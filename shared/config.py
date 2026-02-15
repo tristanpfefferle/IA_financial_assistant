@@ -29,6 +29,9 @@ def app_env() -> str:
 
 def llm_enabled() -> bool:
     """Return whether the LLM planner is enabled."""
+    if app_env().strip().lower() in {"test", "ci"}:
+        return False
+
     raw_value = get_env("AGENT_LLM_ENABLED", "") or ""
     return raw_value.strip().lower() in {"1", "true"}
 
