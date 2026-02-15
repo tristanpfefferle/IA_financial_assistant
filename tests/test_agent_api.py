@@ -57,3 +57,12 @@ def test_agent_chat_search_returns_validation_error_for_invalid_limit() -> None:
     payload = response.json()
     assert payload["tool_result"]["code"] == "VALIDATION_ERROR"
     assert "details" in payload["tool_result"]
+
+
+def test_agent_chat_search_returns_parse_validation_error() -> None:
+    response = client.post("/agent/chat", json={"message": "search: coffee from:2025-01-01"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["tool_result"]["code"] == "VALIDATION_ERROR"
+    assert "format" in payload["reply"].lower()
