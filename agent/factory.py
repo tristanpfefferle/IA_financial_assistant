@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from agent.backend_client import BackendClient
+from agent.llm_planner import LLMPlanner
 from agent.loop import AgentLoop
 from agent.tool_router import ToolRouter
 from backend.factory import build_backend_tool_service
@@ -14,4 +15,8 @@ def build_agent_loop() -> AgentLoop:
     backend_tool_service = build_backend_tool_service()
     backend_client = BackendClient(tool_service=backend_tool_service)
     tool_router = ToolRouter(backend_client=backend_client)
-    return AgentLoop(tool_router=tool_router)
+    llm_planner: LLMPlanner | None = None
+    return AgentLoop(
+        tool_router=tool_router,
+        llm_planner=llm_planner,
+    )
