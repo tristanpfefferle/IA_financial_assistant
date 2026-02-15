@@ -6,12 +6,20 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Protocol
 
-from shared.models import Money, Transaction, TransactionFilters
+from shared.models import (
+    Money,
+    Transaction,
+    TransactionFilters,
+    TransactionSumDirection,
+)
 
 
 class TransactionsRepository(Protocol):
     def list_transactions(self, filters: TransactionFilters) -> list[Transaction]:
         """Return transactions using typed filters."""
+
+    def sum_transactions(self, filters: TransactionFilters) -> tuple[Decimal, int, str]:
+        """Return aggregated amount, count and currency using typed filters."""
 
 
 class GestionFinanciereTransactionsRepository:
@@ -57,7 +65,7 @@ class GestionFinanciereTransactionsRepository:
             ),
         ]
 
-    def list_transactions(self, filters: TransactionFilters) -> list[Transaction]:
+    def _apply_filters_without_pagination(self, filters: TransactionFilters) -> list[Transaction]:
         items = self._seed
 
         if filters.account_id:
@@ -85,6 +93,22 @@ class GestionFinanciereTransactionsRepository:
         if filters.max_amount is not None:
             items = [tx for tx in items if tx.amount.amount <= filters.max_amount]
 
+        return items
+
+    def list_transactions(self, filters: TransactionFilters) -> list[Transaction]:
+        items = self._apply_filters_without_pagination(filters)
         offset = filters.offset
         limit = filters.limit
         return items[offset : offset + limit]
+
+    def sum_transactions(self, filters: TransactionFilters) -> tuple[Decimal, int, str]:
+        items = self._apply_filters_without_pagination(filters)
+
+        if filters.direction == TransactionSumDirection.DEBIT_ONLY:
+            items = [tx for tx in items if tx.amount.amount < 0]
+        elif filters.direction == TransactionSumDirection.CREDIT_ONLY:
+            items = [tx for tx in items if tx.amount.amount > 0]
+
+        total = sum((tx.amount.amount for tx in items), Decimal("0"))
+        currency = items[0].amount.currency if items else "EUR"
+        return total, len(items), currency
