@@ -27,3 +27,24 @@ def test_llm_model_uses_default_when_missing(monkeypatch) -> None:
     monkeypatch.delenv("AGENT_LLM_MODEL", raising=False)
 
     assert config.llm_model() == "gpt-5"
+
+
+def test_cors_allow_origins_defaults_in_dev(monkeypatch) -> None:
+    monkeypatch.setenv("APP_ENV", "dev")
+    monkeypatch.delenv("CORS_ALLOW_ORIGINS", raising=False)
+
+    assert config.cors_allow_origins() == ["http://localhost:5173", "http://127.0.0.1:5173"]
+
+
+def test_cors_allow_origins_parses_comma_separated_list(monkeypatch) -> None:
+    monkeypatch.setenv("APP_ENV", "prod")
+    monkeypatch.setenv("CORS_ALLOW_ORIGINS", "https://a.com, https://b.com")
+
+    assert config.cors_allow_origins() == ["https://a.com", "https://b.com"]
+
+
+def test_cors_allow_origins_defaults_to_empty_in_prod(monkeypatch) -> None:
+    monkeypatch.setenv("APP_ENV", "prod")
+    monkeypatch.delenv("CORS_ALLOW_ORIGINS", raising=False)
+
+    assert config.cors_allow_origins() == []

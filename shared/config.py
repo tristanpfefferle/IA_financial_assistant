@@ -27,6 +27,20 @@ def app_env() -> str:
     return (get_env("APP_ENV", "dev") or "dev").strip() or "dev"
 
 
+def cors_allow_origins() -> list[str]:
+    """Return CORS allowed origins from env with safe environment defaults."""
+    raw_origins = get_env("CORS_ALLOW_ORIGINS", "") or ""
+    parsed_origins = [origin.strip() for origin in raw_origins.split(",") if origin.strip()]
+
+    if parsed_origins:
+        return parsed_origins
+
+    if app_env().strip().lower() in {"dev", "local"}:
+        return ["http://localhost:5173", "http://127.0.0.1:5173"]
+
+    return []
+
+
 def llm_enabled() -> bool:
     """Return whether the LLM planner is enabled."""
     if app_env().strip().lower() in {"test", "ci"}:
