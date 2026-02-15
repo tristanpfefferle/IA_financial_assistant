@@ -58,6 +58,14 @@ class Category(BaseModel):
     name: str
 
 
+class TransactionSumDirection(str, Enum):
+    """Direction selector used by transaction sum tool."""
+
+    ALL = "ALL"
+    DEBIT_ONLY = "DEBIT_ONLY"
+    CREDIT_ONLY = "CREDIT_ONLY"
+
+
 class TransactionFilters(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -70,14 +78,6 @@ class TransactionFilters(BaseModel):
     direction: TransactionSumDirection | None = None
     limit: int = Field(default=50, ge=1, le=500)
     offset: int = Field(default=0, ge=0)
-
-
-class TransactionSumDirection(str, Enum):
-    """Direction selector used by transaction sum tool."""
-
-    ALL = "ALL"
-    DEBIT_ONLY = "DEBIT_ONLY"
-    CREDIT_ONLY = "CREDIT_ONLY"
 
 
 class ToolError(BaseModel):
