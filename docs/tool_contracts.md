@@ -29,6 +29,44 @@
   - `total: int | None` (peut rester `None` si le backend ne calcule pas le total)
 - **Output error**: `ToolError`
 
+
+### `finance.transactions.sum`
+
+- **Input**: `TransactionFilters`
+  - mêmes filtres que `finance.transactions.search`
+  - `direction: TransactionSumDirection | None`
+    - `ALL` ou `None`: somme de tous les montants
+    - `DEBIT_ONLY`: somme uniquement des montants négatifs
+    - `CREDIT_ONLY`: somme uniquement des montants positifs
+- **Output success**: `TransactionSumResult`
+  - `total: Money`
+  - `count: int`
+  - `limit: int`
+  - `offset: int`
+  - `filters: TransactionFilters | None`
+- **Output error**: `ToolError`
+
+Exemples payload JSON:
+
+```json
+{
+  "search": "coffee",
+  "date_range": {"start_date": "2025-01-01", "end_date": "2025-01-31"},
+  "direction": "DEBIT_ONLY"
+}
+```
+
+```json
+{
+  "account_id": "acc_main",
+  "min_amount": "-100.00",
+  "max_amount": "0",
+  "direction": "ALL",
+  "limit": 50,
+  "offset": 0
+}
+```
+
 ## Erreur standard
 
 `ToolError` inclut:

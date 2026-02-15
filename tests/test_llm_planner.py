@@ -37,3 +37,10 @@ def test_deterministic_ping_stays_priority_over_llm_planner() -> None:
     assert deterministic_plan.reply == "pong"
     assert isinstance(delegated_plan, NoopPlan)
     assert delegated_plan.reply == "pong"
+
+
+def test_llm_planner_tool_definitions_expose_search_and_sum() -> None:
+    tools = LLMPlanner._tool_definition()
+    names = {tool["function"]["name"] for tool in tools}
+
+    assert names == {"finance.transactions.search", "finance.transactions.sum"}

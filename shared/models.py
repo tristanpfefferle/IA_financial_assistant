@@ -67,8 +67,17 @@ class TransactionFilters(BaseModel):
     min_amount: Decimal | None = None
     max_amount: Decimal | None = None
     search: str | None = None
+    direction: TransactionSumDirection | None = None
     limit: int = Field(default=50, ge=1, le=500)
     offset: int = Field(default=0, ge=0)
+
+
+class TransactionSumDirection(str, Enum):
+    """Direction selector used by transaction sum tool."""
+
+    ALL = "ALL"
+    DEBIT_ONLY = "DEBIT_ONLY"
+    CREDIT_ONLY = "CREDIT_ONLY"
 
 
 class ToolError(BaseModel):
@@ -86,3 +95,13 @@ class TransactionSearchResult(BaseModel):
     limit: int
     offset: int
     total: int | None = None
+
+
+class TransactionSumResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    total: Money
+    count: int
+    limit: int
+    offset: int
+    filters: TransactionFilters | None = None

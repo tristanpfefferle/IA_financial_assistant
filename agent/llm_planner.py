@@ -35,7 +35,15 @@ class LLMPlanner:
                     "description": "Search financial transactions using structured filters.",
                     "parameters": filters_schema,
                 },
-            }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "finance.transactions.sum",
+                    "description": "Compute total amount and count for transactions matching filters.",
+                    "parameters": filters_schema,
+                },
+            },
         ]
 
     def plan(self, message: str) -> Plan:
@@ -65,8 +73,9 @@ class LLMPlanner:
                         "role": "system",
                         "content": (
                             "Tu es un planificateur d'actions. Utilise l'outil "
-                            "finance.transactions.search quand la demande concerne une "
-                            "recherche de transactions. Sinon demande une clarification."
+                            "finance.transactions.sum pour les demandes de total, somme, dépenses "
+                            "ou recettes. Utilise l'outil finance.transactions.search pour lister "
+                            "ou rechercher des transactions. Sinon demande une clarification."
                         ),
                     },
                     {"role": "user", "content": message},
@@ -79,12 +88,18 @@ class LLMPlanner:
             tool_calls = llm_message.tool_calls or []
             if tool_calls:
                 tool_call = tool_calls[0]
+                parsed_args = json.loads(tool_call.function.arguments or "{}")
                 if tool_call.function.name == "finance.transactions.search":
-                    parsed_args = json.loads(tool_call.function.arguments or "{}")
                     return ToolCallPlan(
                         tool_name="finance.transactions.search",
                         payload=parsed_args,
                         user_reply="OK, je cherche ces transactions.",
+                    )
+                if tool_call.function.name == "finance.transactions.sum":
+                    return ToolCallPlan(
+                        tool_name="finance.transactions.sum",
+                        payload=parsed_args,
+                        user_reply="OK, je calcule la somme des transactions.",
                     )
 
             clarification = llm_message.content or "Pouvez-vous préciser votre demande ?"
