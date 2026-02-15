@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -66,6 +67,14 @@ class TransactionSumDirection(str, Enum):
     CREDIT_ONLY = "CREDIT_ONLY"
 
 
+class RelevesDirection(str, Enum):
+    """Direction selector for releves bank transactions."""
+
+    ALL = "ALL"
+    DEBIT_ONLY = "DEBIT_ONLY"
+    CREDIT_ONLY = "CREDIT_ONLY"
+
+
 class TransactionFilters(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -105,3 +114,49 @@ class TransactionSumResult(BaseModel):
     limit: int
     offset: int
     filters: TransactionFilters | None = None
+
+
+class ReleveBancaire(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: UUID
+    profile_id: UUID | None = None
+    date: date
+    libelle: str | None = None
+    montant: Decimal
+    devise: str
+    categorie: str | None = None
+    payee: str | None = None
+    merchant_id: UUID | None = None
+
+
+class RelevesFilters(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    profile_id: UUID
+    date_range: DateRange | None = None
+    categorie: str | None = None
+    merchant: str | None = None
+    merchant_id: UUID | None = None
+    direction: RelevesDirection = RelevesDirection.ALL
+    limit: int = Field(default=50, ge=1, le=500)
+    offset: int = Field(default=0, ge=0)
+
+
+class RelevesSearchResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[ReleveBancaire]
+    limit: int
+    offset: int
+    total: int | None = None
+
+
+class RelevesSumResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    total: Decimal
+    count: int
+    average: Decimal
+    currency: str | None = None
+    filters: RelevesFilters | None = None
