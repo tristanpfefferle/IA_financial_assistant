@@ -4,7 +4,8 @@ export type AgentChatResponse = {
 }
 
 export async function sendChatMessage(message: string): Promise<AgentChatResponse> {
-  const response = await fetch('http://127.0.0.1:8000/agent/chat', {
+  const baseUrl = import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:8000'
+  const response = await fetch(`${baseUrl}/agent/chat`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
