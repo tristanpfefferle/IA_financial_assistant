@@ -32,13 +32,26 @@ class NoopPlan:
     reply: str
 
 
-Plan = ToolCallPlan | ClarificationPlan | NoopPlan
+@dataclass(slots=True)
+class ErrorPlan:
+    """Plan that returns a parsing error without invoking tools."""
+
+    reply: str
+    tool_error: ToolError
+
+
+Plan = ToolCallPlan | ClarificationPlan | NoopPlan | ErrorPlan
 
 
 _SEARCH_TOKENS = {"from", "to", "account", "category", "limit", "offset", "min", "max"}
 
 
-def _parse_search_payload(message: str) -> tuple[dict[str, object] | None, ToolError | None]:
+def _parse_search_command(message: str) -> tuple[dict[str, object] | None, ToolError | None]:
+    """Parse `search:` commands.
+
+    Grammar: `search: <term?> [from:YYYY-MM-DD to:YYYY-MM-DD] [account:<id>]`
+    with optional `category:`, `limit:`, `offset:`, `min:` and `max:` filters.
+    """
     body = message.split(":", maxsplit=1)[1].strip()
     if not body:
         return {"search": None, "limit": 50, "offset": 0}, None
@@ -123,12 +136,11 @@ def plan_from_message(message: str) -> Plan:
         return NoopPlan(reply="pong")
 
     if normalized_message.lower().startswith("search:"):
-        payload, parse_error = _parse_search_payload(normalized_message)
+        payload, parse_error = _parse_search_command(normalized_message)
         if parse_error is not None:
-            return ToolCallPlan(
-                tool_name="finance.transactions.search",
-                payload={"limit": 0, "_parse_error": parse_error.model_dump(mode="json")},
-                user_reply="Je n'ai pas pu interpréter la commande search:. Corrigez le format puis réessayez.",
+            return ErrorPlan(
+                reply="Je n'ai pas pu interpréter la commande search:. Corrigez le format puis réessayez.",
+                tool_error=parse_error,
             )
 
         return ToolCallPlan(

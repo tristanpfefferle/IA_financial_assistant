@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from agent.planner import ClarificationPlan, NoopPlan, ToolCallPlan, plan_from_message
+from agent.planner import ErrorPlan, ClarificationPlan, NoopPlan, ToolCallPlan, plan_from_message
 from agent.tool_router import ToolRouter
 
 
@@ -35,5 +35,11 @@ class AgentLoop:
 
         if isinstance(plan, NoopPlan):
             return AgentReply(reply=plan.reply)
+
+        if isinstance(plan, ErrorPlan):
+            return AgentReply(
+                reply=plan.reply,
+                tool_result=plan.tool_error.model_dump(mode="json"),
+            )
 
         return AgentReply(reply="Commandes disponibles: 'ping' ou 'search: <term>'.")
