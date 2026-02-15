@@ -14,7 +14,9 @@
 
 - `SUPABASE_URL` (backend)
 - `SUPABASE_SERVICE_ROLE_KEY` (backend)
-- `OPENAI_API_KEY` (agent)
+- `AGENT_LLM_ENABLED` (`1`/`true` pour activer le planner LLM, désactivé par défaut)
+- `AGENT_LLM_MODEL` (optionnel, défaut: `gpt-5`)
+- `OPENAI_API_KEY` (agent, requis seulement si `AGENT_LLM_ENABLED` est actif)
 - `APP_ENV` (`dev`, `test`, `prod`)
 
 ## Commandes utiles
