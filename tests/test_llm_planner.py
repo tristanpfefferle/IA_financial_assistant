@@ -5,6 +5,7 @@ from agent.planner import ErrorPlan, NoopPlan, deterministic_plan_from_message, 
 
 
 def test_llm_planner_disabled_by_default_returns_noop_plan(monkeypatch) -> None:
+    monkeypatch.setenv("APP_ENV", "dev")
     monkeypatch.delenv("AGENT_LLM_ENABLED", raising=False)
 
     planner = LLMPlanner()
@@ -15,6 +16,7 @@ def test_llm_planner_disabled_by_default_returns_noop_plan(monkeypatch) -> None:
 
 
 def test_llm_planner_enabled_without_api_key_returns_error(monkeypatch) -> None:
+    monkeypatch.setenv("APP_ENV", "dev")
     monkeypatch.setenv("AGENT_LLM_ENABLED", "true")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 

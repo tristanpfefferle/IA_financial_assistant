@@ -15,6 +15,7 @@ class AgentReply:
 
     reply: str
     tool_result: dict[str, object] | None = None
+    plan: dict[str, object] | None = None
 
 
 @dataclass(slots=True)
@@ -30,6 +31,7 @@ class AgentLoop:
             return AgentReply(
                 reply=plan.user_reply,
                 tool_result=result.model_dump(mode="json"),
+                plan={"tool_name": plan.tool_name, "payload": plan.payload},
             )
 
         if isinstance(plan, ClarificationPlan):

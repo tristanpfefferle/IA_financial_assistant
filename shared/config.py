@@ -41,6 +41,12 @@ def llm_model() -> str:
     return (get_env("AGENT_LLM_MODEL", "gpt-5") or "gpt-5").strip() or "gpt-5"
 
 
+def llm_strict() -> bool:
+    """Return whether strict LLM clarification behavior is enabled."""
+    raw_value = get_env("AGENT_LLM_STRICT", "") or ""
+    return raw_value.strip().lower() in {"1", "true"}
+
+
 def openai_api_key() -> str | None:
     """Return OpenAI API key when configured."""
     return get_env("OPENAI_API_KEY")
