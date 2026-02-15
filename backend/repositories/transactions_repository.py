@@ -61,7 +61,14 @@ class GestionFinanciereTransactionsRepository:
         items = self._seed
 
         if filters.account_id:
-            items = [tx for tx in items if tx.account_id == filters.account_id]
+            known_account = any(tx.account_id == filters.account_id for tx in items)
+            if known_account:
+                items = [tx for tx in items if tx.account_id == filters.account_id]
+
+        if filters.category_id:
+            known_category = any(tx.category_id == filters.category_id for tx in items)
+            if known_category:
+                items = [tx for tx in items if tx.category_id == filters.category_id]
 
         if filters.search:
             lowered_search = filters.search.lower()
@@ -78,6 +85,6 @@ class GestionFinanciereTransactionsRepository:
         if filters.max_amount is not None:
             items = [tx for tx in items if tx.amount.amount <= filters.max_amount]
 
-        offset = max(filters.offset, 0)
-        limit = max(filters.limit, 0)
+        offset = filters.offset
+        limit = filters.limit
         return items[offset : offset + limit]

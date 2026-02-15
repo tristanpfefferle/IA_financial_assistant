@@ -22,7 +22,7 @@ class ToolRouter:
                 return ToolError(
                     code=ToolErrorCode.VALIDATION_ERROR,
                     message="Invalid payload for tool finance.transactions.search",
-                    details={"validation_error": str(exc)},
+                    details={"validation_errors": exc.errors(), "payload": payload},
                 )
             return self.backend_client.search_transactions(filters)
         return ToolError(
