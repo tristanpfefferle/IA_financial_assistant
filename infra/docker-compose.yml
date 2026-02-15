@@ -1,0 +1,5 @@
+version: "3.9"
+services:
+  app-placeholder:
+    image: python:3.11-slim
+    command: ["python", "-c", "print('backend/agent placeholder container')"]
