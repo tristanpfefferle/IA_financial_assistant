@@ -23,6 +23,8 @@ jobs:
           python -m pip install -e .[dev]
 
       - name: Run pytest
+        env:
+          AGENT_LLM_ENABLED: "0"
         run: pytest
 
       - name: Setup Node.js

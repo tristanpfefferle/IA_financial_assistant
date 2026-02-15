@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass, field
 from typing import Any
 
 from agent.planner import ClarificationPlan, ErrorPlan, NoopPlan, Plan, ToolCallPlan
+from shared import config
 from shared.models import ToolError, ToolErrorCode, TransactionFilters
 
 
@@ -15,13 +15,12 @@ from shared.models import ToolError, ToolErrorCode, TransactionFilters
 class LLMPlanner:
     """Plan messages with an LLM when deterministic parsing cannot route them."""
 
-    model: str = field(default_factory=lambda: os.getenv("AGENT_LLM_MODEL", "gpt-5"))
+    model: str = field(default_factory=config.llm_model)
 
     @staticmethod
     def _enabled() -> bool:
         """Return whether the LLM planner feature flag is enabled."""
-        raw_value = os.getenv("AGENT_LLM_ENABLED", "")
-        return raw_value.strip().lower() in {"1", "true"}
+        return config.llm_enabled()
 
     @staticmethod
     def _tool_definition() -> list[dict[str, Any]]:
@@ -44,7 +43,7 @@ class LLMPlanner:
         if not self._enabled():
             return NoopPlan(reply="LLM planner not enabled.")
 
-        api_key = os.getenv("OPENAI_API_KEY")
+        api_key = config.openai_api_key()
         if not api_key:
             return ErrorPlan(
                 reply="La configuration de l'assistant IA est incomplète.",
