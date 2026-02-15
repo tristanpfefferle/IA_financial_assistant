@@ -12,6 +12,8 @@
 
 ## Variables d'environnement (minimum)
 
+En local/dev, créez un fichier `.env` à partir de `.env.example`.
+
 - `SUPABASE_URL` (backend)
 - `SUPABASE_SERVICE_ROLE_KEY` (backend)
 - `AGENT_LLM_ENABLED` (`1`/`true` pour activer le planner LLM, désactivé par défaut)
@@ -25,6 +27,12 @@
 - API agent (dev): `uvicorn agent.api:app --reload --port 8000`
 - Build UI: `cd ui && npm run build`
 - CI locale: `pytest && (cd ui && npm ci && npm run build)`
+
+## Dépannage
+
+- **Erreur**: `RuntimeError: The starlette.testclient module requires the httpx package to be installed.`
+  - **Cause**: dépendances dev/tests non installées.
+  - **Solution**: exécuter `python -m pip install -e .[dev]` puis relancer `pytest`.
 
 ## Note intégration métier
 

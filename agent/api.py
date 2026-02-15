@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from shared import config as _config
 from agent.factory import build_agent_loop
 from agent.loop import AgentLoop
 
