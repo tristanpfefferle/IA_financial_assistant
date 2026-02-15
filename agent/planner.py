@@ -148,7 +148,7 @@ def deterministic_plan_from_message(message: str) -> Plan:
             )
 
         return ToolCallPlan(
-            tool_name="finance.transactions.search",
+            tool_name="finance_transactions_search",
             payload=payload or {},
             user_reply="Voici le résultat de la recherche de transactions.",
         )

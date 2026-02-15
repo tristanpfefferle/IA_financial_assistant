@@ -1,4 +1,4 @@
-"""Contract tests for finance.transactions.search."""
+"""Contract tests for finance_transactions_search."""
 
 from agent.factory import build_agent_loop
 from shared.models import ToolError, TransactionSearchResult
@@ -8,7 +8,7 @@ def test_transactions_search_returns_paginated_result() -> None:
     agent_loop = build_agent_loop()
 
     payload = {"limit": 2, "offset": 1}
-    result = agent_loop.tool_router.call("finance.transactions.search", payload)
+    result = agent_loop.tool_router.call("finance_transactions_search", payload)
 
     assert isinstance(result, TransactionSearchResult)
     assert result.limit == 2
@@ -20,11 +20,11 @@ def test_transactions_search_applies_search_filter() -> None:
     agent_loop = build_agent_loop()
 
     base_result = agent_loop.tool_router.call(
-        "finance.transactions.search",
+        "finance_transactions_search",
         {"limit": 50, "offset": 0},
     )
     filtered_result = agent_loop.tool_router.call(
-        "finance.transactions.search",
+        "finance_transactions_search",
         {"search": "coffee", "limit": 50, "offset": 0},
     )
 
@@ -37,6 +37,6 @@ def test_transactions_search_applies_search_filter() -> None:
 def test_transactions_search_returns_tool_error_for_invalid_payload() -> None:
     agent_loop = build_agent_loop()
 
-    result = agent_loop.tool_router.call("finance.transactions.search", {"limit": "invalid"})
+    result = agent_loop.tool_router.call("finance_transactions_search", {"limit": "invalid"})
 
     assert isinstance(result, ToolError)

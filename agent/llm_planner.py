@@ -10,7 +10,7 @@ from agent.planner import ClarificationPlan, ErrorPlan, NoopPlan, Plan, ToolCall
 from shared import config
 from shared.models import ToolError, ToolErrorCode, TransactionFilters
 
-_ALLOWED_TOOLS = {"finance.transactions.search", "finance.transactions.sum"}
+_ALLOWED_TOOLS = {"finance_transactions_search", "finance_transactions_sum"}
 _FALLBACK_CLARIFICATION = "Pouvez-vous préciser votre demande ?"
 
 
@@ -79,7 +79,7 @@ class LLMPlanner:
             {
                 "type": "function",
                 "function": {
-                    "name": "finance.transactions.search",
+                    "name": "finance_transactions_search",
                     "description": "Search financial transactions using structured filters.",
                     "parameters": filters_schema,
                 },
@@ -87,7 +87,7 @@ class LLMPlanner:
             {
                 "type": "function",
                 "function": {
-                    "name": "finance.transactions.sum",
+                    "name": "finance_transactions_sum",
                     "description": "Compute total amount and count for transactions matching filters.",
                     "parameters": filters_schema,
                 },
@@ -101,8 +101,8 @@ class LLMPlanner:
                 "role": "system",
                 "content": (
                     "Tu planifies un appel d'outil financier. "
-                    "Utilise finance.transactions.sum pour total/somme/dépenses/revenus, "
-                    "finance.transactions.search pour lister/rechercher des transactions. "
+                    "Utilise finance_transactions_sum pour total/somme/dépenses/revenus, "
+                    "finance_transactions_search pour lister/rechercher des transactions. "
                     "Dates au format YYYY-MM-DD si présentes. "
                     "Direction: DEBIT_ONLY pour dépenses, CREDIT_ONLY pour revenus, sinon ALL."
                 ),
@@ -190,7 +190,7 @@ class LLMPlanner:
                 ),
             )
 
-        if tool_name == "finance.transactions.search":
+        if tool_name == "finance_transactions_search":
             return ToolCallPlan(
                 tool_name=tool_name,
                 payload=parsed_args,

@@ -15,24 +15,24 @@ class ToolRouter:
     backend_client: BackendClient
 
     def call(self, tool_name: str, payload: dict) -> TransactionSearchResult | TransactionSumResult | ToolError:
-        if tool_name == "finance.transactions.search":
+        if tool_name == "finance_transactions_search":
             try:
                 filters = TransactionFilters.model_validate(payload)
             except ValidationError as exc:
                 return ToolError(
                     code=ToolErrorCode.VALIDATION_ERROR,
-                    message="Invalid payload for tool finance.transactions.search",
+                    message="Invalid payload for tool finance_transactions_search",
                     details={"validation_errors": exc.errors(), "payload": payload},
                 )
             return self.backend_client.search_transactions(filters)
 
-        if tool_name == "finance.transactions.sum":
+        if tool_name == "finance_transactions_sum":
             try:
                 filters = TransactionFilters.model_validate(payload)
             except ValidationError as exc:
                 return ToolError(
                     code=ToolErrorCode.VALIDATION_ERROR,
-                    message="Invalid payload for tool finance.transactions.sum",
+                    message="Invalid payload for tool finance_transactions_sum",
                     details={"validation_errors": exc.errors(), "payload": payload},
                 )
             return self.backend_client.sum_transactions(filters)

@@ -1,4 +1,4 @@
-"""Contract tests for finance.transactions.sum."""
+"""Contract tests for finance_transactions_sum."""
 
 from decimal import Decimal
 
@@ -9,7 +9,7 @@ from shared.models import ToolError, ToolErrorCode, TransactionSearchResult, Tra
 def test_sum_all_returns_decimal_and_count() -> None:
     agent_loop = build_agent_loop()
 
-    result = agent_loop.tool_router.call("finance.transactions.sum", {})
+    result = agent_loop.tool_router.call("finance_transactions_sum", {})
 
     assert isinstance(result, TransactionSumResult)
     assert isinstance(result.total.amount, Decimal)
@@ -19,8 +19,8 @@ def test_sum_all_returns_decimal_and_count() -> None:
 def test_sum_debit_only_is_negative_or_zero_and_count_matches() -> None:
     agent_loop = build_agent_loop()
 
-    debit_result = agent_loop.tool_router.call("finance.transactions.sum", {"direction": "DEBIT_ONLY"})
-    base_result = agent_loop.tool_router.call("finance.transactions.search", {})
+    debit_result = agent_loop.tool_router.call("finance_transactions_sum", {"direction": "DEBIT_ONLY"})
+    base_result = agent_loop.tool_router.call("finance_transactions_search", {})
 
     assert isinstance(debit_result, TransactionSumResult)
     assert isinstance(base_result, TransactionSearchResult)
@@ -31,7 +31,7 @@ def test_sum_debit_only_is_negative_or_zero_and_count_matches() -> None:
 def test_sum_with_search_filter() -> None:
     agent_loop = build_agent_loop()
 
-    result = agent_loop.tool_router.call("finance.transactions.sum", {"search": "coffee"})
+    result = agent_loop.tool_router.call("finance_transactions_sum", {"search": "coffee"})
 
     assert isinstance(result, TransactionSumResult)
     assert result.count == 1
@@ -41,7 +41,7 @@ def test_sum_with_search_filter() -> None:
 def test_sum_invalid_direction_validation_error() -> None:
     agent_loop = build_agent_loop()
 
-    result = agent_loop.tool_router.call("finance.transactions.sum", {"direction": "WRONG"})
+    result = agent_loop.tool_router.call("finance_transactions_sum", {"direction": "WRONG"})
 
     assert isinstance(result, ToolError)
     assert result.code == ToolErrorCode.VALIDATION_ERROR
