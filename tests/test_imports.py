@@ -2,9 +2,19 @@
 
 
 def test_import_shared_models() -> None:
-    from shared.models import Account, Category, DateRange, Money, ToolError, ToolErrorCode, Transaction, TransactionFilters
+    from shared.models import (
+        Account,
+        Category,
+        DateRange,
+        Money,
+        ToolError,
+        ToolErrorCode,
+        Transaction,
+        TransactionFilters,
+        TransactionSearchResult,
+    )
 
-    assert all([Money, DateRange, Transaction, Account, Category, TransactionFilters, ToolError, ToolErrorCode])
+    assert all([Money, DateRange, Transaction, Account, Category, TransactionFilters, TransactionSearchResult, ToolError, ToolErrorCode])
 
 
 def test_import_backend_modules() -> None:

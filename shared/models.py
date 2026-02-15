@@ -77,3 +77,12 @@ class ToolError(BaseModel):
     code: ToolErrorCode
     message: str
     details: dict[str, str] | None = None
+
+
+class TransactionSearchResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[Transaction]
+    limit: int
+    offset: int
+    total: int | None = None
