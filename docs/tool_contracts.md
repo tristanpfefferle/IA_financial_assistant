@@ -2,8 +2,8 @@
 
 ## Naming
 
-- Format obligatoire: `finance.<resource>.<action>`
-- Exemples: `finance.transactions.search`, `finance.accounts.list`
+- Format obligatoire: `finance_<resource>_<action>`
+- Exemples: `finance_transactions_search`, `finance.accounts.list`
 - Les noms invalides (ex: `finance..search`) sont interdits.
 
 ## Contrats I/O (Pydantic)
@@ -11,7 +11,7 @@
 - Inputs et outputs des tools backend sont des modèles Pydantic v2 dans `shared/models.py`.
 - Les tools backend lèvent/retournent `ToolError` en cas d'échec fonctionnel.
 
-### `finance.transactions.search`
+### `finance_transactions_search`
 
 - **Input**: `TransactionFilters`
   - `account_id: str | None`
@@ -30,10 +30,10 @@
 - **Output error**: `ToolError`
 
 
-### `finance.transactions.sum`
+### `finance_transactions_sum`
 
 - **Input**: `TransactionFilters`
-  - mêmes filtres que `finance.transactions.search`
+  - mêmes filtres que `finance_transactions_search`
   - `direction: TransactionSumDirection | None`
     - `ALL` ou `None`: somme de tous les montants
     - `DEBIT_ONLY`: somme uniquement des montants négatifs
@@ -81,7 +81,7 @@ Exemples payload JSON:
 ## Pagination et filtres
 
 - Pagination implémentée: `limit` + `offset`.
-- `finance.transactions.search` renvoie toujours un objet paginé stable (`TransactionSearchResult`) même quand `items` est vide.
+- `finance_transactions_search` renvoie toujours un objet paginé stable (`TransactionSearchResult`) même quand `items` est vide.
 - Filtres actuels appliqués dans le repository mock dev/test:
   - `account_id`
   - `search` (substring case-insensitive sur `description`)

@@ -31,7 +31,7 @@ def test_agent_chat_search_returns_tool_result() -> None:
     assert payload["reply"]
     assert isinstance(payload["tool_result"], dict)
     assert isinstance(payload["plan"], dict)
-    assert payload["plan"]["tool_name"] == "finance.transactions.search"
+    assert payload["plan"]["tool_name"] == "finance_transactions_search"
     assert (
         "items" in payload["tool_result"]
         or {"code", "message"}.issubset(set(payload["tool_result"].keys()))

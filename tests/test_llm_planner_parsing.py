@@ -51,7 +51,7 @@ def test_llm_planner_parses_sum_tool_call(monkeypatch) -> None:
     planner = LLMPlanner(
         client=FakeClient(
             _response_with_tool_call(
-                "finance.transactions.sum",
+                "finance_transactions_sum",
                 '{"search": "cafe", "direction": "DEBIT_ONLY"}',
             )
         )
@@ -60,7 +60,7 @@ def test_llm_planner_parses_sum_tool_call(monkeypatch) -> None:
     plan = planner.plan("Combien j'ai dépensé en café ?")
 
     assert isinstance(plan, ToolCallPlan)
-    assert plan.tool_name == "finance.transactions.sum"
+    assert plan.tool_name == "finance_transactions_sum"
     assert plan.payload == {"search": "cafe", "direction": "DEBIT_ONLY"}
 
 
@@ -71,7 +71,7 @@ def test_llm_planner_parses_search_tool_call(monkeypatch) -> None:
     planner = LLMPlanner(
         client=FakeClient(
             _response_with_tool_call(
-                "finance.transactions.search",
+                "finance_transactions_search",
                 '{"search": "coffee", "limit": 10, "offset": 0}',
             )
         )
@@ -80,7 +80,7 @@ def test_llm_planner_parses_search_tool_call(monkeypatch) -> None:
     plan = planner.plan("Liste mes transactions café")
 
     assert isinstance(plan, ToolCallPlan)
-    assert plan.tool_name == "finance.transactions.search"
+    assert plan.tool_name == "finance_transactions_search"
     assert plan.payload["search"] == "coffee"
 
 
@@ -88,7 +88,7 @@ def test_llm_planner_returns_validation_error_on_invalid_json(monkeypatch) -> No
     monkeypatch.setenv("AGENT_LLM_ENABLED", "true")
     monkeypatch.setenv("APP_ENV", "dev")
 
-    planner = LLMPlanner(client=FakeClient(_response_with_tool_call("finance.transactions.sum", "{bad json")))
+    planner = LLMPlanner(client=FakeClient(_response_with_tool_call("finance_transactions_sum", "{bad json")))
 
     plan = planner.plan("Total café")
 

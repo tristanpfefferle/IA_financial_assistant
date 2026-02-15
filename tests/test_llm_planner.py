@@ -45,4 +45,4 @@ def test_llm_planner_tool_definitions_expose_search_and_sum() -> None:
     tools = LLMPlanner._tool_definition()
     names = {tool["function"]["name"] for tool in tools}
 
-    assert names == {"finance.transactions.search", "finance.transactions.sum"}
+    assert names == {"finance_transactions_search", "finance_transactions_sum"}
