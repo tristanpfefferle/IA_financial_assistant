@@ -7,6 +7,7 @@ from agent.llm_planner import LLMPlanner
 from agent.loop import AgentLoop
 from agent.tool_router import ToolRouter
 from backend.factory import build_backend_tool_service
+from shared import config
 
 
 def build_agent_loop() -> AgentLoop:
@@ -16,6 +17,10 @@ def build_agent_loop() -> AgentLoop:
     backend_client = BackendClient(tool_service=backend_tool_service)
     tool_router = ToolRouter(backend_client=backend_client)
     llm_planner: LLMPlanner | None = None
+
+    if config.llm_enabled():
+        llm_planner = LLMPlanner()
+
     return AgentLoop(
         tool_router=tool_router,
         llm_planner=llm_planner,
