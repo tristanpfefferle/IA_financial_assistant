@@ -4,8 +4,18 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
+from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field
+
+
+class ToolErrorCode(str, Enum):
+    """Stable error codes for tool contracts across layers."""
+
+    VALIDATION_ERROR = "VALIDATION_ERROR"
+    UNKNOWN_TOOL = "UNKNOWN_TOOL"
+    BACKEND_ERROR = "BACKEND_ERROR"
+    NOT_FOUND = "NOT_FOUND"
 
 
 class Money(BaseModel):
@@ -64,6 +74,6 @@ class TransactionFilters(BaseModel):
 class ToolError(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    code: str
+    code: ToolErrorCode
     message: str
     details: dict[str, str] | None = None

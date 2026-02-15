@@ -2,8 +2,9 @@
 
 ## Naming
 
-- Format recommandé: `finance.<domaine>.<action>`
+- Format obligatoire: `finance.<resource>.<action>`
 - Exemples: `finance.transactions.search`, `finance.accounts.list`
+- Les noms invalides (ex: `finance..search`) sont interdits.
 
 ## Contrats I/O (Pydantic)
 
@@ -13,7 +14,11 @@
 ## Erreur standard
 
 `ToolError` inclut:
-- `code`: identifiant stable (`INVALID_FILTER`, `NOT_FOUND`, etc.)
+- `code`: identifiant stable de type `ToolErrorCode`
+  - `VALIDATION_ERROR`
+  - `UNKNOWN_TOOL`
+  - `BACKEND_ERROR`
+  - `NOT_FOUND`
 - `message`: description lisible
 - `details`: map optionnelle d'informations techniques
 
