@@ -53,7 +53,12 @@ En production (`APP_ENV=prod`), le chargement dotenv n'est pas requis : Render i
   - `AGENT_LLM_MODEL`
   - `AGENT_LLM_STRICT`
   - `OPENAI_API_KEY` (si LLM activé)
-  - `CORS_ALLOW_ORIGINS=https://<frontend-render-domain>`
+  - `CORS_ALLOW_ORIGINS=https://ia-financial-assistant-ui.onrender.com`
+
+#### CORS en production (Render)
+
+L'API charge les origines CORS via `shared.config.cors_allow_origins()`.
+Si `CORS_ALLOW_ORIGINS` n'est pas défini en production, cette fonction renvoie `[]` et les appels navigateur depuis la UI Render seront bloqués par CORS.
 
 ### UI Vite
 
@@ -62,7 +67,7 @@ En production (`APP_ENV=prod`), le chargement dotenv n'est pas requis : Render i
 - Build command: `npm ci && npm run build`
 - Publish directory: `dist`
 - Variable à définir:
-  - `VITE_API_URL=https://<api-render-domain>`
+  - `VITE_API_URL=https://ia-financial-assistant.onrender.com` (sans slash final)
 
 ## Dépannage
 
