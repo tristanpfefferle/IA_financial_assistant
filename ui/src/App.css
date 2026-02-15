@@ -11,3 +11,9 @@
   padding: 1rem;
   background: #fff;
 }
+
+.help-text {
+  font-size: 0.9rem;
+  color: #4b5563;
+  margin-top: 0.75rem;
+}

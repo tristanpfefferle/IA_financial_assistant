@@ -67,8 +67,8 @@ class TransactionFilters(BaseModel):
     min_amount: Decimal | None = None
     max_amount: Decimal | None = None
     search: str | None = None
-    limit: int = 50
-    offset: int = 0
+    limit: int = Field(default=50, ge=1, le=500)
+    offset: int = Field(default=0, ge=0)
 
 
 class ToolError(BaseModel):
@@ -76,7 +76,7 @@ class ToolError(BaseModel):
 
     code: ToolErrorCode
     message: str
-    details: dict[str, str] | None = None
+    details: dict[str, object] | None = None
 
 
 class TransactionSearchResult(BaseModel):

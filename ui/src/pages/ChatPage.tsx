@@ -52,13 +52,18 @@ export function ChatPage() {
             type="text"
             value={message}
             onChange={(event) => setMessage(event.target.value)}
-            placeholder="ping ou search: coffee"
+            placeholder="search: coffee from:2025-01-01 to:2025-01-31"
             aria-label="Message"
           />
           <button type="submit" disabled={isLoading}>
             {isLoading ? 'Envoi...' : 'Envoyer'}
           </button>
         </form>
+
+        <p className="help-text">
+          Exemples: <code>search: coffee account:acc_main</code>, <code>search: coffee from:2025-01-01 to:2025-01-31</code>,{' '}
+          <code>search: min:-100 max:0 limit:10 offset:0</code>
+        </p>
 
         {error ? <p className="error-text">{error}</p> : null}
 
