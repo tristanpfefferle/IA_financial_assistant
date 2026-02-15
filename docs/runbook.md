@@ -79,3 +79,48 @@ Si `CORS_ALLOW_ORIGINS` n'est pas défini en production, cette fonction renvoie 
 ## Note intégration métier
 
 La logique métier doit venir du repo `gestion_financiere` (wrappers backend). Aucun portage de logique dans `agent/` ou `ui/`.
+
+## API Supabase (`releves_bancaires`)
+
+### Variables d'environnement requises
+
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+
+### Outils backend disponibles
+
+- `finance_releves_search`: liste paginée sur `releves_bancaires`
+- `finance_releves_sum`: agrégats (`total`, `count`, `average`) avec `Decimal`
+
+Filtres supportés:
+
+- `profile_id` (obligatoire)
+- `date_range.start_date` / `date_range.end_date` (optionnel)
+- `categorie` (optionnel)
+- `merchant_id` (prioritaire sur `merchant`)
+- `merchant` (`payee ILIKE %merchant%`)
+- `direction` (`ALL`, `DEBIT_ONLY`, `CREDIT_ONLY`)
+- `limit`, `offset`
+
+### Exemples de test via `tool_router` (sans dépendre du planner)
+
+```bash
+python - <<'PY'
+from agent.factory import build_agent_loop
+
+agent_loop = build_agent_loop()
+
+print(agent_loop.tool_router.call("finance_releves_search", {
+    "profile_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+    "limit": 5,
+    "offset": 0,
+}).model_dump(mode="json"))
+
+print(agent_loop.tool_router.call("finance_releves_sum", {
+    "profile_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+    "direction": "DEBIT_ONLY",
+    "limit": 50,
+    "offset": 0,
+}).model_dump(mode="json"))
+PY
+```
