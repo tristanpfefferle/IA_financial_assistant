@@ -19,7 +19,7 @@ def build_agent_loop() -> AgentLoop:
     llm_planner: LLMPlanner | None = None
 
     if config.llm_enabled():
-        llm_planner = LLMPlanner()
+        llm_planner = LLMPlanner(strict=config.llm_strict())
 
     return AgentLoop(
         tool_router=tool_router,

@@ -167,7 +167,7 @@ def plan_from_message(message: str, llm_planner: LLMPlanner | None = None) -> Pl
     if isinstance(plan, NoopPlan) and plan.reply == "pong":
         return plan
 
-    if isinstance(plan, NoopPlan) and llm_planner is not None:
+    if llm_planner is not None:
         return llm_planner.plan(message)
 
-    return plan
+    return NoopPlan(reply="Commandes disponibles: 'ping' ou 'search: <term>'.")
