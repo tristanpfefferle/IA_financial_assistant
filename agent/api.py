@@ -22,6 +22,7 @@ class ChatResponse(BaseModel):
     """Outgoing chat response payload."""
 
     reply: str
+    tool_result: dict[str, object] | None
 
 
 @lru_cache(maxsize=1)
@@ -53,5 +54,5 @@ def health() -> dict[str, str]:
 def agent_chat(payload: ChatRequest) -> ChatResponse:
     """Handle a user chat message through the agent loop."""
 
-    reply = get_agent_loop().handle_user_message(payload.message)
-    return ChatResponse(reply=reply)
+    agent_reply = get_agent_loop().handle_user_message(payload.message)
+    return ChatResponse(reply=agent_reply.reply, tool_result=agent_reply.tool_result)
