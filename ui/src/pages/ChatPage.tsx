@@ -73,6 +73,15 @@ export function ChatPage() {
               <strong>Reply:</strong> {result.reply}
             </p>
 
+            {result.plan ? (
+              <>
+                <h2>Plan JSON</h2>
+                <pre>
+                  <code>{JSON.stringify(result.plan, null, 2)}</code>
+                </pre>
+              </>
+            ) : null}
+
             {result.tool_result ? (
               <>
                 <h2>Tool result JSON</h2>

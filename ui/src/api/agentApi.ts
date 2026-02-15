@@ -1,10 +1,13 @@
 export type AgentChatResponse = {
   reply: string
   tool_result: Record<string, unknown> | null
+  plan: Record<string, unknown> | null
 }
 
 export async function sendChatMessage(message: string): Promise<AgentChatResponse> {
-  const baseUrl = import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:8000'
+  const rawBaseUrl = import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:8000'
+  const baseUrl = rawBaseUrl.replace(/\/+$/, '')
+
   const response = await fetch(`${baseUrl}/agent/chat`, {
     method: 'POST',
     headers: {
