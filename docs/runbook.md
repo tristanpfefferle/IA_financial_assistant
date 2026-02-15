@@ -20,6 +20,7 @@
 ## Commandes utiles
 
 - Tests Python: `pytest`
+- API agent (dev): `uvicorn agent.api:app --reload --port 8000`
 - Build UI: `cd ui && npm run build`
 - CI locale: `pytest && (cd ui && npm ci && npm run build)`
 

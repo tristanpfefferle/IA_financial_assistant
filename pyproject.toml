@@ -9,11 +9,14 @@ description = "Architecture skeleton for an AI financial assistant"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+  "fastapi>=0.110",
   "pydantic>=2",
+  "uvicorn[standard]>=0.29",
 ]
 
 [project.optional-dependencies]
 dev = [
+  "httpx>=0.27",
   "pytest>=8",
 ]
 
