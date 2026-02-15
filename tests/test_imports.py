@@ -29,6 +29,7 @@ def test_import_agent_modules() -> None:
     from agent.backend_client import BackendClient
     from agent.factory import build_agent_loop
     from agent.loop import AgentLoop
+    from agent.planner import ToolCallPlan, plan_from_message
     from agent.tool_router import ToolRouter
 
-    assert BackendClient and ToolRouter and AgentLoop and build_agent_loop
+    assert BackendClient and ToolRouter and AgentLoop and ToolCallPlan and plan_from_message and build_agent_loop
