@@ -12,7 +12,9 @@ class AgentLoop:
     tool_router: ToolRouter
 
     def handle_user_message(self, message: str) -> str:
-        _ = message
+        if message.strip().lower() == "ping":
+            return "pong"
+
         # Placeholder orchestration flow; model/tool selection to be implemented.
         result = self.tool_router.call("finance.transactions.search", {})
         return f"Agent placeholder response: {result}"

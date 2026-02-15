@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from backend.repositories.transactions_repository import TransactionsRepository
-from shared.models import ToolError, Transaction, TransactionFilters
+from shared.models import ToolError, ToolErrorCode, Transaction, TransactionFilters
 
 
 @dataclass(slots=True)
@@ -20,4 +20,4 @@ class BackendToolService:
         try:
             return self.transactions_repository.list_transactions(filters)
         except Exception as exc:  # placeholder normalization at contract boundary
-            return ToolError(code="BACKEND_ERROR", message=str(exc))
+            return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))
