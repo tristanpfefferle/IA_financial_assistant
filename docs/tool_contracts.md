@@ -3,7 +3,7 @@
 ## Naming
 
 - Format obligatoire: `finance_<resource>_<action>`
-- Exemples: `finance_transactions_search`, `finance.accounts.list`
+- Exemples: `finance_transactions_search`, `finance_accounts_list`
 - Les noms invalides (ex: `finance..search`) sont interdits.
 
 ## Contrats I/O (Pydantic)

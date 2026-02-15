@@ -102,7 +102,7 @@ def test_llm_planner_returns_clarification_for_unknown_tool(monkeypatch) -> None
     monkeypatch.setenv("APP_ENV", "dev")
 
     planner = LLMPlanner(
-        client=FakeClient(_response_with_tool_call("finance.transactions.delete", '{"id": "tx_1"}'))
+        client=FakeClient(_response_with_tool_call("finance_transactions_delete", '{"id": "tx_1"}'))
     )
 
     plan = planner.plan("Supprime cette transaction")

@@ -22,9 +22,10 @@ En production (`APP_ENV=prod`), le chargement dotenv n'est pas requis : Render i
 - `SUPABASE_URL` (backend)
 - `SUPABASE_SERVICE_ROLE_KEY` (backend)
 - `AGENT_LLM_ENABLED` (`1`/`true` pour activer le planner LLM, désactivé par défaut)
-- `AGENT_LLM_MODEL` (optionnel, défaut: `gpt-5`)
+- `AGENT_LLM_MODEL` (optionnel, recommandé: `gpt-4.1-mini` en prod Render)
 - `AGENT_LLM_STRICT` (`1`/`true` pour activer le mode strict de clarification)
 - `OPENAI_API_KEY` (agent, requis seulement si `AGENT_LLM_ENABLED` est actif)
+- Si votre compte OpenAI ne donne pas accès à `gpt-5`, définir explicitement `AGENT_LLM_MODEL=gpt-4.1-mini`.
 - `CORS_ALLOW_ORIGINS` (liste séparée par virgules, ex. `https://ui.onrender.com,https://preview.example.com`)
 
 ### UI (`ui/.env`)
