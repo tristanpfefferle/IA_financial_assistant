@@ -65,4 +65,4 @@ def test_agent_chat_search_returns_parse_validation_error() -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["tool_result"]["code"] == "VALIDATION_ERROR"
-    assert "format" in payload["reply"].lower()
+    assert "details" in payload["tool_result"]

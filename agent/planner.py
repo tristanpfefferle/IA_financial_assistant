@@ -5,8 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation
+from typing import TYPE_CHECKING
 
 from shared.models import ToolError, ToolErrorCode
+
+if TYPE_CHECKING:
+    from agent.llm_planner import LLMPlanner
 
 
 @dataclass(slots=True)
@@ -127,7 +131,7 @@ def _parse_search_command(message: str) -> tuple[dict[str, object] | None, ToolE
     return payload, None
 
 
-def plan_from_message(message: str) -> Plan:
+def deterministic_plan_from_message(message: str) -> Plan:
     """Build a deterministic execution plan from a user message."""
 
     normalized_message = message.strip()
@@ -150,3 +154,20 @@ def plan_from_message(message: str) -> Plan:
         )
 
     return NoopPlan(reply="Commandes disponibles: 'ping' ou 'search: <term>'.")
+
+
+def plan_from_message(message: str, llm_planner: LLMPlanner | None = None) -> Plan:
+    """Build a plan from a user message, optionally delegating to an LLM planner."""
+
+    plan = deterministic_plan_from_message(message)
+
+    if isinstance(plan, (ToolCallPlan, ErrorPlan)):
+        return plan
+
+    if isinstance(plan, NoopPlan) and plan.reply == "pong":
+        return plan
+
+    if isinstance(plan, NoopPlan) and llm_planner is not None:
+        return llm_planner.plan(message)
+
+    return plan
