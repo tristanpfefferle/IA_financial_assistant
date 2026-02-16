@@ -8,9 +8,9 @@ from typing import Any, Protocol
 
 from agent.planner import ClarificationPlan, ErrorPlan, NoopPlan, Plan, ToolCallPlan
 from shared import config
-from shared.models import RelevesFilters, ToolError, ToolErrorCode
+from shared.models import RelevesAggregateRequest, RelevesFilters, ToolError, ToolErrorCode
 
-_ALLOWED_TOOLS = {"finance_releves_search", "finance_releves_sum"}
+_ALLOWED_TOOLS = {"finance_releves_search", "finance_releves_sum", "finance_releves_aggregate"}
 _TOOL_ALIASES = {
     "finance_transactions_search": "finance_releves_search",
     "finance_transactions_sum": "finance_releves_sum",
@@ -82,6 +82,11 @@ class LLMPlanner:
         releves_required = releves_filters_schema.get("required") or []
         releves_filters_schema["required"] = [item for item in releves_required if item != "profile_id"]
 
+        releves_aggregate_schema = RelevesAggregateRequest.model_json_schema()
+        releves_aggregate_schema["properties"].pop("profile_id", None)
+        aggregate_required = releves_aggregate_schema.get("required") or []
+        releves_aggregate_schema["required"] = [item for item in aggregate_required if item != "profile_id"]
+
         return [
             {
                 "type": "function",
@@ -97,6 +102,14 @@ class LLMPlanner:
                     "name": "finance_releves_sum",
                     "description": "Compute total amount and count for releves bancaires matching filters.",
                     "parameters": releves_filters_schema,
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "finance_releves_aggregate",
+                    "description": "Aggregate releves bancaires by group with totals and counts.",
+                    "parameters": releves_aggregate_schema,
                 },
             },
         ]
@@ -157,11 +170,13 @@ class LLMPlanner:
             tool_name = _TOOL_ALIASES.get(tool_name, tool_name)
 
         if tool_name not in _ALLOWED_TOOLS:
-            return ClarificationPlan(
-                question=(
-                    "Je peux: rechercher des relevés ou calculer une somme. "
-                    "Pouvez-vous préciser votre demande ?"
-                )
+            return ErrorPlan(
+                reply="Je ne peux pas exécuter cet outil.",
+                tool_error=ToolError(
+                    code=ToolErrorCode.UNKNOWN_TOOL,
+                    message="Unsupported tool requested by LLM planner.",
+                    details={"tool_name": tool_name},
+                ),
             )
 
         raw_arguments = function_data.get("arguments")
@@ -200,17 +215,10 @@ class LLMPlanner:
                 ),
             )
 
-        if tool_name == "finance_releves_search":
-            return ToolCallPlan(
-                tool_name=tool_name,
-                payload=parsed_args,
-                user_reply="OK, je cherche ces opérations.",
-            )
-
         return ToolCallPlan(
             tool_name=tool_name,
             payload=parsed_args,
-            user_reply="OK, je calcule le total.",
+            user_reply="",
         )
 
     def _is_vague_clarification(self, question: str) -> bool:
