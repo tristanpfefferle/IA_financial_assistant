@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import calendar
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from typing import TYPE_CHECKING
 
@@ -21,6 +21,7 @@ class ToolCallPlan:
     tool_name: str
     payload: dict[str, object]
     user_reply: str
+    meta: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -28,6 +29,7 @@ class ClarificationPlan:
     """Plan that asks the user for clarification."""
 
     question: str
+    meta: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -35,6 +37,7 @@ class NoopPlan:
     """Plan that returns a response without calling tools."""
 
     reply: str
+    meta: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -125,6 +128,10 @@ _CATEGORY_RENAME_PATTERNS = (
     "renommer la catégorie",
     "change le nom de la catégorie",
     "modifie le nom de la catégorie",
+    "modifie la catégorie",
+    "modifier la catégorie",
+    "change la catégorie",
+    "changer la catégorie",
     "appelle la catégorie",
 )
 
@@ -182,11 +189,7 @@ def _extract_rename_names(message: str) -> tuple[str, str] | None:
     if len(quoted_values) >= 2:
         return quoted_values[0], quoted_values[1]
 
-    match = re.search(
-        r"catégorie\s+(?P<old>.+?)\s+en\s+(?P<new>.+)$",
-        message,
-        flags=re.IGNORECASE,
-    )
+    match = re.search(r"catégorie\s+(?P<old>.+?)\s+en\s+(?P<new>.+)$", message, flags=re.IGNORECASE)
     if match is None:
         return None
 
@@ -297,32 +300,10 @@ def _parse_search_command(message: str) -> tuple[dict[str, object] | None, ToolE
     return payload, None
 
 
-def _handle_pending_delete_confirmation(message: str, active_task: dict[str, object]) -> Plan:
-    category_name = str(active_task.get("category_name", "")).strip()
-    if not category_name:
-        return NoopPlan(reply="Suppression annulée.")
-
-    normalized = message.strip().lower()
-    if normalized in {"oui", "ok", "confirme"}:
-        return ToolCallPlan(
-            tool_name="finance_categories_delete",
-            payload={"category_name": category_name},
-            user_reply=f"Catégorie supprimée : {category_name}.",
-        )
-
-    if normalized in {"non", "annule"}:
-        return NoopPlan(reply="Suppression annulée.")
-
-    return ClarificationPlan(question="Répondez OUI ou NON.")
-
-
-def deterministic_plan_from_message(message: str, active_task: dict[str, object] | None = None) -> Plan:
+def deterministic_plan_from_message(message: str) -> Plan:
     """Build a deterministic execution plan from a user message."""
 
     normalized_message = message.strip()
-
-    if active_task and active_task.get("type") == "confirm_delete_category":
-        return _handle_pending_delete_confirmation(normalized_message, active_task)
 
     if normalized_message.lower() == "ping":
         return NoopPlan(reply="pong")
@@ -416,20 +397,18 @@ def deterministic_plan_from_message(message: str, active_task: dict[str, object]
 def plan_from_message(
     message: str,
     llm_planner: LLMPlanner | None = None,
-    active_task: dict[str, object] | None = None,
 ) -> Plan:
     """Build a plan from a user message, optionally delegating to an LLM planner."""
 
-    plan = deterministic_plan_from_message(message, active_task=active_task)
+    plan = deterministic_plan_from_message(message)
 
     # We intentionally return ClarificationPlan directly so the UX can ask the
     # follow-up question deterministically before any optional LLM fallback.
     if isinstance(plan, (ToolCallPlan, ErrorPlan, ClarificationPlan, SetActiveTaskPlan)):
         return plan
 
-    if isinstance(plan, NoopPlan):
-        if plan.reply == "pong" or active_task is not None:
-            return plan
+    if isinstance(plan, NoopPlan) and plan.reply == "pong":
+        return plan
 
     if llm_planner is not None:
         return llm_planner.plan(message)
