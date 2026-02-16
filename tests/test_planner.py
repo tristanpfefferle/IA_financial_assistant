@@ -149,32 +149,17 @@ def test_planner_categories_delete_needs_clarification_when_missing_name() -> No
     assert plan.question == "Quelle catégorie voulez-vous supprimer ?"
 
 
-def test_delete_confirmation_yes_executes() -> None:
-    plan = plan_from_message(
-        "OUI",
-        active_task={"type": "confirm_delete_category", "category_name": "autres"},
-    )
+def test_planner_categories_rename_modifie_pattern() -> None:
+    plan = plan_from_message("Modifie la catégorie Autres en Divers")
 
     assert isinstance(plan, ToolCallPlan)
-    assert plan.tool_name == "finance_categories_delete"
-    assert plan.payload == {"category_name": "autres"}
+    assert plan.tool_name == "finance_categories_update"
+    assert plan.payload == {"category_name": "Autres", "name": "Divers"}
 
 
-def test_delete_confirmation_no_cancels() -> None:
-    plan = plan_from_message(
-        "NON",
-        active_task={"type": "confirm_delete_category", "category_name": "autres"},
-    )
+def test_planner_categories_rename_change_pattern() -> None:
+    plan = plan_from_message("Change la catégorie Autres en Divers")
 
-    assert isinstance(plan, NoopPlan)
-    assert plan.reply == "Suppression annulée."
-
-
-def test_delete_confirmation_unknown_prompts_again() -> None:
-    plan = plan_from_message(
-        "peut-être",
-        active_task={"type": "confirm_delete_category", "category_name": "autres"},
-    )
-
-    assert isinstance(plan, ClarificationPlan)
-    assert plan.question == "Répondez OUI ou NON."
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_categories_update"
+    assert plan.payload == {"category_name": "Autres", "name": "Divers"}
