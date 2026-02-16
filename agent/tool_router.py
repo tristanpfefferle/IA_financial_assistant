@@ -5,10 +5,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from uuid import UUID
 
-from pydantic import ValidationError
+from backend.repositories.category_utils import normalize_category_name
+from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 
 from agent.backend_client import BackendClient
 from shared.models import (
+    CategoriesListResult,
+    CategoryCreateRequest,
+    CategoryDeleteRequest,
+    CategoryUpdateRequest,
+    ProfileCategory,
     RelevesAggregateRequest,
     RelevesAggregateResult,
     RelevesFilters,
@@ -17,6 +23,21 @@ from shared.models import (
     ToolError,
     ToolErrorCode,
 )
+
+
+class _CategoryUpdateByNamePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    category_id: UUID | None = None
+    category_name: str | None = None
+    name: str | None = None
+    exclude_from_totals: bool | None = None
+
+    @model_validator(mode="after")
+    def validate_identifier(self) -> "_CategoryUpdateByNamePayload":
+        if self.category_id is None and (self.category_name is None or not self.category_name.strip()):
+            raise ValueError("Either category_id or category_name must be provided")
+        return self
 
 
 @dataclass(slots=True)
@@ -29,14 +50,32 @@ class ToolRouter:
         payload: dict,
         *,
         profile_id: UUID | None = None,
-    ) -> RelevesSearchResult | RelevesSumResult | RelevesAggregateResult | ToolError:
+    ) -> (
+        RelevesSearchResult
+        | RelevesSumResult
+        | RelevesAggregateResult
+        | CategoriesListResult
+        | ProfileCategory
+        | dict[str, bool]
+        | ToolError
+    ):
+        if tool_name in {
+            "finance_transactions_search",
+            "finance_releves_search",
+            "finance_transactions_sum",
+            "finance_releves_sum",
+            "finance_releves_aggregate",
+            "finance_categories_list",
+            "finance_categories_create",
+            "finance_categories_update",
+            "finance_categories_delete",
+        } and profile_id is None:
+            return ToolError(
+                code=ToolErrorCode.VALIDATION_ERROR,
+                message=f"Missing profile_id context for tool {tool_name}",
+            )
+
         if tool_name in {"finance_transactions_search", "finance_releves_search"}:
-            # finance_transactions_search is deprecated: alias to finance_releves_search.
-            if profile_id is None:
-                return ToolError(
-                    code=ToolErrorCode.VALIDATION_ERROR,
-                    message=f"Missing profile_id context for tool {tool_name}",
-                )
             try:
                 filters = RelevesFilters.model_validate({**payload, "profile_id": str(profile_id)})
             except ValidationError as exc:
@@ -48,12 +87,6 @@ class ToolRouter:
             return self.backend_client.releves_search(filters)
 
         if tool_name in {"finance_transactions_sum", "finance_releves_sum"}:
-            # finance_transactions_sum is deprecated: alias to finance_releves_sum.
-            if profile_id is None:
-                return ToolError(
-                    code=ToolErrorCode.VALIDATION_ERROR,
-                    message=f"Missing profile_id context for tool {tool_name}",
-                )
             try:
                 filters = RelevesFilters.model_validate({**payload, "profile_id": str(profile_id)})
             except ValidationError as exc:
@@ -65,11 +98,6 @@ class ToolRouter:
             return self.backend_client.releves_sum(filters)
 
         if tool_name == "finance_releves_aggregate":
-            if profile_id is None:
-                return ToolError(
-                    code=ToolErrorCode.VALIDATION_ERROR,
-                    message=f"Missing profile_id context for tool {tool_name}",
-                )
             try:
                 request = RelevesAggregateRequest.model_validate(
                     {**payload, "profile_id": str(profile_id)}
@@ -81,6 +109,95 @@ class ToolRouter:
                     details={"validation_errors": exc.errors(), "payload": payload},
                 )
             return self.backend_client.releves_aggregate(request)
+
+        if tool_name == "finance_categories_list":
+            if payload:
+                return ToolError(
+                    code=ToolErrorCode.VALIDATION_ERROR,
+                    message=f"Invalid payload for tool {tool_name}",
+                    details={"payload": payload},
+                )
+            return self.backend_client.finance_categories_list(profile_id=profile_id)
+
+        if tool_name == "finance_categories_create":
+            try:
+                request = CategoryCreateRequest.model_validate({**payload, "profile_id": str(profile_id)})
+            except ValidationError as exc:
+                return ToolError(
+                    code=ToolErrorCode.VALIDATION_ERROR,
+                    message=f"Invalid payload for tool {tool_name}",
+                    details={"validation_errors": exc.errors(), "payload": payload},
+                )
+            return self.backend_client.finance_categories_create(
+                profile_id=request.profile_id,
+                name=request.name,
+                exclude_from_totals=request.exclude_from_totals,
+            )
+
+        if tool_name == "finance_categories_update":
+            try:
+                request_payload = _CategoryUpdateByNamePayload.model_validate(payload)
+            except ValidationError as exc:
+                return ToolError(
+                    code=ToolErrorCode.VALIDATION_ERROR,
+                    message=f"Invalid payload for tool {tool_name}",
+                    details={"validation_errors": exc.errors(), "payload": payload},
+                )
+
+            category_id = request_payload.category_id
+            if category_id is None:
+                categories_result = self.backend_client.finance_categories_list(profile_id=profile_id)
+                if isinstance(categories_result, ToolError):
+                    return categories_result
+                target_name = normalize_category_name(request_payload.category_name or "")
+                matched = next(
+                    (item for item in categories_result.items if item.name_norm == target_name),
+                    None,
+                )
+                if matched is None:
+                    return ToolError(
+                        code=ToolErrorCode.NOT_FOUND,
+                        message="Category not found for provided name.",
+                        details={"category_name": request_payload.category_name},
+                    )
+                category_id = matched.id
+
+            try:
+                request = CategoryUpdateRequest.model_validate(
+                    {
+                        "profile_id": str(profile_id),
+                        "category_id": str(category_id),
+                        "name": request_payload.name,
+                        "exclude_from_totals": request_payload.exclude_from_totals,
+                    }
+                )
+            except ValidationError as exc:
+                return ToolError(
+                    code=ToolErrorCode.VALIDATION_ERROR,
+                    message=f"Invalid payload for tool {tool_name}",
+                    details={"validation_errors": exc.errors(), "payload": payload},
+                )
+
+            return self.backend_client.finance_categories_update(
+                profile_id=request.profile_id,
+                category_id=request.category_id,
+                name=request.name,
+                exclude_from_totals=request.exclude_from_totals,
+            )
+
+        if tool_name == "finance_categories_delete":
+            try:
+                request = CategoryDeleteRequest.model_validate({**payload, "profile_id": str(profile_id)})
+            except ValidationError as exc:
+                return ToolError(
+                    code=ToolErrorCode.VALIDATION_ERROR,
+                    message=f"Invalid payload for tool {tool_name}",
+                    details={"validation_errors": exc.errors(), "payload": payload},
+                )
+            return self.backend_client.finance_categories_delete(
+                profile_id=request.profile_id,
+                category_id=request.category_id,
+            )
 
         return ToolError(
             code=ToolErrorCode.UNKNOWN_TOOL,

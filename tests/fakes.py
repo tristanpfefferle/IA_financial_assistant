@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import date
+from dataclasses import dataclass, field
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from uuid import UUID
 
+from backend.repositories.category_utils import normalize_category_name
 from shared.models import (
+    CategoriesListResult,
+    ProfileCategory,
     ReleveBancaire,
     RelevesAggregateRequest,
     RelevesAggregateResult,
@@ -16,6 +19,8 @@ from shared.models import (
     RelevesGroupBy,
     RelevesSearchResult,
     RelevesSumResult,
+    ToolError,
+    ToolErrorCode,
 )
 
 
@@ -46,7 +51,9 @@ _FIXED_RELEVES = [
 
 @dataclass(slots=True)
 class FakeBackendClient:
-    """Minimal backend client fake implementing releves tools only."""
+    """Minimal backend client fake implementing releves and categories tools."""
+
+    categories: list[ProfileCategory] = field(default_factory=list)
 
     def _filtered_items(self, filters: RelevesFilters) -> list[ReleveBancaire]:
         items = list(_FIXED_RELEVES)
@@ -92,7 +99,6 @@ class FakeBackendClient:
         average = total / count if count > 0 else Decimal("0")
         return RelevesSumResult(total=total, count=count, average=average, currency="CHF", filters=filters)
 
-
     def releves_aggregate(self, request: RelevesAggregateRequest) -> RelevesAggregateResult:
         filters = RelevesFilters(
             profile_id=request.profile_id,
@@ -128,3 +134,61 @@ class FakeBackendClient:
             currency="CHF",
             filters=request,
         )
+
+    def finance_categories_list(self, profile_id: UUID) -> CategoriesListResult:
+        return CategoriesListResult(items=[item for item in self.categories if item.profile_id == profile_id])
+
+    def finance_categories_create(
+        self,
+        *,
+        profile_id: UUID,
+        name: str,
+        exclude_from_totals: bool = False,
+    ) -> ProfileCategory:
+        now = datetime.now(timezone.utc)
+        category = ProfileCategory(
+            id=UUID("44444444-4444-4444-4444-444444444444") if not self.categories else UUID("55555555-5555-5555-5555-555555555555"),
+            profile_id=profile_id,
+            name=name,
+            name_norm=normalize_category_name(name),
+            exclude_from_totals=exclude_from_totals,
+            created_at=now,
+            updated_at=now,
+        )
+        self.categories.append(category)
+        return category
+
+    def finance_categories_update(
+        self,
+        *,
+        profile_id: UUID,
+        category_id: UUID,
+        name: str | None = None,
+        exclude_from_totals: bool | None = None,
+    ) -> ProfileCategory | ToolError:
+        for index, item in enumerate(self.categories):
+            if item.profile_id != profile_id or item.id != category_id:
+                continue
+            updated_name = name if name is not None else item.name
+            updated = item.model_copy(
+                update={
+                    "name": updated_name,
+                    "name_norm": normalize_category_name(updated_name),
+                    "exclude_from_totals": (
+                        exclude_from_totals
+                        if exclude_from_totals is not None
+                        else item.exclude_from_totals
+                    ),
+                    "updated_at": datetime.now(timezone.utc),
+                }
+            )
+            self.categories[index] = updated
+            return updated
+        return ToolError(code=ToolErrorCode.NOT_FOUND, message="Category not found")
+
+    def finance_categories_delete(self, *, profile_id: UUID, category_id: UUID) -> dict[str, bool] | ToolError:
+        for index, item in enumerate(self.categories):
+            if item.profile_id == profile_id and item.id == category_id:
+                self.categories.pop(index)
+                return {"ok": True}
+        return ToolError(code=ToolErrorCode.NOT_FOUND, message="Category not found")

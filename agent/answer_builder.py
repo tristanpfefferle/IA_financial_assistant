@@ -6,6 +6,8 @@ from decimal import Decimal
 
 from agent.planner import ToolCallPlan
 from shared.models import (
+    CategoriesListResult,
+    ProfileCategory,
     RelevesAggregateResult,
     RelevesDirection,
     RelevesSearchResult,
@@ -38,7 +40,6 @@ def _releves_total_label(result: RelevesSumResult) -> str:
     return "Total"
 
 
-
 def _build_aggregate_reply(result: RelevesAggregateResult) -> str:
     currency = result.currency or "CHF"
     direction = result.filters.direction if result.filters is not None else None
@@ -64,6 +65,19 @@ def _build_aggregate_reply(result: RelevesAggregateResult) -> str:
     return "\n".join([f"Voici vos dépenses agrégées par {group_by_label} :", *lines]) + note
 
 
+def _format_category(item: ProfileCategory) -> str:
+    if item.exclude_from_totals:
+        return f"- {item.name} (exclue des totaux)"
+    return f"- {item.name}"
+
+
+def _build_categories_list_reply(result: CategoriesListResult) -> str:
+    if not result.items:
+        return "Vous n'avez aucune catégorie pour le moment."
+    lines = [_format_category(item) for item in result.items]
+    return "\n".join(["Voici vos catégories :", *lines])
+
+
 def build_final_reply(*, plan: ToolCallPlan, tool_result: object) -> str:
     """Build a concise French final answer from a tool result."""
 
@@ -72,6 +86,18 @@ def build_final_reply(*, plan: ToolCallPlan, tool_result: object) -> str:
         if tool_result.details:
             details = f" Détails: {tool_result.details}."
         return f"Erreur: {tool_result.message}.{details}".strip()
+
+    if isinstance(tool_result, CategoriesListResult):
+        return _build_categories_list_reply(tool_result)
+
+    if isinstance(tool_result, ProfileCategory):
+        if plan.tool_name == "finance_categories_create":
+            return f"Catégorie créée: {tool_result.name}."
+        if plan.tool_name == "finance_categories_update":
+            return f"Catégorie mise à jour: {tool_result.name}."
+
+    if plan.tool_name == "finance_categories_delete" and isinstance(tool_result, dict) and tool_result.get("ok"):
+        return "Catégorie supprimée."
 
     if isinstance(tool_result, RelevesSumResult):
         currency_suffix = f" {tool_result.currency}" if tool_result.currency else ""

@@ -8,9 +8,25 @@ from typing import Any, Protocol
 
 from agent.planner import ClarificationPlan, ErrorPlan, NoopPlan, Plan, ToolCallPlan
 from shared import config
-from shared.models import RelevesAggregateRequest, RelevesFilters, ToolError, ToolErrorCode
+from shared.models import (
+    CategoryCreateRequest,
+    CategoryDeleteRequest,
+    CategoryUpdateRequest,
+    RelevesAggregateRequest,
+    RelevesFilters,
+    ToolError,
+    ToolErrorCode,
+)
 
-_ALLOWED_TOOLS = {"finance_releves_search", "finance_releves_sum", "finance_releves_aggregate"}
+_ALLOWED_TOOLS = {
+    "finance_releves_search",
+    "finance_releves_sum",
+    "finance_releves_aggregate",
+    "finance_categories_list",
+    "finance_categories_create",
+    "finance_categories_update",
+    "finance_categories_delete",
+}
 _TOOL_ALIASES = {
     "finance_transactions_search": "finance_releves_search",
     "finance_transactions_sum": "finance_releves_sum",
@@ -75,17 +91,31 @@ class LLMPlanner:
         return config.llm_enabled()
 
     @staticmethod
-    def _tool_definition() -> list[dict[str, Any]]:
-        """Return OpenAI tool definitions based on shared releves filters."""
-        releves_filters_schema = RelevesFilters.model_json_schema()
-        releves_filters_schema["properties"].pop("profile_id", None)
-        releves_required = releves_filters_schema.get("required") or []
-        releves_filters_schema["required"] = [item for item in releves_required if item != "profile_id"]
+    def _schema_without_profile_id(schema: dict[str, Any]) -> dict[str, Any]:
+        properties = schema.get("properties")
+        if isinstance(properties, dict):
+            properties.pop("profile_id", None)
+        required = schema.get("required")
+        if isinstance(required, list):
+            schema["required"] = [item for item in required if item != "profile_id"]
+        return schema
 
-        releves_aggregate_schema = RelevesAggregateRequest.model_json_schema()
-        releves_aggregate_schema["properties"].pop("profile_id", None)
-        aggregate_required = releves_aggregate_schema.get("required") or []
-        releves_aggregate_schema["required"] = [item for item in aggregate_required if item != "profile_id"]
+    @staticmethod
+    def _tool_definition() -> list[dict[str, Any]]:
+        """Return OpenAI tool definitions based on shared schemas."""
+        releves_filters_schema = LLMPlanner._schema_without_profile_id(RelevesFilters.model_json_schema())
+        releves_aggregate_schema = LLMPlanner._schema_without_profile_id(
+            RelevesAggregateRequest.model_json_schema()
+        )
+        categories_create_schema = LLMPlanner._schema_without_profile_id(
+            CategoryCreateRequest.model_json_schema()
+        )
+        categories_update_schema = LLMPlanner._schema_without_profile_id(
+            CategoryUpdateRequest.model_json_schema()
+        )
+        categories_delete_schema = LLMPlanner._schema_without_profile_id(
+            CategoryDeleteRequest.model_json_schema()
+        )
 
         return [
             {
@@ -110,6 +140,42 @@ class LLMPlanner:
                     "name": "finance_releves_aggregate",
                     "description": "Aggregate releves bancaires by group with totals and counts.",
                     "parameters": releves_aggregate_schema,
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "finance_categories_list",
+                    "description": "List profile categories and whether they are excluded from totals.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "finance_categories_create",
+                    "description": "Create a new category for the current profile.",
+                    "parameters": categories_create_schema,
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "finance_categories_update",
+                    "description": "Update an existing category for the current profile.",
+                    "parameters": categories_update_schema,
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "finance_categories_delete",
+                    "description": "Delete a category for the current profile.",
+                    "parameters": categories_delete_schema,
                 },
             },
         ]

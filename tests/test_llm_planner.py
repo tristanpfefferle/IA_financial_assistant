@@ -41,13 +41,21 @@ def test_deterministic_ping_stays_priority_over_llm_planner() -> None:
     assert delegated_plan.reply == "pong"
 
 
-def test_llm_planner_tool_definitions_expose_search_sum_and_aggregate() -> None:
+def test_llm_planner_tool_definitions_expose_releves_and_categories_tools() -> None:
     tools = LLMPlanner._tool_definition()
     names = {tool["function"]["name"] for tool in tools}
 
-    assert names == {"finance_releves_search", "finance_releves_sum", "finance_releves_aggregate"}
+    assert names == {
+        "finance_releves_search",
+        "finance_releves_sum",
+        "finance_releves_aggregate",
+        "finance_categories_list",
+        "finance_categories_create",
+        "finance_categories_update",
+        "finance_categories_delete",
+    }
 
-    aggregate_tool = next(tool for tool in tools if tool["function"]["name"] == "finance_releves_aggregate")
-    parameters = aggregate_tool["function"]["parameters"]
-    assert "profile_id" not in parameters.get("properties", {})
-    assert "profile_id" not in parameters.get("required", [])
+    for tool in tools:
+        parameters = tool["function"]["parameters"]
+        assert "profile_id" not in parameters.get("properties", {})
+        assert "profile_id" not in parameters.get("required", [])

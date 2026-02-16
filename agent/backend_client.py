@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from uuid import UUID
 
 from backend.services.tools import BackendToolService
 from shared.models import (
+    CategoriesListResult,
     RelevesAggregateRequest,
     RelevesAggregateResult,
     RelevesFilters,
     RelevesSearchResult,
     RelevesSumResult,
+    ProfileCategory,
     ToolError,
     TransactionFilters,
     TransactionSearchResult,
@@ -42,3 +45,42 @@ class BackendClient:
         self, request: RelevesAggregateRequest
     ) -> RelevesAggregateResult | ToolError:
         return self.tool_service.releves_aggregate(request)
+
+    def finance_categories_list(self, profile_id: UUID) -> CategoriesListResult | ToolError:
+        return self.tool_service.finance_categories_list(profile_id=profile_id)
+
+    def finance_categories_create(
+        self,
+        *,
+        profile_id: UUID,
+        name: str,
+        exclude_from_totals: bool = False,
+    ) -> ProfileCategory | ToolError:
+        return self.tool_service.finance_categories_create(
+            profile_id=profile_id,
+            name=name,
+            exclude_from_totals=exclude_from_totals,
+        )
+
+    def finance_categories_update(
+        self,
+        *,
+        profile_id: UUID,
+        category_id: UUID,
+        name: str | None = None,
+        exclude_from_totals: bool | None = None,
+    ) -> ProfileCategory | ToolError:
+        return self.tool_service.finance_categories_update(
+            profile_id=profile_id,
+            category_id=category_id,
+            name=name,
+            exclude_from_totals=exclude_from_totals,
+        )
+
+    def finance_categories_delete(
+        self, *, profile_id: UUID, category_id: UUID
+    ) -> dict[str, bool] | ToolError:
+        return self.tool_service.finance_categories_delete(
+            profile_id=profile_id,
+            category_id=category_id,
+        )

@@ -91,3 +91,27 @@ def test_planner_aggregate_par_mois() -> None:
     assert isinstance(plan, ToolCallPlan)
     assert plan.tool_name == "finance_releves_aggregate"
     assert plan.payload["group_by"] == "month"
+
+
+def test_planner_categories_list_pattern() -> None:
+    plan = plan_from_message("liste mes catégories")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_categories_list"
+    assert plan.payload == {}
+
+
+def test_planner_categories_exclude_pattern() -> None:
+    plan = plan_from_message("Exclus Transfert interne des totaux")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_categories_update"
+    assert plan.payload == {"category_name": "Transfert interne", "exclude_from_totals": True}
+
+
+def test_planner_categories_include_pattern() -> None:
+    plan = plan_from_message("réintègre Transfert interne")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_categories_update"
+    assert plan.payload == {"category_name": "Transfert interne", "exclude_from_totals": False}

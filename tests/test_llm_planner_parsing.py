@@ -176,3 +176,23 @@ def test_llm_planner_parses_releves_aggregate_tool_call(monkeypatch) -> None:
     assert plan.tool_name == "finance_releves_aggregate"
     assert plan.payload == {"group_by": "categorie", "direction": "DEBIT_ONLY"}
     assert plan.user_reply == ""
+
+
+def test_llm_planner_parses_categories_update_tool_call(monkeypatch) -> None:
+    monkeypatch.setenv("AGENT_LLM_ENABLED", "true")
+    monkeypatch.setenv("APP_ENV", "dev")
+
+    planner = LLMPlanner(
+        client=FakeClient(
+            _response_with_tool_call(
+                "finance_categories_update",
+                '{"category_id": "44444444-4444-4444-4444-444444444444", "exclude_from_totals": true}',
+            )
+        )
+    )
+
+    plan = planner.plan("Exclus ma catégorie des totaux")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_categories_update"
+    assert plan.payload["exclude_from_totals"] is True
