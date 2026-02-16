@@ -3,7 +3,7 @@
 from decimal import Decimal
 
 from agent.factory import build_agent_loop
-from shared.models import RelevesSumResult, ToolError, ToolErrorCode
+from shared.models import RelevesAggregateResult, RelevesSumResult, ToolError, ToolErrorCode
 
 
 def test_releves_search_requires_profile_id_context() -> None:
@@ -31,3 +31,31 @@ def test_releves_sum_uses_profile_id_from_context() -> None:
     assert isinstance(result, RelevesSumResult)
     assert isinstance(result.total, Decimal)
     assert result.count >= 0
+
+
+def test_aggregate_requires_profile_id_context() -> None:
+    agent_loop = build_agent_loop()
+
+    result = agent_loop.tool_router.call("finance_releves_aggregate", {"group_by": "categorie"})
+
+    assert isinstance(result, ToolError)
+    assert result.code == ToolErrorCode.VALIDATION_ERROR
+
+
+def test_aggregate_by_category_works() -> None:
+    agent_loop = build_agent_loop()
+
+    result = agent_loop.tool_router.call(
+        "finance_releves_aggregate",
+        {
+            "group_by": "categorie",
+            "direction": "DEBIT_ONLY",
+        },
+        profile_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+    )
+
+    assert isinstance(result, RelevesAggregateResult)
+    assert "alimentation" in result.groups
+    assert result.groups["alimentation"].count == 2
+    assert result.groups["alimentation"].total == Decimal("-66.50")
+    assert result.currency == "EUR"
