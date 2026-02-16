@@ -129,3 +129,9 @@ print(agent_loop.tool_router.call("finance_releves_sum", {
 }, profile_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa").model_dump(mode="json"))
 PY
 ```
+
+## Auth ↔ profils (liaison utilisateur)
+
+- Le lien canonique entre Supabase Auth et les profils applicatifs est `public.profils.account_id = auth.users.id`.
+- Le backend API résout d'abord le `profile_id` via `account_id` (UID Supabase Auth), puis utilise `email` uniquement en fallback.
+- L'email ne doit pas être considéré comme identifiant principal de liaison (peut diverger selon les environnements).

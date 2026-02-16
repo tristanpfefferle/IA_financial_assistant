@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from uuid import UUID
 
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -97,13 +98,27 @@ def agent_chat(payload: ChatRequest, authorization: str | None = Header(default=
     except UnauthorizedError as exc:
         raise HTTPException(status_code=401, detail="Unauthorized") from exc
 
-    email = user_payload.get("email")
-    if not isinstance(email, str) or not email:
+    user_id = user_payload.get("id")
+    if not isinstance(user_id, str):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
-    profile_id = get_profiles_repository().get_profile_id_by_email(email)
+    try:
+        auth_user_id = UUID(user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail="Unauthorized") from exc
+
+    email_value = user_payload.get("email")
+    email = email_value if isinstance(email_value, str) else None
+
+    profile_id = get_profiles_repository().get_profile_id_for_auth_user(
+        auth_user_id=auth_user_id,
+        email=email,
+    )
     if profile_id is None:
-        raise HTTPException(status_code=401, detail="No profile linked to authenticated user")
+        raise HTTPException(
+            status_code=401,
+            detail="No profile linked to authenticated user (by account_id or email)",
+        )
 
     agent_reply = get_agent_loop().handle_user_message(payload.message, profile_id=profile_id)
     return ChatResponse(reply=agent_reply.reply, tool_result=agent_reply.tool_result, plan=agent_reply.plan)
