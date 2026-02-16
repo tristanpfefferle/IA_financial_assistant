@@ -52,46 +52,29 @@ class SupabaseProfilesRepository:
         conversation_id = str(profile_id)
         rows, _ = self._client.get_rows(
             table="chat_state",
-            query={
-                "select": "active_task,state,last_filters,agent_state,active_filters,last_intent,last_metric,last_result_summary,tone",
-                "conversation_id": f"eq.{conversation_id}",
-                "limit": 1,
-            },
+            query={"select": "active_task", "conversation_id": f"eq.{conversation_id}", "limit": 1},
             with_count=False,
             use_anon_key=False,
         )
         if not rows:
             return {}
-        row = rows[0]
-        return {key: value for key, value in row.items() if value is not None}
+        row = rows[0] or {}
+        state = row.get("active_task")
+        return {"active_task": state} if state is not None else {}
 
     def update_chat_state(self, *, profile_id: UUID, chat_state: dict[str, Any]) -> None:
         conversation_id = str(profile_id)
+        active_task = chat_state.get("active_task")
         payload = {
             "conversation_id": conversation_id,
+            "user_id": None,
             "profile_id": str(profile_id),
-            "active_task": chat_state.get("active_task"),
-            "state": chat_state.get("state"),
+            "active_task": active_task,
         }
 
-        rows, _ = self._client.get_rows(
-            table="chat_state",
-            query={"select": "conversation_id", "conversation_id": f"eq.{conversation_id}", "limit": 1},
-            with_count=False,
-            use_anon_key=False,
-        )
-        if rows:
-            self._client.patch_rows(
-                table="chat_state",
-                query={"conversation_id": f"eq.{conversation_id}"},
-                payload=payload,
-                use_anon_key=False,
-            )
-            return
-
-        self._client.post_rows(
+        self._client.upsert_row(
             table="chat_state",
             payload=payload,
+            on_conflict="conversation_id",
             use_anon_key=False,
-            prefer="resolution=merge-duplicates,return=representation",
         )

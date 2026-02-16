@@ -100,3 +100,36 @@ def test_post_rows_sets_prefer_header(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
     assert rows == []
+
+
+def test_upsert_row_sets_on_conflict_and_prefer_header(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _build_client()
+
+    def _fake_urlopen(request):
+        assert request.get_method() == "POST"
+        assert request.full_url == "https://example.supabase.co/rest/v1/chat_state?on_conflict=conversation_id"
+        assert request.get_header("Prefer") == "resolution=merge-duplicates,return=representation"
+
+        class _Response:
+            headers = {}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self) -> bytes:
+                return b"[]"
+
+        return _Response()
+
+    monkeypatch.setattr("backend.db.supabase_client.urlopen", _fake_urlopen)
+
+    rows = client.upsert_row(
+        table="chat_state",
+        payload={"conversation_id": "abc", "active_task": None},
+        on_conflict="conversation_id",
+    )
+
+    assert rows == []
