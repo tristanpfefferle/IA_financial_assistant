@@ -102,47 +102,42 @@ class SupabaseRelevesRepository:
     def __init__(self, client: SupabaseClient) -> None:
         self._client = client
 
-    def _build_query(self, filters: RelevesFilters) -> dict[str, str | int]:
-        query: dict[str, str | int] = {
-            "profile_id": f"eq.{filters.profile_id}",
-        }
+    def _build_query(self, filters: RelevesFilters) -> list[tuple[str, str | int]]:
+        query: list[tuple[str, str | int]] = [
+            ("profile_id", f"eq.{filters.profile_id}"),
+        ]
 
         if filters.date_range:
-            query["and"] = (
-                f"(date.gte.{filters.date_range.start_date},"
-                f"date.lte.{filters.date_range.end_date})"
-            )
+            query.append(("date", f"gte.{filters.date_range.start_date}"))
+            query.append(("date", f"lte.{filters.date_range.end_date}"))
 
         if filters.categorie:
-            query["categorie"] = f"eq.{filters.categorie}"
+            query.append(("categorie", f"eq.{filters.categorie}"))
 
         if filters.merchant_id:
-            query["merchant_id"] = f"eq.{filters.merchant_id}"
+            query.append(("merchant_id", f"eq.{filters.merchant_id}"))
         elif filters.merchant:
-            query["payee"] = f"ilike.*{filters.merchant}*"
+            query.append(("payee", f"ilike.*{filters.merchant}*"))
 
         if filters.direction == RelevesDirection.DEBIT_ONLY:
-            query["montant"] = "lt.0"
+            query.append(("montant", "lt.0"))
         elif filters.direction == RelevesDirection.CREDIT_ONLY:
-            query["montant"] = "gt.0"
+            query.append(("montant", "gt.0"))
 
         return query
 
     def list_releves(self, filters: RelevesFilters) -> tuple[list[ReleveBancaire], int | None]:
-        query = self._build_query(filters)
-        query.update(
-            {
-                "select": "id,profile_id,date,libelle,montant,devise,categorie,payee,merchant_id",
-                "limit": filters.limit,
-                "offset": filters.offset,
-            }
-        )
+        query = [
+            *self._build_query(filters),
+            ("select", "id,profile_id,date,libelle,montant,devise,categorie,payee,merchant_id"),
+            ("limit", filters.limit),
+            ("offset", filters.offset),
+        ]
         rows, total = self._client.get_rows(table="releves_bancaires", query=query, with_count=True)
         return [ReleveBancaire.model_validate(row) for row in rows], total
 
     def sum_releves(self, filters: RelevesFilters) -> tuple[Decimal, int, str | None]:
-        query = self._build_query(filters)
-        query["select"] = "montant,devise"
+        query = [*self._build_query(filters), ("select", "montant,devise")]
         rows, _ = self._client.get_rows(table="releves_bancaires", query=query, with_count=False)
 
         total = Decimal("0")

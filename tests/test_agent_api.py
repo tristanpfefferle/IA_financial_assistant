@@ -1,5 +1,7 @@
 """Tests for the FastAPI agent endpoints."""
 
+from uuid import UUID
+
 from fastapi.testclient import TestClient
 
 import agent.api as agent_api
@@ -19,7 +21,7 @@ def _mock_authenticated(monkeypatch) -> None:
     class _Repo:
         def get_profile_id_by_email(self, email: str):
             assert email == "user@example.com"
-            return "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+            return UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 
     agent_api.get_profiles_repository.cache_clear()
     monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: _Repo())
