@@ -15,14 +15,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from shared import config as _config
-from agent.factory import build_agent_loop
+from agent.backend_client import BackendClient
+from agent.llm_planner import LLMPlanner
 from agent.loop import AgentLoop
+from agent.tool_router import ToolRouter
+from backend.factory import build_backend_tool_service
 from backend.auth.supabase_auth import UnauthorizedError, get_user_from_bearer_token
 from backend.db.supabase_client import SupabaseClient, SupabaseSettings
 from backend.repositories.profiles_repository import SupabaseProfilesRepository
 
 
 logger = logging.getLogger(__name__)
+logger.info("using_agent_loop=%s.%s", AgentLoop.__module__, AgentLoop.__name__)
 
 
 class ChatRequest(BaseModel):
@@ -42,8 +46,18 @@ class ChatResponse(BaseModel):
 @lru_cache(maxsize=1)
 def get_agent_loop() -> AgentLoop:
     """Create and cache the agent loop once per process."""
+    backend_tool_service = build_backend_tool_service()
+    backend_client = BackendClient(tool_service=backend_tool_service)
+    tool_router = ToolRouter(backend_client=backend_client)
+    llm_planner: LLMPlanner | None = None
 
-    return build_agent_loop()
+    if _config.llm_enabled():
+        llm_planner = LLMPlanner(strict=_config.llm_strict())
+
+    return AgentLoop(
+        tool_router=tool_router,
+        llm_planner=llm_planner,
+    )
 
 
 @lru_cache(maxsize=1)

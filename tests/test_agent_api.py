@@ -54,6 +54,19 @@ class _DeleteRouter:
         return None
 
 
+def test_get_agent_loop_uses_agent_loop_module(monkeypatch) -> None:
+    agent_api.get_agent_loop.cache_clear()
+    monkeypatch.setattr(agent_api, "build_backend_tool_service", lambda: SimpleNamespace())
+    monkeypatch.setattr(agent_api._config, "llm_enabled", lambda: False)
+
+    try:
+        loop = agent_api.get_agent_loop()
+
+        assert isinstance(loop, AgentLoop)
+        assert loop.__class__.__module__ == "agent.loop"
+    finally:
+        agent_api.get_agent_loop.cache_clear()
+
 
 def test_health_endpoint() -> None:
     response = client.get("/health")
