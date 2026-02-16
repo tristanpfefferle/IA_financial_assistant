@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Any, Protocol
 from uuid import UUID
 
 from backend.db.supabase_client import SupabaseClient
@@ -11,6 +11,12 @@ from backend.db.supabase_client import SupabaseClient
 class ProfilesRepository(Protocol):
     def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None) -> UUID | None:
         """Return profile UUID for an authenticated user."""
+
+    def get_chat_state(self, *, profile_id: UUID) -> dict[str, Any]:
+        """Return persisted chat state for a profile."""
+
+    def update_chat_state(self, *, profile_id: UUID, chat_state: dict[str, Any]) -> None:
+        """Persist chat state for a profile."""
 
 
 class SupabaseProfilesRepository:
@@ -41,3 +47,25 @@ class SupabaseProfilesRepository:
         if email:
             return self._get_profile_id_by_column(column="email", value=email)
         return None
+
+    def get_chat_state(self, *, profile_id: UUID) -> dict[str, Any]:
+        rows, _ = self._client.get_rows(
+            table="profils",
+            query={"select": "chat_state", "id": f"eq.{profile_id}", "limit": 1},
+            with_count=False,
+            use_anon_key=False,
+        )
+        if not rows:
+            return {}
+        chat_state = rows[0].get("chat_state")
+        if isinstance(chat_state, dict):
+            return chat_state
+        return {}
+
+    def update_chat_state(self, *, profile_id: UUID, chat_state: dict[str, Any]) -> None:
+        self._client.patch_rows(
+            table="profils",
+            query={"id": f"eq.{profile_id}"},
+            payload={"chat_state": chat_state},
+            use_anon_key=False,
+        )

@@ -25,10 +25,21 @@ def _mock_authenticated(monkeypatch) -> None:
     )
 
     class _Repo:
+        def __init__(self) -> None:
+            self.chat_state: dict[str, object] = {}
+
         def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None):
             assert auth_user_id == AUTH_USER_ID
             assert email == "user@example.com"
             return UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+
+        def get_chat_state(self, *, profile_id: UUID):
+            assert profile_id == UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+            return self.chat_state
+
+        def update_chat_state(self, *, profile_id: UUID, chat_state: dict[str, object]) -> None:
+            assert profile_id == UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+            self.chat_state = chat_state
 
     agent_api.get_profiles_repository.cache_clear()
     monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: _Repo())
@@ -153,6 +164,12 @@ def test_agent_chat_profile_lookup_supports_fallback_email(monkeypatch) -> None:
             # Simule le fallback interne par email (account_id non trouvé)
             return UUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
 
+        def get_chat_state(self, *, profile_id: UUID):
+            return {}
+
+        def update_chat_state(self, *, profile_id: UUID, chat_state: dict[str, object]) -> None:
+            return None
+
     repo = _Repo()
     agent_api.get_profiles_repository.cache_clear()
     monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
@@ -174,6 +191,12 @@ def test_agent_chat_returns_not_linked_message_when_profile_is_missing(monkeypat
         def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None):
             assert auth_user_id == AUTH_USER_ID
             assert email == "user@example.com"
+            return None
+
+        def get_chat_state(self, *, profile_id: UUID):
+            return {}
+
+        def update_chat_state(self, *, profile_id: UUID, chat_state: dict[str, object]) -> None:
             return None
 
     agent_api.get_profiles_repository.cache_clear()
@@ -200,5 +223,59 @@ def test_agent_chat_delete_returns_json_reply_when_tool_returns_none(monkeypatch
     payload = response.json()
     assert isinstance(payload["reply"], str)
     assert payload["reply"]
-    assert payload["plan"]["tool_name"] == "finance_categories_delete"
-    assert payload["tool_result"] == {"ok": True}
+    assert payload["plan"] is None
+    assert payload["tool_result"] is None
+    assert "Répondez OUI ou NON" in payload["reply"]
+
+
+
+def test_agent_chat_delete_confirmation_workflow(monkeypatch) -> None:
+    monkeypatch.setattr(
+        agent_api,
+        "get_user_from_bearer_token",
+        lambda _token: {"id": str(AUTH_USER_ID), "email": "user@example.com"},
+    )
+
+    class _Repo:
+        def __init__(self) -> None:
+            self.chat_state: dict[str, object] = {}
+
+        def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None):
+            assert auth_user_id == AUTH_USER_ID
+            assert email == "user@example.com"
+            return UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+
+        def get_chat_state(self, *, profile_id: UUID):
+            return self.chat_state
+
+        def update_chat_state(self, *, profile_id: UUID, chat_state: dict[str, object]) -> None:
+            self.chat_state = chat_state
+
+    class _Router:
+        def call(self, tool_name: str, payload: dict, *, profile_id: UUID | None = None):
+            assert tool_name == "finance_categories_delete"
+            assert payload == {"category_name": "autres"}
+            return {"ok": True}
+
+    repo = _Repo()
+    agent_api.get_profiles_repository.cache_clear()
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: AgentLoop(tool_router=_Router()))
+
+    first = client.post(
+        "/agent/chat",
+        json={"message": "Supprime la catégorie autres"},
+        headers=_auth_headers(),
+    )
+    assert first.status_code == 200
+    assert "Répondez OUI ou NON" in first.json()["reply"]
+    assert repo.chat_state.get("active_task", {}).get("type") == "confirm_delete_category"
+
+    second = client.post(
+        "/agent/chat",
+        json={"message": "OUI"},
+        headers=_auth_headers(),
+    )
+    assert second.status_code == 200
+    assert second.json()["plan"]["tool_name"] == "finance_categories_delete"
+    assert "active_task" not in repo.chat_state

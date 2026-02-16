@@ -11,6 +11,7 @@ class _ClientStub:
     def __init__(self, responses: list[list[dict[str, str]]]) -> None:
         self._responses = responses
         self.calls: list[dict[str, object]] = []
+        self.patch_calls: list[dict[str, object]] = []
 
     def get_rows(self, *, table, query, with_count, use_anon_key=False):
         self.calls.append(
@@ -22,6 +23,17 @@ class _ClientStub:
             }
         )
         return self._responses[len(self.calls) - 1], None
+
+    def patch_rows(self, *, table, query, payload, use_anon_key=False):
+        self.patch_calls.append(
+            {
+                "table": table,
+                "query": query,
+                "payload": payload,
+                "use_anon_key": use_anon_key,
+            }
+        )
+        return []
 
 
 def test_get_profile_id_for_auth_user_prefers_account_id() -> None:
@@ -71,3 +83,32 @@ def test_get_profile_id_for_auth_user_returns_none_when_no_match() -> None:
 
     assert profile_id is None
     assert len(client.calls) == 1
+
+
+
+def test_get_chat_state_returns_empty_dict_when_null() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    client = _ClientStub(responses=[[{"chat_state": None}]])
+    repository = SupabaseProfilesRepository(client=client)
+
+    chat_state = repository.get_chat_state(profile_id=profile_id)
+
+    assert chat_state == {}
+    assert client.calls[0]["query"] == {"select": "chat_state", "id": f"eq.{profile_id}", "limit": 1}
+
+
+def test_update_chat_state_patches_profile_row() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    client = _ClientStub(responses=[])
+    repository = SupabaseProfilesRepository(client=client)
+
+    repository.update_chat_state(profile_id=profile_id, chat_state={"active_task": {"type": "x"}})
+
+    assert client.patch_calls == [
+        {
+            "table": "profils",
+            "query": {"id": f"eq.{profile_id}"},
+            "payload": {"chat_state": {"active_task": {"type": "x"}}},
+            "use_anon_key": False,
+        }
+    ]
