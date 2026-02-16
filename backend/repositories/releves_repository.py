@@ -38,6 +38,20 @@ class InMemoryRelevesRepository:
     """In-memory repository used for local dev/tests when Supabase is not configured."""
 
     def __init__(self) -> None:
+        self._profile_categories_seed: list[dict[str, object]] = [
+            {
+                "profile_id": UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+                "name": "Transfert interne",
+                "name_norm": "transfert interne",
+                "exclude_from_totals": True,
+            },
+            {
+                "profile_id": UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+                "name": "Logement",
+                "name_norm": "logement",
+                "exclude_from_totals": False,
+            },
+        ]
         self._seed: list[ReleveBancaire] = [
             ReleveBancaire(
                 id=UUID("11111111-1111-1111-1111-111111111111"),
@@ -70,6 +84,28 @@ class InMemoryRelevesRepository:
                 devise="EUR",
                 categorie="alimentation",
                 payee="Coffee Shop",
+                merchant_id=None,
+            ),
+            ReleveBancaire(
+                id=UUID("44444444-4444-4444-4444-444444444444"),
+                profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+                date=date.fromisoformat("2025-01-12"),
+                libelle="Virement épargne",
+                montant=Decimal("-150.00"),
+                devise="EUR",
+                categorie="Transfert interne",
+                payee="Mon compte épargne",
+                merchant_id=None,
+            ),
+            ReleveBancaire(
+                id=UUID("55555555-5555-5555-5555-555555555555"),
+                profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+                date=date.fromisoformat("2025-01-13"),
+                libelle="Loyer janvier",
+                montant=Decimal("-900.00"),
+                devise="EUR",
+                categorie="Logement",
+                payee="Agence immobilière",
                 merchant_id=None,
             ),
         ]
@@ -154,9 +190,21 @@ class InMemoryRelevesRepository:
         return groups, currency
 
     def get_excluded_category_names(self, profile_id: UUID) -> set[str]:
-        # Kept simple for in-memory mode until categories fixtures are available.
-        _ = profile_id
-        return set()
+        excluded: set[str] = set()
+        for row in self._profile_categories_seed:
+            if row.get("profile_id") != profile_id or not row.get("exclude_from_totals"):
+                continue
+
+            name_norm = str(row.get("name_norm") or "").strip()
+            if name_norm:
+                excluded.add(normalize_category_name(name_norm))
+                continue
+
+            name = row.get("name")
+            if isinstance(name, str) and name.strip():
+                excluded.add(normalize_category_name(name))
+
+        return excluded
 
 
 class SupabaseRelevesRepository:
