@@ -127,6 +127,19 @@ def test_planner_expenses_chez_merchant_two_months_builds_single_range(monkeypat
     assert plan.payload["date_range"]["end_date"] == date(2026, 1, 31)
 
 
+def test_planner_expenses_chez_merchant_two_months_with_repeated_en_builds_single_range(monkeypatch) -> None:
+    monkeypatch.setattr("agent.planner._today", lambda: date(2026, 2, 16))
+
+    plan = plan_from_message("Dépenses chez migros en décembre 2025 et en janvier 2026")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_releves_sum"
+    assert plan.payload["direction"] == "DEBIT_ONLY"
+    assert plan.payload["merchant"] == "migros"
+    assert plan.payload["date_range"]["start_date"] == date(2025, 12, 1)
+    assert plan.payload["date_range"]["end_date"] == date(2026, 1, 31)
+
+
 def test_planner_expenses_chez_merchant_relative_two_months(monkeypatch) -> None:
     monkeypatch.setattr("agent.planner._today", lambda: date(2026, 2, 16))
 
