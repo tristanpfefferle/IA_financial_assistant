@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from uuid import UUID
 
 from pydantic import ValidationError
 
@@ -24,7 +25,11 @@ class ToolRouter:
     backend_client: BackendClient
 
     def call(
-        self, tool_name: str, payload: dict
+        self,
+        tool_name: str,
+        payload: dict,
+        *,
+        profile_id: UUID | None = None,
     ) -> TransactionSearchResult | TransactionSumResult | RelevesSearchResult | RelevesSumResult | ToolError:
         if tool_name == "finance_transactions_search":
             try:
@@ -49,8 +54,13 @@ class ToolRouter:
             return self.backend_client.sum_transactions(filters)
 
         if tool_name == "finance_releves_search":
+            if profile_id is None:
+                return ToolError(
+                    code=ToolErrorCode.VALIDATION_ERROR,
+                    message="Missing profile_id context for tool finance_releves_search",
+                )
             try:
-                filters = RelevesFilters.model_validate(payload)
+                filters = RelevesFilters.model_validate({**payload, "profile_id": str(profile_id)})
             except ValidationError as exc:
                 return ToolError(
                     code=ToolErrorCode.VALIDATION_ERROR,
@@ -60,8 +70,13 @@ class ToolRouter:
             return self.backend_client.releves_search(filters)
 
         if tool_name == "finance_releves_sum":
+            if profile_id is None:
+                return ToolError(
+                    code=ToolErrorCode.VALIDATION_ERROR,
+                    message="Missing profile_id context for tool finance_releves_sum",
+                )
             try:
-                filters = RelevesFilters.model_validate(payload)
+                filters = RelevesFilters.model_validate({**payload, "profile_id": str(profile_id)})
             except ValidationError as exc:
                 return ToolError(
                     code=ToolErrorCode.VALIDATION_ERROR,

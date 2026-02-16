@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from uuid import UUID
 
 from agent.llm_planner import LLMPlanner
 from agent.planner import ErrorPlan, ClarificationPlan, NoopPlan, ToolCallPlan, plan_from_message
@@ -23,11 +24,11 @@ class AgentLoop:
     tool_router: ToolRouter
     llm_planner: LLMPlanner | None = None
 
-    def handle_user_message(self, message: str) -> AgentReply:
+    def handle_user_message(self, message: str, *, profile_id: UUID | None = None) -> AgentReply:
         plan = plan_from_message(message, llm_planner=self.llm_planner)
 
         if isinstance(plan, ToolCallPlan):
-            result = self.tool_router.call(plan.tool_name, plan.payload)
+            result = self.tool_router.call(plan.tool_name, plan.payload, profile_id=profile_id)
             return AgentReply(
                 reply=plan.user_reply,
                 tool_result=result.model_dump(mode="json"),
