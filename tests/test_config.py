@@ -43,8 +43,18 @@ def test_cors_allow_origins_parses_comma_separated_list(monkeypatch) -> None:
     assert config.cors_allow_origins() == ["https://a.com", "https://b.com"]
 
 
-def test_cors_allow_origins_defaults_to_empty_in_prod(monkeypatch) -> None:
+def test_cors_allow_origins_uses_ui_origin_in_prod(monkeypatch) -> None:
     monkeypatch.setenv("APP_ENV", "prod")
     monkeypatch.delenv("CORS_ALLOW_ORIGINS", raising=False)
+    monkeypatch.setenv("UI_ORIGIN", "https://ia-financial-assistant-ui.onrender.com")
+
+    assert config.cors_allow_origins() == ["https://ia-financial-assistant-ui.onrender.com"]
+
+
+def test_cors_allow_origins_warns_and_defaults_to_empty_in_prod(monkeypatch, caplog) -> None:
+    monkeypatch.setenv("APP_ENV", "prod")
+    monkeypatch.delenv("CORS_ALLOW_ORIGINS", raising=False)
+    monkeypatch.delenv("UI_ORIGIN", raising=False)
 
     assert config.cors_allow_origins() == []
+    assert "cors_allow_origins_empty_in_prod" in caplog.text

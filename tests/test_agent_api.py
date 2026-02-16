@@ -336,4 +336,4 @@ def test_agent_chat_returns_fallback_when_agent_loop_fails(monkeypatch) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["reply"]
-    assert payload["tool_result"] == {"error": "agent_loop_failed"}
+    assert payload["tool_result"] == {"error": "internal_server_error"}

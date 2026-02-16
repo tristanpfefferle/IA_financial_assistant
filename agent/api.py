@@ -78,6 +78,8 @@ def _extract_bearer_token(authorization: str | None) -> str:
 
 app = FastAPI(title="IA Financial Assistant Agent API")
 
+ALLOW_ORIGINS = _config.cors_allow_origins()
+
 
 @app.middleware("http")
 async def log_http_requests(request: Request, call_next):
@@ -105,11 +107,13 @@ async def log_http_requests(request: Request, call_next):
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_config.cors_allow_origins(),
+    allow_origins=ALLOW_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+logger.info("cors_allow_origins=%s", ALLOW_ORIGINS)
 
 
 @app.exception_handler(Exception)
@@ -133,72 +137,85 @@ def agent_chat(payload: ChatRequest, authorization: str | None = Header(default=
 
     logger.info("agent_chat_received message_length=%s", len(payload.message))
     token = _extract_bearer_token(authorization)
+    profile_id: UUID | None = None
     try:
-        user_payload = get_user_from_bearer_token(token)
-    except UnauthorizedError as exc:
-        raise HTTPException(status_code=401, detail="Unauthorized") from exc
+        try:
+            user_payload = get_user_from_bearer_token(token)
+        except UnauthorizedError as exc:
+            raise HTTPException(status_code=401, detail="Unauthorized") from exc
 
-    user_id = user_payload.get("id")
-    if not isinstance(user_id, str):
-        raise HTTPException(status_code=401, detail="Unauthorized")
+        user_id = user_payload.get("id")
+        if not isinstance(user_id, str):
+            raise HTTPException(status_code=401, detail="Unauthorized")
 
-    try:
-        auth_user_id = UUID(user_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=401, detail="Unauthorized") from exc
+        try:
+            auth_user_id = UUID(user_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=401, detail="Unauthorized") from exc
 
-    email_value = user_payload.get("email")
-    email = email_value if isinstance(email_value, str) else None
+        email_value = user_payload.get("email")
+        email = email_value if isinstance(email_value, str) else None
 
-    profiles_repository = get_profiles_repository()
-    profile_id = profiles_repository.get_profile_id_for_auth_user(
-        auth_user_id=auth_user_id,
-        email=email,
-    )
-    if profile_id is None:
-        raise HTTPException(
-            status_code=401,
-            detail="No profile linked to authenticated user (by account_id or email)",
+        profiles_repository = get_profiles_repository()
+        profile_id = profiles_repository.get_profile_id_for_auth_user(
+            auth_user_id=auth_user_id,
+            email=email,
         )
+        if profile_id is None:
+            raise HTTPException(
+                status_code=401,
+                detail="No profile linked to authenticated user (by account_id or email)",
+            )
 
-    chat_state = profiles_repository.get_chat_state(profile_id=profile_id)
-    active_task = chat_state.get("active_task") if isinstance(chat_state, dict) else None
+        chat_state = profiles_repository.get_chat_state(profile_id=profile_id)
+        active_task = chat_state.get("active_task") if isinstance(chat_state, dict) else None
 
-    try:
         agent_reply = get_agent_loop().handle_user_message(
             payload.message,
             profile_id=profile_id,
             active_task=active_task if isinstance(active_task, dict) else None,
         )
-    except Exception:
-        logger.exception("agent_chat_failed profile_id=%s", profile_id)
+
+        response_plan = dict(agent_reply.plan) if isinstance(agent_reply.plan, dict) else None
+
+        if agent_reply.should_update_active_task:
+            updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+            if agent_reply.active_task is None:
+                updated_chat_state.pop("active_task", None)
+            else:
+                updated_chat_state["active_task"] = agent_reply.active_task
+            try:
+                profiles_repository.update_chat_state(profile_id=profile_id, chat_state=updated_chat_state)
+            except Exception:
+                logger.exception("chat_state_update_failed profile_id=%s", profile_id)
+                if response_plan is None:
+                    response_plan = {"warnings": ["chat_state_update_failed"]}
+                else:
+                    warnings = response_plan.get("warnings")
+                    if isinstance(warnings, list):
+                        warnings.append("chat_state_update_failed")
+                    else:
+                        response_plan["warnings"] = ["chat_state_update_failed"]
+
+        tool_name = response_plan.get("tool_name") if response_plan is not None else None
+        logger.info("agent_chat_completed tool_name=%s", tool_name)
+        return ChatResponse(reply=agent_reply.reply, tool_result=agent_reply.tool_result, plan=response_plan)
+    except HTTPException as exc:
+        if exc.status_code in {401, 403}:
+            raise
+        logger.exception("agent_chat_http_exception", exc_info=exc)
         return ChatResponse(
-            reply="Une erreur est survenue côté serveur. Réessaie.",
-            tool_result={"error": "agent_loop_failed"},
+            reply="Une erreur est survenue côté serveur. Réessaie dans quelques secondes.",
+            tool_result={"error": "internal_server_error"},
             plan=None,
         )
-
-    response_plan = dict(agent_reply.plan) if isinstance(agent_reply.plan, dict) else None
-
-    if agent_reply.should_update_active_task:
-        updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
-        if agent_reply.active_task is None:
-            updated_chat_state.pop("active_task", None)
-        else:
-            updated_chat_state["active_task"] = agent_reply.active_task
-        try:
-            profiles_repository.update_chat_state(profile_id=profile_id, chat_state=updated_chat_state)
-        except Exception:
-            logger.exception("chat_state_update_failed profile_id=%s", profile_id)
-            if response_plan is None:
-                response_plan = {"warnings": ["chat_state_update_failed"]}
-            else:
-                warnings = response_plan.get("warnings")
-                if isinstance(warnings, list):
-                    warnings.append("chat_state_update_failed")
-                else:
-                    response_plan["warnings"] = ["chat_state_update_failed"]
-
-    tool_name = response_plan.get("tool_name") if response_plan is not None else None
-    logger.info("agent_chat_completed tool_name=%s", tool_name)
-    return ChatResponse(reply=agent_reply.reply, tool_result=agent_reply.tool_result, plan=response_plan)
+    except Exception:
+        logger.exception(
+            "agent_chat_unhandled_error",
+            extra={"path": "/agent/chat", "profile_id": str(profile_id) if profile_id is not None else None},
+        )
+        return ChatResponse(
+            reply="Une erreur est survenue côté serveur. Réessaie dans quelques secondes.",
+            tool_result={"error": "internal_server_error"},
+            plan=None,
+        )
