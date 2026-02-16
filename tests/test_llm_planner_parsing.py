@@ -97,7 +97,7 @@ def test_llm_planner_returns_validation_error_on_invalid_json(monkeypatch) -> No
     assert "raw_arguments" in (plan.tool_error.details or {})
 
 
-def test_llm_planner_returns_clarification_for_unknown_tool(monkeypatch) -> None:
+def test_llm_planner_returns_unknown_tool_error_for_unknown_tool(monkeypatch) -> None:
     monkeypatch.setenv("AGENT_LLM_ENABLED", "true")
     monkeypatch.setenv("APP_ENV", "dev")
 
@@ -107,8 +107,8 @@ def test_llm_planner_returns_clarification_for_unknown_tool(monkeypatch) -> None
 
     plan = planner.plan("Supprime cette transaction")
 
-    assert isinstance(plan, ClarificationPlan)
-    assert "rechercher des relevés" in plan.question
+    assert isinstance(plan, ErrorPlan)
+    assert plan.tool_error.code.value == "UNKNOWN_TOOL"
 
 
 def test_llm_planner_returns_clarification_when_no_tool_call(monkeypatch) -> None:
@@ -154,4 +154,25 @@ def test_llm_planner_parses_releves_sum_tool_call(monkeypatch) -> None:
     assert isinstance(plan, ToolCallPlan)
     assert plan.tool_name == "finance_releves_sum"
     assert plan.payload == {"direction": "DEBIT_ONLY"}
-    assert plan.user_reply == "OK, je calcule le total."
+    assert plan.user_reply == ""
+
+
+def test_llm_planner_parses_releves_aggregate_tool_call(monkeypatch) -> None:
+    monkeypatch.setenv("AGENT_LLM_ENABLED", "true")
+    monkeypatch.setenv("APP_ENV", "dev")
+
+    planner = LLMPlanner(
+        client=FakeClient(
+            _response_with_tool_call(
+                "finance_releves_aggregate",
+                '{"group_by": "categorie", "direction": "DEBIT_ONLY"}',
+            )
+        )
+    )
+
+    plan = planner.plan("Agrège mes dépenses par catégorie")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_releves_aggregate"
+    assert plan.payload == {"group_by": "categorie", "direction": "DEBIT_ONLY"}
+    assert plan.user_reply == ""
