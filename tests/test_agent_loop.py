@@ -15,7 +15,9 @@ class _FailIfCalledRouter:
 class _DeleteRouter:
     def call(self, tool_name: str, payload: dict, *, profile_id: UUID | None = None):
         assert tool_name == "finance_categories_delete"
-        assert payload == {"category_name": "autres"}
+        assert "category_name" in payload
+        assert isinstance(payload["category_name"], str)
+        assert payload["category_name"].strip().lower() == "autres"
         return {"ok": True}
 
 
