@@ -8,7 +8,15 @@ from uuid import UUID
 from pydantic import ValidationError
 
 from agent.backend_client import BackendClient
-from shared.models import RelevesFilters, RelevesSearchResult, RelevesSumResult, ToolError, ToolErrorCode
+from shared.models import (
+    RelevesAggregateRequest,
+    RelevesAggregateResult,
+    RelevesFilters,
+    RelevesSearchResult,
+    RelevesSumResult,
+    ToolError,
+    ToolErrorCode,
+)
 
 
 @dataclass(slots=True)
@@ -21,7 +29,7 @@ class ToolRouter:
         payload: dict,
         *,
         profile_id: UUID | None = None,
-    ) -> RelevesSearchResult | RelevesSumResult | ToolError:
+    ) -> RelevesSearchResult | RelevesSumResult | RelevesAggregateResult | ToolError:
         if tool_name in {"finance_transactions_search", "finance_releves_search"}:
             # finance_transactions_search is deprecated: alias to finance_releves_search.
             if profile_id is None:
@@ -55,6 +63,24 @@ class ToolRouter:
                     details={"validation_errors": exc.errors(), "payload": payload},
                 )
             return self.backend_client.releves_sum(filters)
+
+        if tool_name == "finance_releves_aggregate":
+            if profile_id is None:
+                return ToolError(
+                    code=ToolErrorCode.VALIDATION_ERROR,
+                    message=f"Missing profile_id context for tool {tool_name}",
+                )
+            try:
+                request = RelevesAggregateRequest.model_validate(
+                    {**payload, "profile_id": str(profile_id)}
+                )
+            except ValidationError as exc:
+                return ToolError(
+                    code=ToolErrorCode.VALIDATION_ERROR,
+                    message=f"Invalid payload for tool {tool_name}",
+                    details={"validation_errors": exc.errors(), "payload": payload},
+                )
+            return self.backend_client.releves_aggregate(request)
 
         return ToolError(
             code=ToolErrorCode.UNKNOWN_TOOL,

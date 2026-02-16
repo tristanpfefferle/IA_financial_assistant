@@ -6,6 +6,8 @@ from dataclasses import dataclass
 
 from backend.services.tools import BackendToolService
 from shared.models import (
+    RelevesAggregateRequest,
+    RelevesAggregateResult,
     RelevesFilters,
     RelevesSearchResult,
     RelevesSumResult,
@@ -35,3 +37,8 @@ class BackendClient:
 
     def releves_sum(self, filters: RelevesFilters) -> RelevesSumResult | ToolError:
         return self.tool_service.releves_sum(filters)
+
+    def releves_aggregate(
+        self, request: RelevesAggregateRequest
+    ) -> RelevesAggregateResult | ToolError:
+        return self.tool_service.releves_aggregate(request)

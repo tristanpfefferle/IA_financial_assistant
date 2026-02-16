@@ -7,7 +7,16 @@ from datetime import date
 from decimal import Decimal
 from uuid import UUID
 
-from shared.models import ReleveBancaire, RelevesDirection, RelevesFilters, RelevesSearchResult, RelevesSumResult
+from shared.models import (
+    ReleveBancaire,
+    RelevesAggregateRequest,
+    RelevesAggregateResult,
+    RelevesDirection,
+    RelevesFilters,
+    RelevesGroupBy,
+    RelevesSearchResult,
+    RelevesSumResult,
+)
 
 
 _FIXED_RELEVES = [
@@ -82,3 +91,40 @@ class FakeBackendClient:
         total = sum((item.montant for item in filtered), start=Decimal("0"))
         average = total / count if count > 0 else Decimal("0")
         return RelevesSumResult(total=total, count=count, average=average, currency="CHF", filters=filters)
+
+
+    def releves_aggregate(self, request: RelevesAggregateRequest) -> RelevesAggregateResult:
+        filters = RelevesFilters(
+            profile_id=request.profile_id,
+            date_range=request.date_range,
+            categorie=request.categorie,
+            merchant=request.merchant,
+            merchant_id=request.merchant_id,
+            direction=request.direction,
+            limit=500,
+            offset=0,
+        )
+        filtered = self._filtered_items(filters)
+
+        groups: dict[str, dict[str, object]] = {}
+        for item in filtered:
+            if request.group_by == RelevesGroupBy.CATEGORIE:
+                key = item.categorie or "Non catégorisé"
+            elif request.group_by == RelevesGroupBy.PAYEE:
+                key = item.payee or item.libelle or "Inconnu"
+            else:
+                key = item.date.strftime("%Y-%m")
+
+            current = groups.setdefault(key, {"total": Decimal("0"), "count": 0})
+            current["total"] = current["total"] + item.montant
+            current["count"] = current["count"] + 1
+
+        return RelevesAggregateResult(
+            group_by=request.group_by,
+            groups={
+                name: {"total": values["total"], "count": values["count"]}
+                for name, values in groups.items()
+            },
+            currency="CHF",
+            filters=request,
+        )

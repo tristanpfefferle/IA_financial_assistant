@@ -90,6 +90,19 @@ _FRENCH_MONTH_ALIASES = {
 }
 _EXPENSE_KEYWORDS = {"depense", "dépense", "depenses", "dépenses"}
 
+_AGGREGATE_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("par catégorie", "par categorie"), "categorie"),
+    (("par marchand", "par commerçant", "par commercant"), "payee"),
+    (("par mois",), "month"),
+)
+
+
+def _aggregate_group_by_for_message(lower_message: str) -> str | None:
+    for keywords, group_by in _AGGREGATE_RULES:
+        if any(keyword in lower_message for keyword in keywords):
+            return group_by
+    return None
+
 
 def _today() -> date:
     return date.today()
@@ -198,6 +211,18 @@ def deterministic_plan_from_message(message: str) -> Plan:
         )
 
     lower_message = normalized_message.lower()
+
+    aggregate_group_by = _aggregate_group_by_for_message(lower_message)
+    if aggregate_group_by is not None:
+        return ToolCallPlan(
+            tool_name="finance_releves_aggregate",
+            payload={
+                "group_by": aggregate_group_by,
+                "direction": "DEBIT_ONLY",
+            },
+            user_reply="OK, je prépare une vue agrégée de vos dépenses.",
+        )
+
     if any(keyword in lower_message for keyword in _EXPENSE_KEYWORDS):
         month = _extract_month(lower_message)
         if month is not None:
