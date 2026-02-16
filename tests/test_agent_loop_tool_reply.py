@@ -22,7 +22,7 @@ def test_tool_call_reply_contains_final_amount(monkeypatch) -> None:
     monkeypatch.setattr(
         loop_module,
         "plan_from_message",
-        lambda _message, llm_planner=None: ToolCallPlan(
+        lambda _message, llm_planner=None, active_task=None: ToolCallPlan(
             tool_name="finance_releves_sum",
             payload={"direction": "DEBIT_ONLY"},
             user_reply="OK, je calcule…",

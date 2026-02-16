@@ -5,7 +5,7 @@ from __future__ import annotations
 import calendar
 import re
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import TYPE_CHECKING
 
 from shared.models import ToolError, ToolErrorCode
@@ -45,7 +45,15 @@ class ErrorPlan:
     tool_error: ToolError
 
 
-Plan = ToolCallPlan | ClarificationPlan | NoopPlan | ErrorPlan
+@dataclass(slots=True)
+class SetActiveTaskPlan:
+    """Plan that stores a pending action before user confirmation."""
+
+    reply: str
+    active_task: dict[str, object]
+
+
+Plan = ToolCallPlan | ClarificationPlan | NoopPlan | ErrorPlan | SetActiveTaskPlan
 
 
 _SEARCH_TOKENS = {"from", "to", "category", "limit", "offset"}
@@ -196,14 +204,17 @@ def _extract_delete_name(message: str) -> str | None:
     return _extract_category_name_after_keyword(message)
 
 
-def _build_delete_plan(message: str) -> ToolCallPlan | ClarificationPlan:
+def _build_delete_plan(message: str) -> SetActiveTaskPlan | ClarificationPlan:
     category_name = _extract_delete_name(message)
     if category_name is None:
         return ClarificationPlan(question="Quelle catégorie voulez-vous supprimer ?")
-    return ToolCallPlan(
-        tool_name="finance_categories_delete",
-        payload={"category_name": category_name},
-        user_reply="Catégorie supprimée.",
+    return SetActiveTaskPlan(
+        reply=f"Confirmez-vous la suppression de « {category_name} » ? Répondez OUI ou NON.",
+        active_task={
+            "type": "confirm_delete_category",
+            "category_name": category_name,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        },
     )
 
 
@@ -286,10 +297,32 @@ def _parse_search_command(message: str) -> tuple[dict[str, object] | None, ToolE
     return payload, None
 
 
-def deterministic_plan_from_message(message: str) -> Plan:
+def _handle_pending_delete_confirmation(message: str, active_task: dict[str, object]) -> Plan:
+    category_name = str(active_task.get("category_name", "")).strip()
+    if not category_name:
+        return NoopPlan(reply="Suppression annulée.")
+
+    normalized = message.strip().lower()
+    if normalized in {"oui", "ok", "confirme"}:
+        return ToolCallPlan(
+            tool_name="finance_categories_delete",
+            payload={"category_name": category_name},
+            user_reply=f"Catégorie supprimée : {category_name}.",
+        )
+
+    if normalized in {"non", "annule"}:
+        return NoopPlan(reply="Suppression annulée.")
+
+    return ClarificationPlan(question="Répondez OUI ou NON.")
+
+
+def deterministic_plan_from_message(message: str, active_task: dict[str, object] | None = None) -> Plan:
     """Build a deterministic execution plan from a user message."""
 
     normalized_message = message.strip()
+
+    if active_task and active_task.get("type") == "confirm_delete_category":
+        return _handle_pending_delete_confirmation(normalized_message, active_task)
 
     if normalized_message.lower() == "ping":
         return NoopPlan(reply="pong")
@@ -380,18 +413,23 @@ def deterministic_plan_from_message(message: str) -> Plan:
     return NoopPlan(reply="Commandes disponibles: 'ping' ou 'search: <term>'.")
 
 
-def plan_from_message(message: str, llm_planner: LLMPlanner | None = None) -> Plan:
+def plan_from_message(
+    message: str,
+    llm_planner: LLMPlanner | None = None,
+    active_task: dict[str, object] | None = None,
+) -> Plan:
     """Build a plan from a user message, optionally delegating to an LLM planner."""
 
-    plan = deterministic_plan_from_message(message)
+    plan = deterministic_plan_from_message(message, active_task=active_task)
 
     # We intentionally return ClarificationPlan directly so the UX can ask the
     # follow-up question deterministically before any optional LLM fallback.
-    if isinstance(plan, (ToolCallPlan, ErrorPlan, ClarificationPlan)):
+    if isinstance(plan, (ToolCallPlan, ErrorPlan, ClarificationPlan, SetActiveTaskPlan)):
         return plan
 
-    if isinstance(plan, NoopPlan) and plan.reply == "pong":
-        return plan
+    if isinstance(plan, NoopPlan):
+        if plan.reply == "pong" or active_task is not None:
+            return plan
 
     if llm_planner is not None:
         return llm_planner.plan(message)

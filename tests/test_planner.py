@@ -2,7 +2,7 @@
 
 from datetime import date
 
-from agent.planner import ClarificationPlan, ErrorPlan, NoopPlan, ToolCallPlan, plan_from_message
+from agent.planner import ClarificationPlan, ErrorPlan, NoopPlan, SetActiveTaskPlan, ToolCallPlan, plan_from_message
 
 
 def test_planner_ping_returns_noop_plan() -> None:
@@ -117,12 +117,13 @@ def test_planner_categories_include_pattern() -> None:
     assert plan.payload == {"category_name": "Transfert interne", "exclude_from_totals": False}
 
 
-def test_planner_categories_delete_by_name_pattern() -> None:
+def test_delete_requires_confirmation() -> None:
     plan = plan_from_message("Supprime la catégorie 'divers'")
 
-    assert isinstance(plan, ToolCallPlan)
-    assert plan.tool_name == "finance_categories_delete"
-    assert plan.payload == {"category_name": "divers"}
+    assert isinstance(plan, SetActiveTaskPlan)
+    assert plan.active_task["type"] == "confirm_delete_category"
+    assert plan.active_task["category_name"] == "divers"
+    assert "Répondez OUI ou NON" in plan.reply
 
 
 def test_planner_categories_rename_by_name_pattern() -> None:
@@ -146,3 +147,34 @@ def test_planner_categories_delete_needs_clarification_when_missing_name() -> No
 
     assert isinstance(plan, ClarificationPlan)
     assert plan.question == "Quelle catégorie voulez-vous supprimer ?"
+
+
+def test_delete_confirmation_yes_executes() -> None:
+    plan = plan_from_message(
+        "OUI",
+        active_task={"type": "confirm_delete_category", "category_name": "autres"},
+    )
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_categories_delete"
+    assert plan.payload == {"category_name": "autres"}
+
+
+def test_delete_confirmation_no_cancels() -> None:
+    plan = plan_from_message(
+        "NON",
+        active_task={"type": "confirm_delete_category", "category_name": "autres"},
+    )
+
+    assert isinstance(plan, NoopPlan)
+    assert plan.reply == "Suppression annulée."
+
+
+def test_delete_confirmation_unknown_prompts_again() -> None:
+    plan = plan_from_message(
+        "peut-être",
+        active_task={"type": "confirm_delete_category", "category_name": "autres"},
+    )
+
+    assert isinstance(plan, ClarificationPlan)
+    assert plan.question == "Répondez OUI ou NON."

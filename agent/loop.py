@@ -10,7 +10,14 @@ from pydantic import BaseModel
 
 from agent.answer_builder import build_final_reply
 from agent.llm_planner import LLMPlanner
-from agent.planner import ErrorPlan, ClarificationPlan, NoopPlan, ToolCallPlan, plan_from_message
+from agent.planner import (
+    ClarificationPlan,
+    ErrorPlan,
+    NoopPlan,
+    SetActiveTaskPlan,
+    ToolCallPlan,
+    plan_from_message,
+)
 from agent.tool_router import ToolRouter
 from shared.models import ToolError, ToolErrorCode
 
@@ -25,6 +32,8 @@ class AgentReply:
     reply: str
     tool_result: dict[str, object] | None = None
     plan: dict[str, object] | None = None
+    active_task: dict[str, object] | None = None
+    should_update_active_task: bool = False
 
 
 @dataclass(slots=True)
@@ -57,8 +66,22 @@ class AgentLoop:
             return result
         return {"value": str(result)}
 
-    def handle_user_message(self, message: str, *, profile_id: UUID | None = None) -> AgentReply:
-        plan = plan_from_message(message, llm_planner=self.llm_planner)
+    def handle_user_message(
+        self,
+        message: str,
+        *,
+        profile_id: UUID | None = None,
+        active_task: dict[str, object] | None = None,
+    ) -> AgentReply:
+        plan = plan_from_message(message, llm_planner=self.llm_planner, active_task=active_task)
+        has_pending_delete_confirmation = active_task is not None and active_task.get("type") == "confirm_delete_category"
+
+        if isinstance(plan, SetActiveTaskPlan):
+            return AgentReply(
+                reply=plan.reply,
+                active_task=plan.active_task,
+                should_update_active_task=True,
+            )
 
         if isinstance(plan, ToolCallPlan):
             logger.info("tool_execution_started tool_name=%s", plan.tool_name)
@@ -70,13 +93,19 @@ class AgentLoop:
                 reply=final_reply,
                 tool_result=self._serialize_tool_result(result),
                 plan={"tool_name": plan.tool_name, "payload": plan.payload},
+                active_task=None if has_pending_delete_confirmation else active_task,
+                should_update_active_task=has_pending_delete_confirmation,
             )
 
         if isinstance(plan, ClarificationPlan):
             return AgentReply(reply=plan.question)
 
         if isinstance(plan, NoopPlan):
-            return AgentReply(reply=plan.reply)
+            return AgentReply(
+                reply=plan.reply,
+                active_task=None if has_pending_delete_confirmation else active_task,
+                should_update_active_task=has_pending_delete_confirmation,
+            )
 
         if isinstance(plan, ErrorPlan):
             return AgentReply(

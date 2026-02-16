@@ -140,7 +140,8 @@ def agent_chat(payload: ChatRequest, authorization: str | None = Header(default=
     email_value = user_payload.get("email")
     email = email_value if isinstance(email_value, str) else None
 
-    profile_id = get_profiles_repository().get_profile_id_for_auth_user(
+    profiles_repository = get_profiles_repository()
+    profile_id = profiles_repository.get_profile_id_for_auth_user(
         auth_user_id=auth_user_id,
         email=email,
     )
@@ -150,11 +151,26 @@ def agent_chat(payload: ChatRequest, authorization: str | None = Header(default=
             detail="No profile linked to authenticated user (by account_id or email)",
         )
 
+    chat_state = profiles_repository.get_chat_state(profile_id=profile_id)
+    active_task = chat_state.get("active_task") if isinstance(chat_state, dict) else None
+
     try:
-        agent_reply = get_agent_loop().handle_user_message(payload.message, profile_id=profile_id)
+        agent_reply = get_agent_loop().handle_user_message(
+            payload.message,
+            profile_id=profile_id,
+            active_task=active_task if isinstance(active_task, dict) else None,
+        )
     except Exception:
         logger.exception("agent_chat_failed profile_id=%s", profile_id)
         raise
+
+    if agent_reply.should_update_active_task:
+        updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+        if agent_reply.active_task is None:
+            updated_chat_state.pop("active_task", None)
+        else:
+            updated_chat_state["active_task"] = agent_reply.active_task
+        profiles_repository.update_chat_state(profile_id=profile_id, chat_state=updated_chat_state)
 
     tool_name = agent_reply.plan.get("tool_name") if agent_reply.plan is not None else None
     logger.info("agent_chat_completed tool_name=%s", tool_name)
