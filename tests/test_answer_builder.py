@@ -10,6 +10,7 @@ from agent.answer_builder import build_final_reply
 from agent.planner import ToolCallPlan
 from shared.models import (
     CategoriesListResult,
+    ProfileDataResult,
     ProfileCategory,
     RelevesAggregateGroup,
     RelevesAggregateRequest,
@@ -199,3 +200,55 @@ def test_build_final_reply_not_found_without_suggestions() -> None:
     reply = build_final_reply(plan=plan, tool_result=error)
 
     assert reply == "Je ne trouve pas la catégorie « foo ». Souhaitez-vous la créer ?"
+
+
+def test_build_final_reply_profile_get_single_field_with_value() -> None:
+    plan = ToolCallPlan(tool_name="finance_profile_get", payload={"fields": ["first_name"]}, user_reply="OK")
+    result = ProfileDataResult(
+        profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+        data={"first_name": "Paul"},
+    )
+
+    reply = build_final_reply(plan=plan, tool_result=result)
+
+    assert reply == "Votre prénom est: Paul."
+
+
+def test_build_final_reply_profile_get_single_field_empty() -> None:
+    plan = ToolCallPlan(tool_name="finance_profile_get", payload={"fields": ["first_name"]}, user_reply="OK")
+    result = ProfileDataResult(
+        profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+        data={"first_name": None},
+    )
+
+    reply = build_final_reply(plan=plan, tool_result=result)
+
+    assert reply == "Je n’ai pas votre prénom (champ vide)."
+
+
+def test_build_final_reply_profile_get_multiple_fields() -> None:
+    plan = ToolCallPlan(
+        tool_name="finance_profile_get",
+        payload={"fields": ["first_name", "last_name", "birth_date"]},
+        user_reply="OK",
+    )
+    result = ProfileDataResult(
+        profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+        data={"first_name": "Paul", "last_name": "Bite", "birth_date": "2001-07-14"},
+    )
+
+    reply = build_final_reply(plan=plan, tool_result=result)
+
+    assert reply == "- Prénom: Paul\n- Nom: Bite\n- Date de naissance: 2001-07-14"
+
+
+def test_build_final_reply_profile_update_lists_changes_and_erased_fields() -> None:
+    plan = ToolCallPlan(tool_name="finance_profile_update", payload={"set": {}}, user_reply="OK")
+    result = ProfileDataResult(
+        profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+        data={"first_name": None, "city": "Lausanne"},
+    )
+
+    reply = build_final_reply(plan=plan, tool_result=result)
+
+    assert reply == "Infos mises à jour.\nChamp effacé: prénom.\n- Ville: Lausanne"

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
 from agent.planner import ToolCallPlan
 from shared.models import (
     CategoriesListResult,
+    ProfileDataResult,
     ProfileCategory,
     RelevesAggregateResult,
     RelevesDirection,
@@ -16,6 +18,41 @@ from shared.models import (
     ToolError,
     ToolErrorCode,
 )
+
+
+PROFILE_FIELD_LABELS: dict[str, str] = {
+    "first_name": "Prénom",
+    "last_name": "Nom",
+    "birth_date": "Date de naissance",
+    "gender": "Genre",
+    "address_line1": "Adresse",
+    "address_line2": "Complément d’adresse",
+    "postal_code": "Code postal",
+    "city": "Ville",
+    "canton": "Canton",
+    "country": "Pays",
+    "personal_situation": "Situation personnelle",
+    "professional_situation": "Situation professionnelle",
+    "default_bank_account_id": "Compte bancaire par défaut",
+    "active_modules": "Modules actifs",
+}
+
+PROFILE_FIELD_POSSESSIVE: dict[str, str] = {
+    "first_name": "prénom",
+    "last_name": "nom",
+    "birth_date": "date de naissance",
+    "gender": "genre",
+    "address_line1": "adresse",
+    "address_line2": "complément d’adresse",
+    "postal_code": "code postal",
+    "city": "ville",
+    "canton": "canton",
+    "country": "pays",
+    "personal_situation": "situation personnelle",
+    "professional_situation": "situation professionnelle",
+    "default_bank_account_id": "compte bancaire par défaut",
+    "active_modules": "modules actifs",
+}
 
 
 def _format_decimal(value: Decimal) -> str:
@@ -128,6 +165,57 @@ def _build_categories_list_reply(result: CategoriesListResult) -> str:
     return "\n".join(["Voici vos catégories :", *lines, _excluded_totals_help_message()])
 
 
+def _format_profile_value(value: object) -> str:
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    if isinstance(value, list):
+        return ", ".join(str(item) for item in value)
+    return str(value)
+
+
+def _profile_field_label(field_name: str) -> str:
+    return PROFILE_FIELD_LABELS.get(field_name, field_name)
+
+
+def _profile_field_possessive(field_name: str) -> str:
+    return PROFILE_FIELD_POSSESSIVE.get(field_name, field_name)
+
+
+def _build_profile_get_reply(plan: ToolCallPlan, result: ProfileDataResult) -> str:
+    requested_fields_raw = plan.payload.get("fields") if isinstance(plan.payload, dict) else None
+    if isinstance(requested_fields_raw, list):
+        requested_fields = [field for field in requested_fields_raw if isinstance(field, str)]
+    else:
+        requested_fields = list(result.data.keys())
+
+    if not requested_fields:
+        requested_fields = list(result.data.keys())
+
+    if len(requested_fields) == 1:
+        field_name = requested_fields[0]
+        value = result.data.get(field_name)
+        if value in (None, ""):
+            return f"Je n’ai pas votre {_profile_field_possessive(field_name)} (champ vide)."
+        return f"Votre {_profile_field_possessive(field_name)} est: {_format_profile_value(value)}."
+
+    lines = []
+    for field_name in requested_fields:
+        value = result.data.get(field_name)
+        formatted_value = _format_profile_value(value) if value not in (None, "") else "(vide)"
+        lines.append(f"- {_profile_field_label(field_name)}: {formatted_value}")
+    return "\n".join(lines)
+
+
+def _build_profile_update_reply(result: ProfileDataResult) -> str:
+    lines = ["Infos mises à jour."]
+    for field_name, value in result.data.items():
+        if value is None:
+            lines.append(f"Champ effacé: {_profile_field_possessive(field_name)}.")
+            continue
+        lines.append(f"- {_profile_field_label(field_name)}: {_format_profile_value(value)}")
+    return "\n".join(lines)
+
+
 def build_final_reply(*, plan: ToolCallPlan, tool_result: object) -> str:
     """Build a concise French final answer from a tool result."""
 
@@ -145,6 +233,12 @@ def build_final_reply(*, plan: ToolCallPlan, tool_result: object) -> str:
 
     if isinstance(tool_result, CategoriesListResult):
         return _build_categories_list_reply(tool_result)
+
+    if isinstance(tool_result, ProfileDataResult):
+        if plan.tool_name == "finance_profile_get":
+            return _build_profile_get_reply(plan, tool_result)
+        if plan.tool_name == "finance_profile_update":
+            return _build_profile_update_reply(tool_result)
 
     if isinstance(tool_result, ProfileCategory):
         if plan.tool_name == "finance_categories_create":
