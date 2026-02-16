@@ -2,6 +2,8 @@
 
 from datetime import date
 
+import pytest
+
 from agent.planner import ClarificationPlan, ErrorPlan, NoopPlan, SetActiveTaskPlan, ToolCallPlan, plan_from_message
 
 
@@ -388,6 +390,23 @@ def test_planner_profile_update_city_from_jhabite() -> None:
     assert plan.payload == {"set": {"city": "Zurich"}}
 
 
+@pytest.mark.parametrize(
+    ("message", "expected_city"),
+    [
+        ("J’habite à Genève", "Genève"),
+        ("Mon lieu de résidence est Genève", "Genève"),
+        ("Ma ville est Genève", "Genève"),
+        ("Je vis à Genève", "Genève"),
+    ],
+)
+def test_planner_profile_update_city_variants(message: str, expected_city: str) -> None:
+    plan = plan_from_message(message)
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_profile_update"
+    assert plan.payload == {"set": {"city": expected_city}}
+
+
 def test_planner_profile_update_professional_situation_from_je_suis() -> None:
     plan = plan_from_message("Je suis trader indépendant")
 
@@ -404,9 +423,67 @@ def test_planner_profile_update_last_name() -> None:
     assert plan.payload == {"set": {"last_name": "Dupont"}}
 
 
+def test_planner_profile_update_last_name_from_family_name_pattern() -> None:
+    plan = plan_from_message("Mon nom de famille est Pfefferlé")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_profile_update"
+    assert plan.payload == {"set": {"last_name": "Pfefferlé"}}
+
+
 def test_planner_profile_update_postal_code() -> None:
     plan = plan_from_message("Mon code postal est 8001")
 
     assert isinstance(plan, ToolCallPlan)
     assert plan.tool_name == "finance_profile_update"
     assert plan.payload == {"set": {"postal_code": "8001"}}
+
+
+@pytest.mark.parametrize(
+    ("message", "expected_postal_code"),
+    [
+        ("Mon code postal est 1200", "1200"),
+        ("Mon CP est 1200", "1200"),
+        ("Code postal: 1200", "1200"),
+    ],
+)
+def test_planner_profile_update_postal_code_variants(message: str, expected_postal_code: str) -> None:
+    plan = plan_from_message(message)
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_profile_update"
+    assert plan.payload == {"set": {"postal_code": expected_postal_code}}
+
+
+def test_planner_profile_update_professional_situation_explicit_pattern() -> None:
+    plan = plan_from_message("Ma situation professionnelle est trader indépendant")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_profile_update"
+    assert plan.payload == {"set": {"professional_situation": "trader indépendant"}}
+
+
+def test_planner_profile_birth_date_still_prioritized_over_je_suis_pattern() -> None:
+    plan = plan_from_message("Je suis né le 1998-03-12")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_profile_update"
+    assert plan.payload == {"set": {"birth_date": "1998-03-12"}}
+
+
+def test_planner_profile_je_suis_location_does_not_route_to_professional_situation() -> None:
+    plan = plan_from_message("Je suis à la Migros")
+
+    assert isinstance(plan, NoopPlan)
+
+
+def test_profile_messages_do_not_delegate_to_llm() -> None:
+    class _FailingLLMPlanner:
+        def plan(self, _message: str):
+            raise AssertionError("LLM planner should not be called for profile updates")
+
+    plan = plan_from_message("J’habite à Genève", llm_planner=_FailingLLMPlanner())
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_profile_update"
+    assert plan.payload == {"set": {"city": "Genève"}}

@@ -397,6 +397,15 @@ def _strip_terminal_punctuation(value: str) -> str:
     return value.strip().strip(" .,!?:;\"'")
 
 
+def _looks_like_birth_statement(value: str) -> bool:
+    return bool(re.search(r"\bn[ée](?:\s+le)?\b", value, flags=re.IGNORECASE))
+
+
+def _looks_like_location_statement(value: str) -> bool:
+    normalized = value.strip().lower()
+    return bool(re.match(r"^(?:[àa]|au|aux|chez)\b", normalized))
+
+
 def _build_profile_fields_request(fields: list[str]) -> ToolCallPlan:
     filtered_fields = [field for field in fields if field in _PROFILE_FIELD_WHITELIST]
     return ToolCallPlan(
@@ -453,7 +462,7 @@ def _try_build_profile_plan(message: str) -> ToolCallPlan | ErrorPlan | None:
             return _build_profile_update_request({"first_name": first_name})
 
     last_name_match = re.search(
-        r"\b(?:mon\s+nom\s+est|mets?\s+mon\s+nom\s+[àa])\s+(?P<last_name>.+)$",
+        r"\b(?:mon\s+nom(?:\s+de\s+famille)?\s+est|mets?\s+mon\s+nom\s+[àa])\s+(?P<last_name>.+)$",
         message,
         flags=re.IGNORECASE,
     )
@@ -486,14 +495,18 @@ def _try_build_profile_plan(message: str) -> ToolCallPlan | ErrorPlan | None:
             return None
         return _build_profile_update_request({"birth_date": parsed_birth_date.isoformat()})
 
-    city_match = re.search(r"\bj['’]habite\s+[àa]\s+(?P<city>.+)$", message, flags=re.IGNORECASE)
+    city_match = re.search(
+        r"\b(?:j['’]habite\s+[àa]|je\s+vis\s+[àa]|ma\s+ville\s+est|mon\s+lieu\s+de\s+r[ée]sidence\s+est)\s+(?P<city>.+)$",
+        message,
+        flags=re.IGNORECASE,
+    )
     if city_match is not None:
         city = _strip_terminal_punctuation(city_match.group("city"))
         if city:
             return _build_profile_update_request({"city": city})
 
     postal_code_match = re.search(
-        r"\bmon\s+code\s+postal\s+est\s+(?P<postal_code>[\w\- ]+)\b",
+        r"\b(?:mon\s+code\s+postal\s+est|mon\s+cp\s+est|code\s+postal\s*:)\s+(?P<postal_code>[\w\- ]+)\b",
         message,
         flags=re.IGNORECASE,
     )
@@ -514,12 +527,20 @@ def _try_build_profile_plan(message: str) -> ToolCallPlan | ErrorPlan | None:
         if professional_situation:
             return _build_profile_update_request({"professional_situation": professional_situation})
 
-    standalone_professional_situation_match = re.search(r"\bje\s+suis\s+(?P<professional_situation>.+)$", message, flags=re.IGNORECASE)
+    standalone_professional_situation_match = re.search(
+        r"\bje\s+suis\s+(?P<professional_situation>.+)$",
+        message,
+        flags=re.IGNORECASE,
+    )
     if standalone_professional_situation_match is not None:
         professional_situation = _strip_terminal_punctuation(
             standalone_professional_situation_match.group("professional_situation")
         )
-        if professional_situation:
+        if (
+            professional_situation
+            and not _looks_like_birth_statement(professional_situation)
+            and not _looks_like_location_statement(professional_situation)
+        ):
             return _build_profile_update_request({"professional_situation": professional_situation})
 
     generic_field_plan = _try_build_profile_get_field_plan(message)
