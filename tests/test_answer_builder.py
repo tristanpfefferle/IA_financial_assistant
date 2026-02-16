@@ -24,6 +24,9 @@ from shared.models import (
 
 
 DEBIT_ONLY_NOTE = "Certaines catégories peuvent être exclues des totaux (ex: Transfert interne)."
+EXCLUDED_HELP_MESSAGE = (
+    "Une catégorie exclue des totaux (ex: Transfert interne) n’est pas comptée dans les dépenses."
+)
 
 
 def test_build_final_reply_with_releves_sum_result() -> None:
@@ -120,6 +123,7 @@ def test_build_final_reply_with_categories_list_marks_excluded() -> None:
 
     assert "Voici vos catégories" in reply
     assert "Transfert interne (exclue des totaux)" in reply
+    assert EXCLUDED_HELP_MESSAGE in reply
 
 
 def test_build_final_reply_with_categories_mutations() -> None:
@@ -150,3 +154,43 @@ def test_build_final_reply_with_categories_mutations() -> None:
     assert create_reply == "Catégorie créée: Transport."
     assert update_reply == "Catégorie mise à jour: Transport."
     assert delete_reply == "Catégorie supprimée."
+
+
+def test_build_final_reply_suggests_similar_categories_on_exclude_not_found() -> None:
+    plan = ToolCallPlan(
+        tool_name="finance_categories_update",
+        payload={"category_name": "transfret interne", "exclude_from_totals": True},
+        user_reply="OK",
+    )
+    error = ToolError(
+        code=ToolErrorCode.NOT_FOUND,
+        message="Category not found for provided name.",
+        details={
+            "category_name": "transfret interne",
+            "close_category_names": ["Transfert interne", "Transport"],
+        },
+    )
+
+    reply = build_final_reply(plan=plan, tool_result=error)
+
+    assert "Je ne trouve pas la catégorie « transfret interne »" in reply
+    assert "Transfert interne" in reply
+    assert EXCLUDED_HELP_MESSAGE in reply
+
+
+def test_build_final_reply_proposes_create_when_no_similar_category() -> None:
+    plan = ToolCallPlan(
+        tool_name="finance_categories_update",
+        payload={"category_name": "foo", "exclude_from_totals": True},
+        user_reply="OK",
+    )
+    error = ToolError(
+        code=ToolErrorCode.NOT_FOUND,
+        message="Category not found for provided name.",
+        details={"category_name": "foo", "close_category_names": []},
+    )
+
+    reply = build_final_reply(plan=plan, tool_result=error)
+
+    assert "Souhaitez-vous que je la crée puis l’exclue des totaux ?" in reply
+    assert EXCLUDED_HELP_MESSAGE in reply

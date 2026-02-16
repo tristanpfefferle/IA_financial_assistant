@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from difflib import get_close_matches
+from typing import Any
+
+from backend.repositories.category_utils import normalize_category_name
 
 from agent.planner import ToolCallPlan
 from shared.models import (
@@ -13,6 +17,7 @@ from shared.models import (
     RelevesSearchResult,
     RelevesSumResult,
     ToolError,
+    ToolErrorCode,
 )
 
 
@@ -26,6 +31,61 @@ def _debit_only_note(direction: RelevesDirection | None) -> str:
     if direction == RelevesDirection.DEBIT_ONLY:
         return "\nCertaines catégories peuvent être exclues des totaux (ex: Transfert interne)."
     return ""
+
+
+def _excluded_totals_help_message() -> str:
+    return (
+        "Une catégorie exclue des totaux (ex: Transfert interne) "
+        "n’est pas comptée dans les dépenses."
+    )
+
+
+def _build_category_not_found_reply(plan: ToolCallPlan, error: ToolError) -> str | None:
+    if plan.tool_name != "finance_categories_update" or error.code != ToolErrorCode.NOT_FOUND:
+        return None
+    if not isinstance(plan.payload, dict) or not plan.payload.get("exclude_from_totals"):
+        return None
+
+    details: dict[str, Any] = error.details if isinstance(error.details, dict) else {}
+    raw_name = details.get("category_name") or plan.payload.get("category_name")
+    if not isinstance(raw_name, str) or not raw_name.strip():
+        return None
+    requested_name = raw_name.strip()
+    requested_name_norm = normalize_category_name(requested_name)
+
+    candidates = details.get("close_category_names")
+    if isinstance(candidates, list):
+        candidate_names = [name for name in candidates if isinstance(name, str) and name.strip()]
+    else:
+        candidate_names = []
+
+    if candidate_names:
+        ranked_matches = get_close_matches(
+            requested_name_norm,
+            [normalize_category_name(name) for name in candidate_names],
+            n=3,
+            cutoff=0.6,
+        )
+        if ranked_matches:
+            ranked_set = set(ranked_matches)
+            display_matches = [
+                name
+                for name in candidate_names
+                if normalize_category_name(name) in ranked_set
+            ]
+        else:
+            display_matches = candidate_names[:3]
+        return (
+            f"Je ne trouve pas la catégorie « {requested_name} ». "
+            f"Voulez-vous dire: {', '.join(display_matches)} ?\n"
+            f"{_excluded_totals_help_message()}"
+        )
+
+    return (
+        f"Je ne trouve pas la catégorie « {requested_name} ». "
+        "Souhaitez-vous que je la crée puis l’exclue des totaux ?\n"
+        f"{_excluded_totals_help_message()}"
+    )
 
 
 def _releves_total_label(result: RelevesSumResult) -> str:
@@ -75,13 +135,16 @@ def _build_categories_list_reply(result: CategoriesListResult) -> str:
     if not result.items:
         return "Vous n'avez aucune catégorie pour le moment."
     lines = [_format_category(item) for item in result.items]
-    return "\n".join(["Voici vos catégories :", *lines])
+    return "\n".join(["Voici vos catégories :", *lines, _excluded_totals_help_message()])
 
 
 def build_final_reply(*, plan: ToolCallPlan, tool_result: object) -> str:
     """Build a concise French final answer from a tool result."""
 
     if isinstance(tool_result, ToolError):
+        category_not_found_reply = _build_category_not_found_reply(plan, tool_result)
+        if category_not_found_reply is not None:
+            return category_not_found_reply
         details = ""
         if tool_result.details:
             details = f" Détails: {tool_result.details}."

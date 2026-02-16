@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from difflib import get_close_matches
 from uuid import UUID
 
 from backend.repositories.category_utils import normalize_category_name
@@ -155,10 +156,27 @@ class ToolRouter:
                     None,
                 )
                 if matched is None:
+                    category_name = request_payload.category_name or ""
+                    close_name_norms = get_close_matches(
+                        target_name,
+                        [item.name_norm for item in categories_result.items],
+                        n=3,
+                        cutoff=0.6,
+                    )
+                    close_name_norms_set = set(close_name_norms)
+                    close_category_names = [
+                        item.name
+                        for item in categories_result.items
+                        if item.name_norm in close_name_norms_set
+                    ]
                     return ToolError(
                         code=ToolErrorCode.NOT_FOUND,
                         message="Category not found for provided name.",
-                        details={"category_name": request_payload.category_name},
+                        details={
+                            "category_name": category_name,
+                            "category_name_norm": target_name,
+                            "close_category_names": close_category_names,
+                        },
                     )
                 category_id = matched.id
 
