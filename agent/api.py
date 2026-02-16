@@ -7,6 +7,7 @@ from functools import lru_cache
 from uuid import UUID
 
 from fastapi import FastAPI, Header, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.requests import Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -77,14 +78,6 @@ def _extract_bearer_token(authorization: str | None) -> str:
 
 app = FastAPI(title="IA Financial Assistant Agent API")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_config.cors_allow_origins(),
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 
 @app.middleware("http")
 async def log_http_requests(request: Request, call_next):
@@ -108,6 +101,23 @@ async def log_http_requests(request: Request, call_next):
         response.status_code,
     )
     return response
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_config.cors_allow_origins(),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.exception_handler(Exception)
+async def handle_unexpected_exception(request: Request, exc: Exception) -> JSONResponse:
+    """Return a JSON 500 response for unhandled exceptions."""
+
+    logger.exception("unhandled_exception method=%s path=%s", request.method, request.url.path, exc_info=exc)
+    return JSONResponse(status_code=500, content={"detail": "Internal Server Error"})
 
 
 @app.get("/health")
@@ -162,7 +172,13 @@ def agent_chat(payload: ChatRequest, authorization: str | None = Header(default=
         )
     except Exception:
         logger.exception("agent_chat_failed profile_id=%s", profile_id)
-        raise
+        return ChatResponse(
+            reply="Une erreur est survenue côté serveur. Réessaie.",
+            tool_result={"error": "agent_loop_failed"},
+            plan=None,
+        )
+
+    response_plan = dict(agent_reply.plan) if isinstance(agent_reply.plan, dict) else None
 
     if agent_reply.should_update_active_task:
         updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
@@ -170,8 +186,19 @@ def agent_chat(payload: ChatRequest, authorization: str | None = Header(default=
             updated_chat_state.pop("active_task", None)
         else:
             updated_chat_state["active_task"] = agent_reply.active_task
-        profiles_repository.update_chat_state(profile_id=profile_id, chat_state=updated_chat_state)
+        try:
+            profiles_repository.update_chat_state(profile_id=profile_id, chat_state=updated_chat_state)
+        except Exception:
+            logger.exception("chat_state_update_failed profile_id=%s", profile_id)
+            if response_plan is None:
+                response_plan = {"warnings": ["chat_state_update_failed"]}
+            else:
+                warnings = response_plan.get("warnings")
+                if isinstance(warnings, list):
+                    warnings.append("chat_state_update_failed")
+                else:
+                    response_plan["warnings"] = ["chat_state_update_failed"]
 
-    tool_name = agent_reply.plan.get("tool_name") if agent_reply.plan is not None else None
+    tool_name = response_plan.get("tool_name") if response_plan is not None else None
     logger.info("agent_chat_completed tool_name=%s", tool_name)
-    return ChatResponse(reply=agent_reply.reply, tool_result=agent_reply.tool_result, plan=agent_reply.plan)
+    return ChatResponse(reply=agent_reply.reply, tool_result=agent_reply.tool_result, plan=response_plan)

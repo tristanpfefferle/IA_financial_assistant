@@ -1,5 +1,6 @@
 """Tests for the FastAPI agent endpoints."""
 
+from types import SimpleNamespace
 from uuid import UUID
 
 from fastapi.testclient import TestClient
@@ -279,3 +280,60 @@ def test_agent_chat_delete_confirmation_workflow(monkeypatch) -> None:
     assert second.status_code == 200
     assert second.json()["plan"]["tool_name"] == "finance_categories_delete"
     assert "active_task" not in repo.chat_state
+
+
+def test_agent_chat_returns_200_when_chat_state_update_fails(monkeypatch) -> None:
+    monkeypatch.setattr(
+        agent_api,
+        "get_user_from_bearer_token",
+        lambda _token: {"id": str(AUTH_USER_ID), "email": "user@example.com"},
+    )
+
+    class _Repo:
+        def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None):
+            assert auth_user_id == AUTH_USER_ID
+            assert email == "user@example.com"
+            return UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+
+        def get_chat_state(self, *, profile_id: UUID):
+            return {}
+
+        def update_chat_state(self, *, profile_id: UUID, chat_state: dict[str, object]) -> None:
+            raise RuntimeError("db write failed")
+
+    class _Loop:
+        def handle_user_message(self, *_args, **_kwargs):
+            return SimpleNamespace(
+                reply="ok",
+                tool_result={"ok": True},
+                plan={"tool_name": "finance_releves_search"},
+                should_update_active_task=True,
+                active_task={"type": "any"},
+            )
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: _Repo())
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _Loop())
+
+    response = client.post("/agent/chat", json={"message": "ping"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["reply"] == "ok"
+    assert payload["plan"]["warnings"] == ["chat_state_update_failed"]
+
+
+def test_agent_chat_returns_fallback_when_agent_loop_fails(monkeypatch) -> None:
+    _mock_authenticated(monkeypatch)
+
+    class _Loop:
+        def handle_user_message(self, *_args, **_kwargs):
+            raise RuntimeError("agent loop down")
+
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _Loop())
+
+    response = client.post("/agent/chat", json={"message": "ping"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["reply"]
+    assert payload["tool_result"] == {"error": "agent_loop_failed"}
