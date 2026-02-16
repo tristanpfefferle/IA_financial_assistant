@@ -8,9 +8,9 @@ from typing import Any, Protocol
 
 from agent.planner import ClarificationPlan, ErrorPlan, NoopPlan, Plan, ToolCallPlan
 from shared import config
-from shared.models import ToolError, ToolErrorCode, TransactionFilters
+from shared.models import RelevesFilters, ToolError, ToolErrorCode, TransactionFilters
 
-_ALLOWED_TOOLS = {"finance_transactions_search", "finance_transactions_sum"}
+_ALLOWED_TOOLS = {"finance_transactions_search", "finance_transactions_sum", "finance_releves_search", "finance_releves_sum"}
 _FALLBACK_CLARIFICATION = "Pouvez-vous préciser votre demande ?"
 
 
@@ -73,7 +73,11 @@ class LLMPlanner:
     @staticmethod
     def _tool_definition() -> list[dict[str, Any]]:
         """Return OpenAI tool definitions based on shared transaction filters."""
-        filters_schema = TransactionFilters.model_json_schema()
+        transaction_filters_schema = TransactionFilters.model_json_schema()
+        releves_filters_schema = RelevesFilters.model_json_schema()
+        releves_filters_schema["properties"].pop("profile_id", None)
+        releves_required = releves_filters_schema.get("required") or []
+        releves_filters_schema["required"] = [item for item in releves_required if item != "profile_id"]
 
         return [
             {
@@ -81,7 +85,7 @@ class LLMPlanner:
                 "function": {
                     "name": "finance_transactions_search",
                     "description": "Search financial transactions using structured filters.",
-                    "parameters": filters_schema,
+                    "parameters": transaction_filters_schema,
                 },
             },
             {
@@ -89,7 +93,23 @@ class LLMPlanner:
                 "function": {
                     "name": "finance_transactions_sum",
                     "description": "Compute total amount and count for transactions matching filters.",
-                    "parameters": filters_schema,
+                    "parameters": transaction_filters_schema,
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "finance_releves_search",
+                    "description": "Search releves bancaires using structured filters.",
+                    "parameters": releves_filters_schema,
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "finance_releves_sum",
+                    "description": "Compute total amount and count for releves bancaires matching filters.",
+                    "parameters": releves_filters_schema,
                 },
             },
         ]
@@ -101,7 +121,7 @@ class LLMPlanner:
                 "role": "system",
                 "content": (
                     "Tu planifies un appel d'outil financier. "
-                    "Utilise finance_transactions_sum pour total/somme/dépenses/revenus, "
+                    "Utilise finance_releves_sum pour total/somme/dépenses/revenus (source de vérité), finance_transactions_sum uniquement si la demande vise explicitement les transactions; "
                     "finance_transactions_search pour lister/rechercher des transactions. "
                     "Dates au format YYYY-MM-DD si présentes. "
                     "Direction: DEBIT_ONLY pour dépenses, CREDIT_ONLY pour revenus, sinon ALL."
@@ -190,11 +210,18 @@ class LLMPlanner:
                 ),
             )
 
-        if tool_name == "finance_transactions_search":
+        if tool_name in {"finance_transactions_search", "finance_releves_search"}:
             return ToolCallPlan(
                 tool_name=tool_name,
                 payload=parsed_args,
-                user_reply="OK, je cherche ces transactions.",
+                user_reply="OK, je cherche ces opérations.",
+            )
+
+        if tool_name == "finance_releves_sum":
+            return ToolCallPlan(
+                tool_name=tool_name,
+                payload=parsed_args,
+                user_reply="OK, je calcule la somme des relevés.",
             )
 
         return ToolCallPlan(
