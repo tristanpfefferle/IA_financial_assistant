@@ -205,9 +205,17 @@ def _extract_merchant_name(message: str) -> str | None:
     if not merchant_value:
         return None
 
+    month_tokens = sorted(
+        {**_FRENCH_MONTHS, **{alias.strip("."): value for alias, value in _FRENCH_MONTH_ALIASES.items()}},
+        key=len,
+        reverse=True,
+    )
+    month_pattern = "|".join(re.escape(token) for token in month_tokens)
     temporal_pattern = (
         r"\s+(?:"
-        r"en\s+.+|"
+        rf"en\s+(?:{month_pattern})(?:\s+(?:19\d{{2}}|20\d{{2}}|21\d{{2}}))?"
+        rf"(?:\s*,\s*(?:{month_pattern})(?:\s+(?:19\d{{2}}|20\d{{2}}|21\d{{2}}))?)*"
+        rf"(?:\s+et\s+(?:{month_pattern})(?:\s+(?:19\d{{2}}|20\d{{2}}|21\d{{2}}))?)?|"
         r"(?:ces|les)\s+\d+\s+derniers?\s+mois|"
         r"ce\s+mois-ci|"
         r"le\s+mois\s+dernier"
@@ -224,32 +232,33 @@ def _resolve_two_month_period(
     if len(month_year_pairs) < 2:
         return None
 
-    first_month, first_year = month_year_pairs[0]
-    second_month, second_year = month_year_pairs[1]
-
-    if first_year is None and second_year is None:
+    anchor_year = next((year for _, year in month_year_pairs if year is not None), None)
+    if anchor_year is None:
         return None
 
-    if first_year is None:
-        first_year = second_year
-        if first_year is not None and first_month > second_month:
-            first_year -= 1
+    resolved_pairs: list[tuple[int, int]] = []
+    current_year = anchor_year
+    previous_month: int | None = None
 
-    if second_year is None:
-        second_year = first_year
-        if second_year is not None and second_month < first_month:
-            second_year += 1
+    for month, year in month_year_pairs:
+        if year is not None:
+            current_year = year
+        elif previous_month is not None and month < previous_month:
+            current_year += 1
 
-    if first_year is None or second_year is None:
-        return None
+        resolved_pairs.append((month, current_year))
+        previous_month = month
 
-    start = date(first_year, first_month, 1)
-    second_last_day = calendar.monthrange(second_year, second_month)[1]
-    end = date(second_year, second_month, second_last_day)
-
-    if start <= end:
-        return start, end
-    return end, date(first_year, first_month, calendar.monthrange(first_year, first_month)[1])
+    boundaries = [
+        (
+            date(year, month, 1),
+            date(year, month, calendar.monthrange(year, month)[1]),
+        )
+        for month, year in resolved_pairs
+    ]
+    start = min(boundary[0] for boundary in boundaries)
+    end = max(boundary[1] for boundary in boundaries)
+    return start, end
 
 
 def _shift_month(month_anchor: date, month_delta: int) -> date:
@@ -273,8 +282,11 @@ def _extract_relative_month_range(message: str, today: date) -> tuple[date, date
         if months_count <= 0:
             return None
         month_anchor = date(today.year, today.month, 1)
-        # Convention: "N derniers mois" couvre les N mois complets précédents
-        # + le mois en cours jusqu'à aujourd'hui (inclus).
+        # Convention: "N derniers mois" commence au 1er jour du mois obtenu en
+        # reculant de N mois depuis aujourd'hui, et se termine à aujourd'hui.
+        # Exemples:
+        # - today=2026-02-16, N=2 -> start=2025-12-01, end=2026-02-16
+        # - today=2026-01-10, N=1 -> start=2025-12-01, end=2026-01-10
         start_date = _shift_month(month_anchor, -months_count)
         return start_date, today
 
