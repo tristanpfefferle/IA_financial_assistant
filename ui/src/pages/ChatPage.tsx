@@ -63,7 +63,9 @@ export function ChatPage({ email }: ChatPageProps) {
       return
     }
 
-    messagesRef.current?.scrollTo({ top: messagesRef.current.scrollHeight, behavior: 'smooth' })
+    if (messagesRef.current) {
+      messagesRef.current.scrollTop = messagesRef.current.scrollHeight
+    }
   }, [assistantMessagesCount])
 
   async function handleLogout() {
@@ -87,12 +89,14 @@ export function ChatPage({ email }: ChatPageProps) {
     setIsRefreshingSession(true)
     setError(null)
 
-    const { data, error: refreshError } = await supabase.auth.refreshSession()
-    if (refreshError || !data.session?.access_token) {
-      setError('Rafraîchissement de session impossible. Veuillez vous déconnecter puis vous reconnecter.')
+    try {
+      const { data, error: refreshError } = await supabase.auth.refreshSession()
+      if (refreshError || !data.session?.access_token) {
+        setError('Rafraîchissement de session impossible. Veuillez vous déconnecter puis vous reconnecter.')
+      }
+    } finally {
+      setIsRefreshingSession(false)
     }
-
-    setIsRefreshingSession(false)
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -189,10 +193,8 @@ export function ChatPage({ email }: ChatPageProps) {
           <div>
             <button type="button" className="secondary-button" onClick={handleRefreshSession} disabled={isRefreshingSession}>
               {isRefreshingSession ? 'Rafraîchissement...' : 'Rafraîchir la session'}
-            </button>{' '}
-            <button type="button" className="secondary-button" onClick={handleLogout}>
-              Se déconnecter
             </button>
+            <p className="placeholder-text">Si le problème persiste, reconnectez-vous pour renouveler vos identifiants.</p>
           </div>
         ) : null}
       </section>
