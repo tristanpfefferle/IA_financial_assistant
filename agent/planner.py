@@ -155,6 +155,34 @@ def _extract_month(lower_message: str) -> int | None:
     return next((month_lookup[token] for token in tokenized_message if token in month_lookup), None)
 
 
+def _extract_month_year_pairs(message: str) -> list[tuple[int, int | None]]:
+    """Extract ordered `(month, year)` pairs from a natural-language message."""
+
+    lower_message = message.lower()
+    tokenized_matches = list(re.finditer(r"[\wéèêëàâäùûüôöîïç\.]+", lower_message))
+    month_lookup = {
+        **_FRENCH_MONTHS,
+        **{alias.strip("."): value for alias, value in _FRENCH_MONTH_ALIASES.items()},
+    }
+    month_year_pairs: list[tuple[int, int | None]] = []
+    year_pattern = re.compile(r"(19\d{2}|20\d{2}|21\d{2})")
+
+    for index, match in enumerate(tokenized_matches):
+        normalized_token = match.group(0).strip(".")
+        month = month_lookup.get(normalized_token)
+        if month is None:
+            continue
+
+        year: int | None = None
+        if index + 1 < len(tokenized_matches):
+            next_token = tokenized_matches[index + 1].group(0)
+            if year_pattern.fullmatch(next_token):
+                year = int(next_token)
+        month_year_pairs.append((month, year))
+
+    return month_year_pairs
+
+
 def _extract_year(message: str) -> int | None:
     years = re.findall(r"\b(19\d{2}|20\d{2}|21\d{2})\b", message)
     if not years:
@@ -178,14 +206,91 @@ def _extract_merchant_name(message: str) -> str | None:
         return None
 
     temporal_pattern = (
-        r"\s+en\s+(?:janvier|fevrier|février|mars|avril|mai|juin|juillet|aout|août|"
-        r"septembre|octobre|novembre|decembre|décembre|janv\.?|fevr\.?|févr\.?|"
-        r"avr\.?|juil\.?|sept\.?|oct\.?|nov\.?|dec\.?|déc\.?)"
-        r"(?:\s+(?:19\d{2}|20\d{2}|21\d{2}))?\s*$"
+        r"\s+(?:"
+        r"en\s+.+|"
+        r"(?:ces|les)\s+\d+\s+derniers?\s+mois|"
+        r"ce\s+mois-ci|"
+        r"le\s+mois\s+dernier"
+        r")\s*$"
     )
     merchant_without_temporal = re.sub(temporal_pattern, "", merchant_value, flags=re.IGNORECASE)
     merchant_name = merchant_without_temporal.strip(" .,!?:;\"'")
     return merchant_name or None
+
+
+def _resolve_two_month_period(
+    month_year_pairs: list[tuple[int, int | None]],
+) -> tuple[date, date] | None:
+    if len(month_year_pairs) < 2:
+        return None
+
+    first_month, first_year = month_year_pairs[0]
+    second_month, second_year = month_year_pairs[1]
+
+    if first_year is None and second_year is None:
+        return None
+
+    if first_year is None:
+        first_year = second_year
+        if first_year is not None and first_month > second_month:
+            first_year -= 1
+
+    if second_year is None:
+        second_year = first_year
+        if second_year is not None and second_month < first_month:
+            second_year += 1
+
+    if first_year is None or second_year is None:
+        return None
+
+    start = date(first_year, first_month, 1)
+    second_last_day = calendar.monthrange(second_year, second_month)[1]
+    end = date(second_year, second_month, second_last_day)
+
+    if start <= end:
+        return start, end
+    return end, date(first_year, first_month, calendar.monthrange(first_year, first_month)[1])
+
+
+def _shift_month(month_anchor: date, month_delta: int) -> date:
+    """Return the first day of month shifted by `month_delta` months."""
+
+    month_index = month_anchor.year * 12 + (month_anchor.month - 1) + month_delta
+    year = month_index // 12
+    month = month_index % 12 + 1
+    return date(year, month, 1)
+
+
+def _extract_relative_month_range(message: str, today: date) -> tuple[date, date] | None:
+    lower_message = message.lower()
+
+    relative_months_match = re.search(
+        r"\b(?:ces|les)\s+(?P<n>\d+)\s+derniers?\s+mois\b",
+        lower_message,
+    )
+    if relative_months_match is not None:
+        months_count = int(relative_months_match.group("n"))
+        if months_count <= 0:
+            return None
+        month_anchor = date(today.year, today.month, 1)
+        # Convention: "N derniers mois" couvre les N mois complets précédents
+        # + le mois en cours jusqu'à aujourd'hui (inclus).
+        start_date = _shift_month(month_anchor, -months_count)
+        return start_date, today
+
+    if re.search(r"\bce\s+mois-ci\b", lower_message):
+        return date(today.year, today.month, 1), today
+
+    if re.search(r"\ble\s+mois\s+dernier\b", lower_message):
+        previous_month_start = _shift_month(date(today.year, today.month, 1), -1)
+        previous_month_end = date(
+            previous_month_start.year,
+            previous_month_start.month,
+            calendar.monthrange(previous_month_start.year, previous_month_start.month)[1],
+        )
+        return previous_month_start, previous_month_end
+
+    return None
 
 
 def _extract_category_name(message: str, pattern: str) -> str | None:
@@ -398,10 +503,48 @@ def deterministic_plan_from_message(message: str) -> Plan:
 
     if any(keyword in lower_message for keyword in _EXPENSE_KEYWORDS):
         merchant_name = _extract_merchant_name(normalized_message)
+        today = _today()
+
+        month_year_pairs = _extract_month_year_pairs(normalized_message)
+        multi_month_range = _resolve_two_month_period(month_year_pairs)
+        if multi_month_range is not None:
+            start_date, end_date = multi_month_range
+            payload: dict[str, object] = {
+                "direction": "DEBIT_ONLY",
+                "date_range": {
+                    "start_date": start_date,
+                    "end_date": end_date,
+                },
+            }
+            if merchant_name is not None:
+                payload["merchant"] = merchant_name
+            return ToolCallPlan(
+                tool_name="finance_releves_sum",
+                payload=payload,
+                user_reply="OK, je calcule le total de vos dépenses.",
+            )
+
+        relative_month_range = _extract_relative_month_range(normalized_message, today)
+        if relative_month_range is not None:
+            start_date, end_date = relative_month_range
+            payload = {
+                "direction": "DEBIT_ONLY",
+                "date_range": {
+                    "start_date": start_date,
+                    "end_date": end_date,
+                },
+            }
+            if merchant_name is not None:
+                payload["merchant"] = merchant_name
+            return ToolCallPlan(
+                tool_name="finance_releves_sum",
+                payload=payload,
+                user_reply="OK, je calcule le total de vos dépenses.",
+            )
+
         month = _extract_month(lower_message)
         if month is not None:
             explicit_year = _extract_year(normalized_message)
-            today = _today()
             year = explicit_year or today.year
             if explicit_year is None and month > today.month:
                 return ClarificationPlan(question="De quelle année parlez-vous ?")
