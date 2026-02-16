@@ -67,3 +67,36 @@ def test_get_rows_includes_status_and_body_on_http_error(monkeypatch: pytest.Mon
         client.get_rows(table="releves_bancaires", query={"select": "*"}, with_count=False)
 
     assert "Bad Request from Supabase" in str(error.value)
+
+
+def test_post_rows_sets_prefer_header(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _build_client()
+
+    def _fake_urlopen(request):
+        assert request.get_method() == "POST"
+        assert request.full_url == "https://example.supabase.co/rest/v1/chat_state"
+        assert request.get_header("Prefer") == "resolution=merge-duplicates,return=representation"
+
+        class _Response:
+            headers = {}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self) -> bytes:
+                return b"[]"
+
+        return _Response()
+
+    monkeypatch.setattr("backend.db.supabase_client.urlopen", _fake_urlopen)
+
+    rows = client.post_rows(
+        table="chat_state",
+        payload={"conversation_id": "abc"},
+        prefer="resolution=merge-duplicates,return=representation",
+    )
+
+    assert rows == []

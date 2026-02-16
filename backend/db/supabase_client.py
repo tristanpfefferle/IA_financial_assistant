@@ -60,6 +60,40 @@ class SupabaseClient:
                 f"Supabase request failed with status {exc.code}: {body}"
             ) from exc
 
+    def post_rows(
+        self,
+        *,
+        table: str,
+        payload: dict[str, Any],
+        use_anon_key: bool = False,
+        prefer: str = "return=representation",
+    ) -> list[dict[str, Any]]:
+        """Insert rows in PostgREST and return representation."""
+
+        api_key = self.settings.anon_key if use_anon_key else self.settings.service_role_key
+        if not api_key:
+            raise ValueError("Missing Supabase API key for requested mode")
+        request = Request(
+            url=f"{self.settings.url}/rest/v1/{table}",
+            headers={
+                "apikey": api_key,
+                "Authorization": f"Bearer {api_key}",
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "Prefer": prefer,
+            },
+            data=json.dumps(payload).encode("utf-8"),
+            method="POST",
+        )
+        try:
+            with urlopen(request) as response:  # noqa: S310 - URL comes from trusted env config
+                return json.loads(response.read().decode("utf-8"))
+        except HTTPError as exc:
+            body = exc.read().decode("utf-8", errors="replace")[:500]
+            raise RuntimeError(
+                f"Supabase request failed with status {exc.code}: {body}"
+            ) from exc
+
     def get_rows(
         self,
         *,
