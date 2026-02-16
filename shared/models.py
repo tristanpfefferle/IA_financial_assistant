@@ -121,6 +121,42 @@ class RelevesSumResult(BaseModel):
     filters: RelevesFilters | None = None
 
 
+class RelevesGroupBy(str, Enum):
+    """Grouping selector for releves aggregations."""
+
+    CATEGORIE = "categorie"
+    PAYEE = "payee"
+    MONTH = "month"
+
+
+class RelevesAggregateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    profile_id: UUID
+    group_by: RelevesGroupBy
+    date_range: DateRange | None = None
+    categorie: str | None = None
+    merchant: str | None = None
+    merchant_id: UUID | None = None
+    direction: RelevesDirection = RelevesDirection.ALL
+
+
+class RelevesAggregateGroup(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    total: Decimal
+    count: int
+
+
+class RelevesAggregateResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    group_by: RelevesGroupBy
+    groups: dict[str, RelevesAggregateGroup]
+    currency: str | None = None
+    filters: RelevesAggregateRequest | None = None
+
+
 # Deprecated aliases kept for backwards compatibility.
 TransactionSumDirection = RelevesDirection
 TransactionFilters = RelevesFilters

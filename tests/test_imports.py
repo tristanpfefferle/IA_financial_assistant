@@ -7,6 +7,10 @@ def test_import_shared_models() -> None:
         Category,
         DateRange,
         Money,
+        RelevesAggregateGroup,
+        RelevesAggregateRequest,
+        RelevesAggregateResult,
+        RelevesGroupBy,
         ToolError,
         ToolErrorCode,
         Transaction,
@@ -14,7 +18,23 @@ def test_import_shared_models() -> None:
         TransactionSearchResult,
     )
 
-    assert all([Money, DateRange, Transaction, Account, Category, TransactionFilters, TransactionSearchResult, ToolError, ToolErrorCode])
+    assert all(
+        [
+            Money,
+            DateRange,
+            Transaction,
+            Account,
+            Category,
+            RelevesGroupBy,
+            RelevesAggregateRequest,
+            RelevesAggregateGroup,
+            RelevesAggregateResult,
+            TransactionFilters,
+            TransactionSearchResult,
+            ToolError,
+            ToolErrorCode,
+        ]
+    )
 
 
 def test_import_backend_modules() -> None:
