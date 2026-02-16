@@ -27,7 +27,7 @@ export function ChatPage({ email }: ChatPageProps) {
     const rawBaseUrl = import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:8000'
     return rawBaseUrl.replace(/\/+$/, '')
   }, [])
-  const messagesRef = useRef<HTMLElement | null>(null)
+  const messagesRef = useRef<HTMLDivElement | null>(null)
   const assistantMessagesCount = useMemo(
     () => messages.filter((chatMessage) => chatMessage.role === 'assistant').length,
     [messages],
@@ -152,7 +152,7 @@ export function ChatPage({ email }: ChatPageProps) {
           </div>
         ) : null}
 
-        <section className="messages" aria-live="polite" ref={messagesRef}>
+        <div className="messages" aria-live="polite" ref={messagesRef}>
           {messages.length === 0 ? <p className="placeholder-text">Commencez la conversation avec l’IA.</p> : null}
           {messages.map((chatMessage) => (
             <article key={chatMessage.id} className={`message message-${chatMessage.role}`}>
@@ -173,7 +173,7 @@ export function ChatPage({ email }: ChatPageProps) {
             </article>
           ))}
           {isLoading ? <p className="placeholder-text">Envoi...</p> : null}
-        </section>
+        </div>
 
         <form onSubmit={handleSubmit} className="chat-form">
           <input
