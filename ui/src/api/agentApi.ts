@@ -6,12 +6,41 @@ export type AgentChatResponse = {
   plan: Record<string, unknown> | null
 }
 
+type ErrorPayload = {
+  detail?: string
+}
+
+async function getAccessToken(): Promise<string | null> {
+  const { data: sessionData } = await supabase.auth.getSession()
+  if (sessionData.session?.access_token) {
+    return sessionData.session.access_token
+  }
+
+  const { data: refreshedData, error } = await supabase.auth.refreshSession()
+  if (error) {
+    return null
+  }
+
+  return refreshedData.session?.access_token ?? null
+}
+
+async function extractErrorDetail(response: Response): Promise<string> {
+  try {
+    const payload = (await response.json()) as ErrorPayload
+    if (payload.detail) {
+      return payload.detail
+    }
+  } catch {
+    // Empty body or non-JSON body.
+  }
+
+  return response.statusText || 'Erreur inconnue'
+}
+
 export async function sendChatMessage(message: string): Promise<AgentChatResponse> {
   const rawBaseUrl = import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:8000'
   const baseUrl = rawBaseUrl.replace(/\/+$/, '')
-
-  const { data } = await supabase.auth.getSession()
-  const accessToken = data.session?.access_token
+  const accessToken = await getAccessToken()
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -28,7 +57,8 @@ export async function sendChatMessage(message: string): Promise<AgentChatRespons
   })
 
   if (!response.ok) {
-    throw new Error(`Erreur API agent (${response.status})`)
+    const detail = await extractErrorDetail(response)
+    throw new Error(`Erreur API agent (${response.status}): ${detail}`)
   }
 
   return (await response.json()) as AgentChatResponse

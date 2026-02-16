@@ -17,23 +17,22 @@ export function LoginPage() {
 
     if (authError) {
       setError(authError.message)
-      setIsLoading(false)
-      return
     }
 
-    window.location.assign('/')
+    setIsLoading(false)
   }
 
   return (
     <main className="chat-shell">
-      <h1>Connexion</h1>
-      <section className="chat-card">
-        <form onSubmit={handleSubmit} className="chat-form">
+      <section className="chat-card auth-card">
+        <h1>Connexion</h1>
+        <form onSubmit={handleSubmit} className="chat-form auth-form">
           <input
             type="email"
             value={email}
             onChange={(event) => setEmail(event.target.value)}
             placeholder="Email"
+            autoComplete="email"
             required
           />
           <input
@@ -41,6 +40,7 @@ export function LoginPage() {
             value={password}
             onChange={(event) => setPassword(event.target.value)}
             placeholder="Mot de passe"
+            autoComplete="current-password"
             required
           />
           <button type="submit" disabled={isLoading}>

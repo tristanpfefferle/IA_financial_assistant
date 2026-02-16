@@ -1,19 +1,136 @@
 .chat-shell {
-  max-width: 760px;
-  margin: 3rem auto;
-  padding: 1.25rem;
-  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 2rem 1rem;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .chat-card {
-  border: 1px solid #d0d7de;
+  border: 1px solid #2f3542;
   border-radius: 12px;
   padding: 1rem;
-  background: #fff;
+  background: #171b24;
+  color: #e5e7eb;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.25);
 }
 
-.help-text {
-  font-size: 0.9rem;
-  color: #4b5563;
-  margin-top: 0.75rem;
+.auth-card {
+  max-width: 460px;
+  margin: 4rem auto 0;
+}
+
+.chat-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.chat-header h1 {
+  font-size: 1.4rem;
+  margin: 0;
+}
+
+.chat-form {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.75rem;
+}
+
+.auth-form {
+  grid-template-columns: 1fr;
+}
+
+input,
+button {
+  border-radius: 8px;
+  border: 1px solid #3f4758;
+  padding: 0.7rem 0.9rem;
+  font-size: 0.95rem;
+}
+
+input {
+  background: #0f131b;
+  color: #f3f4f6;
+}
+
+button {
+  background: #2563eb;
+  color: #fff;
+  font-weight: 600;
+}
+
+button:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.secondary-button {
+  background: transparent;
+  border: 1px solid #64748b;
+}
+
+.messages {
+  border: 1px solid #2d3648;
+  background: #0f131b;
+  border-radius: 8px;
+  min-height: 280px;
+  max-height: 420px;
+  overflow-y: auto;
+  margin: 0.5rem 0 1rem;
+  padding: 0.75rem;
+}
+
+.message {
+  max-width: 90%;
+  padding: 0.7rem 0.8rem;
+  border-radius: 10px;
+  margin-bottom: 0.75rem;
+}
+
+.message-user {
+  margin-left: auto;
+  background: #1d4ed8;
+  color: #eaf2ff;
+}
+
+.message-assistant {
+  margin-right: auto;
+  background: #273449;
+  color: #f8fafc;
+}
+
+.message-role {
+  margin: 0 0 0.3rem;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  opacity: 0.8;
+}
+
+.placeholder-text {
+  color: #93a1b7;
+  margin: 0;
+}
+
+.error-text {
+  color: #fda4af;
+  margin: 0.75rem 0 0;
+}
+
+.debug-banner {
+  margin-bottom: 0.75rem;
+  border: 1px dashed #4b5563;
+  border-radius: 8px;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.85rem;
+  color: #cbd5e1;
+  background: #111827;
+}
+
+@media (max-width: 640px) {
+  .chat-form {
+    grid-template-columns: 1fr;
+  }
 }
