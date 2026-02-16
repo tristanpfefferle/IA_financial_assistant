@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import os
+import logging
 
 from dotenv import load_dotenv
+
+
+logger = logging.getLogger(__name__)
 
 
 def _should_load_dotenv() -> bool:
@@ -37,6 +41,15 @@ def cors_allow_origins() -> list[str]:
 
     if app_env().strip().lower() in {"dev", "local"}:
         return ["http://localhost:5173", "http://127.0.0.1:5173"]
+
+    ui_origin = (get_env("UI_ORIGIN", "") or "").strip()
+    if ui_origin:
+        return [ui_origin]
+
+    logger.warning(
+        "cors_allow_origins_empty_in_prod app_env=%s; define CORS_ALLOW_ORIGINS or UI_ORIGIN",
+        app_env(),
+    )
 
     return []
 
