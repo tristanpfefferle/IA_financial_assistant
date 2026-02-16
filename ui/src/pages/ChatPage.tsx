@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 
 import { sendChatMessage } from '../api/agentApi'
 import { supabase } from '../lib/supabaseClient'
@@ -8,6 +8,7 @@ type ChatMessage = {
   role: 'user' | 'assistant'
   content: string
   toolResult?: Record<string, unknown> | null
+  plan?: Record<string, unknown> | null
 }
 
 type ChatPageProps = {
@@ -20,7 +21,17 @@ export function ChatPage({ email }: ChatPageProps) {
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [hasToken, setHasToken] = useState(false)
+  const [isRefreshingSession, setIsRefreshingSession] = useState(false)
   const debugEnabled = import.meta.env.VITE_UI_DEBUG === 'true'
+  const apiBaseUrl = useMemo(() => {
+    const rawBaseUrl = import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:8000'
+    return rawBaseUrl.replace(/\/+$/, '')
+  }, [])
+  const messagesRef = useRef<HTMLElement | null>(null)
+  const assistantMessagesCount = useMemo(
+    () => messages.filter((chatMessage) => chatMessage.role === 'assistant').length,
+    [messages],
+  )
 
   useEffect(() => {
     let active = true
@@ -44,10 +55,44 @@ export function ChatPage({ email }: ChatPageProps) {
   }, [])
 
   const isConnected = useMemo(() => Boolean(email), [email])
+  const canSubmit = message.trim().length > 0 && !isLoading
+  const hasUnauthorizedError = useMemo(() => error?.includes('(401)') ?? false, [error])
+
+  useEffect(() => {
+    if (!assistantMessagesCount) {
+      return
+    }
+
+    messagesRef.current?.scrollTo({ top: messagesRef.current.scrollHeight, behavior: 'smooth' })
+  }, [assistantMessagesCount])
 
   async function handleLogout() {
-    await supabase.auth.signOut()
-    window.location.assign('/')
+    setError(null)
+
+    try {
+      const { error: signOutError } = await supabase.auth.signOut()
+      if (signOutError) {
+        throw signOutError
+      }
+    } catch {
+      setError('Impossible de vous déconnecter pour le moment. Veuillez réessayer.')
+    }
+  }
+
+  async function handleRefreshSession() {
+    if (isRefreshingSession) {
+      return
+    }
+
+    setIsRefreshingSession(true)
+    setError(null)
+
+    const { data, error: refreshError } = await supabase.auth.refreshSession()
+    if (refreshError || !data.session?.access_token) {
+      setError('Rafraîchissement de session impossible. Veuillez vous déconnecter puis vous reconnecter.')
+    }
+
+    setIsRefreshingSession(false)
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -75,6 +120,7 @@ export function ChatPage({ email }: ChatPageProps) {
         role: 'assistant',
         content: response.reply,
         toolResult: response.tool_result,
+        plan: response.plan,
       }
       setMessages((previousMessages) => [...previousMessages, assistantMessage])
     } catch (caughtError) {
@@ -97,11 +143,12 @@ export function ChatPage({ email }: ChatPageProps) {
 
         {debugEnabled ? (
           <div className="debug-banner" role="status" aria-live="polite">
-            Connecté: {isConnected ? 'oui' : 'non'} | Email: {email ?? 'inconnu'} | Token: {hasToken ? 'présent' : 'absent'}
+            Connecté: {isConnected ? 'oui' : 'non'} | Email: {email ?? 'inconnu'} | Token: {hasToken ? 'présent' : 'absent'} |
+            API: {apiBaseUrl}
           </div>
         ) : null}
 
-        <section className="messages" aria-live="polite">
+        <section className="messages" aria-live="polite" ref={messagesRef}>
           {messages.length === 0 ? <p className="placeholder-text">Commencez la conversation avec l’IA.</p> : null}
           {messages.map((chatMessage) => (
             <article key={chatMessage.id} className={`message message-${chatMessage.role}`}>
@@ -113,8 +160,15 @@ export function ChatPage({ email }: ChatPageProps) {
                   <pre>{JSON.stringify(chatMessage.toolResult, null, 2)}</pre>
                 </details>
               ) : null}
+              {debugEnabled && chatMessage.role === 'assistant' && chatMessage.plan ? (
+                <details>
+                  <summary>plan</summary>
+                  <pre>{JSON.stringify(chatMessage.plan, null, 2)}</pre>
+                </details>
+              ) : null}
             </article>
           ))}
+          {isLoading ? <p className="placeholder-text">Envoi...</p> : null}
         </section>
 
         <form onSubmit={handleSubmit} className="chat-form">
@@ -125,12 +179,22 @@ export function ChatPage({ email }: ChatPageProps) {
             placeholder="Posez une question sur vos finances..."
             aria-label="Message"
           />
-          <button type="submit" disabled={isLoading}>
+          <button type="submit" disabled={!canSubmit}>
             {isLoading ? 'Envoi...' : 'Envoyer'}
           </button>
         </form>
 
         {error ? <p className="error-text">{error}</p> : null}
+        {hasUnauthorizedError && isConnected ? (
+          <div>
+            <button type="button" className="secondary-button" onClick={handleRefreshSession} disabled={isRefreshingSession}>
+              {isRefreshingSession ? 'Rafraîchissement...' : 'Rafraîchir la session'}
+            </button>{' '}
+            <button type="button" className="secondary-button" onClick={handleLogout}>
+              Se déconnecter
+            </button>
+          </div>
+        ) : null}
       </section>
     </main>
   )
