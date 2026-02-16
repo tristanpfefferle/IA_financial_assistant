@@ -59,3 +59,38 @@ def test_aggregate_by_category_works() -> None:
     assert result.groups["alimentation"].count == 2
     assert result.groups["alimentation"].total == Decimal("-66.50")
     assert result.currency == "EUR"
+
+
+def test_sum_debit_only_excludes_excluded_categories() -> None:
+    agent_loop = build_agent_loop()
+
+    result = agent_loop.tool_router.call(
+        "finance_releves_sum",
+        {
+            "direction": "DEBIT_ONLY",
+            "limit": 50,
+            "offset": 0,
+        },
+        profile_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+    )
+
+    assert isinstance(result, RelevesSumResult)
+    assert result.total == Decimal("-966.50")
+    assert result.count == 3
+
+
+def test_aggregate_debit_only_excludes_excluded_categories() -> None:
+    agent_loop = build_agent_loop()
+
+    result = agent_loop.tool_router.call(
+        "finance_releves_aggregate",
+        {
+            "group_by": "categorie",
+            "direction": "DEBIT_ONLY",
+        },
+        profile_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+    )
+
+    assert isinstance(result, RelevesAggregateResult)
+    assert "Transfert interne" not in result.groups
+    assert "Logement" in result.groups
