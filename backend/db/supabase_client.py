@@ -94,6 +94,42 @@ class SupabaseClient:
                 f"Supabase request failed with status {exc.code}: {body}"
             ) from exc
 
+    def upsert_row(
+        self,
+        *,
+        table: str,
+        payload: dict[str, Any],
+        on_conflict: str,
+        use_anon_key: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Upsert one row in PostgREST and return representation."""
+
+        api_key = self.settings.anon_key if use_anon_key else self.settings.service_role_key
+        if not api_key:
+            raise ValueError("Missing Supabase API key for requested mode")
+
+        encoded_query = urlencode({"on_conflict": on_conflict})
+        request = Request(
+            url=f"{self.settings.url}/rest/v1/{table}?{encoded_query}",
+            headers={
+                "apikey": api_key,
+                "Authorization": f"Bearer {api_key}",
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "Prefer": "resolution=merge-duplicates,return=representation",
+            },
+            data=json.dumps(payload).encode("utf-8"),
+            method="POST",
+        )
+        try:
+            with urlopen(request) as response:  # noqa: S310 - URL comes from trusted env config
+                return json.loads(response.read().decode("utf-8"))
+        except HTTPError as exc:
+            body = exc.read().decode("utf-8", errors="replace")[:500]
+            raise RuntimeError(
+                f"Supabase request failed with status {exc.code}: {body}"
+            ) from exc
+
     def get_rows(
         self,
         *,

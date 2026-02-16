@@ -13,6 +13,7 @@ class _ClientStub:
         self.calls: list[dict[str, object]] = []
         self.patch_calls: list[dict[str, object]] = []
         self.post_calls: list[dict[str, object]] = []
+        self.upsert_calls: list[dict[str, object]] = []
 
     def get_rows(self, *, table, query, with_count, use_anon_key=False):
         self.calls.append(
@@ -43,6 +44,17 @@ class _ClientStub:
                 "payload": payload,
                 "use_anon_key": use_anon_key,
                 "prefer": prefer,
+            }
+        )
+        return []
+
+    def upsert_row(self, *, table, payload, on_conflict, use_anon_key=False):
+        self.upsert_calls.append(
+            {
+                "table": table,
+                "payload": payload,
+                "on_conflict": on_conflict,
+                "use_anon_key": use_anon_key,
             }
         )
         return []
@@ -108,15 +120,15 @@ def test_get_chat_state_returns_empty_dict_when_row_missing() -> None:
     assert chat_state == {}
     assert client.calls[0]["table"] == "chat_state"
     assert client.calls[0]["query"] == {
-        "select": "active_task,state,last_filters,agent_state,active_filters,last_intent,last_metric,last_result_summary,tone",
+        "select": "active_task",
         "conversation_id": f"eq.{profile_id}",
         "limit": 1,
     }
 
 
-def test_update_chat_state_patches_existing_chat_state_row() -> None:
+def test_update_chat_state_uses_upsert() -> None:
     profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
-    client = _ClientStub(responses=[[{"conversation_id": str(profile_id)}]])
+    client = _ClientStub(responses=[])
     repository = SupabaseProfilesRepository(client=client)
 
     repository.update_chat_state(
@@ -124,46 +136,18 @@ def test_update_chat_state_patches_existing_chat_state_row() -> None:
         chat_state={"active_task": {"type": "x"}, "state": {"step": "confirm"}},
     )
 
-    assert client.calls[-1] == {
-        "table": "chat_state",
-        "query": {"select": "conversation_id", "conversation_id": f"eq.{profile_id}", "limit": 1},
-        "with_count": False,
-        "use_anon_key": False,
-    }
-    assert client.patch_calls == [
+    assert client.upsert_calls == [
         {
             "table": "chat_state",
-            "query": {"conversation_id": f"eq.{profile_id}"},
             "payload": {
                 "conversation_id": str(profile_id),
+                "user_id": None,
                 "profile_id": str(profile_id),
                 "active_task": {"type": "x"},
-                "state": {"step": "confirm"},
             },
+            "on_conflict": "conversation_id",
             "use_anon_key": False,
         }
     ]
+    assert client.calls == []
     assert client.post_calls == []
-
-
-def test_update_chat_state_inserts_when_row_missing() -> None:
-    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
-    client = _ClientStub(responses=[[]])
-    repository = SupabaseProfilesRepository(client=client)
-
-    repository.update_chat_state(profile_id=profile_id, chat_state={})
-
-    assert client.patch_calls == []
-    assert client.post_calls == [
-        {
-            "table": "chat_state",
-            "payload": {
-                "conversation_id": str(profile_id),
-                "profile_id": str(profile_id),
-                "active_task": None,
-                "state": None,
-            },
-            "use_anon_key": False,
-            "prefer": "resolution=merge-duplicates,return=representation",
-        }
-    ]
