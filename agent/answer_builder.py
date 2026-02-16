@@ -28,6 +28,7 @@ def _releves_total_label(result: RelevesSumResult) -> str:
     if direction == RelevesDirection.CREDIT_ONLY:
         return "Total des revenus"
     if direction == RelevesDirection.ALL:
+        # Convention releves_bancaires: revenus > 0, dépenses < 0, donc ce total est un net.
         return "Total net"
     return "Total"
 
