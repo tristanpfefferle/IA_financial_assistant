@@ -28,7 +28,7 @@ def _releves_total_label(result: RelevesSumResult) -> str:
     if direction == RelevesDirection.CREDIT_ONLY:
         return "Total des revenus"
     if direction == RelevesDirection.ALL:
-        return "Total (débits + crédits)"
+        return "Total net"
     return "Total"
 
 

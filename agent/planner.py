@@ -242,6 +242,8 @@ def plan_from_message(message: str, llm_planner: LLMPlanner | None = None) -> Pl
 
     plan = deterministic_plan_from_message(message)
 
+    # We intentionally return ClarificationPlan directly so the UX can ask the
+    # follow-up question deterministically before any optional LLM fallback.
     if isinstance(plan, (ToolCallPlan, ErrorPlan, ClarificationPlan)):
         return plan
 
