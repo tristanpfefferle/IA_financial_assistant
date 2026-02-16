@@ -1,9 +1,7 @@
-"""Utilities for category name handling in repositories."""
+"""Backward-compatible re-export for category text normalization."""
 
 from __future__ import annotations
 
+from shared.text_utils import normalize_category_name
 
-def normalize_category_name(s: str) -> str:
-    """Normalize category names for reliable comparisons."""
-    return " ".join(s.strip().lower().split())
-
+__all__ = ["normalize_category_name"]

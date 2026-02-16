@@ -6,7 +6,7 @@ from datetime import date
 from decimal import Decimal
 from uuid import UUID
 
-from backend.repositories.category_utils import normalize_category_name
+from shared.text_utils import normalize_category_name
 from backend.repositories.releves_repository import InMemoryRelevesRepository, SupabaseRelevesRepository
 from shared.models import (
     DateRange,

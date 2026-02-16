@@ -9,7 +9,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from backend.repositories.category_utils import normalize_category_name
+from shared.text_utils import normalize_category_name
 
 
 class ToolErrorCode(str, Enum):

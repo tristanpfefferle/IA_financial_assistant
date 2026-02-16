@@ -164,7 +164,7 @@ def test_build_final_reply_with_categories_mutations() -> None:
     assert delete_reply == "Catégorie supprimée : Transport."
 
 
-def test_build_final_reply_suggests_similar_categories_on_not_found() -> None:
+def test_build_final_reply_not_found_with_suggestions() -> None:
     plan = ToolCallPlan(
         tool_name="finance_categories_update",
         payload={"category_name": "transfret interne"},
@@ -181,7 +181,7 @@ def test_build_final_reply_suggests_similar_categories_on_not_found() -> None:
 
     reply = build_final_reply(plan=plan, tool_result=error)
 
-    assert reply == "Je ne trouve pas cette catégorie. Vouliez-vous dire: Transfert interne, Transport ?"
+    assert reply == "Je ne trouve pas la catégorie « transfret interne ». Vouliez-vous dire: Transfert interne, Transport ?"
 
 
 def test_build_final_reply_not_found_without_suggestions() -> None:
@@ -198,4 +198,4 @@ def test_build_final_reply_not_found_without_suggestions() -> None:
 
     reply = build_final_reply(plan=plan, tool_result=error)
 
-    assert reply == "Je ne trouve pas cette catégorie."
+    assert reply == "Je ne trouve pas la catégorie « foo ». Souhaitez-vous la créer ?"
