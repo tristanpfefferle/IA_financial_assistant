@@ -11,6 +11,9 @@ from dataclasses import dataclass
 from backend.repositories.releves_repository import RelevesRepository
 from backend.repositories.transactions_repository import TransactionsRepository
 from shared.models import (
+    RelevesAggregateGroup,
+    RelevesAggregateRequest,
+    RelevesAggregateResult,
     RelevesFilters,
     RelevesSearchResult,
     RelevesSumResult,
@@ -54,6 +57,24 @@ class BackendToolService:
                 average=average,
                 currency=currency,
                 filters=filters,
+            )
+        except Exception as exc:  # placeholder normalization at contract boundary
+            return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))
+
+    def releves_aggregate(
+        self, request: RelevesAggregateRequest
+    ) -> RelevesAggregateResult | ToolError:
+        try:
+            aggregated, currency = self.releves_repository.aggregate_releves(request)
+            groups = {
+                group_key: RelevesAggregateGroup(total=total, count=count)
+                for group_key, (total, count) in aggregated.items()
+            }
+            return RelevesAggregateResult(
+                group_by=request.group_by,
+                groups=groups,
+                currency=currency,
+                filters=request,
             )
         except Exception as exc:  # placeholder normalization at contract boundary
             return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))
