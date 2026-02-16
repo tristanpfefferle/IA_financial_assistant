@@ -6,6 +6,7 @@ from decimal import Decimal
 
 from agent.planner import ToolCallPlan
 from shared.models import (
+    RelevesDirection,
     RelevesSearchResult,
     RelevesSumResult,
     ToolError,
@@ -18,6 +19,17 @@ def _format_decimal(value: Decimal) -> str:
     """Format decimals without scientific notation."""
 
     return format(value, "f")
+
+
+def _releves_total_label(result: RelevesSumResult) -> str:
+    direction = result.filters.direction if result.filters is not None else None
+    if direction == RelevesDirection.DEBIT_ONLY:
+        return "Total des dépenses"
+    if direction == RelevesDirection.CREDIT_ONLY:
+        return "Total des revenus"
+    if direction == RelevesDirection.ALL:
+        return "Total (débits + crédits)"
+    return "Total"
 
 
 def build_final_reply(*, plan: ToolCallPlan, tool_result: object) -> str:
@@ -35,12 +47,12 @@ def build_final_reply(*, plan: ToolCallPlan, tool_result: object) -> str:
         return f"Total: {amount} {currency} sur {tool_result.count} transaction(s)."
 
     if isinstance(tool_result, RelevesSumResult):
-        currency = f" {tool_result.currency}" if tool_result.currency else ""
+        currency_suffix = f" {tool_result.currency}" if tool_result.currency else ""
         average = ""
         if tool_result.count > 0:
-            average = f" Moyenne: {_format_decimal(tool_result.average)}{currency}."
+            average = f" Moyenne: {_format_decimal(tool_result.average)}{currency_suffix}."
         return (
-            f"Total des dépenses: {_format_decimal(tool_result.total)}{currency} "
+            f"{_releves_total_label(tool_result)}: {_format_decimal(tool_result.total)}{currency_suffix} "
             f"sur {tool_result.count} opération(s).{average}"
         ).strip()
 

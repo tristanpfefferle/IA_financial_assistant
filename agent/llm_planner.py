@@ -221,7 +221,7 @@ class LLMPlanner:
             return ToolCallPlan(
                 tool_name=tool_name,
                 payload=parsed_args,
-                user_reply="OK, je calcule la somme des relevés.",
+                user_reply="OK, je calcule le total.",
             )
 
         return ToolCallPlan(

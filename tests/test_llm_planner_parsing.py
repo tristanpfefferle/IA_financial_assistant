@@ -154,3 +154,4 @@ def test_llm_planner_parses_releves_sum_tool_call(monkeypatch) -> None:
     assert isinstance(plan, ToolCallPlan)
     assert plan.tool_name == "finance_releves_sum"
     assert plan.payload == {"direction": "DEBIT_ONLY"}
+    assert plan.user_reply == "OK, je calcule le total."
