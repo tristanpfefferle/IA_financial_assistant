@@ -348,3 +348,65 @@ def test_planner_profile_unknown_field_returns_validation_error_plan() -> None:
     assert isinstance(plan, ErrorPlan)
     assert plan.tool_error.code.value == "VALIDATION_ERROR"
     assert plan.tool_error.details == {"field": "couleur préférée"}
+
+
+def test_planner_profile_get_full_profile_affiche() -> None:
+    plan = plan_from_message("Affiche mon profil")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_profile_get"
+    assert plan.payload == {
+        "fields": [
+            "first_name",
+            "last_name",
+            "birth_date",
+            "gender",
+            "address_line1",
+            "address_line2",
+            "postal_code",
+            "city",
+            "canton",
+            "country",
+            "personal_situation",
+            "professional_situation",
+        ]
+    }
+
+
+def test_planner_profile_get_full_profile_informations_personnelles() -> None:
+    plan = plan_from_message("Quelles sont mes informations personnelles")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_profile_get"
+
+
+def test_planner_profile_update_city_from_jhabite() -> None:
+    plan = plan_from_message("J'habite à Zurich")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_profile_update"
+    assert plan.payload == {"set": {"city": "Zurich"}}
+
+
+def test_planner_profile_update_professional_situation_from_je_suis() -> None:
+    plan = plan_from_message("Je suis trader indépendant")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_profile_update"
+    assert plan.payload == {"set": {"professional_situation": "trader indépendant"}}
+
+
+def test_planner_profile_update_last_name() -> None:
+    plan = plan_from_message("Mon nom est Dupont")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_profile_update"
+    assert plan.payload == {"set": {"last_name": "Dupont"}}
+
+
+def test_planner_profile_update_postal_code() -> None:
+    plan = plan_from_message("Mon code postal est 8001")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_profile_update"
+    assert plan.payload == {"set": {"postal_code": "8001"}}
