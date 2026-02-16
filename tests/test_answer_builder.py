@@ -252,3 +252,16 @@ def test_build_final_reply_profile_update_lists_changes_and_erased_fields() -> N
     reply = build_final_reply(plan=plan, tool_result=result)
 
     assert reply == "Infos mises à jour.\nChamp effacé: prénom.\n- Ville: Lausanne"
+
+
+def test_build_final_reply_profile_validation_error_is_user_friendly() -> None:
+    plan = ToolCallPlan(tool_name="finance_profile_get", payload={"fields": ["couleur préférée"]}, user_reply="OK")
+    error = ToolError(
+        code=ToolErrorCode.VALIDATION_ERROR,
+        message="Champ de profil non reconnu.",
+        details={"field": "couleur préférée"},
+    )
+
+    reply = build_final_reply(plan=plan, tool_result=error)
+
+    assert reply == "Je n’ai pas compris quelle info du profil vous voulez (prénom, nom, ville, etc.)."

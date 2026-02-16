@@ -7,6 +7,7 @@ from difflib import get_close_matches
 from uuid import UUID
 
 from shared.text_utils import normalize_category_name
+from shared.profile_fields import normalize_profile_field
 from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 
 from agent.backend_client import BackendClient
@@ -107,6 +108,58 @@ class ToolRouter:
                 "close_category_names": close_category_names,
             },
         )
+
+
+
+    @staticmethod
+    def _normalize_profile_get_payload(payload: dict) -> dict | ToolError:
+        raw_fields = payload.get("fields")
+        if raw_fields is None:
+            return payload
+
+        if not isinstance(raw_fields, list):
+            return ToolError(
+                code=ToolErrorCode.VALIDATION_ERROR,
+                message="Invalid payload for tool finance_profile_get",
+                details={"payload": payload},
+            )
+
+        normalized_fields: list[str] = []
+        for raw_field in raw_fields:
+            if not isinstance(raw_field, str):
+                return ToolError(
+                    code=ToolErrorCode.VALIDATION_ERROR,
+                    message="Invalid payload for tool finance_profile_get",
+                    details={"payload": payload},
+                )
+
+            normalized = normalize_profile_field(raw_field)
+            if isinstance(normalized, ToolError):
+                return normalized
+            normalized_fields.append(normalized)
+
+        return {**payload, "fields": normalized_fields}
+
+    @staticmethod
+    def _normalize_profile_update_payload(payload: dict) -> dict | ToolError:
+        raw_set = payload.get("set")
+        if not isinstance(raw_set, dict):
+            return payload
+
+        normalized_set: dict[str, object | None] = {}
+        for raw_field, value in raw_set.items():
+            if not isinstance(raw_field, str):
+                return ToolError(
+                    code=ToolErrorCode.VALIDATION_ERROR,
+                    message="Invalid payload for tool finance_profile_update",
+                    details={"payload": payload},
+                )
+            normalized = normalize_profile_field(raw_field)
+            if isinstance(normalized, ToolError):
+                return normalized
+            normalized_set[normalized] = value
+
+        return {**payload, "set": normalized_set}
 
     def call(
         self,
@@ -246,8 +299,11 @@ class ToolRouter:
 
 
         if tool_name == "finance_profile_get":
+            normalized_payload = self._normalize_profile_get_payload(payload)
+            if isinstance(normalized_payload, ToolError):
+                return normalized_payload
             try:
-                request = ProfileGetRequest.model_validate(payload)
+                request = ProfileGetRequest.model_validate(normalized_payload)
             except ValidationError as exc:
                 return ToolError(
                     code=ToolErrorCode.VALIDATION_ERROR,
@@ -260,8 +316,11 @@ class ToolRouter:
             )
 
         if tool_name == "finance_profile_update":
+            normalized_payload = self._normalize_profile_update_payload(payload)
+            if isinstance(normalized_payload, ToolError):
+                return normalized_payload
             try:
-                request = ProfileUpdateRequest.model_validate(payload)
+                request = ProfileUpdateRequest.model_validate(normalized_payload)
             except ValidationError as exc:
                 return ToolError(
                     code=ToolErrorCode.VALIDATION_ERROR,

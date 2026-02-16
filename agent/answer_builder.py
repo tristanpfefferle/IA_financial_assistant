@@ -115,6 +115,23 @@ def _build_category_ambiguous_reply(error: ToolError) -> str | None:
     return f"Plusieurs catégories correspondent: {', '.join(candidates)}."
 
 
+
+
+def _build_profile_validation_reply(plan: ToolCallPlan, error: ToolError) -> str | None:
+    if plan.tool_name not in {"finance_profile_get", "finance_profile_update"}:
+        return None
+    if error.code != ToolErrorCode.VALIDATION_ERROR:
+        return None
+
+    details: dict[str, Any] = error.details if isinstance(error.details, dict) else {}
+    raw_field = details.get("field")
+    if isinstance(raw_field, str) and raw_field.strip():
+        return (
+            "Je n’ai pas compris quelle info du profil vous voulez "
+            "(prénom, nom, ville, etc.)."
+        )
+    return "La demande de profil est invalide. Précisez un champ comme prénom, nom ou ville."
+
 def _releves_total_label(result: RelevesSumResult) -> str:
     direction = result.filters.direction if result.filters is not None else None
     if direction == RelevesDirection.DEBIT_ONLY:
@@ -226,6 +243,9 @@ def build_final_reply(*, plan: ToolCallPlan, tool_result: object) -> str:
         category_ambiguous_reply = _build_category_ambiguous_reply(tool_result)
         if category_ambiguous_reply is not None:
             return category_ambiguous_reply
+        profile_validation_reply = _build_profile_validation_reply(plan, tool_result)
+        if profile_validation_reply is not None:
+            return profile_validation_reply
         details = ""
         if tool_result.details:
             details = f" Détails: {tool_result.details}."

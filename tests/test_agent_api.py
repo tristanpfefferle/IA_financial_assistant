@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 import agent.api as agent_api
 from agent.api import app
 from agent.loop import AgentLoop
-from shared.models import ToolError, ToolErrorCode
+from shared.models import ProfileDataResult, ToolError, ToolErrorCode
 
 
 client = TestClient(app)
@@ -402,3 +402,44 @@ def test_agent_chat_returns_fallback_when_agent_loop_fails(monkeypatch) -> None:
     payload = response.json()
     assert payload["reply"]
     assert payload["tool_result"] == {"error": "internal_server_error"}
+
+
+class _ProfileRouter:
+    def call(self, tool_name: str, payload: dict, *, profile_id: UUID | None = None):
+        assert profile_id == UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+        if tool_name == "finance_profile_get" and payload == {"fields": ["city"]}:
+            return ProfileDataResult(
+                profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+                data={"city": "Lausanne"},
+            )
+        raise AssertionError(f"Unexpected tool call: {tool_name} {payload}")
+
+
+def test_agent_chat_profile_city_question_returns_200_with_city(monkeypatch) -> None:
+    _mock_authenticated(monkeypatch)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: AgentLoop(tool_router=_ProfileRouter()))
+
+    response = client.post(
+        "/agent/chat",
+        json={"message": "Quelle est ma ville ?"},
+        headers=_auth_headers(),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["reply"] == "Votre ville est: Lausanne."
+
+
+def test_agent_chat_profile_unknown_field_returns_validation_message(monkeypatch) -> None:
+    _mock_authenticated(monkeypatch)
+
+    response = client.post(
+        "/agent/chat",
+        json={"message": "Quelle est ma couleur préférée ?"},
+        headers=_auth_headers(),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "Je n’ai pas compris quelle info du profil vous voulez" in payload["reply"]
+    assert payload["tool_result"]["code"] == "VALIDATION_ERROR"

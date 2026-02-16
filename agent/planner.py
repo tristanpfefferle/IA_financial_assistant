@@ -9,6 +9,7 @@ from datetime import date, datetime, timezone
 from typing import TYPE_CHECKING
 
 from shared.models import ToolError, ToolErrorCode
+from shared.profile_fields import normalize_profile_field
 
 if TYPE_CHECKING:
     from agent.llm_planner import LLMPlanner
@@ -409,7 +410,7 @@ def _build_profile_update_request(fields_to_update: dict[str, object]) -> ToolCa
     )
 
 
-def _try_build_profile_plan(message: str) -> ToolCallPlan | None:
+def _try_build_profile_plan(message: str) -> ToolCallPlan | ErrorPlan | None:
     lower_message = message.lower()
 
     if re.search(r"\bquel\s+est\s+mon\s+pr[ée]nom\b", lower_message):
@@ -464,7 +465,40 @@ def _try_build_profile_plan(message: str) -> ToolCallPlan | None:
             return None
         return _build_profile_update_request({"birth_date": parsed_birth_date.isoformat()})
 
+    generic_field_plan = _try_build_profile_get_field_plan(message)
+    if generic_field_plan is not None:
+        return generic_field_plan
+
     return None
+
+
+def _try_build_profile_get_field_plan(message: str) -> ToolCallPlan | ErrorPlan | None:
+    match = re.search(
+        r"\bquel(?:le)?\s+est\s+m(?:on|a)\s+(?P<field>[\w\s\-éèêàùâîôç]+)\b",
+        message,
+        flags=re.IGNORECASE,
+    )
+    if match is None:
+        return None
+
+    raw_field = _strip_terminal_punctuation(match.group("field"))
+    if not raw_field:
+        return ErrorPlan(
+            reply="Je n’ai pas compris quelle info du profil vous voulez (prénom, nom, ville, etc.).",
+            tool_error=ToolError(
+                code=ToolErrorCode.VALIDATION_ERROR,
+                message="Champ de profil non précisé.",
+            ),
+        )
+
+    normalized_field = normalize_profile_field(raw_field)
+    if isinstance(normalized_field, ToolError):
+        return ErrorPlan(
+            reply="Je n’ai pas compris quelle info du profil vous voulez (prénom, nom, ville, etc.).",
+            tool_error=normalized_field,
+        )
+
+    return _build_profile_fields_request([normalized_field])
 
 
 def _build_delete_plan(message: str) -> SetActiveTaskPlan | ClarificationPlan:
