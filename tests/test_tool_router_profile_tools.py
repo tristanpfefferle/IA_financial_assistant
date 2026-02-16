@@ -60,3 +60,23 @@ def test_finance_profile_update_rejects_non_whitelisted_field() -> None:
 
     assert isinstance(result, ToolError)
     assert result.code == ToolErrorCode.VALIDATION_ERROR
+
+
+def test_finance_profile_get_supports_french_alias_field_name() -> None:
+    backend = FakeBackendClient(profile_data_by_id={PROFILE_ID: {"city": "Lausanne"}})
+    router = ToolRouter(backend_client=backend)
+
+    result = router.call("finance_profile_get", {"fields": ["ville"]}, profile_id=PROFILE_ID)
+
+    assert isinstance(result, ProfileDataResult)
+    assert result.data == {"city": "Lausanne"}
+
+
+def test_finance_profile_get_unknown_field_returns_validation_error() -> None:
+    router = ToolRouter(backend_client=FakeBackendClient())
+
+    result = router.call("finance_profile_get", {"fields": ["couleur préférée"]}, profile_id=PROFILE_ID)
+
+    assert isinstance(result, ToolError)
+    assert result.code == ToolErrorCode.VALIDATION_ERROR
+    assert result.details == {"field": "couleur préférée"}

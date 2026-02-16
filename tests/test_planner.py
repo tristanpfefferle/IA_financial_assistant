@@ -332,3 +332,19 @@ def test_planner_profile_update_birth_date() -> None:
     assert isinstance(plan, ToolCallPlan)
     assert plan.tool_name == "finance_profile_update"
     assert plan.payload == {"set": {"birth_date": "2001-07-14"}}
+
+
+def test_planner_profile_city_question_routes_to_profile_get() -> None:
+    plan = plan_from_message("Quelle est ma ville ?")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_profile_get"
+    assert plan.payload == {"fields": ["city"]}
+
+
+def test_planner_profile_unknown_field_returns_validation_error_plan() -> None:
+    plan = plan_from_message("Quelle est ma couleur préférée ?")
+
+    assert isinstance(plan, ErrorPlan)
+    assert plan.tool_error.code.value == "VALIDATION_ERROR"
+    assert plan.tool_error.details == {"field": "couleur préférée"}
