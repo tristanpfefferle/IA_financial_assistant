@@ -11,7 +11,6 @@ from dataclasses import dataclass
 from backend.repositories.releves_repository import RelevesRepository
 from backend.repositories.transactions_repository import TransactionsRepository
 from shared.models import (
-    Money,
     RelevesFilters,
     RelevesSearchResult,
     RelevesSumResult,
@@ -29,24 +28,14 @@ class BackendToolService:
     releves_repository: RelevesRepository
 
     def search_transactions(self, filters: TransactionFilters) -> TransactionSearchResult | ToolError:
-        try:
-            items = self.transactions_repository.list_transactions(filters)
-            return TransactionSearchResult(items=items, limit=filters.limit, offset=filters.offset, total=None)
-        except Exception as exc:  # placeholder normalization at contract boundary
-            return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))
+        """Deprecated alias for releves_search kept for compatibility."""
+
+        return self.releves_search(filters)
 
     def sum_transactions(self, filters: TransactionFilters) -> TransactionSumResult | ToolError:
-        try:
-            total_amount, count, currency = self.transactions_repository.sum_transactions(filters)
-            return TransactionSumResult(
-                total=Money(amount=total_amount, currency=currency),
-                count=count,
-                limit=filters.limit,
-                offset=filters.offset,
-                filters=filters,
-            )
-        except Exception as exc:  # placeholder normalization at contract boundary
-            return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))
+        """Deprecated alias for releves_sum kept for compatibility."""
+
+        return self.releves_sum(filters)
 
     def releves_search(self, filters: RelevesFilters) -> RelevesSearchResult | ToolError:
         try:

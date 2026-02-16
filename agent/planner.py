@@ -117,7 +117,7 @@ def _parse_search_command(message: str) -> tuple[dict[str, object] | None, ToolE
     """
     body = message.split(":", maxsplit=1)[1].strip()
     if not body:
-        return {"search": None, "limit": 50, "offset": 0}, None
+        return {"merchant": None, "limit": 50, "offset": 0}, None
 
     words = body.split()
     search_parts: list[str] = []
@@ -131,7 +131,7 @@ def _parse_search_command(message: str) -> tuple[dict[str, object] | None, ToolE
         search_parts.append(word)
 
     payload: dict[str, object] = {
-        "search": " ".join(search_parts).strip() or None,
+        "merchant": " ".join(search_parts).strip() or None,
         "limit": 50,
         "offset": 0,
     }
@@ -157,11 +157,8 @@ def _parse_search_command(message: str) -> tuple[dict[str, object] | None, ToolE
                 "end_date": date.fromisoformat(token_values["to"]),
             }
 
-        if "account" in token_values:
-            payload["account_id"] = token_values["account"]
-
         if "category" in token_values:
-            payload["category_id"] = token_values["category"]
+            payload["categorie"] = token_values["category"]
 
         if "limit" in token_values:
             payload["limit"] = int(token_values["limit"])
@@ -169,11 +166,6 @@ def _parse_search_command(message: str) -> tuple[dict[str, object] | None, ToolE
         if "offset" in token_values:
             payload["offset"] = int(token_values["offset"])
 
-        if "min" in token_values:
-            payload["min_amount"] = Decimal(token_values["min"])
-
-        if "max" in token_values:
-            payload["max_amount"] = Decimal(token_values["max"])
     except ValueError as exc:
         return None, ToolError(
             code=ToolErrorCode.VALIDATION_ERROR,
@@ -207,9 +199,9 @@ def deterministic_plan_from_message(message: str) -> Plan:
             )
 
         return ToolCallPlan(
-            tool_name="finance_transactions_search",
+            tool_name="finance_releves_search",
             payload=payload or {},
-            user_reply="Voici le résultat de la recherche de transactions.",
+            user_reply="Voici le résultat de la recherche de relevés.",
         )
 
     lower_message = normalized_message.lower()

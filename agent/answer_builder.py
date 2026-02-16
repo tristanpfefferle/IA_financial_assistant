@@ -5,14 +5,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from agent.planner import ToolCallPlan
-from shared.models import (
-    RelevesDirection,
-    RelevesSearchResult,
-    RelevesSumResult,
-    ToolError,
-    TransactionSearchResult,
-    TransactionSumResult,
-)
+from shared.models import RelevesDirection, RelevesSearchResult, RelevesSumResult, ToolError
 
 
 def _format_decimal(value: Decimal) -> str:
@@ -29,7 +22,7 @@ def _releves_total_label(result: RelevesSumResult) -> str:
         return "Total des revenus"
     if direction == RelevesDirection.ALL:
         # Convention releves_bancaires: revenus > 0, dépenses < 0, donc ce total est un net.
-        return "Total net"
+        return "Total net (revenus + dépenses)"
     return "Total"
 
 
@@ -42,11 +35,6 @@ def build_final_reply(*, plan: ToolCallPlan, tool_result: object) -> str:
             details = f" Détails: {tool_result.details}."
         return f"Erreur: {tool_result.message}.{details}".strip()
 
-    if isinstance(tool_result, TransactionSumResult):
-        amount = _format_decimal(tool_result.total.amount)
-        currency = tool_result.total.currency
-        return f"Total: {amount} {currency} sur {tool_result.count} transaction(s)."
-
     if isinstance(tool_result, RelevesSumResult):
         currency_suffix = f" {tool_result.currency}" if tool_result.currency else ""
         average = ""
@@ -56,13 +44,6 @@ def build_final_reply(*, plan: ToolCallPlan, tool_result: object) -> str:
             f"{_releves_total_label(tool_result)}: {_format_decimal(tool_result.total)}{currency_suffix} "
             f"sur {tool_result.count} opération(s).{average}"
         ).strip()
-
-    if isinstance(tool_result, TransactionSearchResult):
-        count = len(tool_result.items)
-        examples = [item.description for item in tool_result.items[:2] if item.description]
-        if examples:
-            return f"J'ai trouvé {count} transaction(s), par exemple: {', '.join(examples)}."
-        return f"J'ai trouvé {count} transaction(s)."
 
     if isinstance(tool_result, RelevesSearchResult):
         count = len(tool_result.items)

@@ -49,6 +49,5 @@ def test_build_final_reply_with_releves_sum_all_is_neutral() -> None:
 
     reply = build_final_reply(plan=plan, tool_result=result)
 
-    assert "dépenses" not in reply.lower()
-    assert "Total net" in reply
+    assert "Total net (revenus + dépenses)" in reply
     assert "100.00 sur 2 opération(s)." in reply
