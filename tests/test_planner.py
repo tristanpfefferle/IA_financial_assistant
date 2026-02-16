@@ -68,6 +68,41 @@ def test_planner_expenses_in_janv_uses_month_alias(monkeypatch) -> None:
     assert plan.payload["date_range"]["end_date"] == date(2025, 1, 31)
 
 
+def test_planner_expenses_chez_merchant_uses_sum_with_merchant_filter() -> None:
+    plan = plan_from_message("Dépenses chez coop")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_releves_sum"
+    assert plan.payload["direction"] == "DEBIT_ONLY"
+    assert plan.payload["merchant"] == "coop"
+
+
+def test_planner_expenses_chez_merchant_and_month_are_composed(monkeypatch) -> None:
+    monkeypatch.setattr("agent.planner._today", lambda: date(2025, 2, 10))
+
+    plan = plan_from_message("Dépenses chez coop en janvier 2026")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_releves_sum"
+    assert plan.payload["direction"] == "DEBIT_ONLY"
+    assert plan.payload["merchant"] == "coop"
+    assert plan.payload["date_range"]["start_date"] == date(2026, 1, 1)
+    assert plan.payload["date_range"]["end_date"] == date(2026, 1, 31)
+
+
+def test_planner_expenses_chez_merchant_in_month_without_year_uses_current_year(monkeypatch) -> None:
+    monkeypatch.setattr("agent.planner._today", lambda: date(2026, 2, 10))
+
+    plan = plan_from_message("Dépenses chez coop en janvier")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_releves_sum"
+    assert plan.payload["direction"] == "DEBIT_ONLY"
+    assert plan.payload["merchant"] == "coop"
+    assert plan.payload["date_range"]["start_date"] == date(2026, 1, 1)
+    assert plan.payload["date_range"]["end_date"] == date(2026, 1, 31)
+
+
 def test_planner_aggregate_par_categorie() -> None:
     plan = plan_from_message("mes dépenses par catégorie")
 

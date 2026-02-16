@@ -162,6 +162,32 @@ def _extract_year(message: str) -> int | None:
     return int(years[0])
 
 
+def _extract_merchant_name(message: str) -> str | None:
+    """Extract merchant mention from phrases like `chez coop`.
+
+    Temporal complements (e.g. `en janvier 2026`) are removed from the merchant segment
+    so filters can be composed into a single tool payload.
+    """
+
+    match = re.search(r"\bchez\s+(?P<merchant>.+)$", message, flags=re.IGNORECASE)
+    if match is None:
+        return None
+
+    merchant_value = match.group("merchant").strip(" .,!?:;\"'")
+    if not merchant_value:
+        return None
+
+    temporal_pattern = (
+        r"\s+en\s+(?:janvier|fevrier|février|mars|avril|mai|juin|juillet|aout|août|"
+        r"septembre|octobre|novembre|decembre|décembre|janv\.?|fevr\.?|févr\.?|"
+        r"avr\.?|juil\.?|sept\.?|oct\.?|nov\.?|dec\.?|déc\.?)"
+        r"(?:\s+(?:19\d{2}|20\d{2}|21\d{2}))?\s*$"
+    )
+    merchant_without_temporal = re.sub(temporal_pattern, "", merchant_value, flags=re.IGNORECASE)
+    merchant_name = merchant_without_temporal.strip(" .,!?:;\"'")
+    return merchant_name or None
+
+
 def _extract_category_name(message: str, pattern: str) -> str | None:
     match = re.search(pattern, message, flags=re.IGNORECASE)
     if match is None:
@@ -371,6 +397,7 @@ def deterministic_plan_from_message(message: str) -> Plan:
         )
 
     if any(keyword in lower_message for keyword in _EXPENSE_KEYWORDS):
+        merchant_name = _extract_merchant_name(normalized_message)
         month = _extract_month(lower_message)
         if month is not None:
             explicit_year = _extract_year(normalized_message)
@@ -379,14 +406,27 @@ def deterministic_plan_from_message(message: str) -> Plan:
             if explicit_year is None and month > today.month:
                 return ClarificationPlan(question="De quelle année parlez-vous ?")
             last_day = calendar.monthrange(year, month)[1]
+            payload: dict[str, object] = {
+                "direction": "DEBIT_ONLY",
+                "date_range": {
+                    "start_date": date(year, month, 1),
+                    "end_date": date(year, month, last_day),
+                },
+            }
+            if merchant_name is not None:
+                payload["merchant"] = merchant_name
+            return ToolCallPlan(
+                tool_name="finance_releves_sum",
+                payload=payload,
+                user_reply="OK, je calcule le total de vos dépenses.",
+            )
+
+        if merchant_name is not None:
             return ToolCallPlan(
                 tool_name="finance_releves_sum",
                 payload={
                     "direction": "DEBIT_ONLY",
-                    "date_range": {
-                        "start_date": date(year, month, 1),
-                        "end_date": date(year, month, last_day),
-                    },
+                    "merchant": merchant_name,
                 },
                 user_reply="OK, je calcule le total de vos dépenses.",
             )
