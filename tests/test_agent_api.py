@@ -9,6 +9,7 @@ from agent.api import app
 
 
 client = TestClient(app)
+AUTH_USER_ID = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
 
 
 def _auth_headers() -> dict[str, str]:
@@ -16,10 +17,15 @@ def _auth_headers() -> dict[str, str]:
 
 
 def _mock_authenticated(monkeypatch) -> None:
-    monkeypatch.setattr(agent_api, "get_user_from_bearer_token", lambda _token: {"email": "user@example.com"})
+    monkeypatch.setattr(
+        agent_api,
+        "get_user_from_bearer_token",
+        lambda _token: {"id": str(AUTH_USER_ID), "email": "user@example.com"},
+    )
 
     class _Repo:
-        def get_profile_id_by_email(self, email: str):
+        def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None):
+            assert auth_user_id == AUTH_USER_ID
             assert email == "user@example.com"
             return UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 
@@ -109,3 +115,62 @@ def test_agent_chat_search_returns_parse_validation_error(monkeypatch) -> None:
     payload = response.json()
     assert payload["tool_result"]["code"] == "VALIDATION_ERROR"
     assert "details" in payload["tool_result"]
+
+
+def test_agent_chat_returns_unauthorized_when_auth_user_id_missing(monkeypatch) -> None:
+    monkeypatch.setattr(agent_api, "get_user_from_bearer_token", lambda _token: {"email": "x@example.com"})
+
+    response = client.post("/agent/chat", json={"message": "ping"}, headers=_auth_headers())
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Unauthorized"
+
+
+def test_agent_chat_profile_lookup_supports_fallback_email(monkeypatch) -> None:
+    monkeypatch.setattr(
+        agent_api,
+        "get_user_from_bearer_token",
+        lambda _token: {"id": str(AUTH_USER_ID), "email": "user@example.com"},
+    )
+
+    class _Repo:
+        def __init__(self) -> None:
+            self.called = False
+
+        def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None):
+            self.called = True
+            assert auth_user_id == AUTH_USER_ID
+            assert email == "user@example.com"
+            # Simule le fallback interne par email (account_id non trouvé)
+            return UUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
+
+    repo = _Repo()
+    agent_api.get_profiles_repository.cache_clear()
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+
+    response = client.post("/agent/chat", json={"message": "ping"}, headers=_auth_headers())
+
+    assert repo.called is True
+    assert response.status_code == 200
+
+
+def test_agent_chat_returns_not_linked_message_when_profile_is_missing(monkeypatch) -> None:
+    monkeypatch.setattr(
+        agent_api,
+        "get_user_from_bearer_token",
+        lambda _token: {"id": str(AUTH_USER_ID), "email": "user@example.com"},
+    )
+
+    class _Repo:
+        def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None):
+            assert auth_user_id == AUTH_USER_ID
+            assert email == "user@example.com"
+            return None
+
+    agent_api.get_profiles_repository.cache_clear()
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: _Repo())
+
+    response = client.post("/agent/chat", json={"message": "ping"}, headers=_auth_headers())
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "No profile linked to authenticated user (by account_id or email)"
