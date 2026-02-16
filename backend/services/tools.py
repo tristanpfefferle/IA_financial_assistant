@@ -7,10 +7,17 @@ All business logic must stay in backend and should be delegated to the existing
 from __future__ import annotations
 
 from dataclasses import dataclass
+from uuid import UUID
 
+from backend.repositories.categories_repository import CategoriesRepository
 from backend.repositories.releves_repository import RelevesRepository
 from backend.repositories.transactions_repository import TransactionsRepository
 from shared.models import (
+    CategoriesListResult,
+    CategoryCreateRequest,
+    CategoryDeleteRequest,
+    CategoryUpdateRequest,
+    ProfileCategory,
     RelevesAggregateGroup,
     RelevesAggregateRequest,
     RelevesAggregateResult,
@@ -29,6 +36,7 @@ from shared.models import (
 class BackendToolService:
     transactions_repository: TransactionsRepository
     releves_repository: RelevesRepository
+    categories_repository: CategoriesRepository
 
     def search_transactions(self, filters: TransactionFilters) -> TransactionSearchResult | ToolError:
         """Deprecated alias for releves_search kept for compatibility."""
@@ -76,5 +84,61 @@ class BackendToolService:
                 currency=currency,
                 filters=request,
             )
+        except Exception as exc:  # placeholder normalization at contract boundary
+            return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))
+
+    def finance_categories_list(self, profile_id: UUID) -> CategoriesListResult | ToolError:
+        try:
+            items = self.categories_repository.list_categories(profile_id=profile_id)
+            return CategoriesListResult(items=items)
+        except Exception as exc:  # placeholder normalization at contract boundary
+            return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))
+
+    def finance_categories_create(
+        self,
+        profile_id: UUID,
+        name: str,
+        exclude_from_totals: bool = False,
+    ) -> ProfileCategory | ToolError:
+        try:
+            return self.categories_repository.create_category(
+                CategoryCreateRequest(
+                    profile_id=profile_id,
+                    name=name,
+                    exclude_from_totals=exclude_from_totals,
+                )
+            )
+        except Exception as exc:  # placeholder normalization at contract boundary
+            return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))
+
+    def finance_categories_update(
+        self,
+        profile_id: UUID,
+        category_id: UUID,
+        name: str | None = None,
+        exclude_from_totals: bool | None = None,
+    ) -> ProfileCategory | ToolError:
+        try:
+            return self.categories_repository.update_category(
+                CategoryUpdateRequest(
+                    profile_id=profile_id,
+                    category_id=category_id,
+                    name=name,
+                    exclude_from_totals=exclude_from_totals,
+                )
+            )
+        except ValueError as exc:
+            return ToolError(code=ToolErrorCode.NOT_FOUND, message=str(exc))
+        except Exception as exc:  # placeholder normalization at contract boundary
+            return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))
+
+    def finance_categories_delete(self, profile_id: UUID, category_id: UUID) -> dict[str, bool] | ToolError:
+        try:
+            self.categories_repository.delete_category(
+                CategoryDeleteRequest(profile_id=profile_id, category_id=category_id)
+            )
+            return {"ok": True}
+        except ValueError as exc:
+            return ToolError(code=ToolErrorCode.NOT_FOUND, message=str(exc))
         except Exception as exc:  # placeholder normalization at contract boundary
             return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))
