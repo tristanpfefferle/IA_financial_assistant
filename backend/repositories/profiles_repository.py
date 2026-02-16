@@ -49,23 +49,49 @@ class SupabaseProfilesRepository:
         return None
 
     def get_chat_state(self, *, profile_id: UUID) -> dict[str, Any]:
+        conversation_id = str(profile_id)
         rows, _ = self._client.get_rows(
-            table="profils",
-            query={"select": "chat_state", "id": f"eq.{profile_id}", "limit": 1},
+            table="chat_state",
+            query={
+                "select": "active_task,state,last_filters,agent_state,active_filters,last_intent,last_metric,last_result_summary,tone",
+                "conversation_id": f"eq.{conversation_id}",
+                "limit": 1,
+            },
             with_count=False,
             use_anon_key=False,
         )
         if not rows:
             return {}
-        chat_state = rows[0].get("chat_state")
-        if isinstance(chat_state, dict):
-            return chat_state
-        return {}
+        row = rows[0]
+        return {key: value for key, value in row.items() if value is not None}
 
     def update_chat_state(self, *, profile_id: UUID, chat_state: dict[str, Any]) -> None:
-        self._client.patch_rows(
-            table="profils",
-            query={"id": f"eq.{profile_id}"},
-            payload={"chat_state": chat_state},
+        conversation_id = str(profile_id)
+        payload = {
+            "conversation_id": conversation_id,
+            "profile_id": str(profile_id),
+            "active_task": chat_state.get("active_task"),
+            "state": chat_state.get("state"),
+        }
+
+        rows, _ = self._client.get_rows(
+            table="chat_state",
+            query={"select": "conversation_id", "conversation_id": f"eq.{conversation_id}", "limit": 1},
+            with_count=False,
             use_anon_key=False,
+        )
+        if rows:
+            self._client.patch_rows(
+                table="chat_state",
+                query={"conversation_id": f"eq.{conversation_id}"},
+                payload=payload,
+                use_anon_key=False,
+            )
+            return
+
+        self._client.post_rows(
+            table="chat_state",
+            payload=payload,
+            use_anon_key=False,
+            prefer="resolution=merge-duplicates,return=representation",
         )

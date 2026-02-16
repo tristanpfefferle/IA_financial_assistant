@@ -12,6 +12,7 @@ class _ClientStub:
         self._responses = responses
         self.calls: list[dict[str, object]] = []
         self.patch_calls: list[dict[str, object]] = []
+        self.post_calls: list[dict[str, object]] = []
 
     def get_rows(self, *, table, query, with_count, use_anon_key=False):
         self.calls.append(
@@ -31,6 +32,17 @@ class _ClientStub:
                 "query": query,
                 "payload": payload,
                 "use_anon_key": use_anon_key,
+            }
+        )
+        return []
+
+    def post_rows(self, *, table, payload, use_anon_key=False, prefer="return=representation"):
+        self.post_calls.append(
+            {
+                "table": table,
+                "payload": payload,
+                "use_anon_key": use_anon_key,
+                "prefer": prefer,
             }
         )
         return []
@@ -86,29 +98,72 @@ def test_get_profile_id_for_auth_user_returns_none_when_no_match() -> None:
 
 
 
-def test_get_chat_state_returns_empty_dict_when_null() -> None:
+def test_get_chat_state_returns_empty_dict_when_row_missing() -> None:
     profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
-    client = _ClientStub(responses=[[{"chat_state": None}]])
+    client = _ClientStub(responses=[[]])
     repository = SupabaseProfilesRepository(client=client)
 
     chat_state = repository.get_chat_state(profile_id=profile_id)
 
     assert chat_state == {}
-    assert client.calls[0]["query"] == {"select": "chat_state", "id": f"eq.{profile_id}", "limit": 1}
+    assert client.calls[0]["table"] == "chat_state"
+    assert client.calls[0]["query"] == {
+        "select": "active_task,state,last_filters,agent_state,active_filters,last_intent,last_metric,last_result_summary,tone",
+        "conversation_id": f"eq.{profile_id}",
+        "limit": 1,
+    }
 
 
-def test_update_chat_state_patches_profile_row() -> None:
+def test_update_chat_state_patches_existing_chat_state_row() -> None:
     profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
-    client = _ClientStub(responses=[])
+    client = _ClientStub(responses=[[{"conversation_id": str(profile_id)}]])
     repository = SupabaseProfilesRepository(client=client)
 
-    repository.update_chat_state(profile_id=profile_id, chat_state={"active_task": {"type": "x"}})
+    repository.update_chat_state(
+        profile_id=profile_id,
+        chat_state={"active_task": {"type": "x"}, "state": {"step": "confirm"}},
+    )
 
+    assert client.calls[-1] == {
+        "table": "chat_state",
+        "query": {"select": "conversation_id", "conversation_id": f"eq.{profile_id}", "limit": 1},
+        "with_count": False,
+        "use_anon_key": False,
+    }
     assert client.patch_calls == [
         {
-            "table": "profils",
-            "query": {"id": f"eq.{profile_id}"},
-            "payload": {"chat_state": {"active_task": {"type": "x"}}},
+            "table": "chat_state",
+            "query": {"conversation_id": f"eq.{profile_id}"},
+            "payload": {
+                "conversation_id": str(profile_id),
+                "profile_id": str(profile_id),
+                "active_task": {"type": "x"},
+                "state": {"step": "confirm"},
+            },
             "use_anon_key": False,
+        }
+    ]
+    assert client.post_calls == []
+
+
+def test_update_chat_state_inserts_when_row_missing() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    client = _ClientStub(responses=[[]])
+    repository = SupabaseProfilesRepository(client=client)
+
+    repository.update_chat_state(profile_id=profile_id, chat_state={})
+
+    assert client.patch_calls == []
+    assert client.post_calls == [
+        {
+            "table": "chat_state",
+            "payload": {
+                "conversation_id": str(profile_id),
+                "profile_id": str(profile_id),
+                "active_task": None,
+                "state": None,
+            },
+            "use_anon_key": False,
+            "prefer": "resolution=merge-duplicates,return=representation",
         }
     ]
