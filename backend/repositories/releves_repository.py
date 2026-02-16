@@ -8,6 +8,7 @@ from typing import Protocol
 from uuid import UUID
 
 from backend.db.supabase_client import SupabaseClient
+from backend.repositories.category_utils import normalize_category_name
 from shared.models import (
     ReleveBancaire,
     RelevesAggregateRequest,
@@ -28,6 +29,9 @@ class RelevesRepository(Protocol):
         self, request: RelevesAggregateRequest
     ) -> tuple[dict[str, tuple[Decimal, int]], str | None]:
         """Return grouped totals/counts plus optional currency."""
+
+    def get_excluded_category_names(self, profile_id: UUID) -> set[str]:
+        """Return normalized category names excluded from totals for the profile."""
 
 
 class InMemoryRelevesRepository:
@@ -79,7 +83,12 @@ class InMemoryRelevesRepository:
             items = [item for item in items if start <= item.date <= end]
 
         if filters.categorie:
-            items = [item for item in items if item.categorie == filters.categorie]
+            normalized_filter = normalize_category_name(filters.categorie)
+            items = [
+                item
+                for item in items
+                if item.categorie and normalize_category_name(item.categorie) == normalized_filter
+            ]
 
         if filters.merchant_id:
             items = [item for item in items if item.merchant_id == filters.merchant_id]
@@ -126,6 +135,11 @@ class InMemoryRelevesRepository:
         currency = filtered[0].devise if filtered else None
         return groups, currency
 
+    def get_excluded_category_names(self, profile_id: UUID) -> set[str]:
+        # Kept simple for in-memory mode until categories fixtures are available.
+        _ = profile_id
+        return set()
+
 
 class SupabaseRelevesRepository:
     """Supabase-backed repository for releves_bancaires."""
@@ -143,7 +157,7 @@ class SupabaseRelevesRepository:
             query.append(("date", f"lte.{filters.date_range.end_date}"))
 
         if filters.categorie:
-            query.append(("categorie", f"eq.{filters.categorie}"))
+            query.append(("categorie", f"eq.{normalize_category_name(filters.categorie)}"))
 
         if filters.merchant_id:
             query.append(("merchant_id", f"eq.{filters.merchant_id}"))
@@ -203,3 +217,30 @@ class SupabaseRelevesRepository:
             groups[key] = (current_total + montant, current_count + 1)
 
         return groups, currency
+
+    def get_excluded_category_names(self, profile_id: UUID) -> set[str]:
+        rows, _ = self._client.get_rows(
+            table="profile_categories",
+            query=[
+                ("profile_id", f"eq.{profile_id}"),
+                ("exclude_from_totals", "eq.true"),
+                ("select", "name,name_norm,exclude_from_totals"),
+            ],
+            with_count=False,
+        )
+
+        excluded: set[str] = set()
+        for row in rows:
+            if not row.get("exclude_from_totals"):
+                continue
+
+            name_norm = str(row.get("name_norm") or "").strip()
+            if name_norm:
+                excluded.add(normalize_category_name(name_norm))
+                continue
+
+            name = row.get("name")
+            if isinstance(name, str) and name.strip():
+                excluded.add(normalize_category_name(name))
+
+        return excluded
