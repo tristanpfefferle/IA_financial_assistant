@@ -104,6 +104,24 @@ _CATEGORY_LIST_PATTERNS = (
     "quelles sont mes categories",
 )
 
+_CATEGORY_DELETE_PATTERNS = (
+    "supprime la catégorie",
+    "supprimer la catégorie",
+    "delete la catégorie",
+    "remove la catégorie",
+    "efface la catégorie",
+)
+
+_CATEGORY_RENAME_PATTERNS = (
+    "renomme la catégorie",
+    "renommer la catégorie",
+    "change le nom de la catégorie",
+    "modifie le nom de la catégorie",
+    "appelle la catégorie",
+)
+
+_QUOTED_VALUE_PATTERN = r"[\"'«](?P<value>[^\"'»]+)[\"'»]"
+
 
 def _aggregate_group_by_for_message(lower_message: str) -> str | None:
     for keywords, group_by in _AGGREGATE_RULES:
@@ -135,6 +153,70 @@ def _extract_category_name(message: str, pattern: str) -> str | None:
         return None
     category_name = match.group("category").strip(" .,!?:;\"'")
     return category_name or None
+
+
+
+
+def _extract_quoted_values(message: str) -> list[str]:
+    return [match.group("value").strip() for match in re.finditer(_QUOTED_VALUE_PATTERN, message)]
+
+
+def _extract_category_name_after_keyword(message: str) -> str | None:
+    match = re.search(r"catégorie\s+(?P<category>.+)$", message, flags=re.IGNORECASE)
+    if match is None:
+        return None
+    category_name = match.group("category").strip(" .,!?:;\"'")
+    return category_name or None
+
+
+def _extract_rename_names(message: str) -> tuple[str, str] | None:
+    quoted_values = _extract_quoted_values(message)
+    if len(quoted_values) >= 2:
+        return quoted_values[0], quoted_values[1]
+
+    match = re.search(
+        r"catégorie\s+(?P<old>.+?)\s+en\s+(?P<new>.+)$",
+        message,
+        flags=re.IGNORECASE,
+    )
+    if match is None:
+        return None
+
+    old_name = match.group("old").strip(" .,!?:;\"'")
+    new_name = match.group("new").strip(" .,!?:;\"'")
+    if not old_name or not new_name:
+        return None
+    return old_name, new_name
+
+
+def _extract_delete_name(message: str) -> str | None:
+    quoted_values = _extract_quoted_values(message)
+    if quoted_values:
+        return quoted_values[0]
+    return _extract_category_name_after_keyword(message)
+
+
+def _build_delete_plan(message: str) -> ToolCallPlan | ClarificationPlan:
+    category_name = _extract_delete_name(message)
+    if category_name is None:
+        return ClarificationPlan(question="Quelle catégorie voulez-vous supprimer ?")
+    return ToolCallPlan(
+        tool_name="finance_categories_delete",
+        payload={"category_name": category_name},
+        user_reply="Catégorie supprimée.",
+    )
+
+
+def _build_rename_plan(message: str) -> ToolCallPlan | ClarificationPlan:
+    names = _extract_rename_names(message)
+    if names is None:
+        return ClarificationPlan(question="Quelle catégorie voulez-vous renommer, et en quel nom ?")
+    old_name, new_name = names
+    return ToolCallPlan(
+        tool_name="finance_categories_update",
+        payload={"category_name": old_name, "name": new_name},
+        user_reply="Catégorie renommée.",
+    )
 
 
 def _parse_search_command(message: str) -> tuple[dict[str, object] | None, ToolError | None]:
@@ -234,6 +316,12 @@ def deterministic_plan_from_message(message: str) -> Plan:
             payload={},
             user_reply="Voici vos catégories.",
         )
+
+    if any(pattern in lower_message for pattern in _CATEGORY_DELETE_PATTERNS):
+        return _build_delete_plan(normalized_message)
+
+    if any(pattern in lower_message for pattern in _CATEGORY_RENAME_PATTERNS):
+        return _build_rename_plan(normalized_message)
 
     category_to_exclude = _extract_category_name(
         normalized_message,

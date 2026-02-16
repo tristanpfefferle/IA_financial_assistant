@@ -19,6 +19,7 @@ class ToolErrorCode(str, Enum):
     UNKNOWN_TOOL = "UNKNOWN_TOOL"
     BACKEND_ERROR = "BACKEND_ERROR"
     NOT_FOUND = "NOT_FOUND"
+    AMBIGUOUS = "AMBIGUOUS"
 
 
 class Money(BaseModel):
