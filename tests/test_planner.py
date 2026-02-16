@@ -77,6 +77,30 @@ def test_planner_expenses_chez_merchant_uses_sum_with_merchant_filter() -> None:
     assert plan.payload["merchant"] == "coop"
 
 
+def test_extract_merchant_does_not_strip_non_temporal_en() -> None:
+    plan = plan_from_message("Dépenses chez coop en ligne")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_releves_sum"
+    assert plan.payload["merchant"] == "coop en ligne"
+
+
+def test_extract_merchant_strips_temporal_en_month() -> None:
+    plan = plan_from_message("Dépenses chez migros en janvier 2026")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_releves_sum"
+    assert plan.payload["merchant"] == "migros"
+
+
+def test_extract_merchant_strips_temporal_multi_month() -> None:
+    plan = plan_from_message("Dépenses chez migros en décembre 2025 et janvier 2026")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_releves_sum"
+    assert plan.payload["merchant"] == "migros"
+
+
 def test_planner_expenses_chez_merchant_and_month_are_composed(monkeypatch) -> None:
     monkeypatch.setattr("agent.planner._today", lambda: date(2025, 2, 10))
 
@@ -114,6 +138,32 @@ def test_planner_expenses_chez_merchant_relative_two_months(monkeypatch) -> None
     assert plan.payload["merchant"] == "migros"
     assert plan.payload["date_range"]["start_date"] == date(2025, 12, 1)
     assert plan.payload["date_range"]["end_date"] == date(2026, 2, 16)
+
+
+def test_planner_expenses_chez_merchant_relative_one_month(monkeypatch) -> None:
+    monkeypatch.setattr("agent.planner._today", lambda: date(2026, 1, 10))
+
+    plan = plan_from_message("Dépenses chez migros ces 1 derniers mois")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_releves_sum"
+    assert plan.payload["direction"] == "DEBIT_ONLY"
+    assert plan.payload["merchant"] == "migros"
+    assert plan.payload["date_range"]["start_date"] == date(2025, 12, 1)
+    assert plan.payload["date_range"]["end_date"] == date(2026, 1, 10)
+
+
+def test_planner_expenses_chez_merchant_three_months_builds_min_max_range(monkeypatch) -> None:
+    monkeypatch.setattr("agent.planner._today", lambda: date(2026, 3, 5))
+
+    plan = plan_from_message("Dépenses chez migros en décembre 2025, janvier 2026 et février 2026")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_releves_sum"
+    assert plan.payload["direction"] == "DEBIT_ONLY"
+    assert plan.payload["merchant"] == "migros"
+    assert plan.payload["date_range"]["start_date"] == date(2025, 12, 1)
+    assert plan.payload["date_range"]["end_date"] == date(2026, 2, 28)
 
 
 def test_planner_expenses_chez_merchant_single_month_still_works(monkeypatch) -> None:
