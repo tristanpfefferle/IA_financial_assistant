@@ -1,5 +1,7 @@
 """Tests for deterministic planning behavior."""
 
+from datetime import date
+
 from agent.planner import ErrorPlan, NoopPlan, ToolCallPlan, plan_from_message
 
 
@@ -33,3 +35,13 @@ def test_planner_search_missing_to_returns_error_plan() -> None:
 
     assert isinstance(plan, ErrorPlan)
     assert plan.tool_error.code.value == "VALIDATION_ERROR"
+
+
+def test_planner_expenses_in_january_routes_to_releves_sum() -> None:
+    plan = plan_from_message("total de mes dépenses en janvier")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_releves_sum"
+    assert plan.payload["direction"] == "DEBIT_ONLY"
+    assert plan.payload["date_range"]["start_date"] == date(date.today().year, 1, 1)
+    assert plan.payload["date_range"]["end_date"] == date(date.today().year, 1, 31)

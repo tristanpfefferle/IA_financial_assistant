@@ -7,6 +7,7 @@ type ChatMessage = {
   id: string
   role: 'user' | 'assistant'
   content: string
+  toolResult?: Record<string, unknown> | null
 }
 
 type ChatPageProps = {
@@ -73,6 +74,7 @@ export function ChatPage({ email }: ChatPageProps) {
         id: crypto.randomUUID(),
         role: 'assistant',
         content: response.reply,
+        toolResult: response.tool_result,
       }
       setMessages((previousMessages) => [...previousMessages, assistantMessage])
     } catch (caughtError) {
@@ -105,6 +107,12 @@ export function ChatPage({ email }: ChatPageProps) {
             <article key={chatMessage.id} className={`message message-${chatMessage.role}`}>
               <p className="message-role">{chatMessage.role === 'user' ? 'Vous' : 'Assistant'}</p>
               <p>{chatMessage.content}</p>
+              {debugEnabled && chatMessage.role === 'assistant' && chatMessage.toolResult ? (
+                <details>
+                  <summary>tool_result</summary>
+                  <pre>{JSON.stringify(chatMessage.toolResult, null, 2)}</pre>
+                </details>
+              ) : null}
             </article>
           ))}
         </section>

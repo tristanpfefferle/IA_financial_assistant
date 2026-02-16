@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import calendar
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation
@@ -48,6 +49,24 @@ Plan = ToolCallPlan | ClarificationPlan | NoopPlan | ErrorPlan
 
 
 _SEARCH_TOKENS = {"from", "to", "account", "category", "limit", "offset", "min", "max"}
+_FRENCH_MONTHS = {
+    "janvier": 1,
+    "fevrier": 2,
+    "février": 2,
+    "mars": 3,
+    "avril": 4,
+    "mai": 5,
+    "juin": 6,
+    "juillet": 7,
+    "aout": 8,
+    "août": 8,
+    "septembre": 9,
+    "octobre": 10,
+    "novembre": 11,
+    "decembre": 12,
+    "décembre": 12,
+}
+_EXPENSE_KEYWORDS = {"depense", "dépense", "depenses", "dépenses"}
 
 
 def _parse_search_command(message: str) -> tuple[dict[str, object] | None, ToolError | None]:
@@ -152,6 +171,24 @@ def deterministic_plan_from_message(message: str) -> Plan:
             payload=payload or {},
             user_reply="Voici le résultat de la recherche de transactions.",
         )
+
+    lower_message = normalized_message.lower()
+    if any(keyword in lower_message for keyword in _EXPENSE_KEYWORDS):
+        month = next((month for month_name, month in _FRENCH_MONTHS.items() if month_name in lower_message), None)
+        if month is not None:
+            year = date.today().year
+            last_day = calendar.monthrange(year, month)[1]
+            return ToolCallPlan(
+                tool_name="finance_releves_sum",
+                payload={
+                    "direction": "DEBIT_ONLY",
+                    "date_range": {
+                        "start_date": date(year, month, 1),
+                        "end_date": date(year, month, last_day),
+                    },
+                },
+                user_reply="OK, je calcule le total de vos dépenses.",
+            )
 
     return NoopPlan(reply="Commandes disponibles: 'ping' ou 'search: <term>'.")
 

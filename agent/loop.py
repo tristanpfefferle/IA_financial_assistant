@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from uuid import UUID
 
+from agent.answer_builder import build_final_reply
 from agent.llm_planner import LLMPlanner
 from agent.planner import ErrorPlan, ClarificationPlan, NoopPlan, ToolCallPlan, plan_from_message
 from agent.tool_router import ToolRouter
@@ -29,8 +30,9 @@ class AgentLoop:
 
         if isinstance(plan, ToolCallPlan):
             result = self.tool_router.call(plan.tool_name, plan.payload, profile_id=profile_id)
+            final_reply = build_final_reply(plan=plan, tool_result=result)
             return AgentReply(
-                reply=plan.user_reply,
+                reply=final_reply,
                 tool_result=result.model_dump(mode="json"),
                 plan={"tool_name": plan.tool_name, "payload": plan.payload},
             )

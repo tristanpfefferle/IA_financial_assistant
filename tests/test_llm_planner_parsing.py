@@ -134,3 +134,23 @@ def test_llm_planner_returns_clarification_when_no_tool_call(monkeypatch) -> Non
 
     assert isinstance(plan, ClarificationPlan)
     assert plan.question == "Pouvez-vous préciser la période ?"
+
+
+def test_llm_planner_parses_releves_sum_tool_call(monkeypatch) -> None:
+    monkeypatch.setenv("AGENT_LLM_ENABLED", "true")
+    monkeypatch.setenv("APP_ENV", "dev")
+
+    planner = LLMPlanner(
+        client=FakeClient(
+            _response_with_tool_call(
+                "finance_releves_sum",
+                '{"direction": "DEBIT_ONLY"}',
+            )
+        )
+    )
+
+    plan = planner.plan("Total de mes dépenses")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_releves_sum"
+    assert plan.payload == {"direction": "DEBIT_ONLY"}
