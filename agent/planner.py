@@ -164,6 +164,11 @@ _PROFILE_CORE_FIELDS = [
     "canton",
     "country",
 ]
+_PROFILE_FULL_FIELDS = [
+    *_PROFILE_CORE_FIELDS,
+    "personal_situation",
+    "professional_situation",
+]
 _PROFILE_ADDRESS_FIELDS = ["address_line1", "address_line2", "postal_code", "city", "canton", "country"]
 
 
@@ -413,6 +418,12 @@ def _build_profile_update_request(fields_to_update: dict[str, object]) -> ToolCa
 def _try_build_profile_plan(message: str) -> ToolCallPlan | ErrorPlan | None:
     lower_message = message.lower()
 
+    if re.search(
+        r"\b(?:affiche\s+mon\s+profil|quelles?\s+sont\s+mes\s+informations\s+personnelles|montre\s+mes\s+infos\s+personnelles?)\b",
+        lower_message,
+    ):
+        return _build_profile_fields_request(_PROFILE_FULL_FIELDS)
+
     if re.search(r"\bquel\s+est\s+mon\s+pr[ée]nom\b", lower_message):
         return _build_profile_fields_request(["first_name"])
 
@@ -426,7 +437,7 @@ def _try_build_profile_plan(message: str) -> ToolCallPlan | ErrorPlan | None:
         return _build_profile_fields_request(_PROFILE_ADDRESS_FIELDS)
 
     if re.search(r"\bmontre\s+mes\s+infos\s+perso\b", lower_message):
-        return _build_profile_fields_request(_PROFILE_CORE_FIELDS)
+        return _build_profile_fields_request(_PROFILE_FULL_FIELDS)
 
     if re.search(r"\b(?:supprime|efface)\s+mon\s+pr[ée]nom\b", lower_message):
         return _build_profile_update_request({"first_name": None})
@@ -440,6 +451,16 @@ def _try_build_profile_plan(message: str) -> ToolCallPlan | ErrorPlan | None:
         first_name = _strip_terminal_punctuation(first_name_match.group("first_name"))
         if first_name:
             return _build_profile_update_request({"first_name": first_name})
+
+    last_name_match = re.search(
+        r"\b(?:mon\s+nom\s+est|mets?\s+mon\s+nom\s+[àa])\s+(?P<last_name>.+)$",
+        message,
+        flags=re.IGNORECASE,
+    )
+    if last_name_match is not None:
+        last_name = _strip_terminal_punctuation(last_name_match.group("last_name"))
+        if last_name:
+            return _build_profile_update_request({"last_name": last_name})
 
     full_name_match = re.search(r"\bje\s+m[\"'’]?appelle\s+(?P<full_name>.+)$", message, flags=re.IGNORECASE)
     if full_name_match is not None:
@@ -464,6 +485,42 @@ def _try_build_profile_plan(message: str) -> ToolCallPlan | ErrorPlan | None:
         except ValueError:
             return None
         return _build_profile_update_request({"birth_date": parsed_birth_date.isoformat()})
+
+    city_match = re.search(r"\bj['’]habite\s+[àa]\s+(?P<city>.+)$", message, flags=re.IGNORECASE)
+    if city_match is not None:
+        city = _strip_terminal_punctuation(city_match.group("city"))
+        if city:
+            return _build_profile_update_request({"city": city})
+
+    postal_code_match = re.search(
+        r"\bmon\s+code\s+postal\s+est\s+(?P<postal_code>[\w\- ]+)\b",
+        message,
+        flags=re.IGNORECASE,
+    )
+    if postal_code_match is not None:
+        postal_code = _strip_terminal_punctuation(postal_code_match.group("postal_code"))
+        if postal_code:
+            return _build_profile_update_request({"postal_code": postal_code})
+
+    professional_situation_match = re.search(
+        r"\bma\s+situation\s+professionnelle\s+est\s+(?P<professional_situation>.+)$",
+        message,
+        flags=re.IGNORECASE,
+    )
+    if professional_situation_match is not None:
+        professional_situation = _strip_terminal_punctuation(
+            professional_situation_match.group("professional_situation")
+        )
+        if professional_situation:
+            return _build_profile_update_request({"professional_situation": professional_situation})
+
+    standalone_professional_situation_match = re.search(r"\bje\s+suis\s+(?P<professional_situation>.+)$", message, flags=re.IGNORECASE)
+    if standalone_professional_situation_match is not None:
+        professional_situation = _strip_terminal_punctuation(
+            standalone_professional_situation_match.group("professional_situation")
+        )
+        if professional_situation:
+            return _build_profile_update_request({"professional_situation": professional_situation})
 
     generic_field_plan = _try_build_profile_get_field_plan(message)
     if generic_field_plan is not None:
