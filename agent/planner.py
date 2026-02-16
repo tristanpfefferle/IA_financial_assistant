@@ -100,6 +100,7 @@ _FRENCH_MONTH_ALIASES = {
     "déc.": 12,
 }
 _EXPENSE_KEYWORDS = {"depense", "dépense", "depenses", "dépenses"}
+_MONTH_YEAR_LINK_TOKENS = {"en", "et", "puis", "ainsi", "que"}
 
 _AGGREGATE_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
     (("par catégorie", "par categorie"), "categorie"),
@@ -169,15 +170,24 @@ def _extract_month_year_pairs(message: str) -> list[tuple[int, int | None]]:
 
     for index, match in enumerate(tokenized_matches):
         normalized_token = match.group(0).strip(".")
+        if normalized_token in _MONTH_YEAR_LINK_TOKENS:
+            continue
+
         month = month_lookup.get(normalized_token)
         if month is None:
             continue
 
         year: int | None = None
-        if index + 1 < len(tokenized_matches):
-            next_token = tokenized_matches[index + 1].group(0)
+        lookahead_index = index + 1
+        while lookahead_index < len(tokenized_matches):
+            next_token = tokenized_matches[lookahead_index].group(0).strip(".")
+            if next_token in _MONTH_YEAR_LINK_TOKENS:
+                lookahead_index += 1
+                continue
             if year_pattern.fullmatch(next_token):
                 year = int(next_token)
+            break
+
         month_year_pairs.append((month, year))
 
     return month_year_pairs
@@ -215,7 +225,7 @@ def _extract_merchant_name(message: str) -> str | None:
         r"\s+(?:"
         rf"en\s+(?:{month_pattern})(?:\s+(?:19\d{{2}}|20\d{{2}}|21\d{{2}}))?"
         rf"(?:\s*,\s*(?:{month_pattern})(?:\s+(?:19\d{{2}}|20\d{{2}}|21\d{{2}}))?)*"
-        rf"(?:\s+et\s+(?:{month_pattern})(?:\s+(?:19\d{{2}}|20\d{{2}}|21\d{{2}}))?)?|"
+        rf"(?:\s+et\s+(?:en\s+)?(?:{month_pattern})(?:\s+(?:19\d{{2}}|20\d{{2}}|21\d{{2}}))?)?|"
         r"(?:ces|les)\s+\d+\s+derniers?\s+mois|"
         r"ce\s+mois-ci|"
         r"le\s+mois\s+dernier"
