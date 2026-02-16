@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import UUID
 
 from agent.answer_builder import build_final_reply
 from agent.planner import ToolCallPlan
 from shared.models import (
+    CategoriesListResult,
+    ProfileCategory,
     RelevesAggregateGroup,
     RelevesAggregateRequest,
     RelevesAggregateResult,
@@ -94,3 +97,56 @@ def test_build_final_reply_with_releves_aggregate_result_sorted_and_limited() ->
     assert "Autres" in reply
     assert "-120.00" not in reply
     assert DEBIT_ONLY_NOTE in reply
+
+
+def test_build_final_reply_with_categories_list_marks_excluded() -> None:
+    now = datetime.now(timezone.utc)
+    plan = ToolCallPlan(tool_name="finance_categories_list", payload={}, user_reply="OK")
+    result = CategoriesListResult(
+        items=[
+            ProfileCategory(
+                id=UUID("44444444-4444-4444-4444-444444444444"),
+                profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+                name="Transfert interne",
+                name_norm="transfert interne",
+                exclude_from_totals=True,
+                created_at=now,
+                updated_at=now,
+            )
+        ]
+    )
+
+    reply = build_final_reply(plan=plan, tool_result=result)
+
+    assert "Voici vos catégories" in reply
+    assert "Transfert interne (exclue des totaux)" in reply
+
+
+def test_build_final_reply_with_categories_mutations() -> None:
+    now = datetime.now(timezone.utc)
+    category = ProfileCategory(
+        id=UUID("44444444-4444-4444-4444-444444444444"),
+        profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+        name="Transport",
+        name_norm="transport",
+        exclude_from_totals=False,
+        created_at=now,
+        updated_at=now,
+    )
+
+    create_reply = build_final_reply(
+        plan=ToolCallPlan(tool_name="finance_categories_create", payload={}, user_reply="OK"),
+        tool_result=category,
+    )
+    update_reply = build_final_reply(
+        plan=ToolCallPlan(tool_name="finance_categories_update", payload={}, user_reply="OK"),
+        tool_result=category,
+    )
+    delete_reply = build_final_reply(
+        plan=ToolCallPlan(tool_name="finance_categories_delete", payload={}, user_reply="OK"),
+        tool_result={"ok": True},
+    )
+
+    assert create_reply == "Catégorie créée: Transport."
+    assert update_reply == "Catégorie mise à jour: Transport."
+    assert delete_reply == "Catégorie supprimée."

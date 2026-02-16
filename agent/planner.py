@@ -97,6 +97,14 @@ _AGGREGATE_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
 )
 
 
+_CATEGORY_LIST_PATTERNS = (
+    "liste mes catégories",
+    "liste mes categories",
+    "quelles sont mes catégories",
+    "quelles sont mes categories",
+)
+
+
 def _aggregate_group_by_for_message(lower_message: str) -> str | None:
     for keywords, group_by in _AGGREGATE_RULES:
         if any(keyword in lower_message for keyword in keywords):
@@ -119,6 +127,14 @@ def _extract_year(message: str) -> int | None:
     if not years:
         return None
     return int(years[0])
+
+
+def _extract_category_name(message: str, pattern: str) -> str | None:
+    match = re.search(pattern, message, flags=re.IGNORECASE)
+    if match is None:
+        return None
+    category_name = match.group("category").strip(" .,!?:;\"'")
+    return category_name or None
 
 
 def _parse_search_command(message: str) -> tuple[dict[str, object] | None, ToolError | None]:
@@ -211,6 +227,35 @@ def deterministic_plan_from_message(message: str) -> Plan:
         )
 
     lower_message = normalized_message.lower()
+
+    if any(pattern in lower_message for pattern in _CATEGORY_LIST_PATTERNS):
+        return ToolCallPlan(
+            tool_name="finance_categories_list",
+            payload={},
+            user_reply="Voici vos catégories.",
+        )
+
+    category_to_exclude = _extract_category_name(
+        normalized_message,
+        r"exclus\s+(?P<category>.+?)\s+des\s+totaux",
+    )
+    if category_to_exclude is not None:
+        return ToolCallPlan(
+            tool_name="finance_categories_update",
+            payload={"category_name": category_to_exclude, "exclude_from_totals": True},
+            user_reply="Catégorie exclue des totaux.",
+        )
+
+    category_to_include = _extract_category_name(
+        normalized_message,
+        r"(?:réintègre|reintegre|inclue|inclu)\s+(?P<category>.+)",
+    )
+    if category_to_include is not None:
+        return ToolCallPlan(
+            tool_name="finance_categories_update",
+            payload={"category_name": category_to_include, "exclude_from_totals": False},
+            user_reply="Catégorie réintégrée dans les totaux.",
+        )
 
     aggregate_group_by = _aggregate_group_by_for_message(lower_message)
     if aggregate_group_by is not None:
