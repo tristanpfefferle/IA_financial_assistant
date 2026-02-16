@@ -7,7 +7,9 @@ from decimal import Decimal
 from enum import Enum
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from backend.repositories.category_utils import normalize_category_name
 
 
 class ToolErrorCode(str, Enum):
@@ -57,6 +59,53 @@ class Category(BaseModel):
 
     id: str
     name: str
+
+
+class ProfileCategory(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: UUID
+    profile_id: UUID
+    name: str
+    name_norm: str
+    exclude_from_totals: bool
+    created_at: datetime
+    updated_at: datetime
+
+    @field_validator("name_norm")
+    @classmethod
+    def normalize_name_norm(cls, value: str) -> str:
+        return normalize_category_name(value)
+
+
+class CategoriesListResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[ProfileCategory]
+
+
+class CategoryCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    profile_id: UUID
+    name: str
+    exclude_from_totals: bool = False
+
+
+class CategoryUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    profile_id: UUID
+    category_id: UUID
+    name: str | None = None
+    exclude_from_totals: bool | None = None
+
+
+class CategoryDeleteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    profile_id: UUID
+    category_id: UUID
 
 
 class ToolError(BaseModel):
