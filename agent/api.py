@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import logging
 from functools import lru_cache
+from typing import Any
 from uuid import UUID
 
+from fastapi.encoders import jsonable_encoder
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.requests import Request
@@ -33,8 +35,8 @@ class ChatResponse(BaseModel):
     """Outgoing chat response payload."""
 
     reply: str
-    tool_result: dict[str, object] | None
-    plan: dict[str, object] | None = None
+    tool_result: Any | None
+    plan: Any | None = None
 
 
 @lru_cache(maxsize=1)
@@ -120,7 +122,14 @@ logger.info("cors_allow_origins=%s", ALLOW_ORIGINS)
 async def handle_unexpected_exception(request: Request, exc: Exception) -> JSONResponse:
     """Return a JSON 500 response for unhandled exceptions."""
 
-    logger.exception("unhandled_exception method=%s path=%s", request.method, request.url.path, exc_info=exc)
+    logger.exception(
+        "unhandled_exception method=%s path=%s exception_type=%s message=%s",
+        request.method,
+        request.url.path,
+        type(exc).__name__,
+        str(exc),
+        exc_info=exc,
+    )
     return JSONResponse(status_code=500, content={"detail": "Internal Server Error"})
 
 
@@ -176,7 +185,7 @@ def agent_chat(payload: ChatRequest, authorization: str | None = Header(default=
             active_task=active_task if isinstance(active_task, dict) else None,
         )
 
-        response_plan = dict(agent_reply.plan) if isinstance(agent_reply.plan, dict) else None
+        response_plan = dict(agent_reply.plan) if isinstance(agent_reply.plan, dict) else agent_reply.plan
 
         if agent_reply.should_update_active_task:
             updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
@@ -188,7 +197,7 @@ def agent_chat(payload: ChatRequest, authorization: str | None = Header(default=
                 profiles_repository.update_chat_state(profile_id=profile_id, chat_state=updated_chat_state)
             except Exception:
                 logger.exception("chat_state_update_failed profile_id=%s", profile_id)
-                if response_plan is None:
+                if not isinstance(response_plan, dict):
                     response_plan = {"warnings": ["chat_state_update_failed"]}
                 else:
                     warnings = response_plan.get("warnings")
@@ -197,9 +206,12 @@ def agent_chat(payload: ChatRequest, authorization: str | None = Header(default=
                     else:
                         response_plan["warnings"] = ["chat_state_update_failed"]
 
-        tool_name = response_plan.get("tool_name") if response_plan is not None else None
+        tool_name = response_plan.get("tool_name") if isinstance(response_plan, dict) else None
         logger.info("agent_chat_completed tool_name=%s", tool_name)
-        return ChatResponse(reply=agent_reply.reply, tool_result=agent_reply.tool_result, plan=response_plan)
+        safe_tool_result = jsonable_encoder(agent_reply.tool_result)
+        safe_plan = jsonable_encoder(response_plan)
+
+        return ChatResponse(reply=agent_reply.reply, tool_result=safe_tool_result, plan=safe_plan)
     except HTTPException as exc:
         if exc.status_code in {401, 403}:
             raise
