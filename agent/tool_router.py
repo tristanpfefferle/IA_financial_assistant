@@ -41,9 +41,69 @@ class _CategoryUpdateByNamePayload(BaseModel):
         return self
 
 
+class _CategoryDeleteByNamePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    category_id: UUID | None = None
+    category_name: str | None = None
+
+    @model_validator(mode="after")
+    def validate_identifier(self) -> "_CategoryDeleteByNamePayload":
+        if self.category_id is None and (self.category_name is None or not self.category_name.strip()):
+            raise ValueError("Either category_id or category_name must be provided")
+        return self
+
+
 @dataclass(slots=True)
 class ToolRouter:
     backend_client: BackendClient
+
+    def _find_category_by_name(
+        self,
+        *,
+        profile_id: UUID,
+        category_name: str,
+    ) -> ProfileCategory | ToolError:
+        categories_result = self.backend_client.finance_categories_list(profile_id=profile_id)
+        if isinstance(categories_result, ToolError):
+            return categories_result
+
+        target_name = normalize_category_name(category_name)
+        exact_matches = [item for item in categories_result.items if item.name_norm == target_name]
+
+        if len(exact_matches) == 1:
+            return exact_matches[0]
+
+        if len(exact_matches) > 1:
+            return ToolError(
+                code=ToolErrorCode.AMBIGUOUS,
+                message="Multiple categories match the provided name.",
+                details={
+                    "category_name": category_name,
+                    "category_name_norm": target_name,
+                    "candidates": [item.name for item in exact_matches],
+                },
+            )
+
+        close_name_norms = get_close_matches(
+            target_name,
+            [item.name_norm for item in categories_result.items],
+            n=3,
+            cutoff=0.6,
+        )
+        close_name_norms_set = set(close_name_norms)
+        close_category_names = [
+            item.name for item in categories_result.items if item.name_norm in close_name_norms_set
+        ]
+        return ToolError(
+            code=ToolErrorCode.NOT_FOUND,
+            message="Category not found for provided name.",
+            details={
+                "category_name": category_name,
+                "category_name_norm": target_name,
+                "close_category_names": close_category_names,
+            },
+        )
 
     def call(
         self,
@@ -147,37 +207,12 @@ class ToolRouter:
 
             category_id = request_payload.category_id
             if category_id is None:
-                categories_result = self.backend_client.finance_categories_list(profile_id=profile_id)
-                if isinstance(categories_result, ToolError):
-                    return categories_result
-                target_name = normalize_category_name(request_payload.category_name or "")
-                matched = next(
-                    (item for item in categories_result.items if item.name_norm == target_name),
-                    None,
+                matched = self._find_category_by_name(
+                    profile_id=profile_id,
+                    category_name=request_payload.category_name or "",
                 )
-                if matched is None:
-                    category_name = request_payload.category_name or ""
-                    close_name_norms = get_close_matches(
-                        target_name,
-                        [item.name_norm for item in categories_result.items],
-                        n=3,
-                        cutoff=0.6,
-                    )
-                    close_name_norms_set = set(close_name_norms)
-                    close_category_names = [
-                        item.name
-                        for item in categories_result.items
-                        if item.name_norm in close_name_norms_set
-                    ]
-                    return ToolError(
-                        code=ToolErrorCode.NOT_FOUND,
-                        message="Category not found for provided name.",
-                        details={
-                            "category_name": category_name,
-                            "category_name_norm": target_name,
-                            "close_category_names": close_category_names,
-                        },
-                    )
+                if isinstance(matched, ToolError):
+                    return matched
                 category_id = matched.id
 
             try:
@@ -205,7 +240,28 @@ class ToolRouter:
 
         if tool_name == "finance_categories_delete":
             try:
-                request = CategoryDeleteRequest.model_validate({**payload, "profile_id": str(profile_id)})
+                request_payload = _CategoryDeleteByNamePayload.model_validate(payload)
+            except ValidationError as exc:
+                return ToolError(
+                    code=ToolErrorCode.VALIDATION_ERROR,
+                    message=f"Invalid payload for tool {tool_name}",
+                    details={"validation_errors": exc.errors(), "payload": payload},
+                )
+
+            category_id = request_payload.category_id
+            if category_id is None:
+                matched = self._find_category_by_name(
+                    profile_id=profile_id,
+                    category_name=request_payload.category_name or "",
+                )
+                if isinstance(matched, ToolError):
+                    return matched
+                category_id = matched.id
+
+            try:
+                request = CategoryDeleteRequest.model_validate(
+                    {"profile_id": str(profile_id), "category_id": str(category_id)}
+                )
             except ValidationError as exc:
                 return ToolError(
                     code=ToolErrorCode.VALIDATION_ERROR,

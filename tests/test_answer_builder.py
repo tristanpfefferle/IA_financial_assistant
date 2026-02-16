@@ -143,23 +143,31 @@ def test_build_final_reply_with_categories_mutations() -> None:
         tool_result=category,
     )
     update_reply = build_final_reply(
-        plan=ToolCallPlan(tool_name="finance_categories_update", payload={}, user_reply="OK"),
+        plan=ToolCallPlan(
+            tool_name="finance_categories_update",
+            payload={"category_name": "Transport", "name": "Mobilité"},
+            user_reply="OK",
+        ),
         tool_result=category,
     )
     delete_reply = build_final_reply(
-        plan=ToolCallPlan(tool_name="finance_categories_delete", payload={}, user_reply="OK"),
+        plan=ToolCallPlan(
+            tool_name="finance_categories_delete",
+            payload={"category_name": "Transport"},
+            user_reply="OK",
+        ),
         tool_result={"ok": True},
     )
 
     assert create_reply == "Catégorie créée: Transport."
-    assert update_reply == "Catégorie mise à jour: Transport."
-    assert delete_reply == "Catégorie supprimée."
+    assert update_reply == "Catégorie renommée : Transport → Mobilité."
+    assert delete_reply == "Catégorie supprimée : Transport."
 
 
-def test_build_final_reply_suggests_similar_categories_on_exclude_not_found() -> None:
+def test_build_final_reply_suggests_similar_categories_on_not_found() -> None:
     plan = ToolCallPlan(
         tool_name="finance_categories_update",
-        payload={"category_name": "transfret interne", "exclude_from_totals": True},
+        payload={"category_name": "transfret interne"},
         user_reply="OK",
     )
     error = ToolError(
@@ -173,15 +181,13 @@ def test_build_final_reply_suggests_similar_categories_on_exclude_not_found() ->
 
     reply = build_final_reply(plan=plan, tool_result=error)
 
-    assert "Je ne trouve pas la catégorie « transfret interne »" in reply
-    assert "Transfert interne" in reply
-    assert EXCLUDED_HELP_MESSAGE in reply
+    assert reply == "Je ne trouve pas cette catégorie. Vouliez-vous dire: Transfert interne, Transport ?"
 
 
-def test_build_final_reply_proposes_create_when_no_similar_category() -> None:
+def test_build_final_reply_not_found_without_suggestions() -> None:
     plan = ToolCallPlan(
         tool_name="finance_categories_update",
-        payload={"category_name": "foo", "exclude_from_totals": True},
+        payload={"category_name": "foo"},
         user_reply="OK",
     )
     error = ToolError(
@@ -192,5 +198,4 @@ def test_build_final_reply_proposes_create_when_no_similar_category() -> None:
 
     reply = build_final_reply(plan=plan, tool_result=error)
 
-    assert "Souhaitez-vous que je la crée puis l’exclue des totaux ?" in reply
-    assert EXCLUDED_HELP_MESSAGE in reply
+    assert reply == "Je ne trouve pas cette catégorie."

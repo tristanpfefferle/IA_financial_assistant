@@ -3,10 +3,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
-from difflib import get_close_matches
 from typing import Any
-
-from backend.repositories.category_utils import normalize_category_name
 
 from agent.planner import ToolCallPlan
 from shared.models import (
@@ -40,52 +37,40 @@ def _excluded_totals_help_message() -> str:
     )
 
 
-def _build_category_not_found_reply(plan: ToolCallPlan, error: ToolError) -> str | None:
-    if plan.tool_name != "finance_categories_update" or error.code != ToolErrorCode.NOT_FOUND:
-        return None
-    if not isinstance(plan.payload, dict) or not plan.payload.get("exclude_from_totals"):
+def _build_category_not_found_reply(error: ToolError) -> str | None:
+    if error.code != ToolErrorCode.NOT_FOUND:
         return None
 
     details: dict[str, Any] = error.details if isinstance(error.details, dict) else {}
-    raw_name = details.get("category_name") or plan.payload.get("category_name")
+    raw_name = details.get("category_name")
     if not isinstance(raw_name, str) or not raw_name.strip():
         return None
-    requested_name = raw_name.strip()
-    requested_name_norm = normalize_category_name(requested_name)
 
-    candidates = details.get("close_category_names")
-    if isinstance(candidates, list):
-        candidate_names = [name for name in candidates if isinstance(name, str) and name.strip()]
-    else:
-        candidate_names = []
+    candidate_names_raw = details.get("close_category_names")
+    if not isinstance(candidate_names_raw, list):
+        return "Je ne trouve pas cette catégorie."
 
-    if candidate_names:
-        ranked_matches = get_close_matches(
-            requested_name_norm,
-            [normalize_category_name(name) for name in candidate_names],
-            n=3,
-            cutoff=0.6,
-        )
-        if ranked_matches:
-            ranked_set = set(ranked_matches)
-            display_matches = [
-                name
-                for name in candidate_names
-                if normalize_category_name(name) in ranked_set
-            ]
-        else:
-            display_matches = candidate_names[:3]
-        return (
-            f"Je ne trouve pas la catégorie « {requested_name} ». "
-            f"Voulez-vous dire: {', '.join(display_matches)} ?\n"
-            f"{_excluded_totals_help_message()}"
-        )
+    candidate_names = [name for name in candidate_names_raw if isinstance(name, str) and name.strip()]
+    if not candidate_names:
+        return "Je ne trouve pas cette catégorie."
 
-    return (
-        f"Je ne trouve pas la catégorie « {requested_name} ». "
-        "Souhaitez-vous que je la crée puis l’exclue des totaux ?\n"
-        f"{_excluded_totals_help_message()}"
-    )
+    return f"Je ne trouve pas cette catégorie. Vouliez-vous dire: {', '.join(candidate_names[:3])} ?"
+
+
+def _build_category_ambiguous_reply(error: ToolError) -> str | None:
+    if error.code != ToolErrorCode.AMBIGUOUS:
+        return None
+
+    details: dict[str, Any] = error.details if isinstance(error.details, dict) else {}
+    candidates_raw = details.get("candidates")
+    if not isinstance(candidates_raw, list):
+        return "Plusieurs catégories correspondent. Pouvez-vous préciser ?"
+
+    candidates = [name for name in candidates_raw if isinstance(name, str) and name.strip()]
+    if not candidates:
+        return "Plusieurs catégories correspondent. Pouvez-vous préciser ?"
+
+    return f"Plusieurs catégories correspondent: {', '.join(candidates)}."
 
 
 def _releves_total_label(result: RelevesSumResult) -> str:
@@ -142,9 +127,12 @@ def build_final_reply(*, plan: ToolCallPlan, tool_result: object) -> str:
     """Build a concise French final answer from a tool result."""
 
     if isinstance(tool_result, ToolError):
-        category_not_found_reply = _build_category_not_found_reply(plan, tool_result)
+        category_not_found_reply = _build_category_not_found_reply(tool_result)
         if category_not_found_reply is not None:
             return category_not_found_reply
+        category_ambiguous_reply = _build_category_ambiguous_reply(tool_result)
+        if category_ambiguous_reply is not None:
+            return category_ambiguous_reply
         details = ""
         if tool_result.details:
             details = f" Détails: {tool_result.details}."
@@ -157,9 +145,16 @@ def build_final_reply(*, plan: ToolCallPlan, tool_result: object) -> str:
         if plan.tool_name == "finance_categories_create":
             return f"Catégorie créée: {tool_result.name}."
         if plan.tool_name == "finance_categories_update":
+            requested_old_name = plan.payload.get("category_name") if isinstance(plan.payload, dict) else None
+            requested_new_name = plan.payload.get("name") if isinstance(plan.payload, dict) else None
+            if isinstance(requested_old_name, str) and isinstance(requested_new_name, str):
+                return f"Catégorie renommée : {requested_old_name} → {requested_new_name}."
             return f"Catégorie mise à jour: {tool_result.name}."
 
     if plan.tool_name == "finance_categories_delete" and isinstance(tool_result, dict) and tool_result.get("ok"):
+        deleted_name = plan.payload.get("category_name") if isinstance(plan.payload, dict) else None
+        if isinstance(deleted_name, str):
+            return f"Catégorie supprimée : {deleted_name}."
         return "Catégorie supprimée."
 
     if isinstance(tool_result, RelevesSumResult):

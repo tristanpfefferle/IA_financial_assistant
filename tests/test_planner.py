@@ -115,3 +115,34 @@ def test_planner_categories_include_pattern() -> None:
     assert isinstance(plan, ToolCallPlan)
     assert plan.tool_name == "finance_categories_update"
     assert plan.payload == {"category_name": "Transfert interne", "exclude_from_totals": False}
+
+
+def test_planner_categories_delete_by_name_pattern() -> None:
+    plan = plan_from_message("Supprime la catégorie 'divers'")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_categories_delete"
+    assert plan.payload == {"category_name": "divers"}
+
+
+def test_planner_categories_rename_by_name_pattern() -> None:
+    plan = plan_from_message('Renomme la catégorie "divers" en "Divers"')
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_categories_update"
+    assert plan.payload == {"category_name": "divers", "name": "Divers"}
+
+
+def test_planner_categories_rename_without_quotes_pattern() -> None:
+    plan = plan_from_message("Change le nom de la catégorie divers en Divers")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_categories_update"
+    assert plan.payload == {"category_name": "divers", "name": "Divers"}
+
+
+def test_planner_categories_delete_needs_clarification_when_missing_name() -> None:
+    plan = plan_from_message("supprime la catégorie")
+
+    assert isinstance(plan, ClarificationPlan)
+    assert plan.question == "Quelle catégorie voulez-vous supprimer ?"
