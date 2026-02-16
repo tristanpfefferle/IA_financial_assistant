@@ -8,7 +8,13 @@ from typing import Protocol
 from uuid import UUID
 
 from backend.db.supabase_client import SupabaseClient
-from shared.models import ReleveBancaire, RelevesDirection, RelevesFilters
+from shared.models import (
+    ReleveBancaire,
+    RelevesAggregateRequest,
+    RelevesDirection,
+    RelevesFilters,
+    RelevesGroupBy,
+)
 
 
 class RelevesRepository(Protocol):
@@ -17,6 +23,11 @@ class RelevesRepository(Protocol):
 
     def sum_releves(self, filters: RelevesFilters) -> tuple[Decimal, int, str | None]:
         """Return total, count and currency for releves matching filters."""
+
+    def aggregate_releves(
+        self, request: RelevesAggregateRequest
+    ) -> tuple[dict[str, tuple[Decimal, int]], str | None]:
+        """Return grouped totals/counts plus optional currency."""
 
 
 class InMemoryRelevesRepository:
@@ -59,7 +70,7 @@ class InMemoryRelevesRepository:
             ),
         ]
 
-    def _apply_filters(self, filters: RelevesFilters) -> list[ReleveBancaire]:
+    def _apply_filters(self, filters: RelevesFilters | RelevesAggregateRequest) -> list[ReleveBancaire]:
         items = [item for item in self._seed if item.profile_id == filters.profile_id]
 
         if filters.date_range:
@@ -95,6 +106,26 @@ class InMemoryRelevesRepository:
         currency = filtered[0].devise if filtered else None
         return total, len(filtered), currency
 
+    def aggregate_releves(
+        self, request: RelevesAggregateRequest
+    ) -> tuple[dict[str, tuple[Decimal, int]], str | None]:
+        filtered = self._apply_filters(request)
+        groups: dict[str, tuple[Decimal, int]] = {}
+
+        for item in filtered:
+            if request.group_by == RelevesGroupBy.CATEGORIE:
+                key = item.categorie or "Autre"
+            elif request.group_by == RelevesGroupBy.PAYEE:
+                key = item.payee or "Inconnu"
+            else:
+                key = item.date.isoformat()[:7]
+
+            current_total, current_count = groups.get(key, (Decimal("0"), 0))
+            groups[key] = (current_total + item.montant, current_count + 1)
+
+        currency = filtered[0].devise if filtered else None
+        return groups, currency
+
 
 class SupabaseRelevesRepository:
     """Supabase-backed repository for releves_bancaires."""
@@ -102,7 +133,7 @@ class SupabaseRelevesRepository:
     def __init__(self, client: SupabaseClient) -> None:
         self._client = client
 
-    def _build_query(self, filters: RelevesFilters) -> list[tuple[str, str | int]]:
+    def _build_query(self, filters: RelevesFilters | RelevesAggregateRequest) -> list[tuple[str, str | int]]:
         query: list[tuple[str, str | int]] = [
             ("profile_id", f"eq.{filters.profile_id}"),
         ]
@@ -149,3 +180,26 @@ class SupabaseRelevesRepository:
                 currency = row.get("devise")
 
         return total, len(rows), currency
+
+    def aggregate_releves(
+        self, request: RelevesAggregateRequest
+    ) -> tuple[dict[str, tuple[Decimal, int]], str | None]:
+        query = [*self._build_query(request), ("select", "montant,devise,date,categorie,payee")]
+        rows, _ = self._client.get_rows(table="releves_bancaires", query=query, with_count=False)
+
+        groups: dict[str, tuple[Decimal, int]] = {}
+        currency: str | None = rows[0].get("devise") if rows else None
+
+        for row in rows:
+            if request.group_by == RelevesGroupBy.CATEGORIE:
+                key = row.get("categorie") or "Autre"
+            elif request.group_by == RelevesGroupBy.PAYEE:
+                key = row.get("payee") or "Inconnu"
+            else:
+                key = str(row["date"])[:7]
+
+            montant = Decimal(str(row["montant"]))
+            current_total, current_count = groups.get(key, (Decimal("0"), 0))
+            groups[key] = (current_total + montant, current_count + 1)
+
+        return groups, currency
