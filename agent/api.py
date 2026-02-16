@@ -26,7 +26,6 @@ from backend.repositories.profiles_repository import SupabaseProfilesRepository
 
 
 logger = logging.getLogger(__name__)
-logger.info("using_agent_loop=%s.%s", AgentLoop.__module__, AgentLoop.__name__)
 
 
 class ChatRequest(BaseModel):
@@ -54,10 +53,12 @@ def get_agent_loop() -> AgentLoop:
     if _config.llm_enabled():
         llm_planner = LLMPlanner(strict=_config.llm_strict())
 
-    return AgentLoop(
+    loop = AgentLoop(
         tool_router=tool_router,
         llm_planner=llm_planner,
     )
+    logger.info("using_agent_loop=%s.%s", loop.__class__.__module__, loop.__class__.__name__)
+    return loop
 
 
 @lru_cache(maxsize=1)

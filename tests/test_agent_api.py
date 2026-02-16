@@ -56,7 +56,24 @@ class _DeleteRouter:
 
 def test_get_agent_loop_uses_agent_loop_module(monkeypatch) -> None:
     agent_api.get_agent_loop.cache_clear()
+
+    class _DummyBackendClient:
+        pass
+
+    class _DummyToolRouter:
+        pass
+
     monkeypatch.setattr(agent_api, "build_backend_tool_service", lambda: SimpleNamespace())
+    monkeypatch.setattr(
+        agent_api,
+        "BackendClient",
+        lambda tool_service: _DummyBackendClient(),
+    )
+    monkeypatch.setattr(
+        agent_api,
+        "ToolRouter",
+        lambda backend_client: _DummyToolRouter(),
+    )
     monkeypatch.setattr(agent_api._config, "llm_enabled", lambda: False)
 
     try:
