@@ -21,9 +21,13 @@ class BackendClient:
     tool_service: BackendToolService
 
     def search_transactions(self, filters: TransactionFilters) -> TransactionSearchResult | ToolError:
+        """Deprecated alias for releves_search kept for compatibility."""
+
         return self.tool_service.search_transactions(filters)
 
     def sum_transactions(self, filters: TransactionFilters) -> TransactionSumResult | ToolError:
+        """Deprecated alias for releves_sum kept for compatibility."""
+
         return self.tool_service.sum_transactions(filters)
 
     def releves_search(self, filters: RelevesFilters) -> RelevesSearchResult | ToolError:

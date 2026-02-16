@@ -16,8 +16,8 @@ def test_planner_search_parses_date_range_filters() -> None:
     plan = plan_from_message("search: coffee from:2025-01-01 to:2025-01-31")
 
     assert isinstance(plan, ToolCallPlan)
-    assert plan.tool_name == "finance_transactions_search"
-    assert plan.payload["search"] == "coffee"
+    assert plan.tool_name == "finance_releves_search"
+    assert plan.payload["merchant"] == "coffee"
     assert plan.payload["date_range"]["start_date"].isoformat() == "2025-01-01"
     assert plan.payload["date_range"]["end_date"].isoformat() == "2025-01-31"
 
@@ -26,7 +26,7 @@ def test_planner_search_invalid_limit_stays_tool_call() -> None:
     plan = plan_from_message("search: coffee limit:0")
 
     assert isinstance(plan, ToolCallPlan)
-    assert plan.tool_name == "finance_transactions_search"
+    assert plan.tool_name == "finance_releves_search"
     assert plan.payload["limit"] == 0
 
 

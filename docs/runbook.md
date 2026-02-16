@@ -96,6 +96,10 @@ La logique métier doit venir du repo `gestion_financiere` (wrappers backend). A
 
 ### Outils backend disponibles
 
+- `transactions` = alias historique de `relevés` (même source de vérité: `releves_bancaires`)
+- Outils canoniques: `finance_releves_search` et `finance_releves_sum`
+- Alias temporairement compatibles (dépréciés): `finance_transactions_search` et `finance_transactions_sum`
+
 - `finance_releves_search`: liste paginée sur `releves_bancaires`
 - `finance_releves_sum`: agrégats (`total`, `count`, `average`) avec `Decimal`
 

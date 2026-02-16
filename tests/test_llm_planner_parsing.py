@@ -52,7 +52,7 @@ def test_llm_planner_parses_sum_tool_call(monkeypatch) -> None:
         client=FakeClient(
             _response_with_tool_call(
                 "finance_transactions_sum",
-                '{"search": "cafe", "direction": "DEBIT_ONLY"}',
+                '{"merchant": "cafe", "direction": "DEBIT_ONLY"}',
             )
         )
     )
@@ -60,8 +60,8 @@ def test_llm_planner_parses_sum_tool_call(monkeypatch) -> None:
     plan = planner.plan("Combien j'ai dépensé en café ?")
 
     assert isinstance(plan, ToolCallPlan)
-    assert plan.tool_name == "finance_transactions_sum"
-    assert plan.payload == {"search": "cafe", "direction": "DEBIT_ONLY"}
+    assert plan.tool_name == "finance_releves_sum"
+    assert plan.payload == {"merchant": "cafe", "direction": "DEBIT_ONLY"}
 
 
 def test_llm_planner_parses_search_tool_call(monkeypatch) -> None:
@@ -72,7 +72,7 @@ def test_llm_planner_parses_search_tool_call(monkeypatch) -> None:
         client=FakeClient(
             _response_with_tool_call(
                 "finance_transactions_search",
-                '{"search": "coffee", "limit": 10, "offset": 0}',
+                '{"merchant": "coffee", "limit": 10, "offset": 0}',
             )
         )
     )
@@ -80,8 +80,8 @@ def test_llm_planner_parses_search_tool_call(monkeypatch) -> None:
     plan = planner.plan("Liste mes transactions café")
 
     assert isinstance(plan, ToolCallPlan)
-    assert plan.tool_name == "finance_transactions_search"
-    assert plan.payload["search"] == "coffee"
+    assert plan.tool_name == "finance_releves_search"
+    assert plan.payload["merchant"] == "coffee"
 
 
 def test_llm_planner_returns_validation_error_on_invalid_json(monkeypatch) -> None:
@@ -108,7 +108,7 @@ def test_llm_planner_returns_clarification_for_unknown_tool(monkeypatch) -> None
     plan = planner.plan("Supprime cette transaction")
 
     assert isinstance(plan, ClarificationPlan)
-    assert "rechercher des transactions" in plan.question
+    assert "rechercher des relevés" in plan.question
 
 
 def test_llm_planner_returns_clarification_when_no_tool_call(monkeypatch) -> None:

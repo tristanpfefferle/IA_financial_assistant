@@ -67,7 +67,7 @@ def test_agent_chat_search_returns_tool_result(monkeypatch) -> None:
     assert payload["reply"]
     assert isinstance(payload["tool_result"], dict)
     assert isinstance(payload["plan"], dict)
-    assert payload["plan"]["tool_name"] == "finance_transactions_search"
+    assert payload["plan"]["tool_name"] == "finance_releves_search"
     assert (
         "items" in payload["tool_result"]
         or {"code", "message"}.issubset(set(payload["tool_result"].keys()))
@@ -88,7 +88,7 @@ def test_agent_chat_search_supports_date_range_filters(monkeypatch) -> None:
     assert isinstance(payload["tool_result"], dict)
     assert "items" in payload["tool_result"]
     assert payload["tool_result"]["items"]
-    assert all("coffee" in item["description"].lower() for item in payload["tool_result"]["items"])
+    assert all(("coffee" in (item.get("libelle") or "").lower()) or ("coffee" in (item.get("payee") or "").lower()) for item in payload["tool_result"]["items"])
 
 
 def test_agent_chat_search_returns_validation_error_for_invalid_limit(monkeypatch) -> None:

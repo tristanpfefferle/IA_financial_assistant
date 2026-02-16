@@ -59,36 +59,6 @@ class Category(BaseModel):
     name: str
 
 
-class TransactionSumDirection(str, Enum):
-    """Direction selector used by transaction sum tool."""
-
-    ALL = "ALL"
-    DEBIT_ONLY = "DEBIT_ONLY"
-    CREDIT_ONLY = "CREDIT_ONLY"
-
-
-class RelevesDirection(str, Enum):
-    """Direction selector for releves bank transactions."""
-
-    ALL = "ALL"
-    DEBIT_ONLY = "DEBIT_ONLY"
-    CREDIT_ONLY = "CREDIT_ONLY"
-
-
-class TransactionFilters(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    account_id: str | None = None
-    category_id: str | None = None
-    date_range: DateRange | None = None
-    min_amount: Decimal | None = None
-    max_amount: Decimal | None = None
-    search: str | None = None
-    direction: TransactionSumDirection | None = None
-    limit: int = Field(default=50, ge=1, le=500)
-    offset: int = Field(default=0, ge=0)
-
-
 class ToolError(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -97,23 +67,12 @@ class ToolError(BaseModel):
     details: dict[str, object] | None = None
 
 
-class TransactionSearchResult(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+class RelevesDirection(str, Enum):
+    """Direction selector for releves bank transactions."""
 
-    items: list[Transaction]
-    limit: int
-    offset: int
-    total: int | None = None
-
-
-class TransactionSumResult(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    total: Money
-    count: int
-    limit: int
-    offset: int
-    filters: TransactionFilters | None = None
+    ALL = "ALL"
+    DEBIT_ONLY = "DEBIT_ONLY"
+    CREDIT_ONLY = "CREDIT_ONLY"
 
 
 class ReleveBancaire(BaseModel):
@@ -160,3 +119,10 @@ class RelevesSumResult(BaseModel):
     average: Decimal
     currency: str | None = None
     filters: RelevesFilters | None = None
+
+
+# Deprecated aliases kept for backwards compatibility.
+TransactionSumDirection = RelevesDirection
+TransactionFilters = RelevesFilters
+TransactionSearchResult = RelevesSearchResult
+TransactionSumResult = RelevesSumResult
