@@ -2,9 +2,9 @@ import { useEffect, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 
 import './App.css'
+import { supabase } from './lib/supabaseClient'
 import { ChatPage } from './pages/ChatPage'
 import { LoginPage } from './pages/LoginPage'
-import { supabase } from './lib/supabaseClient'
 
 function App() {
   const [session, setSession] = useState<Session | null>(null)
@@ -34,7 +34,7 @@ function App() {
     return <LoginPage />
   }
 
-  return <ChatPage />
+  return <ChatPage email={session.user.email} />
 }
 
 export default App
