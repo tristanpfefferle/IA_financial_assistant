@@ -6,7 +6,6 @@ import calendar
 import re
 from dataclasses import dataclass
 from datetime import date
-from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING
 
 from shared.models import ToolError, ToolErrorCode
@@ -49,7 +48,7 @@ class ErrorPlan:
 Plan = ToolCallPlan | ClarificationPlan | NoopPlan | ErrorPlan
 
 
-_SEARCH_TOKENS = {"from", "to", "account", "category", "limit", "offset", "min", "max"}
+_SEARCH_TOKENS = {"from", "to", "category", "limit", "offset"}
 _FRENCH_MONTHS = {
     "janvier": 1,
     "fevrier": 2,
@@ -112,8 +111,8 @@ def _extract_year(message: str) -> int | None:
 def _parse_search_command(message: str) -> tuple[dict[str, object] | None, ToolError | None]:
     """Parse `search:` commands.
 
-    Grammar: `search: <term?> [from:YYYY-MM-DD to:YYYY-MM-DD] [account:<id>]`
-    with optional `category:`, `limit:`, `offset:`, `min:` and `max:` filters.
+    Grammar: `search: <merchant?> [from:YYYY-MM-DD to:YYYY-MM-DD]`
+    with optional `category:`, `limit:` and `offset:` filters.
     """
     body = message.split(":", maxsplit=1)[1].strip()
     if not body:
@@ -130,6 +129,7 @@ def _parse_search_command(message: str) -> tuple[dict[str, object] | None, ToolE
             break
         search_parts.append(word)
 
+    # UX note: the free-text term before filters maps to `merchant`.
     payload: dict[str, object] = {
         "merchant": " ".join(search_parts).strip() or None,
         "limit": 50,
@@ -172,13 +172,6 @@ def _parse_search_command(message: str) -> tuple[dict[str, object] | None, ToolE
             message="Format invalide dans la commande search:. Vérifiez les dates et nombres.",
             details={"error": str(exc), "input": token_values},
         )
-    except InvalidOperation as exc:
-        return None, ToolError(
-            code=ToolErrorCode.VALIDATION_ERROR,
-            message="Montant invalide dans la commande search:. Utilisez un nombre décimal valide.",
-            details={"error": str(exc), "input": token_values},
-        )
-
     return payload, None
 
 

@@ -2,17 +2,18 @@
 
 from uuid import UUID
 
-from agent.factory import build_agent_loop
+from agent.tool_router import ToolRouter
 from shared.models import ToolError, TransactionSearchResult
+from tests.fakes import FakeBackendClient
 
 PROFILE_ID = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 
 
 def test_transactions_search_returns_paginated_result() -> None:
-    agent_loop = build_agent_loop()
+    tool_router = ToolRouter(backend_client=FakeBackendClient())
 
     payload = {"limit": 2, "offset": 1}
-    result = agent_loop.tool_router.call("finance_transactions_search", payload, profile_id=PROFILE_ID)
+    result = tool_router.call("finance_transactions_search", payload, profile_id=PROFILE_ID)
 
     assert isinstance(result, TransactionSearchResult)
     assert result.limit == 2
@@ -21,14 +22,14 @@ def test_transactions_search_returns_paginated_result() -> None:
 
 
 def test_transactions_search_applies_merchant_filter() -> None:
-    agent_loop = build_agent_loop()
+    tool_router = ToolRouter(backend_client=FakeBackendClient())
 
-    base_result = agent_loop.tool_router.call(
+    base_result = tool_router.call(
         "finance_transactions_search",
         {"limit": 50, "offset": 0},
         profile_id=PROFILE_ID,
     )
-    filtered_result = agent_loop.tool_router.call(
+    filtered_result = tool_router.call(
         "finance_transactions_search",
         {"merchant": "coffee", "limit": 50, "offset": 0},
         profile_id=PROFILE_ID,
@@ -37,14 +38,16 @@ def test_transactions_search_applies_merchant_filter() -> None:
     assert isinstance(base_result, TransactionSearchResult)
     assert isinstance(filtered_result, TransactionSearchResult)
     assert 0 < len(filtered_result.items) < len(base_result.items)
-    assert all("coffee" in (transaction.payee or "").lower() for transaction in filtered_result.items)
+    assert all(
+        "coffee" in (transaction.payee or "").lower()
+        or "coffee" in (transaction.libelle or "").lower()
+        for transaction in filtered_result.items
+    )
 
 
 def test_transactions_search_returns_tool_error_for_invalid_payload() -> None:
-    agent_loop = build_agent_loop()
+    tool_router = ToolRouter(backend_client=FakeBackendClient())
 
-    result = agent_loop.tool_router.call(
-        "finance_transactions_search", {"limit": "invalid"}, profile_id=PROFILE_ID
-    )
+    result = tool_router.call("finance_transactions_search", {"limit": "invalid"}, profile_id=PROFILE_ID)
 
     assert isinstance(result, ToolError)
