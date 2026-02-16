@@ -300,3 +300,35 @@ def test_planner_categories_rename_change_pattern() -> None:
     assert isinstance(plan, ToolCallPlan)
     assert plan.tool_name == "finance_categories_update"
     assert plan.payload == {"category_name": "Autres", "name": "Divers"}
+
+
+def test_planner_profile_get_first_name() -> None:
+    plan = plan_from_message("Quel est mon prénom ?")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_profile_get"
+    assert plan.payload == {"fields": ["first_name"]}
+
+
+def test_planner_profile_update_first_name() -> None:
+    plan = plan_from_message("Mets mon prénom à Paul")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_profile_update"
+    assert plan.payload == {"set": {"first_name": "Paul"}}
+
+
+def test_planner_profile_clear_first_name() -> None:
+    plan = plan_from_message("Supprime mon prénom")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_profile_update"
+    assert plan.payload == {"set": {"first_name": None}}
+
+
+def test_planner_profile_update_birth_date() -> None:
+    plan = plan_from_message("Ma date de naissance est 2001-07-14")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_profile_update"
+    assert plan.payload == {"set": {"birth_date": "2001-07-14"}}
