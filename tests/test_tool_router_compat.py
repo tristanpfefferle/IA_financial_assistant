@@ -3,7 +3,7 @@
 from uuid import UUID
 
 from agent.tool_router import ToolRouter
-from shared.models import RelevesSumResult
+from shared.models import RelevesAggregateResult, RelevesSumResult, ToolError, ToolErrorCode
 from tests.fakes import FakeBackendClient
 
 PROFILE_ID = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
@@ -25,3 +25,25 @@ def test_transactions_sum_alias_matches_releves_sum() -> None:
     assert tx_result.total == releves_result.total
     assert tx_result.count == releves_result.count
     assert tx_result.currency == releves_result.currency
+
+
+def test_releves_aggregate_requires_profile_id_context() -> None:
+    tool_router = ToolRouter(backend_client=FakeBackendClient())
+
+    result = tool_router.call("finance_releves_aggregate", {"group_by": "categorie"})
+
+    assert isinstance(result, ToolError)
+    assert result.code == ToolErrorCode.VALIDATION_ERROR
+
+
+def test_releves_aggregate_routes_to_backend_client() -> None:
+    tool_router = ToolRouter(backend_client=FakeBackendClient())
+
+    result = tool_router.call(
+        "finance_releves_aggregate",
+        {"group_by": "payee", "direction": "DEBIT_ONLY"},
+        profile_id=PROFILE_ID,
+    )
+
+    assert isinstance(result, RelevesAggregateResult)
+    assert result.group_by.value == "payee"

@@ -5,7 +5,13 @@ from __future__ import annotations
 from decimal import Decimal
 
 from agent.planner import ToolCallPlan
-from shared.models import RelevesDirection, RelevesSearchResult, RelevesSumResult, ToolError
+from shared.models import (
+    RelevesAggregateResult,
+    RelevesDirection,
+    RelevesSearchResult,
+    RelevesSumResult,
+    ToolError,
+)
 
 
 def _format_decimal(value: Decimal) -> str:
@@ -26,6 +32,30 @@ def _releves_total_label(result: RelevesSumResult) -> str:
     return "Total"
 
 
+
+def _build_aggregate_reply(result: RelevesAggregateResult) -> str:
+    currency = result.currency or "CHF"
+    sorted_groups = sorted(result.groups.items(), key=lambda item: abs(item[1].total), reverse=True)
+
+    if not sorted_groups:
+        return "Je n'ai trouvé aucune opération pour cette agrégation."
+
+    top_groups = sorted_groups[:10]
+    lines = [
+        f"- {name}: {abs(group.total):.2f} {currency} ({group.count} opérations)"
+        for name, group in top_groups
+    ]
+
+    if len(sorted_groups) > 10:
+        others = sorted_groups[10:]
+        others_total = sum((abs(group.total) for _, group in others), start=Decimal("0"))
+        others_count = sum(group.count for _, group in others)
+        lines.append(f"- Autres: {others_total:.2f} {currency} ({others_count} opérations)")
+
+    group_by_label = result.group_by.value
+    return "\n".join([f"Voici vos dépenses agrégées par {group_by_label} :", *lines])
+
+
 def build_final_reply(*, plan: ToolCallPlan, tool_result: object) -> str:
     """Build a concise French final answer from a tool result."""
 
@@ -44,6 +74,9 @@ def build_final_reply(*, plan: ToolCallPlan, tool_result: object) -> str:
             f"{_releves_total_label(tool_result)}: {_format_decimal(tool_result.total)}{currency_suffix} "
             f"sur {tool_result.count} opération(s).{average}"
         ).strip()
+
+    if isinstance(tool_result, RelevesAggregateResult):
+        return _build_aggregate_reply(tool_result)
 
     if isinstance(tool_result, RelevesSearchResult):
         count = len(tool_result.items)

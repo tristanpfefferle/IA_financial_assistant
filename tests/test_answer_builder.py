@@ -7,7 +7,16 @@ from uuid import UUID
 
 from agent.answer_builder import build_final_reply
 from agent.planner import ToolCallPlan
-from shared.models import RelevesDirection, RelevesFilters, RelevesSumResult, ToolError, ToolErrorCode
+from shared.models import (
+    RelevesAggregateGroup,
+    RelevesAggregateResult,
+    RelevesDirection,
+    RelevesFilters,
+    RelevesGroupBy,
+    RelevesSumResult,
+    ToolError,
+    ToolErrorCode,
+)
 
 
 def test_build_final_reply_with_releves_sum_result() -> None:
@@ -51,3 +60,23 @@ def test_build_final_reply_with_releves_sum_all_is_neutral() -> None:
 
     assert "Total net (revenus + dépenses)" in reply
     assert "100.00 sur 2 opération(s)." in reply
+
+
+def test_build_final_reply_with_releves_aggregate_result_sorted_and_limited() -> None:
+    plan = ToolCallPlan(tool_name="finance_releves_aggregate", payload={}, user_reply="OK")
+    groups = {
+        f"g{i}": RelevesAggregateGroup(total=Decimal(str(-i * 10)), count=i)
+        for i in range(1, 13)
+    }
+    result = RelevesAggregateResult(
+        group_by=RelevesGroupBy.CATEGORIE,
+        groups=groups,
+        currency="CHF",
+    )
+
+    reply = build_final_reply(plan=plan, tool_result=result)
+
+    assert "par categorie" in reply or "par catégorie" in reply
+    assert "g12" in reply
+    assert "- g1:" not in reply
+    assert "Autres" in reply

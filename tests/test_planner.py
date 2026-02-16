@@ -66,3 +66,28 @@ def test_planner_expenses_in_janv_uses_month_alias(monkeypatch) -> None:
     assert isinstance(plan, ToolCallPlan)
     assert plan.payload["date_range"]["start_date"] == date(2025, 1, 1)
     assert plan.payload["date_range"]["end_date"] == date(2025, 1, 31)
+
+
+def test_planner_aggregate_par_categorie() -> None:
+    plan = plan_from_message("mes dépenses par catégorie")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_releves_aggregate"
+    assert plan.payload["group_by"] == "categorie"
+    assert plan.payload["direction"] == "DEBIT_ONLY"
+
+
+def test_planner_aggregate_par_marchand() -> None:
+    plan = plan_from_message("analyse par marchand")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_releves_aggregate"
+    assert plan.payload["group_by"] == "payee"
+
+
+def test_planner_aggregate_par_mois() -> None:
+    plan = plan_from_message("répartition par mois")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_releves_aggregate"
+    assert plan.payload["group_by"] == "month"
