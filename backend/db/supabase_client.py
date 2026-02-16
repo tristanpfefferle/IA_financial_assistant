@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from typing import Any
+from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
@@ -27,13 +28,13 @@ class SupabaseClient:
         self,
         *,
         table: str,
-        query: dict[str, str | int],
+        query: dict[str, str | int] | list[tuple[str, str | int]],
         with_count: bool,
         use_anon_key: bool = False,
     ) -> tuple[list[dict[str, Any]], int | None]:
         """Fetch rows from PostgREST and optionally parse exact row count."""
 
-        encoded_query = urlencode(query)
+        encoded_query = urlencode(query, doseq=True)
         api_key = self.settings.anon_key if use_anon_key else self.settings.service_role_key
         if not api_key:
             raise ValueError("Missing Supabase API key for requested mode")
@@ -47,12 +48,18 @@ class SupabaseClient:
             },
             method="GET",
         )
-        with urlopen(request) as response:  # noqa: S310 - URL comes from trusted env config
-            rows = json.loads(response.read().decode("utf-8"))
-            total: int | None = None
-            if with_count:
-                content_range = response.headers.get("content-range")
-                if content_range and "/" in content_range:
-                    _, total_str = content_range.split("/", maxsplit=1)
-                    total = int(total_str)
-            return rows, total
+        try:
+            with urlopen(request) as response:  # noqa: S310 - URL comes from trusted env config
+                rows = json.loads(response.read().decode("utf-8"))
+                total: int | None = None
+                if with_count:
+                    content_range = response.headers.get("content-range")
+                    if content_range and "/" in content_range:
+                        _, total_str = content_range.split("/", maxsplit=1)
+                        total = int(total_str)
+                return rows, total
+        except HTTPError as exc:
+            body = exc.read().decode("utf-8", errors="replace")[:500]
+            raise RuntimeError(
+                f"Supabase request failed with status {exc.code}: {body}"
+            ) from exc
