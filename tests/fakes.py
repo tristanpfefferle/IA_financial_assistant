@@ -81,4 +81,4 @@ class FakeBackendClient:
         count = len(filtered)
         total = sum((item.montant for item in filtered), start=Decimal("0"))
         average = total / count if count > 0 else Decimal("0")
-        return RelevesSumResult(total=total, count=count, average=average, currency="CHF")
+        return RelevesSumResult(total=total, count=count, average=average, currency="CHF", filters=filters)
