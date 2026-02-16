@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from functools import lru_cache
 from uuid import UUID
 
 from fastapi import FastAPI, Header, HTTPException
+from fastapi.requests import Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -15,6 +17,9 @@ from agent.loop import AgentLoop
 from backend.auth.supabase_auth import UnauthorizedError, get_user_from_bearer_token
 from backend.db.supabase_client import SupabaseClient, SupabaseSettings
 from backend.repositories.profiles_repository import SupabaseProfilesRepository
+
+
+logger = logging.getLogger(__name__)
 
 
 class ChatRequest(BaseModel):
@@ -81,6 +86,30 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def log_http_requests(request: Request, call_next):
+    """Log incoming requests, HTTP status codes and unexpected errors."""
+
+    logger.info("http_request_received method=%s path=%s", request.method, request.url.path)
+    try:
+        response = await call_next(request)
+    except Exception:
+        logger.exception(
+            "http_request_failed method=%s path=%s",
+            request.method,
+            request.url.path,
+        )
+        raise
+
+    logger.info(
+        "http_response_sent method=%s path=%s status_code=%s",
+        request.method,
+        request.url.path,
+        response.status_code,
+    )
+    return response
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     """Healthcheck endpoint."""
@@ -92,6 +121,7 @@ def health() -> dict[str, str]:
 def agent_chat(payload: ChatRequest, authorization: str | None = Header(default=None)) -> ChatResponse:
     """Handle a user chat message through the agent loop."""
 
+    logger.info("agent_chat_received message_length=%s", len(payload.message))
     token = _extract_bearer_token(authorization)
     try:
         user_payload = get_user_from_bearer_token(token)
@@ -120,5 +150,12 @@ def agent_chat(payload: ChatRequest, authorization: str | None = Header(default=
             detail="No profile linked to authenticated user (by account_id or email)",
         )
 
-    agent_reply = get_agent_loop().handle_user_message(payload.message, profile_id=profile_id)
+    try:
+        agent_reply = get_agent_loop().handle_user_message(payload.message, profile_id=profile_id)
+    except Exception:
+        logger.exception("agent_chat_failed profile_id=%s", profile_id)
+        raise
+
+    tool_name = agent_reply.plan.get("tool_name") if agent_reply.plan is not None else None
+    logger.info("agent_chat_completed tool_name=%s", tool_name)
     return ChatResponse(reply=agent_reply.reply, tool_result=agent_reply.tool_result, plan=agent_reply.plan)

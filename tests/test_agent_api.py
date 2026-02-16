@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 import agent.api as agent_api
 from agent.api import app
+from agent.loop import AgentLoop
 
 
 client = TestClient(app)
@@ -31,6 +32,14 @@ def _mock_authenticated(monkeypatch) -> None:
 
     agent_api.get_profiles_repository.cache_clear()
     monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: _Repo())
+
+class _DeleteRouter:
+    def call(self, tool_name: str, payload: dict, *, profile_id: UUID | None = None):
+        assert tool_name == "finance_categories_delete"
+        assert payload["category_name"] == "Transport"
+        assert profile_id == UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+        return None
+
 
 
 def test_health_endpoint() -> None:
@@ -174,3 +183,22 @@ def test_agent_chat_returns_not_linked_message_when_profile_is_missing(monkeypat
 
     assert response.status_code == 401
     assert response.json()["detail"] == "No profile linked to authenticated user (by account_id or email)"
+
+
+def test_agent_chat_delete_returns_json_reply_when_tool_returns_none(monkeypatch) -> None:
+    _mock_authenticated(monkeypatch)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: AgentLoop(tool_router=_DeleteRouter()))
+
+    response = client.post(
+        "/agent/chat",
+        json={"message": 'Supprime la catégorie "Transport"'},
+        headers=_auth_headers(),
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/json")
+    payload = response.json()
+    assert isinstance(payload["reply"], str)
+    assert payload["reply"]
+    assert payload["plan"]["tool_name"] == "finance_categories_delete"
+    assert payload["tool_result"] == {"ok": True}
