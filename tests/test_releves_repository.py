@@ -3,11 +3,19 @@
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
 from uuid import UUID
 
 from backend.repositories.category_utils import normalize_category_name
 from backend.repositories.releves_repository import InMemoryRelevesRepository, SupabaseRelevesRepository
-from shared.models import DateRange, RelevesFilters
+from shared.models import (
+    DateRange,
+    ReleveBancaire,
+    RelevesAggregateRequest,
+    RelevesDirection,
+    RelevesFilters,
+    RelevesGroupBy,
+)
 
 
 class _ClientStub:
@@ -98,3 +106,108 @@ def test_build_query_normalizes_category_filter() -> None:
 
     query = client.calls[0]["query"]
     assert ("categorie", "eq.alimentation") in query
+
+
+def test_in_memory_sum_and_aggregate_exclude_categories_for_debit_only(monkeypatch) -> None:
+    repository = InMemoryRelevesRepository()
+    repository._seed.append(
+        ReleveBancaire(
+            id=UUID("44444444-4444-4444-4444-444444444444"),
+            profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            date=date(2025, 1, 12),
+            libelle="Ajustement",
+            montant=Decimal("-5.00"),
+            devise="EUR",
+            categorie=None,
+            payee="Banque",
+            merchant_id=None,
+        )
+    )
+    monkeypatch.setattr(repository, "get_excluded_category_names", lambda _profile_id: {"alimentation"})
+
+    filters = RelevesFilters(
+        profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+        direction=RelevesDirection.DEBIT_ONLY,
+        limit=10,
+        offset=0,
+    )
+    total, count, currency = repository.sum_releves(filters)
+
+    assert total == Decimal("-5.00")
+    assert count == 1
+    assert currency == "EUR"
+
+    aggregate_request = RelevesAggregateRequest(
+        profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+        direction=RelevesDirection.DEBIT_ONLY,
+        group_by=RelevesGroupBy.CATEGORIE,
+    )
+    groups, aggregate_currency = repository.aggregate_releves(aggregate_request)
+
+    assert groups == {"Autre": (Decimal("-5.00"), 1)}
+    assert aggregate_currency == "EUR"
+
+
+def test_supabase_sum_and_aggregate_exclude_categories_for_debit_only(monkeypatch) -> None:
+    client = _ClientStub(
+        rows=[
+            {"montant": -10, "devise": "EUR", "categorie": "Alimentation", "date": "2025-01-10", "payee": "A"},
+            {
+                "montant": -20,
+                "devise": "EUR",
+                "categorie": "Transport",
+                "date": "2025-01-11",
+                "payee": "B",
+            },
+            {"montant": -3, "devise": "EUR", "categorie": None, "date": "2025-01-12", "payee": "C"},
+        ]
+    )
+    repository = SupabaseRelevesRepository(client=client)
+    monkeypatch.setattr(repository, "get_excluded_category_names", lambda _profile_id: {"alimentation"})
+
+    filters = RelevesFilters(
+        profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+        direction=RelevesDirection.DEBIT_ONLY,
+        limit=50,
+        offset=0,
+    )
+    total, count, currency = repository.sum_releves(filters)
+
+    assert total == Decimal("-23")
+    assert count == 2
+    assert currency == "EUR"
+
+    aggregate_request = RelevesAggregateRequest(
+        profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+        direction=RelevesDirection.DEBIT_ONLY,
+        group_by=RelevesGroupBy.CATEGORIE,
+    )
+    groups, aggregate_currency = repository.aggregate_releves(aggregate_request)
+
+    assert groups == {
+        "Transport": (Decimal("-20"), 1),
+        "Autre": (Decimal("-3"), 1),
+    }
+    assert aggregate_currency == "EUR"
+
+
+def test_supabase_credit_only_does_not_apply_excluded_categories(monkeypatch) -> None:
+    client = _ClientStub(rows=[{"montant": 100, "devise": "EUR", "categorie": "Salaire"}])
+    repository = SupabaseRelevesRepository(client=client)
+
+    def _raise_if_called(_profile_id: UUID) -> set[str]:
+        raise AssertionError("should not call get_excluded_category_names for CREDIT_ONLY")
+
+    monkeypatch.setattr(repository, "get_excluded_category_names", _raise_if_called)
+
+    filters = RelevesFilters(
+        profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+        direction=RelevesDirection.CREDIT_ONLY,
+        limit=50,
+        offset=0,
+    )
+    total, count, currency = repository.sum_releves(filters)
+
+    assert total == Decimal("100")
+    assert count == 1
+    assert currency == "EUR"
