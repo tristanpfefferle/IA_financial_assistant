@@ -137,6 +137,33 @@ _CATEGORY_RENAME_PATTERNS = (
 )
 
 _QUOTED_VALUE_PATTERN = r"[\"'«](?P<value>[^\"'»]+)[\"'»]"
+_PROFILE_FIELD_WHITELIST = {
+    "first_name",
+    "last_name",
+    "birth_date",
+    "gender",
+    "address_line1",
+    "address_line2",
+    "postal_code",
+    "city",
+    "canton",
+    "country",
+    "personal_situation",
+    "professional_situation",
+}
+_PROFILE_CORE_FIELDS = [
+    "first_name",
+    "last_name",
+    "birth_date",
+    "gender",
+    "address_line1",
+    "address_line2",
+    "postal_code",
+    "city",
+    "canton",
+    "country",
+]
+_PROFILE_ADDRESS_FIELDS = ["address_line1", "address_line2", "postal_code", "city", "canton", "country"]
 
 
 def _aggregate_group_by_for_message(lower_message: str) -> str | None:
@@ -360,6 +387,86 @@ def _extract_delete_name(message: str) -> str | None:
     return _extract_category_name_after_keyword(message)
 
 
+def _strip_terminal_punctuation(value: str) -> str:
+    return value.strip().strip(" .,!?:;\"'")
+
+
+def _build_profile_fields_request(fields: list[str]) -> ToolCallPlan:
+    filtered_fields = [field for field in fields if field in _PROFILE_FIELD_WHITELIST]
+    return ToolCallPlan(
+        tool_name="finance_profile_get",
+        payload={"fields": filtered_fields},
+        user_reply="Voici vos informations de profil.",
+    )
+
+
+def _build_profile_update_request(fields_to_update: dict[str, object]) -> ToolCallPlan:
+    sanitized_set = {key: value for key, value in fields_to_update.items() if key in _PROFILE_FIELD_WHITELIST}
+    return ToolCallPlan(
+        tool_name="finance_profile_update",
+        payload={"set": sanitized_set},
+        user_reply="Profil mis à jour.",
+    )
+
+
+def _try_build_profile_plan(message: str) -> ToolCallPlan | None:
+    lower_message = message.lower()
+
+    if re.search(r"\bquel\s+est\s+mon\s+pr[ée]nom\b", lower_message):
+        return _build_profile_fields_request(["first_name"])
+
+    if re.search(r"\bquel\s+est\s+mon\s+nom\b", lower_message):
+        return _build_profile_fields_request(["last_name"])
+
+    if re.search(r"\bquelle\s+est\s+ma\s+date\s+de\s+naissance\b", lower_message):
+        return _build_profile_fields_request(["birth_date"])
+
+    if re.search(r"\bquelle\s+est\s+mon\s+adresse\b", lower_message):
+        return _build_profile_fields_request(_PROFILE_ADDRESS_FIELDS)
+
+    if re.search(r"\bmontre\s+mes\s+infos\s+perso\b", lower_message):
+        return _build_profile_fields_request(_PROFILE_CORE_FIELDS)
+
+    if re.search(r"\b(?:supprime|efface)\s+mon\s+pr[ée]nom\b", lower_message):
+        return _build_profile_update_request({"first_name": None})
+
+    first_name_match = re.search(
+        r"\b(?:mon\s+pr[ée]nom\s+est|mets?\s+mon\s+pr[ée]nom\s+[àa])\s+(?P<first_name>.+)$",
+        message,
+        flags=re.IGNORECASE,
+    )
+    if first_name_match is not None:
+        first_name = _strip_terminal_punctuation(first_name_match.group("first_name"))
+        if first_name:
+            return _build_profile_update_request({"first_name": first_name})
+
+    full_name_match = re.search(r"\bje\s+m[\"'’]?appelle\s+(?P<full_name>.+)$", message, flags=re.IGNORECASE)
+    if full_name_match is not None:
+        full_name = _strip_terminal_punctuation(full_name_match.group("full_name"))
+        name_tokens = [token for token in full_name.split() if token]
+        if name_tokens:
+            first_name = name_tokens[0]
+            last_name = " ".join(name_tokens[1:]) if len(name_tokens) > 1 else None
+            profile_set: dict[str, object] = {"first_name": first_name}
+            if last_name is not None:
+                profile_set["last_name"] = last_name
+            return _build_profile_update_request(profile_set)
+
+    birth_date_match = re.search(
+        r"\b(?:je\s+suis\s+n[ée]\s+le|ma\s+date\s+de\s+naissance\s+est)\s+(?P<birth_date>\d{4}-\d{2}-\d{2})\b",
+        lower_message,
+    )
+    if birth_date_match is not None:
+        birth_date_raw = birth_date_match.group("birth_date")
+        try:
+            parsed_birth_date = date.fromisoformat(birth_date_raw)
+        except ValueError:
+            return None
+        return _build_profile_update_request({"birth_date": parsed_birth_date.isoformat()})
+
+    return None
+
+
 def _build_delete_plan(message: str) -> SetActiveTaskPlan | ClarificationPlan:
     category_name = _extract_delete_name(message)
     if category_name is None:
@@ -476,6 +583,10 @@ def deterministic_plan_from_message(message: str) -> Plan:
         )
 
     lower_message = normalized_message.lower()
+
+    profile_plan = _try_build_profile_plan(normalized_message)
+    if profile_plan is not None:
+        return profile_plan
 
     if any(pattern in lower_message for pattern in _CATEGORY_LIST_PATTERNS):
         return ToolCallPlan(
