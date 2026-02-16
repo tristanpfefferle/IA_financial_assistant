@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from difflib import get_close_matches
 from uuid import UUID
 
-from backend.repositories.category_utils import normalize_category_name
+from shared.text_utils import normalize_category_name
 from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 
 from agent.backend_client import BackendClient

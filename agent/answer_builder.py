@@ -43,18 +43,23 @@ def _build_category_not_found_reply(error: ToolError) -> str | None:
 
     details: dict[str, Any] = error.details if isinstance(error.details, dict) else {}
     raw_name = details.get("category_name")
-    if not isinstance(raw_name, str) or not raw_name.strip():
-        return None
+    category_name = raw_name.strip() if isinstance(raw_name, str) and raw_name.strip() else None
+
+    base_message = (
+        f"Je ne trouve pas la catégorie « {category_name} »."
+        if category_name is not None
+        else "Je ne trouve pas cette catégorie."
+    )
 
     candidate_names_raw = details.get("close_category_names")
     if not isinstance(candidate_names_raw, list):
-        return "Je ne trouve pas cette catégorie."
+        return f"{base_message} Souhaitez-vous la créer ?"
 
     candidate_names = [name for name in candidate_names_raw if isinstance(name, str) and name.strip()]
-    if not candidate_names:
-        return "Je ne trouve pas cette catégorie."
+    if candidate_names:
+        return f"{base_message} Vouliez-vous dire: {', '.join(candidate_names[:3])} ?"
 
-    return f"Je ne trouve pas cette catégorie. Vouliez-vous dire: {', '.join(candidate_names[:3])} ?"
+    return f"{base_message} Souhaitez-vous la créer ?"
 
 
 def _build_category_ambiguous_reply(error: ToolError) -> str | None:

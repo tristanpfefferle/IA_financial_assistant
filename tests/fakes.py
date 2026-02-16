@@ -7,7 +7,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from uuid import UUID
 
-from backend.repositories.category_utils import normalize_category_name
+from shared.text_utils import normalize_category_name
 from shared.models import (
     CategoriesListResult,
     ProfileCategory,

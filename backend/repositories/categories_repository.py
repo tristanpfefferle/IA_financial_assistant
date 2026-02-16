@@ -11,7 +11,7 @@ from urllib.request import Request, urlopen
 from uuid import UUID, uuid4
 
 from backend.db.supabase_client import SupabaseClient
-from backend.repositories.category_utils import normalize_category_name
+from shared.text_utils import normalize_category_name
 from shared.models import (
     CategoryCreateRequest,
     CategoryDeleteRequest,

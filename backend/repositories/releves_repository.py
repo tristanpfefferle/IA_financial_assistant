@@ -8,7 +8,7 @@ from typing import Protocol
 from uuid import UUID
 
 from backend.db.supabase_client import SupabaseClient
-from backend.repositories.category_utils import normalize_category_name
+from shared.text_utils import normalize_category_name
 from shared.models import (
     ReleveBancaire,
     RelevesAggregateRequest,
