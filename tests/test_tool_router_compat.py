@@ -109,3 +109,32 @@ def test_categories_delete_validates_payload() -> None:
 
     assert isinstance(result, ToolError)
     assert result.code == ToolErrorCode.VALIDATION_ERROR
+
+
+def test_categories_update_by_name_not_found_returns_close_matches() -> None:
+    backend = FakeBackendClient(
+        categories=[
+            ProfileCategory(
+                id=UUID("44444444-4444-4444-4444-444444444444"),
+                profile_id=PROFILE_ID,
+                name="Transfert interne",
+                name_norm="transfert interne",
+                exclude_from_totals=False,
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
+            )
+        ]
+    )
+    tool_router = ToolRouter(backend_client=backend)
+
+    result = tool_router.call(
+        "finance_categories_update",
+        {"category_name": "transfret interne", "exclude_from_totals": True},
+        profile_id=PROFILE_ID,
+    )
+
+    assert isinstance(result, ToolError)
+    assert result.code == ToolErrorCode.NOT_FOUND
+    assert result.details is not None
+    assert result.details.get("category_name_norm") == "transfret interne"
+    assert result.details.get("close_category_names") == ["Transfert interne"]
