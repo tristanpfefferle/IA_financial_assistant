@@ -7,6 +7,7 @@ from backend.repositories.categories_repository import (
     InMemoryCategoriesRepository,
     SupabaseCategoriesRepository,
 )
+from backend.repositories.profiles_repository import SupabaseProfilesRepository
 from backend.repositories.releves_repository import InMemoryRelevesRepository, SupabaseRelevesRepository
 from backend.repositories.transactions_repository import GestionFinanciereTransactionsRepository
 from backend.services.tools import BackendToolService
@@ -34,12 +35,15 @@ def build_backend_tool_service() -> BackendToolService:
         )
         releves_repository = SupabaseRelevesRepository(client=supabase_client)
         categories_repository = SupabaseCategoriesRepository(client=supabase_client)
+        profiles_repository = SupabaseProfilesRepository(client=supabase_client)
     else:
         releves_repository = InMemoryRelevesRepository()
         categories_repository = InMemoryCategoriesRepository()
+        profiles_repository = None
 
     return BackendToolService(
         transactions_repository=transactions_repository,
         releves_repository=releves_repository,
         categories_repository=categories_repository,
+        profiles_repository=profiles_repository,
     )

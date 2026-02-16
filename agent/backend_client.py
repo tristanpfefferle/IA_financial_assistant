@@ -14,6 +14,7 @@ from shared.models import (
     RelevesSearchResult,
     RelevesSumResult,
     ProfileCategory,
+    ProfileDataResult,
     ToolError,
     TransactionFilters,
     TransactionSearchResult,
@@ -84,3 +85,19 @@ class BackendClient:
             profile_id=profile_id,
             category_id=category_id,
         )
+
+    def finance_profile_get(
+        self,
+        *,
+        profile_id: UUID,
+        fields: list[str] | None = None,
+    ) -> ProfileDataResult | ToolError:
+        return self.tool_service.finance_profile_get(profile_id=profile_id, fields=fields)
+
+    def finance_profile_update(
+        self,
+        *,
+        profile_id: UUID,
+        set_fields: dict[str, object | None],
+    ) -> ProfileDataResult | ToolError:
+        return self.tool_service.finance_profile_update(profile_id=profile_id, set_fields=set_fields)

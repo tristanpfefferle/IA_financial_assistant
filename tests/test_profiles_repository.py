@@ -8,8 +8,9 @@ from backend.repositories.profiles_repository import SupabaseProfilesRepository
 
 
 class _ClientStub:
-    def __init__(self, responses: list[list[dict[str, str]]]) -> None:
+    def __init__(self, responses: list[list[dict[str, str]]], patch_responses: list[list[dict[str, str]]] | None = None) -> None:
         self._responses = responses
+        self._patch_responses = patch_responses or []
         self.calls: list[dict[str, object]] = []
         self.patch_calls: list[dict[str, object]] = []
         self.post_calls: list[dict[str, object]] = []
@@ -35,7 +36,7 @@ class _ClientStub:
                 "use_anon_key": use_anon_key,
             }
         )
-        return []
+        return self._patch_responses[len(self.patch_calls) - 1] if self._patch_responses else []
 
     def post_rows(self, *, table, payload, use_anon_key=False, prefer="return=representation"):
         self.post_calls.append(
@@ -156,3 +157,44 @@ def test_update_chat_state_uses_upsert() -> None:
     ]
     assert client.calls == []
     assert client.post_calls == []
+
+
+def test_get_profile_fields_reads_only_selected_columns() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    client = _ClientStub(
+        responses=[[{"first_name": "Paul", "city": "Bouveret", "birth_date": "2001-07-14"}]]
+    )
+    repository = SupabaseProfilesRepository(client=client)
+
+    data = repository.get_profile_fields(profile_id=profile_id, fields=["first_name", "city", "birth_date"])
+
+    assert data == {"first_name": "Paul", "city": "Bouveret", "birth_date": "2001-07-14"}
+    assert client.calls[0]["query"] == {
+        "select": "first_name,city,birth_date",
+        "id": f"eq.{profile_id}",
+        "limit": 1,
+    }
+
+
+def test_update_profile_fields_patches_single_profile_id_and_returns_updated_fields() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    client = _ClientStub(
+        responses=[],
+        patch_responses=[[{"first_name": "Paul", "city": "Bouveret", "birth_date": "2001-07-14"}]],
+    )
+    repository = SupabaseProfilesRepository(client=client)
+
+    data = repository.update_profile_fields(
+        profile_id=profile_id,
+        set_dict={"first_name": "Paul", "city": "Bouveret", "birth_date": "2001-07-14"},
+    )
+
+    assert data == {"first_name": "Paul", "city": "Bouveret", "birth_date": "2001-07-14"}
+    assert client.patch_calls == [
+        {
+            "table": "profils",
+            "query": {"id": f"eq.{profile_id}"},
+            "payload": {"first_name": "Paul", "city": "Bouveret", "birth_date": "2001-07-14"},
+            "use_anon_key": False,
+        }
+    ]

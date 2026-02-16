@@ -12,6 +12,8 @@ from shared.models import (
     CategoryCreateRequest,
     CategoryDeleteRequest,
     CategoryUpdateRequest,
+    ProfileGetRequest,
+    ProfileUpdateRequest,
     RelevesAggregateRequest,
     RelevesFilters,
     ToolError,
@@ -26,6 +28,8 @@ _ALLOWED_TOOLS = {
     "finance_categories_create",
     "finance_categories_update",
     "finance_categories_delete",
+    "finance_profile_get",
+    "finance_profile_update",
 }
 _TOOL_ALIASES = {
     "finance_transactions_search": "finance_releves_search",
@@ -116,6 +120,8 @@ class LLMPlanner:
         categories_delete_schema = LLMPlanner._schema_without_profile_id(
             CategoryDeleteRequest.model_json_schema()
         )
+        profile_get_schema = ProfileGetRequest.model_json_schema()
+        profile_update_schema = ProfileUpdateRequest.model_json_schema()
 
         return [
             {
@@ -176,6 +182,22 @@ class LLMPlanner:
                     "name": "finance_categories_delete",
                     "description": "Delete a category for the current profile.",
                     "parameters": categories_delete_schema,
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "finance_profile_get",
+                    "description": "Read selected profile fields from the current user profile.",
+                    "parameters": profile_get_schema,
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "finance_profile_update",
+                    "description": "Update selected profile fields for the current user profile.",
+                    "parameters": profile_update_schema,
                 },
             },
         ]

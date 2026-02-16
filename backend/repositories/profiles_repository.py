@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any, Protocol
 from uuid import UUID
 
 from backend.db.supabase_client import SupabaseClient
+from shared.models import PROFILE_DEFAULT_CORE_FIELDS
 
 
 class ProfilesRepository(Protocol):
@@ -17,6 +19,12 @@ class ProfilesRepository(Protocol):
 
     def update_chat_state(self, *, profile_id: UUID, user_id: UUID, chat_state: dict[str, Any]) -> None:
         """Persist chat state for a profile."""
+
+    def get_profile_fields(self, *, profile_id: UUID, fields: list[str] | None = None) -> dict[str, Any]:
+        """Return selected profile columns for one profile id."""
+
+    def update_profile_fields(self, *, profile_id: UUID, set_dict: dict[str, Any]) -> dict[str, Any]:
+        """Update selected profile columns for one profile id and return updated values."""
 
 
 class SupabaseProfilesRepository:
@@ -84,3 +92,40 @@ class SupabaseProfilesRepository:
             on_conflict="conversation_id",
             use_anon_key=False,
         )
+
+    @staticmethod
+    def _serialize_profile_value(value: Any) -> Any:
+        if isinstance(value, (date, UUID)):
+            return str(value)
+        return value
+
+    def get_profile_fields(self, *, profile_id: UUID, fields: list[str] | None = None) -> dict[str, Any]:
+        selected_fields = list(fields or PROFILE_DEFAULT_CORE_FIELDS)
+        select_clause = ",".join(dict.fromkeys(selected_fields))
+        rows, _ = self._client.get_rows(
+            table="profils",
+            query={"select": select_clause, "id": f"eq.{profile_id}", "limit": 1},
+            with_count=False,
+            use_anon_key=False,
+        )
+        if not rows:
+            raise ValueError("Profile not found")
+
+        row = rows[0]
+        return {field: row.get(field) for field in selected_fields}
+
+    def update_profile_fields(self, *, profile_id: UUID, set_dict: dict[str, Any]) -> dict[str, Any]:
+        serialized_set_dict = {
+            field: self._serialize_profile_value(value) for field, value in set_dict.items()
+        }
+        rows = self._client.patch_rows(
+            table="profils",
+            query={"id": f"eq.{profile_id}"},
+            payload=serialized_set_dict,
+            use_anon_key=False,
+        )
+        if not rows:
+            raise ValueError("Profile not found")
+
+        row = rows[0]
+        return {field: row.get(field) for field in set_dict}

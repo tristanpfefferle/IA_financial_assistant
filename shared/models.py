@@ -207,6 +207,107 @@ class RelevesAggregateResult(BaseModel):
     filters: RelevesAggregateRequest | None = None
 
 
+PROFILE_ALLOWED_FIELDS: frozenset[str] = frozenset(
+    {
+        "first_name",
+        "last_name",
+        "birth_date",
+        "gender",
+        "address_line1",
+        "address_line2",
+        "postal_code",
+        "city",
+        "canton",
+        "country",
+        "personal_situation",
+        "professional_situation",
+        "default_bank_account_id",
+        "active_modules",
+    }
+)
+PROFILE_DEFAULT_CORE_FIELDS: tuple[str, ...] = (
+    "first_name",
+    "last_name",
+    "birth_date",
+    "gender",
+    "city",
+    "country",
+)
+
+
+class ProfileGetRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    fields: list[str] | None = None
+
+    @field_validator("fields")
+    @classmethod
+    def validate_fields(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return value
+        invalid_fields = sorted({field for field in value if field not in PROFILE_ALLOWED_FIELDS})
+        if invalid_fields:
+            raise ValueError(f"Unsupported profile fields: {', '.join(invalid_fields)}")
+        return value
+
+
+class ProfileUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    set: dict[str, object | None]
+
+    @field_validator("set")
+    @classmethod
+    def validate_set(cls, value: dict[str, object | None]) -> dict[str, object | None]:
+        if not value:
+            raise ValueError("set must contain at least one field")
+
+        string_fields = PROFILE_ALLOWED_FIELDS - {"birth_date", "default_bank_account_id", "active_modules"}
+        normalized: dict[str, object | None] = {}
+
+        for field_name, field_value in value.items():
+            if field_name not in PROFILE_ALLOWED_FIELDS:
+                raise ValueError(f"Unsupported profile field: {field_name}")
+
+            if field_value is None:
+                normalized[field_name] = None
+                continue
+
+            if field_name == "birth_date":
+                if isinstance(field_value, date):
+                    normalized[field_name] = field_value
+                    continue
+                if isinstance(field_value, str):
+                    normalized[field_name] = date.fromisoformat(field_value)
+                    continue
+                raise ValueError("birth_date must be an ISO date string")
+
+            if field_name == "default_bank_account_id":
+                normalized[field_name] = UUID(str(field_value))
+                continue
+
+            if field_name == "active_modules":
+                if isinstance(field_value, list) and all(isinstance(item, str) for item in field_value):
+                    normalized[field_name] = field_value
+                    continue
+                raise ValueError("active_modules must be a list of strings")
+
+            if field_name in string_fields and isinstance(field_value, str):
+                normalized[field_name] = field_value
+                continue
+
+            raise ValueError(f"Invalid type for profile field: {field_name}")
+
+        return normalized
+
+
+class ProfileDataResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    profile_id: UUID
+    data: dict[str, object | None]
+
+
 # Deprecated aliases kept for backwards compatibility.
 TransactionSumDirection = RelevesDirection
 TransactionFilters = RelevesFilters

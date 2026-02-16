@@ -16,6 +16,9 @@ from shared.models import (
     CategoryDeleteRequest,
     CategoryUpdateRequest,
     ProfileCategory,
+    ProfileDataResult,
+    ProfileGetRequest,
+    ProfileUpdateRequest,
     RelevesAggregateRequest,
     RelevesAggregateResult,
     RelevesFilters,
@@ -118,6 +121,7 @@ class ToolRouter:
         | CategoriesListResult
         | ProfileCategory
         | dict[str, bool]
+        | ProfileDataResult
         | ToolError
     ):
         if tool_name in {
@@ -130,6 +134,8 @@ class ToolRouter:
             "finance_categories_create",
             "finance_categories_update",
             "finance_categories_delete",
+            "finance_profile_get",
+            "finance_profile_update",
         } and profile_id is None:
             return ToolError(
                 code=ToolErrorCode.VALIDATION_ERROR,
@@ -238,6 +244,34 @@ class ToolRouter:
                 exclude_from_totals=request.exclude_from_totals,
             )
 
+
+        if tool_name == "finance_profile_get":
+            try:
+                request = ProfileGetRequest.model_validate(payload)
+            except ValidationError as exc:
+                return ToolError(
+                    code=ToolErrorCode.VALIDATION_ERROR,
+                    message=f"Invalid payload for tool {tool_name}",
+                    details={"validation_errors": exc.errors(), "payload": payload},
+                )
+            return self.backend_client.finance_profile_get(
+                profile_id=profile_id,
+                fields=request.fields,
+            )
+
+        if tool_name == "finance_profile_update":
+            try:
+                request = ProfileUpdateRequest.model_validate(payload)
+            except ValidationError as exc:
+                return ToolError(
+                    code=ToolErrorCode.VALIDATION_ERROR,
+                    message=f"Invalid payload for tool {tool_name}",
+                    details={"validation_errors": exc.errors(), "payload": payload},
+                )
+            return self.backend_client.finance_profile_update(
+                profile_id=profile_id,
+                set_fields=request.set,
+            )
         if tool_name == "finance_categories_delete":
             try:
                 request_payload = _CategoryDeleteByNamePayload.model_validate(payload)
