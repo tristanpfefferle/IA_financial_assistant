@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 import agent.api as agent_api
 from agent.api import app
 from agent.loop import AgentLoop
+from shared.models import ToolError, ToolErrorCode
 
 
 client = TestClient(app)
@@ -281,6 +282,30 @@ def test_agent_chat_delete_confirmation_workflow(monkeypatch) -> None:
     assert second.json()["plan"]["tool_name"] == "finance_categories_delete"
     assert "active_task" not in repo.chat_state
 
+
+
+def test_agent_chat_serializes_pydantic_tool_result(monkeypatch) -> None:
+    _mock_authenticated(monkeypatch)
+
+    class _Loop:
+        def handle_user_message(self, *_args, **_kwargs):
+            return SimpleNamespace(
+                reply="tool error",
+                tool_result=ToolError(code=ToolErrorCode.BACKEND_ERROR, message="boom"),
+                plan={"tool_name": "finance_releves_search"},
+                should_update_active_task=False,
+                active_task=None,
+            )
+
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _Loop())
+
+    response = client.post("/agent/chat", json={"message": "ping"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert isinstance(payload["tool_result"], dict)
+    assert payload["tool_result"]["code"] == "BACKEND_ERROR"
+    assert payload["tool_result"]["message"] == "boom"
 
 def test_agent_chat_returns_200_when_chat_state_update_fails(monkeypatch) -> None:
     monkeypatch.setattr(
