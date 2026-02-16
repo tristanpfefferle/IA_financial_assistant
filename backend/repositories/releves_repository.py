@@ -111,6 +111,15 @@ class InMemoryRelevesRepository:
 
     def sum_releves(self, filters: RelevesFilters) -> tuple[Decimal, int, str | None]:
         filtered = self._apply_filters(filters)
+        if filters.direction == RelevesDirection.DEBIT_ONLY:
+            excluded_categories = self.get_excluded_category_names(filters.profile_id)
+            if excluded_categories:
+                filtered = [
+                    item
+                    for item in filtered
+                    if not item.categorie
+                    or normalize_category_name(item.categorie) not in excluded_categories
+                ]
         total = sum((item.montant for item in filtered), Decimal("0"))
         currency = filtered[0].devise if filtered else None
         return total, len(filtered), currency
@@ -119,6 +128,15 @@ class InMemoryRelevesRepository:
         self, request: RelevesAggregateRequest
     ) -> tuple[dict[str, tuple[Decimal, int]], str | None]:
         filtered = self._apply_filters(request)
+        if request.direction == RelevesDirection.DEBIT_ONLY:
+            excluded_categories = self.get_excluded_category_names(request.profile_id)
+            if excluded_categories:
+                filtered = [
+                    item
+                    for item in filtered
+                    if not item.categorie
+                    or normalize_category_name(item.categorie) not in excluded_categories
+                ]
         groups: dict[str, tuple[Decimal, int]] = {}
 
         for item in filtered:
@@ -182,8 +200,18 @@ class SupabaseRelevesRepository:
         return [ReleveBancaire.model_validate(row) for row in rows], total
 
     def sum_releves(self, filters: RelevesFilters) -> tuple[Decimal, int, str | None]:
-        query = [*self._build_query(filters), ("select", "montant,devise")]
+        query = [*self._build_query(filters), ("select", "montant,devise,categorie")]
         rows, _ = self._client.get_rows(table="releves_bancaires", query=query, with_count=False)
+
+        if filters.direction == RelevesDirection.DEBIT_ONLY:
+            excluded_categories = self.get_excluded_category_names(filters.profile_id)
+            if excluded_categories:
+                rows = [
+                    row
+                    for row in rows
+                    if not row.get("categorie")
+                    or normalize_category_name(str(row["categorie"])) not in excluded_categories
+                ]
 
         total = Decimal("0")
         currency: str | None = None
@@ -200,6 +228,16 @@ class SupabaseRelevesRepository:
     ) -> tuple[dict[str, tuple[Decimal, int]], str | None]:
         query = [*self._build_query(request), ("select", "montant,devise,date,categorie,payee")]
         rows, _ = self._client.get_rows(table="releves_bancaires", query=query, with_count=False)
+
+        if request.direction == RelevesDirection.DEBIT_ONLY:
+            excluded_categories = self.get_excluded_category_names(request.profile_id)
+            if excluded_categories:
+                rows = [
+                    row
+                    for row in rows
+                    if not row.get("categorie")
+                    or normalize_category_name(str(row["categorie"])) not in excluded_categories
+                ]
 
         groups: dict[str, tuple[Decimal, int]] = {}
         currency: str | None = rows[0].get("devise") if rows else None
