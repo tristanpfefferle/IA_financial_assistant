@@ -20,7 +20,8 @@ En production (`APP_ENV=prod`), le chargement dotenv n'est pas requis : Render i
 
 - `APP_ENV` (`dev`, `local`, `test`, `ci`, `prod`)
 - `SUPABASE_URL` (backend)
-- `SUPABASE_SERVICE_ROLE_KEY` (backend)
+- `SUPABASE_ANON_KEY` (backend auth verification)
+- `SUPABASE_SERVICE_ROLE_KEY` (backend server-only)
 - `AGENT_LLM_ENABLED` (`1`/`true` pour activer le planner LLM, désactivé par défaut)
 - `AGENT_LLM_MODEL` (optionnel, recommandé: `gpt-4.1-mini` en prod Render)
 - `AGENT_LLM_STRICT` (`1`/`true` pour activer le mode strict de clarification)
@@ -30,6 +31,8 @@ En production (`APP_ENV=prod`), le chargement dotenv n'est pas requis : Render i
 
 ### UI (`ui/.env`)
 
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_ANON_KEY`
 - `VITE_API_URL` (URL publique de l'API, ex. `http://127.0.0.1:8000` en local)
 
 ## Commandes utiles
@@ -49,7 +52,8 @@ En production (`APP_ENV=prod`), le chargement dotenv n'est pas requis : Render i
 - Variables à définir:
   - `APP_ENV=prod`
   - `SUPABASE_URL`
-  - `SUPABASE_SERVICE_ROLE_KEY`
+  - `SUPABASE_ANON_KEY`
+  - `SUPABASE_SERVICE_ROLE_KEY` (server-only)
   - `AGENT_LLM_ENABLED`
   - `AGENT_LLM_MODEL`
   - `AGENT_LLM_STRICT`
@@ -67,7 +71,9 @@ Si `CORS_ALLOW_ORIGINS` n'est pas défini en production, cette fonction renvoie 
 - Root Directory: `ui`
 - Build command: `npm ci && npm run build`
 - Publish directory: `dist`
-- Variable à définir:
+- Variables à définir:
+  - `VITE_SUPABASE_URL`
+  - `VITE_SUPABASE_ANON_KEY`
   - `VITE_API_URL=https://ia-financial-assistant.onrender.com` (sans slash final)
 
 ## Dépannage
@@ -85,6 +91,7 @@ La logique métier doit venir du repo `gestion_financiere` (wrappers backend). A
 ### Variables d'environnement requises
 
 - `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`
 - `SUPABASE_SERVICE_ROLE_KEY`
 
 ### Outils backend disponibles
@@ -94,7 +101,7 @@ La logique métier doit venir du repo `gestion_financiere` (wrappers backend). A
 
 Filtres supportés:
 
-- `profile_id` (obligatoire)
+- `profile_id` est injecté côté API depuis le token Bearer (jamais fourni par la UI)
 - `date_range.start_date` / `date_range.end_date` (optionnel)
 - `categorie` (optionnel)
 - `merchant_id` (prioritaire sur `merchant`)
@@ -111,16 +118,14 @@ from agent.factory import build_agent_loop
 agent_loop = build_agent_loop()
 
 print(agent_loop.tool_router.call("finance_releves_search", {
-    "profile_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
     "limit": 5,
     "offset": 0,
-}).model_dump(mode="json"))
+}, profile_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa").model_dump(mode="json"))
 
 print(agent_loop.tool_router.call("finance_releves_sum", {
-    "profile_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
     "direction": "DEBIT_ONLY",
     "limit": 50,
     "offset": 0,
-}).model_dump(mode="json"))
+}, profile_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa").model_dump(mode="json"))
 PY
 ```

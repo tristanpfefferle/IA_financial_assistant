@@ -74,3 +74,8 @@ def supabase_url() -> str | None:
 def supabase_service_role_key() -> str | None:
     """Return Supabase service role key when configured."""
     return get_env("SUPABASE_SERVICE_ROLE_KEY")
+
+
+def supabase_anon_key() -> str | None:
+    """Return Supabase anon key when configured."""
+    return get_env("SUPABASE_ANON_KEY")

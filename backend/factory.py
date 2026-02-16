@@ -22,7 +22,11 @@ def build_backend_tool_service() -> BackendToolService:
     supabase_key = config.supabase_service_role_key()
     if supabase_url and supabase_key:
         supabase_client = SupabaseClient(
-            settings=SupabaseSettings(url=supabase_url, service_role_key=supabase_key)
+            settings=SupabaseSettings(
+                url=supabase_url,
+                service_role_key=supabase_key,
+                anon_key=config.supabase_anon_key(),
+            )
         )
         releves_repository = SupabaseRelevesRepository(client=supabase_client)
     else:

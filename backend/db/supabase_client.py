@@ -13,6 +13,7 @@ from urllib.request import Request, urlopen
 class SupabaseSettings:
     url: str
     service_role_key: str
+    anon_key: str | None = None
 
 
 class SupabaseClient:
@@ -28,15 +29,19 @@ class SupabaseClient:
         table: str,
         query: dict[str, str | int],
         with_count: bool,
+        use_anon_key: bool = False,
     ) -> tuple[list[dict[str, Any]], int | None]:
         """Fetch rows from PostgREST and optionally parse exact row count."""
 
         encoded_query = urlencode(query)
+        api_key = self.settings.anon_key if use_anon_key else self.settings.service_role_key
+        if not api_key:
+            raise ValueError("Missing Supabase API key for requested mode")
         request = Request(
             url=f"{self.settings.url}/rest/v1/{table}?{encoded_query}",
             headers={
-                "apikey": self.settings.service_role_key,
-                "Authorization": f"Bearer {self.settings.service_role_key}",
+                "apikey": api_key,
+                "Authorization": f"Bearer {api_key}",
                 "Accept": "application/json",
                 "Prefer": "count=exact" if with_count else "return=representation",
             },
