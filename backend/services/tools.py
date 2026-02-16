@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from backend.repositories.categories_repository import CategoriesRepository
+from backend.repositories.profiles_repository import ProfilesRepository
 from backend.repositories.releves_repository import RelevesRepository
 from backend.repositories.transactions_repository import TransactionsRepository
 from shared.models import (
@@ -18,6 +19,7 @@ from shared.models import (
     CategoryDeleteRequest,
     CategoryUpdateRequest,
     ProfileCategory,
+    ProfileDataResult,
     RelevesAggregateGroup,
     RelevesAggregateRequest,
     RelevesAggregateResult,
@@ -37,6 +39,7 @@ class BackendToolService:
     transactions_repository: TransactionsRepository
     releves_repository: RelevesRepository
     categories_repository: CategoriesRepository
+    profiles_repository: ProfilesRepository | None = None
 
     def search_transactions(self, filters: TransactionFilters) -> TransactionSearchResult | ToolError:
         """Deprecated alias for releves_search kept for compatibility."""
@@ -138,6 +141,41 @@ class BackendToolService:
                 CategoryDeleteRequest(profile_id=profile_id, category_id=category_id)
             )
             return {"ok": True}
+        except ValueError as exc:
+            return ToolError(code=ToolErrorCode.NOT_FOUND, message=str(exc))
+        except Exception as exc:  # placeholder normalization at contract boundary
+            return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))
+
+    def finance_profile_get(
+        self,
+        profile_id: UUID,
+        fields: list[str] | None = None,
+    ) -> ProfileDataResult | ToolError:
+        if self.profiles_repository is None:
+            return ToolError(code=ToolErrorCode.BACKEND_ERROR, message="Profiles repository unavailable")
+
+        try:
+            data = self.profiles_repository.get_profile_fields(profile_id=profile_id, fields=fields)
+            return ProfileDataResult(profile_id=profile_id, data=data)
+        except ValueError as exc:
+            return ToolError(code=ToolErrorCode.NOT_FOUND, message=str(exc))
+        except Exception as exc:  # placeholder normalization at contract boundary
+            return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))
+
+    def finance_profile_update(
+        self,
+        profile_id: UUID,
+        set_fields: dict[str, object | None],
+    ) -> ProfileDataResult | ToolError:
+        if self.profiles_repository is None:
+            return ToolError(code=ToolErrorCode.BACKEND_ERROR, message="Profiles repository unavailable")
+
+        try:
+            updated_data = self.profiles_repository.update_profile_fields(
+                profile_id=profile_id,
+                set_dict=set_fields,
+            )
+            return ProfileDataResult(profile_id=profile_id, data=updated_data)
         except ValueError as exc:
             return ToolError(code=ToolErrorCode.NOT_FOUND, message=str(exc))
         except Exception as exc:  # placeholder normalization at contract boundary

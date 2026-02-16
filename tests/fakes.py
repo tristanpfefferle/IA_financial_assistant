@@ -11,6 +11,8 @@ from shared.text_utils import normalize_category_name
 from shared.models import (
     CategoriesListResult,
     ProfileCategory,
+    ProfileDataResult,
+    PROFILE_DEFAULT_CORE_FIELDS,
     ReleveBancaire,
     RelevesAggregateRequest,
     RelevesAggregateResult,
@@ -54,6 +56,7 @@ class FakeBackendClient:
     """Minimal backend client fake implementing releves and categories tools."""
 
     categories: list[ProfileCategory] = field(default_factory=list)
+    profile_data_by_id: dict[UUID, dict[str, object | None]] = field(default_factory=dict)
 
     def _filtered_items(self, filters: RelevesFilters) -> list[ReleveBancaire]:
         items = list(_FIXED_RELEVES)
@@ -192,3 +195,30 @@ class FakeBackendClient:
                 self.categories.pop(index)
                 return {"ok": True}
         return ToolError(code=ToolErrorCode.NOT_FOUND, message="Category not found")
+
+
+    def finance_profile_get(
+        self,
+        *,
+        profile_id: UUID,
+        fields: list[str] | None = None,
+    ) -> ProfileDataResult:
+        selected_fields = fields or list(PROFILE_DEFAULT_CORE_FIELDS)
+        profile_data = self.profile_data_by_id.get(profile_id, {})
+        return ProfileDataResult(
+            profile_id=profile_id,
+            data={field: profile_data.get(field) for field in selected_fields},
+        )
+
+    def finance_profile_update(
+        self,
+        *,
+        profile_id: UUID,
+        set_fields: dict[str, object | None],
+    ) -> ProfileDataResult:
+        profile_data = self.profile_data_by_id.setdefault(profile_id, {})
+        profile_data.update(set_fields)
+        return ProfileDataResult(
+            profile_id=profile_id,
+            data={field: profile_data.get(field) for field in set_fields},
+        )
