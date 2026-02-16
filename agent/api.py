@@ -191,7 +191,7 @@ def agent_chat(payload: ChatRequest, authorization: str | None = Header(default=
                 detail="No profile linked to authenticated user (by account_id or email)",
             )
 
-        chat_state = profiles_repository.get_chat_state(profile_id=profile_id)
+        chat_state = profiles_repository.get_chat_state(profile_id=profile_id, user_id=auth_user_id)
         active_task = chat_state.get("active_task") if isinstance(chat_state, dict) else None
 
         agent_reply = get_agent_loop().handle_user_message(
@@ -209,7 +209,11 @@ def agent_chat(payload: ChatRequest, authorization: str | None = Header(default=
             else:
                 updated_chat_state["active_task"] = agent_reply.active_task
             try:
-                profiles_repository.update_chat_state(profile_id=profile_id, chat_state=updated_chat_state)
+                profiles_repository.update_chat_state(
+                    profile_id=profile_id,
+                    user_id=auth_user_id,
+                    chat_state=updated_chat_state,
+                )
             except Exception:
                 logger.exception("chat_state_update_failed profile_id=%s", profile_id)
                 if not isinstance(response_plan, dict):

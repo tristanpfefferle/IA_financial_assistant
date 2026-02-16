@@ -35,12 +35,14 @@ def _mock_authenticated(monkeypatch) -> None:
             assert email == "user@example.com"
             return UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 
-        def get_chat_state(self, *, profile_id: UUID):
+        def get_chat_state(self, *, profile_id: UUID, user_id: UUID):
             assert profile_id == UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+            assert user_id == AUTH_USER_ID
             return self.chat_state
 
-        def update_chat_state(self, *, profile_id: UUID, chat_state: dict[str, object]) -> None:
+        def update_chat_state(self, *, profile_id: UUID, user_id: UUID, chat_state: dict[str, object]) -> None:
             assert profile_id == UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+            assert user_id == AUTH_USER_ID
             self.chat_state = chat_state
 
     agent_api.get_profiles_repository.cache_clear()
@@ -196,10 +198,12 @@ def test_agent_chat_profile_lookup_supports_fallback_email(monkeypatch) -> None:
             # Simule le fallback interne par email (account_id non trouvé)
             return UUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
 
-        def get_chat_state(self, *, profile_id: UUID):
+        def get_chat_state(self, *, profile_id: UUID, user_id: UUID):
+            assert user_id == AUTH_USER_ID
             return {}
 
-        def update_chat_state(self, *, profile_id: UUID, chat_state: dict[str, object]) -> None:
+        def update_chat_state(self, *, profile_id: UUID, user_id: UUID, chat_state: dict[str, object]) -> None:
+            assert user_id == AUTH_USER_ID
             return None
 
     repo = _Repo()
@@ -225,10 +229,12 @@ def test_agent_chat_returns_not_linked_message_when_profile_is_missing(monkeypat
             assert email == "user@example.com"
             return None
 
-        def get_chat_state(self, *, profile_id: UUID):
+        def get_chat_state(self, *, profile_id: UUID, user_id: UUID):
+            assert user_id == AUTH_USER_ID
             return {}
 
-        def update_chat_state(self, *, profile_id: UUID, chat_state: dict[str, object]) -> None:
+        def update_chat_state(self, *, profile_id: UUID, user_id: UUID, chat_state: dict[str, object]) -> None:
+            assert user_id == AUTH_USER_ID
             return None
 
     agent_api.get_profiles_repository.cache_clear()
@@ -277,10 +283,12 @@ def test_agent_chat_delete_confirmation_workflow(monkeypatch) -> None:
             assert email == "user@example.com"
             return UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 
-        def get_chat_state(self, *, profile_id: UUID):
+        def get_chat_state(self, *, profile_id: UUID, user_id: UUID):
+            assert user_id == AUTH_USER_ID
             return self.chat_state
 
-        def update_chat_state(self, *, profile_id: UUID, chat_state: dict[str, object]) -> None:
+        def update_chat_state(self, *, profile_id: UUID, user_id: UUID, chat_state: dict[str, object]) -> None:
+            assert user_id == AUTH_USER_ID
             self.chat_state = chat_state
 
     class _Router:
@@ -350,10 +358,12 @@ def test_agent_chat_returns_200_when_chat_state_update_fails(monkeypatch) -> Non
             assert email == "user@example.com"
             return UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 
-        def get_chat_state(self, *, profile_id: UUID):
+        def get_chat_state(self, *, profile_id: UUID, user_id: UUID):
+            assert user_id == AUTH_USER_ID
             return {}
 
-        def update_chat_state(self, *, profile_id: UUID, chat_state: dict[str, object]) -> None:
+        def update_chat_state(self, *, profile_id: UUID, user_id: UUID, chat_state: dict[str, object]) -> None:
+            assert user_id == AUTH_USER_ID
             raise RuntimeError("db write failed")
 
     class _Loop:

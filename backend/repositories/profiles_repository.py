@@ -12,10 +12,10 @@ class ProfilesRepository(Protocol):
     def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None) -> UUID | None:
         """Return profile UUID for an authenticated user."""
 
-    def get_chat_state(self, *, profile_id: UUID) -> dict[str, Any]:
+    def get_chat_state(self, *, profile_id: UUID, user_id: UUID) -> dict[str, Any]:
         """Return persisted chat state for a profile."""
 
-    def update_chat_state(self, *, profile_id: UUID, chat_state: dict[str, Any]) -> None:
+    def update_chat_state(self, *, profile_id: UUID, user_id: UUID, chat_state: dict[str, Any]) -> None:
         """Persist chat state for a profile."""
 
 
@@ -48,11 +48,17 @@ class SupabaseProfilesRepository:
             return self._get_profile_id_by_column(column="email", value=email)
         return None
 
-    def get_chat_state(self, *, profile_id: UUID) -> dict[str, Any]:
+    def get_chat_state(self, *, profile_id: UUID, user_id: UUID) -> dict[str, Any]:
         conversation_id = str(profile_id)
         rows, _ = self._client.get_rows(
             table="chat_state",
-            query={"select": "active_task", "conversation_id": f"eq.{conversation_id}", "limit": 1},
+            query={
+                "select": "active_task",
+                "conversation_id": f"eq.{conversation_id}",
+                "profile_id": f"eq.{profile_id}",
+                "user_id": f"eq.{user_id}",
+                "limit": 1,
+            },
             with_count=False,
             use_anon_key=False,
         )
@@ -62,12 +68,12 @@ class SupabaseProfilesRepository:
         state = row.get("active_task")
         return {"active_task": state} if state is not None else {}
 
-    def update_chat_state(self, *, profile_id: UUID, chat_state: dict[str, Any]) -> None:
+    def update_chat_state(self, *, profile_id: UUID, user_id: UUID, chat_state: dict[str, Any]) -> None:
         conversation_id = str(profile_id)
         active_task = chat_state.get("active_task")
         payload = {
             "conversation_id": conversation_id,
-            "user_id": None,
+            "user_id": str(user_id),
             "profile_id": str(profile_id),
             "active_task": active_task,
         }
