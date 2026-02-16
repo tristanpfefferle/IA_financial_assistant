@@ -90,6 +90,45 @@ def test_planner_expenses_chez_merchant_and_month_are_composed(monkeypatch) -> N
     assert plan.payload["date_range"]["end_date"] == date(2026, 1, 31)
 
 
+def test_planner_expenses_chez_merchant_two_months_builds_single_range(monkeypatch) -> None:
+    monkeypatch.setattr("agent.planner._today", lambda: date(2026, 2, 16))
+
+    plan = plan_from_message("Dépenses chez migros en décembre 2025 et janvier 2026")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_releves_sum"
+    assert plan.payload["direction"] == "DEBIT_ONLY"
+    assert plan.payload["merchant"] == "migros"
+    assert plan.payload["date_range"]["start_date"] == date(2025, 12, 1)
+    assert plan.payload["date_range"]["end_date"] == date(2026, 1, 31)
+
+
+def test_planner_expenses_chez_merchant_relative_two_months(monkeypatch) -> None:
+    monkeypatch.setattr("agent.planner._today", lambda: date(2026, 2, 16))
+
+    plan = plan_from_message("Dépenses chez migros ces 2 derniers mois")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_releves_sum"
+    assert plan.payload["direction"] == "DEBIT_ONLY"
+    assert plan.payload["merchant"] == "migros"
+    assert plan.payload["date_range"]["start_date"] == date(2025, 12, 1)
+    assert plan.payload["date_range"]["end_date"] == date(2026, 2, 16)
+
+
+def test_planner_expenses_chez_merchant_single_month_still_works(monkeypatch) -> None:
+    monkeypatch.setattr("agent.planner._today", lambda: date(2026, 2, 16))
+
+    plan = plan_from_message("Dépenses chez migros en janvier 2026")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_releves_sum"
+    assert plan.payload["direction"] == "DEBIT_ONLY"
+    assert plan.payload["merchant"] == "migros"
+    assert plan.payload["date_range"]["start_date"] == date(2026, 1, 1)
+    assert plan.payload["date_range"]["end_date"] == date(2026, 1, 31)
+
+
 def test_planner_expenses_chez_merchant_in_month_without_year_uses_current_year(monkeypatch) -> None:
     monkeypatch.setattr("agent.planner._today", lambda: date(2026, 2, 10))
 
