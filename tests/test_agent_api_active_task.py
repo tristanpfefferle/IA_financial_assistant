@@ -30,14 +30,16 @@ class _Repo:
         assert email == "user@example.com"
         return PROFILE_ID
 
-    def get_chat_state(self, *, profile_id: UUID):
+    def get_chat_state(self, *, profile_id: UUID, user_id: UUID):
         assert profile_id == PROFILE_ID
+        assert user_id == AUTH_USER_ID
         return dict(self.chat_state)
 
-    def update_chat_state(self, *, profile_id: UUID, chat_state: dict[str, object]) -> None:
+    def update_chat_state(self, *, profile_id: UUID, user_id: UUID, chat_state: dict[str, object]) -> None:
         assert profile_id == PROFILE_ID
+        assert user_id == AUTH_USER_ID
         self.chat_state = dict(chat_state)
-        self.update_calls.append({"profile_id": profile_id, "chat_state": dict(chat_state)})
+        self.update_calls.append({"profile_id": profile_id, "user_id": user_id, "chat_state": dict(chat_state)})
 
 
 
@@ -71,6 +73,7 @@ def test_agent_chat_sets_active_task_on_delete_confirmation_request(monkeypatch)
     assert response.status_code == 200
     assert "confirmer" in response.json()["reply"]
     assert repo.update_calls
+    assert repo.update_calls[-1]["user_id"] == AUTH_USER_ID
     assert repo.update_calls[-1]["chat_state"]["active_task"] == {
         "type": "confirm_delete_category",
         "category_name": "X",
@@ -112,4 +115,5 @@ def test_agent_chat_uses_persisted_active_task_and_clears_after_confirmation(mon
     assert response.status_code == 200
     assert response.json()["plan"]["tool_name"] == "finance_categories_delete"
     assert repo.update_calls
+    assert repo.update_calls[-1]["user_id"] == AUTH_USER_ID
     assert "active_task" not in repo.update_calls[-1]["chat_state"]
