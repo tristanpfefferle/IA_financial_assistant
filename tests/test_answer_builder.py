@@ -35,3 +35,20 @@ def test_build_final_reply_with_tool_error() -> None:
 
     assert "Erreur" in reply
     assert "Service indisponible" in reply
+
+
+def test_build_final_reply_with_releves_sum_all_is_neutral() -> None:
+    plan = ToolCallPlan(tool_name="finance_releves_sum", payload={}, user_reply="OK")
+    result = RelevesSumResult(
+        total=Decimal("100.00"),
+        count=2,
+        average=Decimal("50.00"),
+        currency=None,
+        filters=RelevesFilters(profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"), direction=RelevesDirection.ALL),
+    )
+
+    reply = build_final_reply(plan=plan, tool_result=result)
+
+    assert "dépenses" not in reply.lower()
+    assert "Total (débits + crédits)" in reply
+    assert "100.00 sur 2 opération(s)." in reply

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import calendar
+import re
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation
@@ -66,7 +67,46 @@ _FRENCH_MONTHS = {
     "decembre": 12,
     "décembre": 12,
 }
+_FRENCH_MONTH_ALIASES = {
+    "janv": 1,
+    "janv.": 1,
+    "fevr": 2,
+    "fevr.": 2,
+    "févr": 2,
+    "févr.": 2,
+    "avr": 4,
+    "avr.": 4,
+    "juil": 7,
+    "juil.": 7,
+    "sept": 9,
+    "sept.": 9,
+    "oct": 10,
+    "oct.": 10,
+    "nov": 11,
+    "nov.": 11,
+    "dec": 12,
+    "dec.": 12,
+    "déc": 12,
+    "déc.": 12,
+}
 _EXPENSE_KEYWORDS = {"depense", "dépense", "depenses", "dépenses"}
+
+
+def _today() -> date:
+    return date.today()
+
+
+def _extract_month(lower_message: str) -> int | None:
+    tokenized_message = re.findall(r"[\wéèêëàâäùûüôöîïç\.]+", lower_message)
+    month_lookup = {**_FRENCH_MONTHS, **_FRENCH_MONTH_ALIASES}
+    return next((month_lookup[token] for token in tokenized_message if token in month_lookup), None)
+
+
+def _extract_year(message: str) -> int | None:
+    years = re.findall(r"\b(19\d{2}|20\d{2}|21\d{2})\b", message)
+    if not years:
+        return None
+    return int(years[0])
 
 
 def _parse_search_command(message: str) -> tuple[dict[str, object] | None, ToolError | None]:
@@ -174,9 +214,13 @@ def deterministic_plan_from_message(message: str) -> Plan:
 
     lower_message = normalized_message.lower()
     if any(keyword in lower_message for keyword in _EXPENSE_KEYWORDS):
-        month = next((month for month_name, month in _FRENCH_MONTHS.items() if month_name in lower_message), None)
+        month = _extract_month(lower_message)
         if month is not None:
-            year = date.today().year
+            explicit_year = _extract_year(normalized_message)
+            today = _today()
+            year = explicit_year or today.year
+            if explicit_year is None and month > today.month:
+                return ClarificationPlan(question="De quelle année parlez-vous ?")
             last_day = calendar.monthrange(year, month)[1]
             return ToolCallPlan(
                 tool_name="finance_releves_sum",
@@ -198,7 +242,7 @@ def plan_from_message(message: str, llm_planner: LLMPlanner | None = None) -> Pl
 
     plan = deterministic_plan_from_message(message)
 
-    if isinstance(plan, (ToolCallPlan, ErrorPlan)):
+    if isinstance(plan, (ToolCallPlan, ErrorPlan, ClarificationPlan)):
         return plan
 
     if isinstance(plan, NoopPlan) and plan.reply == "pong":
