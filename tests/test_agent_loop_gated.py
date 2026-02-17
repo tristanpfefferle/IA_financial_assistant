@@ -226,6 +226,71 @@ def test_gated_llm_write_requires_confirmation_does_not_execute_immediately(
     assert any(record.msg == "llm_tool_requires_confirmation" for record in caplog.records)
 
 
+def test_gated_llm_write_invalid_categories_delete_payload_falls_back(monkeypatch) -> None:
+    router = _RouterSpy()
+    _configure_gated(
+        monkeypatch,
+        allowlist={"finance_categories_delete"},
+        deterministic_plan=NoopPlan(reply="deterministic"),
+        llm_plan=ToolCallPlan(
+            tool_name="finance_categories_delete",
+            payload={"category_name": "   "},
+            user_reply="OK.",
+        ),
+    )
+
+    reply = AgentLoop(tool_router=router, llm_planner=object()).handle_user_message("query")
+
+    assert reply.reply == "deterministic"
+    assert router.calls == []
+    assert reply.active_task is None
+
+
+@pytest.mark.parametrize("payload", [{}, {"set": {}}])
+def test_gated_llm_write_invalid_profile_update_payload_falls_back(
+    monkeypatch, payload: dict
+) -> None:
+    router = _RouterSpy()
+    _configure_gated(
+        monkeypatch,
+        allowlist={"finance_profile_update"},
+        deterministic_plan=NoopPlan(reply="deterministic"),
+        llm_plan=ToolCallPlan(
+            tool_name="finance_profile_update",
+            payload=payload,
+            user_reply="OK.",
+        ),
+    )
+
+    reply = AgentLoop(tool_router=router, llm_planner=object()).handle_user_message("query")
+
+    assert reply.reply == "deterministic"
+    assert router.calls == []
+    assert reply.active_task is None
+
+
+def test_gated_llm_write_profile_update_disallows_unknown_fields_falls_back(
+    monkeypatch,
+) -> None:
+    router = _RouterSpy()
+    _configure_gated(
+        monkeypatch,
+        allowlist={"finance_profile_update"},
+        deterministic_plan=NoopPlan(reply="deterministic"),
+        llm_plan=ToolCallPlan(
+            tool_name="finance_profile_update",
+            payload={"set": {"unknown": "x"}},
+            user_reply="OK.",
+        ),
+    )
+
+    reply = AgentLoop(tool_router=router, llm_planner=object()).handle_user_message("query")
+
+    assert reply.reply == "deterministic"
+    assert router.calls == []
+    assert reply.active_task is None
+
+
 def test_confirm_llm_write_yes_executes_tool(monkeypatch) -> None:
     router = _RouterSpy()
     _configure_gated(
@@ -250,6 +315,37 @@ def test_confirm_llm_write_yes_executes_tool(monkeypatch) -> None:
     }
     assert second_reply.should_update_active_task is True
     assert second_reply.active_task is None
+
+
+def test_confirm_llm_write_yes_executes_profile_update(monkeypatch) -> None:
+    router = _RouterSpy()
+    _configure_gated(
+        monkeypatch,
+        allowlist={"finance_profile_update"},
+        deterministic_plan=NoopPlan(reply="deterministic"),
+        llm_plan=ToolCallPlan(
+            tool_name="finance_profile_update",
+            payload={"set": {"city": "  Lausanne  ", "country": " CH "}},
+            user_reply="OK.",
+        ),
+    )
+
+    loop = AgentLoop(tool_router=router, llm_planner=object())
+    first_reply = loop.handle_user_message("mets à jour mon profil")
+    second_reply = loop.handle_user_message("oui", active_task=first_reply.active_task)
+
+    assert first_reply.active_task is not None
+    assert first_reply.active_task["type"] == "needs_confirmation"
+    assert router.calls == [
+        (
+            "finance_profile_update",
+            {"set": {"city": "Lausanne", "country": "CH"}},
+        )
+    ]
+    assert second_reply.plan == {
+        "tool_name": "finance_profile_update",
+        "payload": {"set": {"city": "Lausanne", "country": "CH"}},
+    }
 
 
 def test_confirm_llm_write_no_cancels(monkeypatch) -> None:

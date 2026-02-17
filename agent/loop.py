@@ -27,7 +27,7 @@ from agent.planner import (
 )
 from agent.tool_router import ToolRouter
 from shared import config
-from shared.models import RelevesGroupBy, ToolError, ToolErrorCode
+from shared.models import PROFILE_ALLOWED_FIELDS, RelevesGroupBy, ToolError, ToolErrorCode
 
 
 logger = logging.getLogger(__name__)
@@ -711,6 +711,36 @@ class AgentLoop:
 
         if tool_name == "finance_categories_list":
             return True, None, {}
+
+        if tool_name == "finance_categories_delete":
+            category_name = payload.get("category_name")
+            if not isinstance(category_name, str) or not category_name.strip():
+                return False, "missing_category_name", payload
+            return True, None, {"category_name": category_name.strip()}
+
+        if tool_name == "finance_profile_update":
+            raw_set = payload.get("set")
+            if not isinstance(raw_set, dict) or not raw_set:
+                return False, "invalid_profile_update", payload
+
+            normalized_set: dict[str, object] = {}
+            for field_name, field_value in raw_set.items():
+                if not isinstance(field_name, str) or field_name not in PROFILE_ALLOWED_FIELDS:
+                    return False, "invalid_profile_update", payload
+
+                if isinstance(field_value, str):
+                    stripped_value = field_value.strip()
+                    if not stripped_value:
+                        continue
+                    normalized_set[field_name] = stripped_value
+                    continue
+
+                normalized_set[field_name] = field_value
+
+            if not normalized_set:
+                return False, "invalid_profile_update", payload
+
+            return True, None, {"set": normalized_set}
 
         if tool_name == "finance_profile_get":
             fields = payload.get("fields")
