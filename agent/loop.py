@@ -948,11 +948,24 @@ class AgentLoop:
         if not config.llm_gated():
             return plan_from_message(message, llm_planner=self.llm_planner)
 
+        message_hash = hashlib.sha256(message.encode("utf-8")).hexdigest()[:12]
         if not isinstance(deterministic_plan, NoopPlan):
             return deterministic_plan
 
-        message_hash = hashlib.sha256(message.encode("utf-8")).hexdigest()[:12]
-        llm_plan = plan_from_message(message, llm_planner=self.llm_planner)
+        try:
+            llm_plan = plan_from_message(message, llm_planner=self.llm_planner)
+        except Exception:
+            logger.exception(
+                "llm_gated_error",
+                extra={
+                    "event": "llm_gated_error",
+                    "message_hash": message_hash,
+                    "profile_id": str(profile_id) if profile_id is not None else None,
+                    "deterministic_plan_type": deterministic_plan.__class__.__name__,
+                },
+            )
+            return deterministic_plan
+
         logger.info(
             "llm_gated_used",
             extra={
@@ -970,6 +983,8 @@ class AgentLoop:
                     "llm_tool_blocked",
                     extra={
                         "event": "llm_tool_blocked",
+                        "message_hash": message_hash,
+                        "profile_id": str(profile_id) if profile_id is not None else None,
                         "tool_name": llm_plan.tool_name,
                         "allowlist": sorted(allowed_tools),
                     },
@@ -985,6 +1000,8 @@ class AgentLoop:
                     "llm_payload_invalid",
                     extra={
                         "event": "llm_payload_invalid",
+                        "message_hash": message_hash,
+                        "profile_id": str(profile_id) if profile_id is not None else None,
                         "tool_name": llm_plan.tool_name,
                         "reason": reason,
                     },
@@ -995,6 +1012,8 @@ class AgentLoop:
                 "llm_tool_allowed",
                 extra={
                     "event": "llm_tool_allowed",
+                    "message_hash": message_hash,
+                    "profile_id": str(profile_id) if profile_id is not None else None,
                     "tool_name": llm_plan.tool_name,
                     "same_as_deterministic": False,
                     "payload_keys": sorted(normalized_payload.keys()),
