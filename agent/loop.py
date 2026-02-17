@@ -48,6 +48,41 @@ _LLM_WRITE_TOOLS = {
 }
 _CONFIRM_WORDS = {"oui", "o", "ok", "confirme", "confirmé", "confirmée"}
 _REJECT_WORDS = {"non", "n", "annule", "annuler"}
+_PROFILE_FIELD_ALIASES = {
+    "ville": "city",
+    "city": "city",
+    "commune": "city",
+    "localite": "city",
+    "adresse ville": "city",
+    "address city": "city",
+    "pays": "country",
+    "country": "country",
+    "nation": "country",
+    "code postal": "postal_code",
+    "postal": "postal_code",
+    "zipcode": "postal_code",
+    "zip": "postal_code",
+    "canton": "canton",
+    "state": "canton",
+    "adresse": "address_line1",
+    "address": "address_line1",
+    "address line1": "address_line1",
+    "rue": "address_line1",
+    "street": "address_line1",
+    "adresse2": "address_line2",
+    "address line2": "address_line2",
+    "complement": "address_line2",
+    "prenom": "first_name",
+    "first name": "first_name",
+    "nom": "last_name",
+    "last name": "last_name",
+    "date de naissance": "birth_date",
+    "naissance": "birth_date",
+    "birth date": "birth_date",
+    "genre": "gender",
+    "sexe": "gender",
+    "gender": "gender",
+}
 
 
 def _build_clarification_tool_result(
@@ -73,6 +108,11 @@ def _normalize_for_match(value: str) -> str:
     return "".join(
         char for char in without_accents if not unicodedata.combining(char)
     ).strip()
+
+
+def _normalize_profile_field_key(key: str) -> str:
+    normalized = _normalize_for_match(key)
+    return _PROFILE_FIELD_ALIASES.get(normalized, normalized)
 
 
 @dataclass(slots=True)
@@ -728,9 +768,9 @@ class AgentLoop:
                 if not isinstance(field_name, str):
                     return False, "invalid_profile_update", payload
 
-                normalized_field = field_name.strip()
-                if not normalized_field or normalized_field not in PROFILE_ALLOWED_FIELDS:
-                    return False, "invalid_profile_update", payload
+                normalized_field = _normalize_profile_field_key(field_name)
+                if normalized_field not in PROFILE_ALLOWED_FIELDS:
+                    return False, "invalid_profile_update_field", payload
 
                 if isinstance(field_value, str):
                     stripped_value = field_value.strip()
@@ -754,10 +794,10 @@ class AgentLoop:
             for field_name in fields:
                 if not isinstance(field_name, str):
                     return False, "invalid_fields", payload
-                stripped = field_name.strip()
-                if not stripped:
+                normalized_field = _normalize_profile_field_key(field_name)
+                if normalized_field not in PROFILE_ALLOWED_FIELDS:
                     return False, "invalid_fields", payload
-                normalized_fields.append(stripped)
+                normalized_fields.append(normalized_field)
 
             normalized_payload = dict(payload)
             normalized_payload["fields"] = normalized_fields

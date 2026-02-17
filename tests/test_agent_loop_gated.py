@@ -279,7 +279,7 @@ def test_gated_llm_write_profile_update_disallows_unknown_fields_falls_back(
         deterministic_plan=NoopPlan(reply="deterministic"),
         llm_plan=ToolCallPlan(
             tool_name="finance_profile_update",
-            payload={"set": {"unknown": "x"}},
+            payload={"set": {"ville_de_residence": "x"}},
             user_reply="OK.",
         ),
     )
@@ -348,7 +348,9 @@ def test_confirm_llm_write_yes_executes_profile_update(monkeypatch) -> None:
     }
 
 
-def test_gated_llm_write_profile_update_strips_field_names(monkeypatch) -> None:
+def test_gated_llm_write_profile_update_normalizes_french_alias_before_confirmation(
+    monkeypatch,
+) -> None:
     router = _RouterSpy()
     _configure_gated(
         monkeypatch,
@@ -356,7 +358,38 @@ def test_gated_llm_write_profile_update_strips_field_names(monkeypatch) -> None:
         deterministic_plan=NoopPlan(reply="deterministic"),
         llm_plan=ToolCallPlan(
             tool_name="finance_profile_update",
-            payload={"set": {" city ": " Lausanne "}},
+            payload={"set": {"ville": "  Choëx "}},
+            user_reply="OK.",
+        ),
+    )
+
+    loop = AgentLoop(tool_router=router, llm_planner=object())
+    first_reply = loop.handle_user_message("Mets à jour mon profil : ville Choëx")
+
+    assert first_reply.active_task is not None
+    assert first_reply.active_task["type"] == "needs_confirmation"
+    assert first_reply.active_task["confirmation_type"] == "confirm_llm_write"
+    assert first_reply.active_task["context"]["payload"] == {"set": {"city": "Choëx"}}
+
+    second_reply = loop.handle_user_message("oui", active_task=first_reply.active_task)
+
+    assert router.calls == [("finance_profile_update", {"set": {"city": "Choëx"}})]
+    assert second_reply.plan == {
+        "tool_name": "finance_profile_update",
+        "payload": {"set": {"city": "Choëx"}},
+    }
+
+
+
+def test_gated_llm_write_profile_update_normalizes_english_aliases(monkeypatch) -> None:
+    router = _RouterSpy()
+    _configure_gated(
+        monkeypatch,
+        allowlist={"finance_profile_update"},
+        deterministic_plan=NoopPlan(reply="deterministic"),
+        llm_plan=ToolCallPlan(
+            tool_name="finance_profile_update",
+            payload={"set": {"zip": " 1000 ", "country": " ch "}},
             user_reply="OK.",
         ),
     )
@@ -366,10 +399,15 @@ def test_gated_llm_write_profile_update_strips_field_names(monkeypatch) -> None:
     second_reply = loop.handle_user_message("oui", active_task=first_reply.active_task)
 
     assert first_reply.active_task is not None
-    assert router.calls == [("finance_profile_update", {"set": {"city": "Lausanne"}})]
+    assert first_reply.active_task["context"]["payload"] == {
+        "set": {"postal_code": "1000", "country": "ch"}
+    }
+    assert router.calls == [
+        ("finance_profile_update", {"set": {"postal_code": "1000", "country": "ch"}})
+    ]
     assert second_reply.plan == {
         "tool_name": "finance_profile_update",
-        "payload": {"set": {"city": "Lausanne"}},
+        "payload": {"set": {"postal_code": "1000", "country": "ch"}},
     }
 
 
