@@ -77,6 +77,9 @@ _BANK_ACCOUNT_HINTS = {
     "raiffeisen",
     "cs",
     "credit suisse",
+    "crédit suisse",
+    "credit-suisse",
+    "crédit-suisse",
 }
 
 _BANK_HINT_SUFFIXES = {
