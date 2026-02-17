@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import date
 from uuid import UUID
 
+import pytest
+
 import agent.loop
 from agent.loop import AgentLoop
 from agent.planner import NoopPlan, ToolCallPlan
@@ -228,6 +230,62 @@ def test_confirm_delete_bank_account_yes_executes_delete() -> None:
     }
     assert reply.should_update_active_task is True
     assert reply.active_task is None
+
+
+
+@pytest.mark.parametrize("message", ["delete le compte test", "remove le compte test"])
+def test_bank_account_delete_variants_stay_deterministic_and_execute_after_confirmation(
+    monkeypatch, message: str
+) -> None:
+    calls = {"llm": 0}
+
+    def _spy_plan_from_message(*_args, **_kwargs):
+        calls["llm"] += 1
+        return ToolCallPlan(
+            tool_name="finance_releves_search",
+            payload={"merchant": "should-not-run"},
+            user_reply="OK.",
+        )
+
+    class _DeleteTestAccountRouter:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict]] = []
+
+        def call(self, tool_name: str, payload: dict, *, profile_id: UUID | None = None):
+            self.calls.append((tool_name, payload))
+            assert tool_name == "finance_bank_accounts_delete"
+            assert payload == {"name": "test"}
+            return {"ok": True}
+
+    monkeypatch.setattr(agent.loop, "plan_from_message", _spy_plan_from_message)
+    monkeypatch.setattr(agent.loop.config, "llm_enabled", lambda: True)
+    monkeypatch.setattr(agent.loop.config, "llm_gated", lambda: True)
+    monkeypatch.setattr(agent.loop.config, "llm_allowed_tools", lambda: {"finance_releves_search"})
+    monkeypatch.setattr(agent.loop.config, "llm_shadow", lambda: False)
+
+    router = _DeleteTestAccountRouter()
+    loop = AgentLoop(tool_router=router, llm_planner=object())
+
+    confirm_reply = loop.handle_user_message(message)
+
+    assert confirm_reply.should_update_active_task is True
+    assert confirm_reply.active_task is not None
+    assert confirm_reply.active_task["type"] == "needs_confirmation"
+    assert (
+        confirm_reply.active_task["confirmation_type"]
+        == "confirm_delete_bank_account"
+    )
+    assert confirm_reply.active_task["context"] == {"name": "test"}
+    assert calls["llm"] == 0
+
+    delete_reply = loop.handle_user_message("oui", active_task=confirm_reply.active_task)
+
+    assert delete_reply.plan == {
+        "tool_name": "finance_bank_accounts_delete",
+        "payload": {"name": "test"},
+    }
+    assert calls["llm"] == 0
+    assert router.calls == [("finance_bank_accounts_delete", {"name": "test"})]
 
 
 def test_bank_account_ambiguous_sets_select_active_task_then_resolves_by_index() -> (

@@ -9,6 +9,7 @@ from typing import Any, Protocol
 from agent.planner import ClarificationPlan, ErrorPlan, NoopPlan, Plan, ToolCallPlan
 from shared import config
 from shared.models import (
+    BankAccountDeleteRequest,
     CategoryCreateRequest,
     CategoryDeleteRequest,
     CategoryUpdateRequest,
@@ -32,12 +33,17 @@ _ALLOWED_TOOLS = {
     "finance_categories_delete",
     "finance_profile_get",
     "finance_profile_update",
+    "finance_bank_accounts_delete",
 }
 _TOOL_ALIASES = {
     "finance_transactions_search": "finance_releves_search",
     "finance_transactions_sum": "finance_releves_sum",
 }
 _FALLBACK_CLARIFICATION = "Pouvez-vous préciser votre demande ?"
+_DELETE_BANK_ACCOUNT_FALLBACK = (
+    "La suppression de compte bancaire est bien disponible via l'outil "
+    "finance_bank_accounts_delete avec confirmation. Indiquez le nom du compte à supprimer."
+)
 
 
 class OpenAIChatClient(Protocol):
@@ -124,6 +130,9 @@ class LLMPlanner:
         )
         profile_get_schema = ProfileGetRequest.model_json_schema()
         profile_update_schema = ProfileUpdateRequest.model_json_schema()
+        bank_account_delete_schema = LLMPlanner._schema_without_profile_id(
+            BankAccountDeleteRequest.model_json_schema()
+        )
         releves_import_schema = LLMPlanner._schema_without_profile_id(
             RelevesImportRequest.model_json_schema()
         )
@@ -200,6 +209,14 @@ class LLMPlanner:
             {
                 "type": "function",
                 "function": {
+                    "name": "finance_bank_accounts_delete",
+                    "description": "Delete a bank account for the current profile (requires user confirmation in the flow).",
+                    "parameters": bank_account_delete_schema,
+                },
+            },
+            {
+                "type": "function",
+                "function": {
                     "name": "finance_profile_get",
                     "description": "Read selected profile fields from the current user profile.",
                     "parameters": profile_get_schema,
@@ -224,6 +241,7 @@ class LLMPlanner:
                     "Tu planifies un appel d'outil financier. "
                     "Transactions et relevés désignent la même source de vérité (releves_bancaires). "
                     "Utilise toujours finance_releves_search pour lister/rechercher et finance_releves_sum pour total/somme/dépenses/revenus. "
+                    "La suppression de compte bancaire existe via finance_bank_accounts_delete et doit passer par une confirmation utilisateur. "
                     "Dates au format YYYY-MM-DD si présentes. "
                     "Direction: DEBIT_ONLY pour dépenses, CREDIT_ONLY pour revenus, sinon ALL."
                 ),
@@ -259,6 +277,13 @@ class LLMPlanner:
         tool_calls = message.get("tool_calls") or []
         if not tool_calls:
             question = content if isinstance(content, str) and content.strip() else _FALLBACK_CLARIFICATION
+            normalized_question = question.casefold()
+            if (
+                "pas d'outil" in normalized_question
+                and "compte bancaire" in normalized_question
+                and ("supprim" in normalized_question or "delete" in normalized_question)
+            ):
+                question = _DELETE_BANK_ACCOUNT_FALLBACK
             return ClarificationPlan(question=question)
 
         tool_call = tool_calls[0] if isinstance(tool_calls[0], dict) else {}

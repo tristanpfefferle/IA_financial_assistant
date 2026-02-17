@@ -196,3 +196,29 @@ def test_llm_planner_parses_categories_update_tool_call(monkeypatch) -> None:
     assert isinstance(plan, ToolCallPlan)
     assert plan.tool_name == "finance_categories_update"
     assert plan.payload["exclude_from_totals"] is True
+
+
+def test_llm_planner_rewrites_incorrect_no_tool_bank_delete_fallback(monkeypatch) -> None:
+    monkeypatch.setenv("AGENT_LLM_ENABLED", "true")
+    monkeypatch.setenv("APP_ENV", "dev")
+
+    planner = LLMPlanner(
+        client=FakeClient(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "Je n'ai pas d'outil pour supprimer un compte bancaire.",
+                            "tool_calls": [],
+                        }
+                    }
+                ]
+            }
+        )
+    )
+
+    plan = planner.plan("delete le compte test")
+
+    assert isinstance(plan, ClarificationPlan)
+    assert "finance_bank_accounts_delete" in plan.question
+    assert "confirmation" in plan.question
