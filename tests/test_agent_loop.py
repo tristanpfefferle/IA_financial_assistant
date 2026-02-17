@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date
 from uuid import UUID
 
+import agent.loop
 from agent.loop import AgentLoop
 from shared.models import ToolError, ToolErrorCode
 
@@ -351,6 +352,25 @@ def test_nlu_search_without_merchant_sets_active_task_with_date_range() -> None:
     }
 
 
+def test_nlu_search_without_merchant_starts_active_task_via_plan_meta() -> None:
+    loop = AgentLoop(tool_router=_FailIfCalledRouter())
+
+    reply = loop.handle_user_message("recherche en janvier 2026")
+
+    assert reply.reply == "Que voulez-vous rechercher (ex: Migros, coffee, Coop) ?"
+    assert reply.tool_result == {
+        "type": "clarification",
+        "clarification_type": "awaiting_search_merchant",
+        "message": "Que voulez-vous rechercher (ex: Migros, coffee, Coop) ?",
+        "payload": {"date_range": {"start_date": date(2026, 1, 1), "end_date": date(2026, 1, 31)}},
+    }
+    assert reply.active_task == {
+        "type": "awaiting_search_merchant",
+        "date_range": {"start_date": date(2026, 1, 1), "end_date": date(2026, 1, 31)},
+    }
+    assert reply.should_update_active_task is True
+
+
 def test_active_task_search_merchant_runs_search_and_clears_active_task() -> None:
     router = _SearchRouter()
     loop = AgentLoop(tool_router=router)
@@ -574,8 +594,8 @@ def test_nlu_tool_call_with_llm_planner_does_not_call_plan_from_message(monkeypa
     def _fail_plan_from_message(*args, **kwargs):
         raise AssertionError("plan_from_message should not be called when deterministic NLU returns a tool_call")
 
-    monkeypatch.setattr("agent.loop.parse_intent", _fake_parse_intent)
-    monkeypatch.setattr("agent.loop.plan_from_message", _fail_plan_from_message)
+    monkeypatch.setattr(agent.loop, "parse_intent", _fake_parse_intent)
+    monkeypatch.setattr(agent.loop, "plan_from_message", _fail_plan_from_message)
 
     loop = AgentLoop(tool_router=_CreateAccountRouter(), llm_planner=object())
     reply = loop.handle_user_message("ignored")

@@ -533,6 +533,17 @@ class AgentLoop:
         elif plan_meta.get("keep_active_task"):
             should_update_active_task = True
             updated_active_task = active_task
+            clarification_type = plan_meta.get("clarification_type")
+            clarification_payload = plan_meta.get("clarification_payload")
+            if (
+                active_task is None
+                and clarification_type == "awaiting_search_merchant"
+            ):
+                updated_active_task = {"type": "awaiting_search_merchant"}
+                if isinstance(clarification_payload, dict):
+                    date_range = clarification_payload.get("date_range")
+                    if isinstance(date_range, dict):
+                        updated_active_task["date_range"] = date_range
 
         if isinstance(plan, SetActiveTaskPlan):
             if profile_id is not None:
@@ -634,8 +645,6 @@ class AgentLoop:
         profile_id: UUID | None,
         active_task: dict[str, object] | None,
     ) -> Plan | AgentReply:
-        del profile_id
-
         if active_task is not None:
             return self.plan_from_active_task(message, active_task)
 
@@ -647,31 +656,28 @@ class AgentLoop:
                 if isinstance(clarification_message, str):
                     clarification_type = nlu_intent.get("clarification_type")
                     if clarification_type == "awaiting_search_merchant":
-                        next_active_task: dict[str, object] = {"type": "awaiting_search_merchant"}
                         clarification_payload: dict[str, object] = {}
                         date_range = nlu_intent.get("date_range")
                         if isinstance(date_range, dict):
-                            next_active_task["date_range"] = date_range
                             clarification_payload["date_range"] = date_range
-                        return AgentReply(
-                            reply=clarification_message,
-                            tool_result=_build_clarification_tool_result(
-                                message=clarification_message,
-                                clarification_type="awaiting_search_merchant",
-                                payload=clarification_payload or None,
-                            ),
-                            active_task=next_active_task,
-                            should_update_active_task=True,
+                        return ClarificationPlan(
+                            question=clarification_message,
+                            meta={
+                                "keep_active_task": True,
+                                "clarification_type": "awaiting_search_merchant",
+                                "clarification_payload": clarification_payload,
+                            },
                         )
 
-                    return AgentReply(
-                        reply=clarification_message,
-                        tool_result=_build_clarification_tool_result(
-                            message=clarification_message,
-                            clarification_type=str(clarification_type)
-                            if isinstance(clarification_type, str) and clarification_type
-                            else "generic",
-                        ),
+                    return ClarificationPlan(
+                        question=clarification_message,
+                        meta={
+                            "clarification_type": (
+                                str(clarification_type)
+                                if isinstance(clarification_type, str) and clarification_type
+                                else "generic"
+                            )
+                        },
                     )
 
             if intent_type == "ui_action":
