@@ -117,6 +117,7 @@ class _SearchWithBankHintRouter:
                 {
                     "items": [
                         type("_Account", (), {"id": "acc-ubs", "name": "UBS"}),
+                        type("_Account", (), {"id": "acc-credit-suisse", "name": "Credit Suisse"}),
                         type("_Account", (), {"id": "acc-revolut", "name": "Revolut"}),
                     ]
                 },
@@ -447,6 +448,26 @@ def test_nlu_search_with_punctuated_bank_hint_matches_account() -> None:
     assert reply.plan == {
         "tool_name": "finance_releves_search",
         "payload": {"merchant": "migros", "limit": 50, "offset": 0, "bank_account_id": "acc-ubs"},
+    }
+
+
+def test_nlu_search_with_multi_word_bank_hint_matches_account() -> None:
+    router = _SearchWithBankHintRouter()
+    loop = AgentLoop(tool_router=router)
+
+    reply = loop.handle_user_message(
+        "cherche Migros credit suisse",
+        profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+    )
+
+    assert router.calls[0] == ("finance_bank_accounts_list", {})
+    assert router.calls[1] == (
+        "finance_releves_search",
+        {"merchant": "migros", "limit": 50, "offset": 0, "bank_account_id": "acc-credit-suisse"},
+    )
+    assert reply.plan == {
+        "tool_name": "finance_releves_search",
+        "payload": {"merchant": "migros", "limit": 50, "offset": 0, "bank_account_id": "acc-credit-suisse"},
     }
 
 
