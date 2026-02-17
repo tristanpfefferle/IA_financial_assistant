@@ -178,6 +178,29 @@ def test_llm_planner_parses_releves_aggregate_tool_call(monkeypatch) -> None:
     assert plan.user_reply == ""
 
 
+
+
+def test_llm_planner_parses_bank_accounts_list_tool_call(monkeypatch) -> None:
+    monkeypatch.setenv("AGENT_LLM_ENABLED", "true")
+    monkeypatch.setenv("APP_ENV", "dev")
+
+    planner = LLMPlanner(
+        client=FakeClient(
+            _response_with_tool_call(
+                "finance_bank_accounts_list",
+                '{}',
+            )
+        )
+    )
+
+    plan = planner.plan("Montre moi mes comptes bancaires")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_bank_accounts_list"
+    assert plan.payload == {}
+    assert plan.user_reply == ""
+
+
 def test_llm_planner_parses_categories_update_tool_call(monkeypatch) -> None:
     monkeypatch.setenv("AGENT_LLM_ENABLED", "true")
     monkeypatch.setenv("APP_ENV", "dev")

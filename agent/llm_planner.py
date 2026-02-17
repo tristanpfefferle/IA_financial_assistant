@@ -33,6 +33,7 @@ _ALLOWED_TOOLS = {
     "finance_categories_delete",
     "finance_profile_get",
     "finance_profile_update",
+    "finance_bank_accounts_list",
     "finance_bank_accounts_delete",
 }
 _TOOL_ALIASES = {
@@ -209,6 +210,18 @@ class LLMPlanner:
             {
                 "type": "function",
                 "function": {
+                    "name": "finance_bank_accounts_list",
+                    "description": "List bank accounts for the current profile.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
                     "name": "finance_bank_accounts_delete",
                     "description": "Delete a bank account for the current profile (requires user confirmation in the flow).",
                     "parameters": bank_account_delete_schema,
@@ -241,7 +254,8 @@ class LLMPlanner:
                     "Tu planifies un appel d'outil financier. "
                     "Transactions et relevés désignent la même source de vérité (releves_bancaires). "
                     "Utilise toujours finance_releves_search pour lister/rechercher et finance_releves_sum pour total/somme/dépenses/revenus. "
-                    "La suppression de compte bancaire existe via finance_bank_accounts_delete et doit passer par une confirmation utilisateur. "
+                    "Lister les comptes bancaires => finance_bank_accounts_list. "
+                    "Supprimer un compte => finance_bank_accounts_delete (avec confirmation). "
                     "Dates au format YYYY-MM-DD si présentes. "
                     "Direction: DEBIT_ONLY pour dépenses, CREDIT_ONLY pour revenus, sinon ALL."
                 ),

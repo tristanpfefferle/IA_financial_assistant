@@ -146,6 +146,8 @@ _RELEVES_ASSIGN_PATTERNS = (
 _BANK_ACCOUNT_LIST_PATTERNS = (
     "liste mes comptes bancaires",
     "affiche mes comptes bancaires",
+    "montre moi mes comptes bancaires",
+    "j'ai combien de comptes bancaires",
     "liste mes comptes",
     "affiche mes comptes",
     "quels sont mes comptes",

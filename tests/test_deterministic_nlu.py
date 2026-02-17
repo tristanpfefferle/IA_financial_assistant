@@ -45,6 +45,8 @@ def test_parse_account_create_missing_name_needs_clarification(message: str) -> 
         "quels sont mes comptes bancaires",
         "Quels sont mes comptes",
         "affiche mes comptes",
+        "montre moi mes comptes bancaires",
+        "j'ai combien de comptes bancaires ?",
     ],
 )
 def test_parse_accounts_list_variants(message: str) -> None:

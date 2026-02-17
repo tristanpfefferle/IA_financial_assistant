@@ -1001,6 +1001,74 @@ def test_llm_gated_executes_allowed_tool(monkeypatch) -> None:
     }
 
 
+def test_llm_gated_executes_allowed_bank_accounts_list_tool_when_deterministic_is_noop(
+    monkeypatch,
+) -> None:
+    class _ListAccountsRouter:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict]] = []
+
+        def call(
+            self, tool_name: str, payload: dict, *, profile_id: UUID | None = None
+        ):
+            self.calls.append((tool_name, payload))
+            assert tool_name == "finance_bank_accounts_list"
+            return {
+                "items": [
+                    {
+                        "id": "11111111-1111-1111-1111-111111111111",
+                        "profile_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                        "name": "UBS",
+                        "kind": "individual",
+                        "account_kind": "personal_current",
+                        "is_system": False,
+                    }
+                ],
+                "default_bank_account_id": "11111111-1111-1111-1111-111111111111",
+            }
+
+    def _fake_parse_intent(_message: str):
+        return None
+
+    def _spy_plan_from_message(*_args, **_kwargs):
+        return ToolCallPlan(
+            tool_name="finance_bank_accounts_list",
+            payload={},
+            user_reply="",
+        )
+
+    monkeypatch.setattr(agent.loop, "parse_intent", _fake_parse_intent)
+    monkeypatch.setattr(
+        agent.loop,
+        "deterministic_plan_from_message",
+        lambda _m: NoopPlan(reply="Commandes disponibles: 'ping' ou 'search: <term>'."),
+    )
+    monkeypatch.setattr(agent.loop, "plan_from_message", _spy_plan_from_message)
+    monkeypatch.setattr(agent.loop.config, "llm_enabled", lambda: True)
+    monkeypatch.setattr(agent.loop.config, "llm_gated", lambda: True)
+    monkeypatch.setattr(
+        agent.loop.config,
+        "llm_allowed_tools",
+        lambda: {"finance_bank_accounts_list"},
+    )
+    monkeypatch.setattr(agent.loop.config, "llm_shadow", lambda: False)
+
+    router = _ListAccountsRouter()
+    loop = AgentLoop(tool_router=router, llm_planner=object())
+    reply = loop.handle_user_message("Montre moi mes comptes bancaires")
+
+    assert router.calls == [
+        (
+            "finance_bank_accounts_list",
+            {},
+        )
+    ]
+    assert reply.plan == {
+        "tool_name": "finance_bank_accounts_list",
+        "payload": {},
+    }
+
+
 def test_active_task_never_runs_llm_execution_when_gated(monkeypatch) -> None:
     def _fail_plan_from_message(*_args, **_kwargs):
         raise AssertionError("LLM execution should not run when active_task is present")
