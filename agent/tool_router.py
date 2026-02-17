@@ -29,6 +29,8 @@ from shared.models import (
     RelevesAggregateRequest,
     RelevesAggregateResult,
     RelevesFilters,
+    RelevesImportRequest,
+    RelevesImportResult,
     RelevesSearchResult,
     RelevesSumResult,
     ToolError,
@@ -129,6 +131,15 @@ class _RelevesSetBankAccountPayload(BaseModel):
             raise ValueError("Provide either releve_ids/releves_ids or filters, not both")
 
         return self
+
+
+class _RelevesImportPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    files: list[dict[str, str]]
+    bank_account_id: UUID | None = None
+    import_mode: str = "analyze"
+    modified_action: str = "keep"
 
 
 @dataclass(slots=True)
@@ -292,6 +303,7 @@ class ToolRouter:
         RelevesSearchResult
         | RelevesSumResult
         | RelevesAggregateResult
+        | RelevesImportResult
         | CategoriesListResult
         | BankAccountsListResult
         | ProfileCategory
@@ -308,6 +320,7 @@ class ToolRouter:
             "finance_releves_sum",
             "finance_releves_aggregate",
             "finance_releves_set_bank_account",
+            "finance_releves_import_files",
             "finance_categories_list",
             "finance_categories_create",
             "finance_categories_update",
@@ -397,6 +410,23 @@ class ToolRouter:
                 filters=request_payload.filters,
                 releve_ids=releve_ids,
             )
+
+        if tool_name == "finance_releves_import_files":
+            try:
+                request_payload = _RelevesImportPayload.model_validate(payload)
+                request = RelevesImportRequest.model_validate(
+                    {
+                        **request_payload.model_dump(),
+                        "profile_id": str(profile_id),
+                    }
+                )
+            except ValidationError as exc:
+                return ToolError(
+                    code=ToolErrorCode.VALIDATION_ERROR,
+                    message=f"Invalid payload for tool {tool_name}",
+                    details={"validation_errors": exc.errors(), "payload": payload},
+                )
+            return self.backend_client.finance_releves_import_files(request=request)
 
         if tool_name == "finance_categories_list":
             if payload:

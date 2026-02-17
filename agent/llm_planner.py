@@ -16,6 +16,7 @@ from shared.models import (
     ProfileUpdateRequest,
     RelevesAggregateRequest,
     RelevesFilters,
+    RelevesImportRequest,
     ToolError,
     ToolErrorCode,
 )
@@ -24,6 +25,7 @@ _ALLOWED_TOOLS = {
     "finance_releves_search",
     "finance_releves_sum",
     "finance_releves_aggregate",
+    "finance_releves_import_files",
     "finance_categories_list",
     "finance_categories_create",
     "finance_categories_update",
@@ -122,6 +124,9 @@ class LLMPlanner:
         )
         profile_get_schema = ProfileGetRequest.model_json_schema()
         profile_update_schema = ProfileUpdateRequest.model_json_schema()
+        releves_import_schema = LLMPlanner._schema_without_profile_id(
+            RelevesImportRequest.model_json_schema()
+        )
 
         return [
             {
@@ -146,6 +151,14 @@ class LLMPlanner:
                     "name": "finance_releves_aggregate",
                     "description": "Aggregate releves bancaires by group with totals and counts.",
                     "parameters": releves_aggregate_schema,
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "finance_releves_import_files",
+                    "description": "Import one or more bank statement files in analyze or commit mode.",
+                    "parameters": releves_import_schema,
                 },
             },
             {

@@ -49,6 +49,7 @@ def test_llm_planner_tool_definitions_expose_releves_categories_and_profile_tool
         "finance_releves_search",
         "finance_releves_sum",
         "finance_releves_aggregate",
+        "finance_releves_import_files",
         "finance_categories_list",
         "finance_categories_create",
         "finance_categories_update",

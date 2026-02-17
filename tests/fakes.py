@@ -20,6 +20,10 @@ from shared.models import (
     RelevesAggregateResult,
     RelevesDirection,
     RelevesFilters,
+    RelevesImportError,
+    RelevesImportPreviewItem,
+    RelevesImportRequest,
+    RelevesImportResult,
     RelevesGroupBy,
     RelevesSearchResult,
     RelevesSumResult,
@@ -184,6 +188,32 @@ class FakeBackendClient:
             self.releves[index] = item.model_copy(update={"bank_account_id": bank_account_id})
             updated_count += 1
         return {"ok": True, "updated_count": updated_count}
+
+    def finance_releves_import_files(
+        self,
+        *,
+        request: RelevesImportRequest,
+    ) -> RelevesImportResult:
+        _ = request
+        return RelevesImportResult(
+            imported_count=0,
+            failed_count=0,
+            duplicates_count=0,
+            replaced_count=0,
+            identical_count=0,
+            modified_count=0,
+            new_count=0,
+            requires_confirmation=False,
+            errors=[RelevesImportError(file="fake.csv", message="not implemented")],
+            preview=[
+                RelevesImportPreviewItem(
+                    date=date(2025, 1, 1),
+                    montant=Decimal("0"),
+                    devise="CHF",
+                    libelle="fake",
+                )
+            ],
+        )
 
     def finance_categories_list(self, profile_id: UUID) -> CategoriesListResult:
         return CategoriesListResult(items=[item for item in self.categories if item.profile_id == profile_id])

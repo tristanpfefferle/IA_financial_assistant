@@ -317,6 +317,69 @@ class RelevesAggregateResult(BaseModel):
     filters: RelevesAggregateRequest | None = None
 
 
+class RelevesImportMode(str, Enum):
+    ANALYZE = "analyze"
+    COMMIT = "commit"
+
+
+class RelevesImportModifiedAction(str, Enum):
+    KEEP = "keep"
+    REPLACE = "replace"
+
+
+class RelevesImportFile(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    filename: str
+    content_base64: str
+
+
+class RelevesImportRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    profile_id: UUID
+    files: list[RelevesImportFile]
+    bank_account_id: UUID | None = None
+    import_mode: RelevesImportMode = RelevesImportMode.ANALYZE
+    modified_action: RelevesImportModifiedAction = RelevesImportModifiedAction.KEEP
+
+
+class RelevesImportError(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    file: str
+    row_index: int | None = None
+    message: str
+
+
+class RelevesImportPreviewItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    date: date
+    montant: Decimal
+    devise: str
+    libelle: str | None = None
+    payee: str | None = None
+    categorie: str | None = None
+    bank_account_id: UUID | None = None
+
+
+class RelevesImportResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: str = "releves_import_result"
+    imported_count: int
+    failed_count: int
+    duplicates_count: int
+    replaced_count: int
+    identical_count: int
+    modified_count: int
+    new_count: int
+    requires_confirmation: bool
+    errors: list[RelevesImportError]
+    preview: list[RelevesImportPreviewItem]
+
+
 PROFILE_ALLOWED_FIELDS: frozenset[str] = frozenset(
     {
         "first_name",
