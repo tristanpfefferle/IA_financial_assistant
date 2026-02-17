@@ -134,3 +134,56 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 }
+
+.import-panel {
+  border: 1px solid #2d3648;
+  border-radius: 8px;
+  background: #0f131b;
+  padding: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.import-panel h2 {
+  margin: 0 0 0.7rem;
+  font-size: 1rem;
+}
+
+.import-controls {
+  display: grid;
+  gap: 0.6rem;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+select {
+  border-radius: 8px;
+  border: 1px solid #3f4758;
+  padding: 0.7rem 0.9rem;
+  font-size: 0.95rem;
+  background: #0f131b;
+  color: #f3f4f6;
+}
+
+.import-actions {
+  margin-top: 0.6rem;
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.import-result {
+  margin-top: 0.7rem;
+  font-size: 0.9rem;
+}
+
+.import-result table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 0.5rem;
+}
+
+.import-result th,
+.import-result td {
+  border-bottom: 1px solid #2d3648;
+  text-align: left;
+  padding: 0.4rem;
+}

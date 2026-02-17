@@ -1,6 +1,13 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
 
-import { sendChatMessage } from '../api/agentApi'
+import {
+  importReleves,
+  listBankAccounts,
+  sendChatMessage,
+  type BankAccount,
+  type ImportFilePayload,
+  type RelevesImportResult,
+} from '../api/agentApi'
 import { supabase } from '../lib/supabaseClient'
 
 type ChatMessage = {
@@ -15,6 +22,17 @@ type ChatPageProps = {
   email?: string
 }
 
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer)
+  let binary = ''
+  const chunkSize = 0x8000
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length))
+    binary += String.fromCharCode(...chunk)
+  }
+  return btoa(binary)
+}
+
 export function ChatPage({ email }: ChatPageProps) {
   const [message, setMessage] = useState('')
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -22,6 +40,14 @@ export function ChatPage({ email }: ChatPageProps) {
   const [isLoading, setIsLoading] = useState(false)
   const [hasToken, setHasToken] = useState(false)
   const [isRefreshingSession, setIsRefreshingSession] = useState(false)
+  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([])
+  const [selectedBankAccountId, setSelectedBankAccountId] = useState<string>('')
+  const [selectedFile, setSelectedFile] = useState<ImportFilePayload | null>(null)
+  const [importMode, setImportMode] = useState<'analyze' | 'commit'>('analyze')
+  const [modifiedAction, setModifiedAction] = useState<'keep' | 'replace'>('replace')
+  const [importResult, setImportResult] = useState<RelevesImportResult | null>(null)
+  const [importError, setImportError] = useState<string | null>(null)
+  const [isImporting, setIsImporting] = useState(false)
   const debugEnabled = import.meta.env.VITE_UI_DEBUG === 'true'
   const apiBaseUrl = useMemo(() => {
     const rawBaseUrl = import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:8000'
@@ -54,9 +80,25 @@ export function ChatPage({ email }: ChatPageProps) {
     }
   }, [])
 
+  useEffect(() => {
+    if (!hasToken) {
+      return
+    }
+
+    listBankAccounts()
+      .then((result) => {
+        setBankAccounts(result.items ?? [])
+      })
+      .catch((caughtError) => {
+        const errorMessage = caughtError instanceof Error ? caughtError.message : 'Erreur inconnue'
+        setImportError(errorMessage)
+      })
+  }, [hasToken])
+
   const isConnected = useMemo(() => Boolean(email), [email])
   const canSubmit = message.trim().length > 0 && !isLoading
   const hasUnauthorizedError = useMemo(() => error?.includes('(401)') ?? false, [error])
+  const canImport = useMemo(() => Boolean(selectedFile) && !isImporting, [selectedFile, isImporting])
 
   useEffect(() => {
     if (!assistantMessagesCount) {
@@ -67,6 +109,55 @@ export function ChatPage({ email }: ChatPageProps) {
       messagesRef.current.scrollTop = messagesRef.current.scrollHeight
     }
   }, [assistantMessagesCount])
+
+  async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    if (!file) {
+      setSelectedFile(null)
+      return
+    }
+
+    setImportError(null)
+    setImportResult(null)
+
+    try {
+      const arrayBuffer = await file.arrayBuffer()
+      setSelectedFile({
+        filename: file.name,
+        content_base64: arrayBufferToBase64(arrayBuffer),
+      })
+    } catch {
+      setSelectedFile(null)
+      setImportError('Impossible de lire le fichier sélectionné.')
+    }
+  }
+
+  async function runImport(mode: 'analyze' | 'commit', action: 'keep' | 'replace') {
+    if (!selectedFile || isImporting) {
+      return
+    }
+
+    setIsImporting(true)
+    setImportError(null)
+    setImportResult(null)
+
+    try {
+      const result = await importReleves({
+        files: [selectedFile],
+        bank_account_id: selectedBankAccountId || null,
+        import_mode: mode,
+        modified_action: action,
+      })
+      setImportMode(mode)
+      setModifiedAction(action)
+      setImportResult(result)
+    } catch (caughtError) {
+      const errorMessage = caughtError instanceof Error ? caughtError.message : 'Erreur inconnue'
+      setImportError(errorMessage)
+    } finally {
+      setIsImporting(false)
+    }
+  }
 
   async function handleLogout() {
     setError(null)
@@ -151,6 +242,83 @@ export function ChatPage({ email }: ChatPageProps) {
             API: {apiBaseUrl}
           </div>
         ) : null}
+
+        <section className="import-panel">
+          <h2>Importer un relevé (CSV)</h2>
+          <div className="import-controls">
+            <input type="file" accept=".csv" onChange={handleFileChange} />
+            <select value={selectedBankAccountId} onChange={(event) => setSelectedBankAccountId(event.target.value)}>
+              <option value="">Aucun (non rattaché)</option>
+              {bankAccounts.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {account.name}
+                </option>
+              ))}
+            </select>
+            <select value={importMode} onChange={(event) => setImportMode(event.target.value as 'analyze' | 'commit')}>
+              <option value="analyze">Analyser</option>
+              <option value="commit">Commit</option>
+            </select>
+            <select value={modifiedAction} onChange={(event) => setModifiedAction(event.target.value as 'keep' | 'replace')}>
+              <option value="replace">Remplacer (recommandé)</option>
+              <option value="keep">Conserver l&apos;existant</option>
+            </select>
+          </div>
+          <p className="placeholder-text">Replace recommandé pour les lignes modifiées.</p>
+          <div className="import-actions">
+            <button type="button" disabled={!canImport} onClick={() => runImport('analyze', modifiedAction)}>
+              {isImporting && importMode === 'analyze' ? 'Analyse...' : 'Analyser'}
+            </button>
+            <button type="button" disabled={!canImport} onClick={() => runImport('commit', 'replace')}>
+              {isImporting && importMode === 'commit' ? 'Import...' : 'Importer (replace)'}
+            </button>
+          </div>
+          {importError ? <p className="error-text">{importError}</p> : null}
+
+          {importResult ? (
+            <div className="import-result">
+              <p>
+                new: {importResult.new_count} | modified: {importResult.modified_count} | identical: {importResult.identical_count}{' '}
+                | duplicates: {importResult.duplicates_count} | replaced: {importResult.replaced_count} | failed:{' '}
+                {importResult.failed_count}
+              </p>
+              {importResult.requires_confirmation ? <p className="placeholder-text">Confirmation requise avant commit.</p> : null}
+
+              {importResult.errors?.length ? (
+                <ul>
+                  {importResult.errors.slice(0, 5).map((row, index) => (
+                    <li key={`${row.file}-${index}`}>
+                      {row.file} {row.row_index ? `(ligne ${row.row_index})` : ''}: {row.message}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+
+              {importResult.preview?.length ? (
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Montant</th>
+                      <th>Devise</th>
+                      <th>Libellé / Payee</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {importResult.preview.slice(0, 20).map((item, index) => (
+                      <tr key={`${item.date}-${index}`}>
+                        <td>{item.date}</td>
+                        <td>{String(item.montant)}</td>
+                        <td>{item.devise}</td>
+                        <td>{item.libelle ?? item.payee ?? '-'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : null}
+            </div>
+          ) : null}
+        </section>
 
         <div className="messages" aria-live="polite" ref={messagesRef}>
           {messages.length === 0 ? <p className="placeholder-text">Commencez la conversation avec l’IA.</p> : null}
