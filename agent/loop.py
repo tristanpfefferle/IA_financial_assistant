@@ -98,13 +98,15 @@ class AgentLoop:
         if not (self.shadow_llm or config.llm_shadow()):
             return
 
+        message_hash = hashlib.sha256(message.encode("utf-8")).hexdigest()[:12]
+
         try:
             llm_plan = plan_from_message(message, llm_planner=self.llm_planner)
         except Exception:
             logger.exception(
                 "llm_shadow_plan_error",
                 extra={
-                    "message_hash": hashlib.sha256(message.encode("utf-8")).hexdigest()[:12],
+                    "message_hash": message_hash,
                     "profile_id": str(profile_id) if profile_id is not None else None,
                     "active_task_type": (
                         active_task.get("type")
@@ -132,7 +134,7 @@ class AgentLoop:
         logger.info(
             "llm_shadow_plan",
             extra={
-                "message_hash": hashlib.sha256(message.encode("utf-8")).hexdigest()[:12],
+                "message_hash": message_hash,
                 "profile_id": str(profile_id) if profile_id is not None else None,
                 "active_task_type": (
                     active_task.get("type")
