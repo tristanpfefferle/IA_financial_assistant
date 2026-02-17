@@ -56,6 +56,26 @@ class AgentLoop:
     @staticmethod
     def plan_from_active_task(message: str, active_task: dict[str, object]):
         active_task_type = active_task.get("type")
+        if active_task_type == "awaiting_search_merchant":
+            merchant = message.strip().lower()
+            if not merchant:
+                return ClarificationPlan(
+                    question="Que voulez-vous rechercher (ex: Migros, coffee, Coop) ?",
+                    meta={"keep_active_task": True},
+                )
+
+            payload: dict[str, object] = {"merchant": merchant, "limit": 50, "offset": 0}
+            date_range = active_task.get("date_range")
+            if isinstance(date_range, dict):
+                payload["date_range"] = date_range
+
+            return ToolCallPlan(
+                tool_name="finance_releves_search",
+                payload=payload,
+                user_reply="OK.",
+                meta={"clear_active_task": True},
+            )
+
         if active_task_type == "select_bank_account":
             return AgentLoop._plan_from_select_bank_account(message=message, active_task=active_task)
 
@@ -428,6 +448,18 @@ class AgentLoop:
                 if intent_type == "clarification":
                     clarification_message = nlu_intent.get("message")
                     if isinstance(clarification_message, str):
+                        clarification_type = nlu_intent.get("clarification_type")
+                        if clarification_type == "awaiting_search_merchant":
+                            next_active_task: dict[str, object] = {"type": "awaiting_search_merchant"}
+                            date_range = nlu_intent.get("date_range")
+                            if isinstance(date_range, dict):
+                                next_active_task["date_range"] = date_range
+                            return AgentReply(
+                                reply=clarification_message,
+                                active_task=next_active_task,
+                                should_update_active_task=True,
+                            )
+
                         return AgentReply(reply=clarification_message)
                 if intent_type == "ui_action":
                     action = nlu_intent.get("action")
