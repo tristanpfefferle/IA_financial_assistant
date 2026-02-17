@@ -73,3 +73,50 @@ def test_cors_allow_origins_warns_and_defaults_to_empty_in_prod(monkeypatch, cap
 
     assert config.cors_allow_origins() == []
     assert "cors_allow_origins_empty_in_prod" in caplog.text
+
+
+def test_llm_gated_true_string(monkeypatch) -> None:
+    monkeypatch.setenv("APP_ENV", "dev")
+    monkeypatch.setenv("AGENT_LLM_GATED", "true")
+
+    assert config.llm_gated() is True
+
+
+def test_llm_gated_forced_off_in_test_env(monkeypatch) -> None:
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("AGENT_LLM_GATED", "true")
+
+    assert config.llm_gated() is False
+
+
+def test_llm_allowed_tools_defaults(monkeypatch) -> None:
+    monkeypatch.delenv("AGENT_LLM_ALLOWED_TOOLS", raising=False)
+
+    assert config.llm_allowed_tools() == {
+        "finance_releves_search",
+        "finance_bank_accounts_list",
+    }
+
+
+def test_llm_allowed_tools_parses_comma_separated(monkeypatch) -> None:
+    monkeypatch.setenv(
+        "AGENT_LLM_ALLOWED_TOOLS",
+        " finance_releves_search, finance_transactions_sum ,,finance_bank_accounts_list ",
+    )
+
+    assert config.llm_allowed_tools() == {
+        "finance_releves_search",
+        "finance_transactions_sum",
+        "finance_bank_accounts_list",
+    }
+
+
+def test_llm_fallback_enabled_requires_enabled_and_gated(monkeypatch) -> None:
+    monkeypatch.setenv("APP_ENV", "dev")
+    monkeypatch.setenv("AGENT_LLM_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LLM_GATED", "true")
+
+    assert config.llm_fallback_enabled() is True
+
+    monkeypatch.setenv("AGENT_LLM_GATED", "false")
+    assert config.llm_fallback_enabled() is False

@@ -11,6 +11,9 @@ from dotenv import load_dotenv
 logger = logging.getLogger(__name__)
 
 
+_TRUE_VALUES = {"1", "true"}
+
+
 def _should_load_dotenv() -> bool:
     """Return whether local dotenv loading should run."""
     app_env = os.getenv("APP_ENV", "dev").strip().lower()
@@ -60,7 +63,37 @@ def llm_enabled() -> bool:
         return False
 
     raw_value = get_env("AGENT_LLM_ENABLED", "") or ""
-    return raw_value.strip().lower() in {"1", "true"}
+    return raw_value.strip().lower() in _TRUE_VALUES
+
+
+def llm_gated() -> bool:
+    """Return whether gated LLM execution is enabled."""
+    if app_env().strip().lower() in {"test", "ci"}:
+        return False
+
+    raw_value = get_env("AGENT_LLM_GATED", "") or ""
+    return raw_value.strip().lower() in _TRUE_VALUES
+
+
+def llm_allowed_tools() -> set[str]:
+    """Return the allowlist of tool names that LLM can execute in gated mode."""
+    raw_value = (get_env("AGENT_LLM_ALLOWED_TOOLS", "") or "").strip()
+    if raw_value:
+        return {
+            tool_name.strip()
+            for tool_name in raw_value.split(",")
+            if tool_name.strip()
+        }
+
+    return {
+        "finance_releves_search",
+        "finance_bank_accounts_list",
+    }
+
+
+def llm_fallback_enabled() -> bool:
+    """Return whether LLM fallback execution is globally enabled."""
+    return llm_enabled() and llm_gated()
 
 
 def llm_model() -> str:
@@ -71,7 +104,7 @@ def llm_model() -> str:
 def llm_strict() -> bool:
     """Return whether strict LLM clarification behavior is enabled."""
     raw_value = get_env("AGENT_LLM_STRICT", "") or ""
-    return raw_value.strip().lower() in {"1", "true"}
+    return raw_value.strip().lower() in _TRUE_VALUES
 
 
 def llm_shadow() -> bool:
@@ -80,7 +113,7 @@ def llm_shadow() -> bool:
         return False
 
     raw_value = get_env("AGENT_LLM_SHADOW", "") or ""
-    return raw_value.strip().lower() in {"1", "true"}
+    return raw_value.strip().lower() in _TRUE_VALUES
 
 
 def openai_api_key() -> str | None:
