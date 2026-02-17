@@ -76,7 +76,7 @@ def _strip_terminal_punctuation(value: str) -> str:
 
 def _normalize_message_for_match(value: str) -> str:
     stripped = _strip_terminal_punctuation(value)
-    return re.sub(r"\s+", " ", stripped)
+    return re.sub(r"\s+", " ", stripped).strip()
 
 
 def _extract_date_range_from_message(message: str) -> tuple[dict[str, date], str] | None:
