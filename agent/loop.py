@@ -111,6 +111,10 @@ def _normalize_for_match(value: str) -> str:
 
 
 def _normalize_profile_field_key(key: str) -> str:
+    raw = key.strip()
+    if raw and raw in PROFILE_ALLOWED_FIELDS:
+        return raw
+
     normalized = _normalize_for_match(key)
     return _PROFILE_FIELD_ALIASES.get(normalized, normalized)
 
