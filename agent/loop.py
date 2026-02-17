@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import hashlib
 import unicodedata
 from dataclasses import dataclass
 from difflib import get_close_matches
@@ -25,6 +26,7 @@ from agent.planner import (
     plan_from_message,
 )
 from agent.tool_router import ToolRouter
+from shared import config
 from shared.models import ToolError, ToolErrorCode
 
 
@@ -80,6 +82,71 @@ class AgentReply:
 class AgentLoop:
     tool_router: ToolRouter
     llm_planner: LLMPlanner | None = None
+    shadow_llm: bool = False
+
+    def _run_llm_shadow(
+        self,
+        message: str,
+        *,
+        profile_id: UUID | None,
+        active_task: dict[str, object] | None,
+        deterministic_plan: Plan,
+    ) -> None:
+        if self.llm_planner is None:
+            return
+
+        if not (self.shadow_llm or config.llm_shadow()):
+            return
+
+        try:
+            llm_plan = plan_from_message(message, llm_planner=self.llm_planner)
+        except Exception:
+            logger.exception(
+                "llm_shadow_plan_error",
+                extra={
+                    "message_hash": hashlib.sha256(message.encode("utf-8")).hexdigest()[:12],
+                    "profile_id": str(profile_id) if profile_id is not None else None,
+                    "active_task_type": (
+                        active_task.get("type")
+                        if isinstance(active_task, dict)
+                        and isinstance(active_task.get("type"), str)
+                        else None
+                    ),
+                    "deterministic_plan_type": deterministic_plan.__class__.__name__,
+                },
+            )
+            return
+
+        deterministic_tool_name = (
+            deterministic_plan.tool_name
+            if isinstance(deterministic_plan, ToolCallPlan)
+            else None
+        )
+        llm_tool_name = llm_plan.tool_name if isinstance(llm_plan, ToolCallPlan) else None
+        same_tool = (
+            isinstance(deterministic_plan, ToolCallPlan)
+            and isinstance(llm_plan, ToolCallPlan)
+            and deterministic_tool_name == llm_tool_name
+        )
+
+        logger.info(
+            "llm_shadow_plan",
+            extra={
+                "message_hash": hashlib.sha256(message.encode("utf-8")).hexdigest()[:12],
+                "profile_id": str(profile_id) if profile_id is not None else None,
+                "active_task_type": (
+                    active_task.get("type")
+                    if isinstance(active_task, dict)
+                    and isinstance(active_task.get("type"), str)
+                    else None
+                ),
+                "deterministic_plan_type": deterministic_plan.__class__.__name__,
+                "deterministic_tool_name": deterministic_tool_name,
+                "llm_plan_type": llm_plan.__class__.__name__,
+                "llm_tool_name": llm_tool_name,
+                "same_tool": same_tool,
+            },
+        )
 
     @staticmethod
     def plan_from_active_task(message: str, active_task: dict[str, object]):
@@ -608,6 +675,12 @@ class AgentLoop:
         if isinstance(routed, AgentReply):
             return routed
         plan = routed
+        self._run_llm_shadow(
+            message,
+            profile_id=profile_id,
+            active_task=active_task,
+            deterministic_plan=plan,
+        )
 
         plan_meta = (
             getattr(plan, "meta", {})
