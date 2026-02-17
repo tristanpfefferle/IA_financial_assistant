@@ -681,7 +681,9 @@ class AgentLoop:
                                 isinstance(merchant_fallback, str)
                                 and merchant_fallback.strip()
                             ):
-                                plan.payload["merchant"] = merchant_fallback.strip()
+                                plan.payload["merchant"] = (
+                                    merchant_fallback.strip().casefold()
+                                )
 
             logger.info("tool_execution_started tool_name=%s", plan.tool_name)
             raw_result = self.tool_router.call(
@@ -811,7 +813,9 @@ class AgentLoop:
                         meta["bank_account_hint"] = bank_account_hint.strip().casefold()
                     merchant_fallback = nlu_intent.get("merchant_fallback")
                     if isinstance(merchant_fallback, str) and merchant_fallback.strip():
-                        meta["merchant_fallback"] = merchant_fallback.strip()
+                        meta["merchant_fallback"] = (
+                            merchant_fallback.strip().casefold()
+                        )
                     return ToolCallPlan(
                         tool_name=tool_name,
                         payload=payload,
