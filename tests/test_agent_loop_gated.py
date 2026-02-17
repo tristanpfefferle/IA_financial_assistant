@@ -317,6 +317,36 @@ def test_gated_logs_tool_allowed_event(monkeypatch, caplog) -> None:
     assert any(record.msg == "llm_tool_allowed" for record in caplog.records)
 
 
+def test_gated_llm_exception_falls_back_and_logs_error(monkeypatch, caplog) -> None:
+    router = _RouterSpy()
+    monkeypatch.setattr(agent.loop, "parse_intent", lambda _message: None)
+    monkeypatch.setattr(
+        agent.loop,
+        "deterministic_plan_from_message",
+        lambda _message: NoopPlan(reply="deterministic"),
+    )
+
+    def _raise_plan_from_message(*_args, **_kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(agent.loop, "plan_from_message", _raise_plan_from_message)
+    monkeypatch.setattr(agent.loop.config, "llm_enabled", lambda: True)
+    monkeypatch.setattr(agent.loop.config, "llm_gated", lambda: True)
+    monkeypatch.setattr(agent.loop.config, "llm_shadow", lambda: False)
+
+    with caplog.at_level("ERROR"):
+        reply = AgentLoop(tool_router=router, llm_planner=object()).handle_user_message(
+            "query"
+        )
+
+    assert reply.reply == "deterministic"
+    assert any(
+        record.msg == "llm_gated_error"
+        or getattr(record, "event", None) == "llm_gated_error"
+        for record in caplog.records
+    )
+
+
 def test_deterministic_error_plan_wins_over_llm(monkeypatch) -> None:
     llm_calls = {"count": 0}
     monkeypatch.setattr(agent.loop, "parse_intent", lambda _message: None)
