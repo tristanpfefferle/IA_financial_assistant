@@ -23,6 +23,7 @@ from backend.factory import build_backend_tool_service
 from backend.auth.supabase_auth import UnauthorizedError, get_user_from_bearer_token
 from backend.db.supabase_client import SupabaseClient, SupabaseSettings
 from backend.repositories.profiles_repository import SupabaseProfilesRepository
+from shared.models import ToolError
 
 
 logger = logging.getLogger(__name__)
@@ -42,12 +43,35 @@ class ChatResponse(BaseModel):
     plan: Any | None = None
 
 
+class ImportFilePayload(BaseModel):
+    """Single file payload for bank statement import."""
+
+    filename: str
+    content_base64: str
+
+
+class ImportRequestPayload(BaseModel):
+    """Import request payload sent by the UI."""
+
+    files: list[ImportFilePayload]
+    bank_account_id: str | None = None
+    import_mode: str = "analyze"
+    modified_action: str = "replace"
+
+
+@lru_cache(maxsize=1)
+def get_tool_router() -> ToolRouter:
+    """Create and cache the tool router once per process."""
+
+    backend_tool_service = build_backend_tool_service()
+    backend_client = BackendClient(tool_service=backend_tool_service)
+    return ToolRouter(backend_client=backend_client)
+
+
 @lru_cache(maxsize=1)
 def get_agent_loop() -> AgentLoop:
     """Create and cache the agent loop once per process."""
-    backend_tool_service = build_backend_tool_service()
-    backend_client = BackendClient(tool_service=backend_tool_service)
-    tool_router = ToolRouter(backend_client=backend_client)
+    tool_router = get_tool_router()
     llm_planner: LLMPlanner | None = None
 
     if _config.llm_enabled():
@@ -91,6 +115,40 @@ def _extract_bearer_token(authorization: str | None) -> str:
     if not token:
         raise HTTPException(status_code=401, detail="Missing bearer token")
     return token
+
+
+def _resolve_authenticated_profile(authorization: str | None) -> tuple[UUID, UUID]:
+    """Resolve authenticated user and linked profile from authorization header."""
+
+    token = _extract_bearer_token(authorization)
+    try:
+        user_payload = get_user_from_bearer_token(token)
+    except UnauthorizedError as exc:
+        raise HTTPException(status_code=401, detail="Unauthorized") from exc
+
+    user_id = user_payload.get("id")
+    if not isinstance(user_id, str):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    try:
+        auth_user_id = UUID(user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail="Unauthorized") from exc
+
+    email_value = user_payload.get("email")
+    email = email_value if isinstance(email_value, str) else None
+
+    profiles_repository = get_profiles_repository()
+    profile_id = profiles_repository.get_profile_id_for_auth_user(
+        auth_user_id=auth_user_id,
+        email=email,
+    )
+    if profile_id is None:
+        raise HTTPException(
+            status_code=401,
+            detail="No profile linked to authenticated user (by account_id or email)",
+        )
+    return auth_user_id, profile_id
 
 
 app = FastAPI(title="IA Financial Assistant Agent API")
@@ -160,36 +218,10 @@ def agent_chat(payload: ChatRequest, authorization: str | None = Header(default=
     """Handle a user chat message through the agent loop."""
 
     logger.info("agent_chat_received message_length=%s", len(payload.message))
-    token = _extract_bearer_token(authorization)
     profile_id: UUID | None = None
     try:
-        try:
-            user_payload = get_user_from_bearer_token(token)
-        except UnauthorizedError as exc:
-            raise HTTPException(status_code=401, detail="Unauthorized") from exc
-
-        user_id = user_payload.get("id")
-        if not isinstance(user_id, str):
-            raise HTTPException(status_code=401, detail="Unauthorized")
-
-        try:
-            auth_user_id = UUID(user_id)
-        except ValueError as exc:
-            raise HTTPException(status_code=401, detail="Unauthorized") from exc
-
-        email_value = user_payload.get("email")
-        email = email_value if isinstance(email_value, str) else None
-
         profiles_repository = get_profiles_repository()
-        profile_id = profiles_repository.get_profile_id_for_auth_user(
-            auth_user_id=auth_user_id,
-            email=email,
-        )
-        if profile_id is None:
-            raise HTTPException(
-                status_code=401,
-                detail="No profile linked to authenticated user (by account_id or email)",
-            )
+        auth_user_id, profile_id = _resolve_authenticated_profile(authorization)
 
         chat_state = profiles_repository.get_chat_state(profile_id=profile_id, user_id=auth_user_id)
         active_task = chat_state.get("active_task") if isinstance(chat_state, dict) else None
@@ -250,3 +282,39 @@ def agent_chat(payload: ChatRequest, authorization: str | None = Header(default=
             tool_result={"error": "internal_server_error"},
             plan=None,
         )
+
+
+@app.get("/finance/bank-accounts")
+def list_bank_accounts(authorization: str | None = Header(default=None)) -> Any:
+    """Return bank accounts for the authenticated profile."""
+
+    _, profile_id = _resolve_authenticated_profile(authorization)
+    result = get_tool_router().call("finance_bank_accounts_list", {}, profile_id=profile_id)
+    if isinstance(result, ToolError):
+        raise HTTPException(status_code=400, detail=result.message)
+    return jsonable_encoder(result)
+
+
+@app.post("/finance/releves/import")
+def import_releves(payload: ImportRequestPayload, authorization: str | None = Header(default=None)) -> Any:
+    """Import bank statements using backend tool router."""
+
+    _, profile_id = _resolve_authenticated_profile(authorization)
+    tool_payload: dict[str, Any] = {
+        "files": [
+            {"filename": import_file.filename, "content_base64": import_file.content_base64}
+            for import_file in payload.files
+        ],
+        "import_mode": payload.import_mode,
+        "modified_action": payload.modified_action,
+    }
+    if payload.bank_account_id:
+        tool_payload["bank_account_id"] = payload.bank_account_id
+
+    result = get_tool_router().call("finance_releves_import_files", tool_payload, profile_id=profile_id)
+    if isinstance(result, ToolError):
+        detail = result.message
+        if result.details:
+            detail = f"{result.message} ({result.details})"
+        raise HTTPException(status_code=400, detail=detail)
+    return jsonable_encoder(result)
