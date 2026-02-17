@@ -27,7 +27,7 @@ from agent.planner import (
 )
 from agent.tool_router import ToolRouter
 from shared import config
-from shared.models import ToolError, ToolErrorCode
+from shared.models import RelevesGroupBy, ToolError, ToolErrorCode
 
 
 logger = logging.getLogger(__name__)
@@ -709,6 +709,50 @@ class AgentLoop:
             if direction in {"DEBIT_ONLY", "CREDIT_ONLY"} or has_filters:
                 return True, None, dict(payload)
             return False, "missing_filters_or_direction", payload
+
+        if tool_name == "finance_releves_aggregate":
+            group_by = payload.get("group_by")
+            if not isinstance(group_by, str) or not group_by.strip():
+                return False, "missing_group_by", payload
+
+            normalized_group_by = group_by.strip()
+            allowed_group_by = {enum_member.value for enum_member in RelevesGroupBy}
+            if normalized_group_by not in allowed_group_by:
+                return False, "invalid_group_by", payload
+
+            normalized_payload = dict(payload)
+            normalized_payload["group_by"] = normalized_group_by
+
+            direction = payload.get("direction")
+            if direction is not None:
+                if not isinstance(direction, str) or not direction.strip():
+                    return False, "invalid_direction", payload
+                normalized_direction = direction.strip()
+                if normalized_direction not in {"DEBIT_ONLY", "CREDIT_ONLY", "ALL"}:
+                    return False, "invalid_direction", payload
+                normalized_payload["direction"] = normalized_direction
+
+            date_range = payload.get("date_range")
+            if date_range is not None:
+                if not isinstance(date_range, dict):
+                    return False, "invalid_date_range", payload
+
+                start_date = date_range.get("start_date")
+                end_date = date_range.get("end_date")
+                if (
+                    not isinstance(start_date, str)
+                    or not start_date.strip()
+                    or not isinstance(end_date, str)
+                    or not end_date.strip()
+                ):
+                    return False, "invalid_date_range", payload
+
+                normalized_payload["date_range"] = {
+                    "start_date": start_date.strip(),
+                    "end_date": end_date.strip(),
+                }
+
+            return True, None, normalized_payload
 
         return True, None, dict(payload)
 

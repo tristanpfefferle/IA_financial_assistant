@@ -87,6 +87,7 @@ def llm_allowed_tools() -> set[str]:
 
     return {
         "finance_releves_search",
+        "finance_releves_aggregate",
         "finance_bank_accounts_list",
     }
 
