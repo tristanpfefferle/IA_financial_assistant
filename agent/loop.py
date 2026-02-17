@@ -324,6 +324,46 @@ class AgentLoop:
 
         if len(exact_matches) == 1:
             account = exact_matches[0]
+            can_delete_result = tool_router.call(
+                "finance_bank_accounts_can_delete",
+                {"bank_account_id": str(account.id)},
+                profile_id=profile_id,
+            )
+            normalized_can_delete = AgentLoop._normalize_tool_result(
+                "finance_bank_accounts_can_delete",
+                can_delete_result,
+            )
+            if isinstance(normalized_can_delete, ToolError):
+                can_delete_plan = ToolCallPlan(
+                    tool_name="finance_bank_accounts_can_delete",
+                    payload={"bank_account_id": str(account.id)},
+                    user_reply="",
+                )
+                return AgentReply(
+                    reply=build_final_reply(plan=can_delete_plan, tool_result=normalized_can_delete),
+                    tool_result=AgentLoop._serialize_tool_result(normalized_can_delete),
+                    plan={"tool_name": can_delete_plan.tool_name, "payload": can_delete_plan.payload},
+                )
+
+            if (
+                isinstance(normalized_can_delete, dict)
+                and normalized_can_delete.get("ok") is True
+                and normalized_can_delete.get("can_delete") is False
+            ):
+                error = ToolError(code=ToolErrorCode.CONFLICT, message="bank account not empty")
+                delete_plan = ToolCallPlan(
+                    tool_name="finance_bank_accounts_delete",
+                    payload={"bank_account_id": str(account.id)},
+                    user_reply="",
+                )
+                return AgentReply(
+                    reply=build_final_reply(plan=delete_plan, tool_result=error),
+                    tool_result=AgentLoop._serialize_tool_result(error),
+                    plan={"tool_name": delete_plan.tool_name, "payload": delete_plan.payload},
+                    active_task=None,
+                    should_update_active_task=True,
+                )
+
             return AgentReply(
                 reply=(
                     f"Confirmez-vous la suppression du compte « {account.name} » ? "

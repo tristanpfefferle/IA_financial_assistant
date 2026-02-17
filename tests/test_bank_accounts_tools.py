@@ -79,3 +79,21 @@ def test_finance_bank_accounts_create_returns_conflict_for_duplicate_name() -> N
     assert isinstance(result, ToolError)
     assert result.code == ToolErrorCode.CONFLICT
     assert result.message == "bank account name already exists"
+
+
+def test_finance_bank_accounts_can_delete_returns_not_empty_reason() -> None:
+    bank_accounts_repository = SimpleNamespace(can_delete_bank_account=lambda request: False)
+    service = BackendToolService(
+        transactions_repository=SimpleNamespace(),
+        releves_repository=SimpleNamespace(),
+        categories_repository=SimpleNamespace(),
+        bank_accounts_repository=bank_accounts_repository,
+        profiles_repository=SimpleNamespace(get_profile_fields=lambda **kwargs: {}),
+    )
+
+    result = service.finance_bank_accounts_can_delete(
+        profile_id=PROFILE_ID,
+        bank_account_id=BANK_ACCOUNT_ID,
+    )
+
+    assert result == {"ok": True, "can_delete": False, "reason": "not_empty"}

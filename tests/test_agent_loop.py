@@ -58,14 +58,17 @@ class _AmbiguousThenDeleteByIdRouter:
 
 
 class _ListThenDeleteRouter:
-    def __init__(self, items: list[dict[str, str]]) -> None:
+    def __init__(self, items: list[dict[str, str]], *, can_delete: bool = True) -> None:
         self.items = items
+        self.can_delete = can_delete
         self.calls: list[tuple[str, dict]] = []
 
     def call(self, tool_name: str, payload: dict, *, profile_id: UUID | None = None):
         self.calls.append((tool_name, payload))
         if tool_name == "finance_bank_accounts_list":
             return type("_ListResult", (), {"items": [type("_Account", (), item) for item in self.items]})()
+        if tool_name == "finance_bank_accounts_can_delete":
+            return {"ok": True, "can_delete": self.can_delete}
         if tool_name == "finance_bank_accounts_delete":
             return {"ok": True}
         raise AssertionError(f"Unexpected tool call: {tool_name}")
@@ -218,8 +221,32 @@ def test_confirm_delete_bank_account_not_found_skips_confirmation_when_profile_a
     assert reply.active_task is None
 
 
+def test_confirm_delete_bank_account_conflict_when_not_empty_skips_confirmation() -> None:
+    router = _ListThenDeleteRouter(
+        items=[{"id": "11111111-1111-1111-1111-111111111111", "name": "UBS"}],
+        can_delete=False,
+    )
+    loop = AgentLoop(tool_router=router)
+
+    reply = loop.handle_user_message(
+        "supprime le compte ubs",
+        profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+    )
+
+    assert (
+        reply.reply
+        == "Impossible de supprimer ce compte car il contient des transactions. "
+        "Déplacez/supprimez d’abord les transactions ou choisissez un autre compte."
+    )
+    assert reply.should_update_active_task is True
+    assert reply.active_task is None
+
+
 def test_confirm_delete_bank_account_existing_stores_id_in_active_task() -> None:
-    router = _ListThenDeleteRouter(items=[{"id": "11111111-1111-1111-1111-111111111111", "name": "UBS"}])
+    router = _ListThenDeleteRouter(
+        items=[{"id": "11111111-1111-1111-1111-111111111111", "name": "UBS"}],
+        can_delete=True,
+    )
     loop = AgentLoop(tool_router=router)
 
     reply = loop.handle_user_message(

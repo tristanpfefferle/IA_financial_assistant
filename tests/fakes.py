@@ -246,6 +246,17 @@ class FakeBackendClient:
                 return {"ok": True}
         return ToolError(code=ToolErrorCode.NOT_FOUND, message="Bank account not found")
 
+    def finance_bank_accounts_can_delete(
+        self,
+        *,
+        profile_id: UUID,
+        bank_account_id: UUID,
+    ) -> dict[str, object] | ToolError:
+        for item in self.bank_accounts:
+            if item.profile_id == profile_id and item.id == bank_account_id:
+                return {"ok": True, "can_delete": True}
+        return ToolError(code=ToolErrorCode.NOT_FOUND, message="Bank account not found")
+
     def finance_bank_accounts_set_default(
         self,
         *,

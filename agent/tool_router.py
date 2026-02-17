@@ -290,6 +290,7 @@ class ToolRouter:
             "finance_bank_accounts_create",
             "finance_bank_accounts_update",
             "finance_bank_accounts_delete",
+            "finance_bank_accounts_can_delete",
             "finance_bank_accounts_set_default",
         } and profile_id is None:
             return ToolError(
@@ -554,6 +555,22 @@ class ToolRouter:
                     details={"validation_errors": exc.errors(), "payload": payload},
                 )
             return self.backend_client.finance_bank_accounts_delete(
+                profile_id=request.profile_id,
+                bank_account_id=request.bank_account_id,
+            )
+
+        if tool_name == "finance_bank_accounts_can_delete":
+            try:
+                request = BankAccountDeleteRequest.model_validate(
+                    {"profile_id": str(profile_id), "bank_account_id": payload.get("bank_account_id")}
+                )
+            except ValidationError as exc:
+                return ToolError(
+                    code=ToolErrorCode.VALIDATION_ERROR,
+                    message=f"Invalid payload for tool {tool_name}",
+                    details={"validation_errors": exc.errors(), "payload": payload},
+                )
+            return self.backend_client.finance_bank_accounts_can_delete(
                 profile_id=request.profile_id,
                 bank_account_id=request.bank_account_id,
             )

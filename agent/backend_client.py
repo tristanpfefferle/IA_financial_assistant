@@ -141,6 +141,17 @@ class BackendClient:
             bank_account_id=bank_account_id,
         )
 
+    def finance_bank_accounts_can_delete(
+        self,
+        *,
+        profile_id: UUID,
+        bank_account_id: UUID,
+    ) -> dict[str, object] | ToolError:
+        return self.tool_service.finance_bank_accounts_can_delete(
+            profile_id=profile_id,
+            bank_account_id=bank_account_id,
+        )
+
     def finance_bank_accounts_set_default(
         self,
         *,

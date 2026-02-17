@@ -319,6 +319,29 @@ class BackendToolService:
         except Exception as exc:
             return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))
 
+    def finance_bank_accounts_can_delete(
+        self,
+        profile_id: UUID,
+        bank_account_id: UUID,
+    ) -> dict[str, object] | ToolError:
+        if self.bank_accounts_repository is None:
+            return ToolError(
+                code=ToolErrorCode.BACKEND_ERROR,
+                message="Bank accounts repository unavailable",
+            )
+        try:
+            can_delete = self.bank_accounts_repository.can_delete_bank_account(
+                BankAccountDeleteRequest(
+                    profile_id=profile_id,
+                    bank_account_id=bank_account_id,
+                )
+            )
+            if can_delete:
+                return {"ok": True, "can_delete": True}
+            return {"ok": True, "can_delete": False, "reason": "not_empty"}
+        except Exception as exc:
+            return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))
+
     def finance_bank_accounts_set_default(
         self,
         profile_id: UUID,

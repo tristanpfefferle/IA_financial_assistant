@@ -35,6 +35,9 @@ class BankAccountsRepository(Protocol):
     def set_default_bank_account(self, request: BankAccountSetDefaultRequest) -> UUID:
         """Set default profile bank account and return selected id."""
 
+    def can_delete_bank_account(self, request: BankAccountDeleteRequest) -> bool:
+        """Return whether one bank account can be deleted safely."""
+
 
 class InMemoryBankAccountsRepository:
     """In-memory bank accounts repository used by tests/dev."""
@@ -103,12 +106,19 @@ class InMemoryBankAccountsRepository:
         self._default_by_profile[request.profile_id] = request.bank_account_id
         return request.bank_account_id
 
+    def can_delete_bank_account(self, request: BankAccountDeleteRequest) -> bool:
+        return True
+
 
 class SupabaseBankAccountsRepository:
     """Supabase-backed bank accounts repository."""
 
     def __init__(self, client: SupabaseClient) -> None:
         self._client = client
+
+    @staticmethod
+    def _escape_ilike_value(value: str) -> str:
+        return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
     def _request_rows(
         self,
@@ -158,12 +168,13 @@ class SupabaseBankAccountsRepository:
 
     def create_bank_account(self, request: BankAccountCreateRequest) -> BankAccount:
         normalized_name = request.name.strip()
+        escaped_name = self._escape_ilike_value(normalized_name)
         existing_rows, _ = self._client.get_rows(
             table="bank_accounts",
             query={
                 "select": "id",
                 "profile_id": f"eq.{request.profile_id}",
-                "name": f"ilike.{normalized_name}",
+                "name": f"ilike.{escaped_name}",
                 "limit": 1,
             },
             with_count=False,
@@ -260,6 +271,9 @@ class SupabaseBankAccountsRepository:
         )
         if not rows:
             raise ValueError("Bank account not found")
+
+    def can_delete_bank_account(self, request: BankAccountDeleteRequest) -> bool:
+        return not self._has_related_transactions(request)
 
     def set_default_bank_account(self, request: BankAccountSetDefaultRequest) -> UUID:
         account_rows, _ = self._client.get_rows(
