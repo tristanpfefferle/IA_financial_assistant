@@ -554,3 +554,31 @@ def test_active_task_search_merchant_with_serialized_dates_runs_search() -> None
     }
     assert reply.should_update_active_task is True
     assert reply.active_task is None
+
+
+def test_nlu_tool_call_with_llm_planner_does_not_call_plan_from_message(monkeypatch) -> None:
+    class _CreateAccountRouter:
+        def call(self, tool_name: str, payload: dict, *, profile_id: UUID | None = None):
+            assert tool_name == "finance_bank_accounts_create"
+            assert payload == {"name": "UBS"}
+            return {"id": "new-account"}
+
+    def _fake_parse_intent(message: str):
+        assert message == "ignored"
+        return {
+            "type": "tool_call",
+            "tool_name": "finance_bank_accounts_create",
+            "payload": {"name": "UBS"},
+        }
+
+    def _fail_plan_from_message(*args, **kwargs):
+        raise AssertionError("plan_from_message should not be called when deterministic NLU returns a tool_call")
+
+    monkeypatch.setattr("agent.loop.parse_intent", _fake_parse_intent)
+    monkeypatch.setattr("agent.loop.plan_from_message", _fail_plan_from_message)
+
+    loop = AgentLoop(tool_router=_CreateAccountRouter(), llm_planner=object())
+    reply = loop.handle_user_message("ignored")
+
+    assert reply.plan == {"tool_name": "finance_bank_accounts_create", "payload": {"name": "UBS"}}
+    assert reply.tool_result == {"id": "new-account"}
