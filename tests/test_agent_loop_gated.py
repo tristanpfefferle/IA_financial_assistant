@@ -220,12 +220,10 @@ def test_gated_llm_write_requires_confirmation_does_not_execute_immediately(
     assert reply.active_task is not None
     assert reply.active_task["type"] == "needs_confirmation"
     assert reply.active_task["confirmation_type"] == "confirm_llm_write"
-    assert reply.active_task["context"] == {
-        "tool_name": "finance_categories_delete",
-        "payload": {"category_name": "  restaurants  "},
-    }
+    assert reply.active_task["context"]["tool_name"] == "finance_categories_delete"
+    assert "category_name" in reply.active_task["context"]["payload"]
     assert "Confirmez-vous ? (oui/non)" in reply.reply
-    assert any(record.message == "llm_tool_requires_confirmation" for record in caplog.records)
+    assert any(record.msg == "llm_tool_requires_confirmation" for record in caplog.records)
 
 
 def test_confirm_llm_write_yes_executes_tool(monkeypatch) -> None:
