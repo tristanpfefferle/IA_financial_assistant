@@ -257,7 +257,9 @@ class LLMPlanner:
                     "Lister les comptes bancaires => finance_bank_accounts_list. "
                     "Supprimer un compte => finance_bank_accounts_delete (avec confirmation). "
                     "Dates au format YYYY-MM-DD si présentes. "
-                    "Direction: DEBIT_ONLY pour dépenses, CREDIT_ONLY pour revenus, sinon ALL."
+                    "Direction: DEBIT_ONLY pour dépenses, CREDIT_ONLY pour revenus, sinon ALL. "
+                    "Pour le profil, utilise toujours les champs canoniques: first_name, last_name, birth_date, gender, address_line1, address_line2, postal_code, city, canton, country, personal_situation, professional_situation. "
+                    "Ne génère jamais 'ville'/'pays' dans le payload: utilise 'city'/'country'."
                 ),
             },
             {"role": "user", "content": message},
