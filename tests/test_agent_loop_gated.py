@@ -348,6 +348,31 @@ def test_confirm_llm_write_yes_executes_profile_update(monkeypatch) -> None:
     }
 
 
+def test_gated_llm_write_profile_update_strips_field_names(monkeypatch) -> None:
+    router = _RouterSpy()
+    _configure_gated(
+        monkeypatch,
+        allowlist={"finance_profile_update"},
+        deterministic_plan=NoopPlan(reply="deterministic"),
+        llm_plan=ToolCallPlan(
+            tool_name="finance_profile_update",
+            payload={"set": {" city ": " Lausanne "}},
+            user_reply="OK.",
+        ),
+    )
+
+    loop = AgentLoop(tool_router=router, llm_planner=object())
+    first_reply = loop.handle_user_message("mets à jour mon profil")
+    second_reply = loop.handle_user_message("oui", active_task=first_reply.active_task)
+
+    assert first_reply.active_task is not None
+    assert router.calls == [("finance_profile_update", {"set": {"city": "Lausanne"}})]
+    assert second_reply.plan == {
+        "tool_name": "finance_profile_update",
+        "payload": {"set": {"city": "Lausanne"}},
+    }
+
+
 def test_confirm_llm_write_no_cancels(monkeypatch) -> None:
     router = _RouterSpy()
     _configure_gated(
