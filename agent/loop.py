@@ -923,6 +923,23 @@ class AgentLoop:
 
         llm_plan = plan_from_message(message, llm_planner=self.llm_planner)
         if isinstance(llm_plan, ToolCallPlan) and llm_plan.tool_name in config.llm_allowed_tools():
+            if llm_plan.tool_name == "finance_releves_search":
+                merchant = llm_plan.payload.get("merchant")
+                if not isinstance(merchant, str) or not merchant.strip():
+                    return deterministic_plan
+
+                normalized_payload = dict(llm_plan.payload)
+                normalized_payload["merchant"] = merchant.strip()
+                normalized_payload.setdefault("limit", 50)
+                normalized_payload.setdefault("offset", 0)
+
+                return ToolCallPlan(
+                    tool_name=llm_plan.tool_name,
+                    payload=normalized_payload,
+                    user_reply=llm_plan.user_reply,
+                    meta=dict(llm_plan.meta),
+                )
+
             return llm_plan
 
         return deterministic_plan

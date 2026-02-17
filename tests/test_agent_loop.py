@@ -931,10 +931,15 @@ def test_llm_gated_executes_allowed_tool(monkeypatch) -> None:
     loop = AgentLoop(tool_router=router, llm_planner=object())
     reply = loop.handle_user_message("ignored")
 
-    assert router.calls == [("finance_releves_search", {"merchant": "coop"})]
+    assert router.calls == [
+        (
+            "finance_releves_search",
+            {"merchant": "coop", "limit": 50, "offset": 0},
+        )
+    ]
     assert reply.plan == {
         "tool_name": "finance_releves_search",
-        "payload": {"merchant": "coop"},
+        "payload": {"merchant": "coop", "limit": 50, "offset": 0},
     }
 
 
