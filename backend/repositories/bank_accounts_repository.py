@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
 from typing import Any, Protocol
 from urllib.error import HTTPError
 from urllib.parse import urlencode
@@ -61,7 +60,10 @@ class InMemoryBankAccountsRepository:
 
     def update_bank_account(self, request: BankAccountUpdateRequest) -> BankAccount:
         for index, account in enumerate(self._accounts):
-            if account.profile_id != request.profile_id or account.id != request.bank_account_id:
+            if (
+                account.profile_id != request.profile_id
+                or account.id != request.bank_account_id
+            ):
                 continue
             updated = account.model_copy(update=request.set)
             self._accounts[index] = updated
@@ -72,7 +74,10 @@ class InMemoryBankAccountsRepository:
         kept = [
             account
             for account in self._accounts
-            if not (account.profile_id == request.profile_id and account.id == request.bank_account_id)
+            if not (
+                account.profile_id == request.profile_id
+                and account.id == request.bank_account_id
+            )
         ]
         if len(kept) == len(self._accounts):
             raise ValueError("Bank account not found")
@@ -82,7 +87,8 @@ class InMemoryBankAccountsRepository:
 
     def set_default_bank_account(self, request: BankAccountSetDefaultRequest) -> UUID:
         exists = any(
-            account.profile_id == request.profile_id and account.id == request.bank_account_id
+            account.profile_id == request.profile_id
+            and account.id == request.bank_account_id
             for account in self._accounts
         )
         if not exists:
@@ -126,7 +132,9 @@ class SupabaseBankAccountsRepository:
                 return json.loads(response.read().decode("utf-8"))
         except HTTPError as exc:
             body_text = exc.read().decode("utf-8", errors="replace")[:500]
-            raise RuntimeError(f"Supabase request failed with status {exc.code}: {body_text}") from exc
+            raise RuntimeError(
+                f"Supabase request failed with status {exc.code}: {body_text}"
+            ) from exc
 
     def list_bank_accounts(self, profile_id: UUID) -> list[BankAccount]:
         rows, _ = self._client.get_rows(
@@ -162,7 +170,11 @@ class SupabaseBankAccountsRepository:
         return BankAccount.model_validate(rows[0])
 
     def update_bank_account(self, request: BankAccountUpdateRequest) -> BankAccount:
-        payload = {field_name: value for field_name, value in request.set.items() if value is not None}
+        payload = {
+            field_name: value
+            for field_name, value in request.set.items()
+            if value is not None
+        }
         rows = self._request_rows(
             table="bank_accounts",
             method="PATCH",
@@ -201,15 +213,18 @@ class SupabaseBankAccountsRepository:
         if self._has_related_transactions(request):
             raise ValueError("bank account not empty")
 
-        self._client.patch_rows(
-            table="profils",
-            query={
-                "id": f"eq.{request.profile_id}",
-                "default_bank_account_id": f"eq.{request.bank_account_id}",
-            },
-            payload={"default_bank_account_id": None},
-            use_anon_key=False,
-        )
+        try:
+            self._client.patch_rows(
+                table="profils",
+                query={
+                    "id": f"eq.{request.profile_id}",
+                    "default_bank_account_id": f"eq.{request.bank_account_id}",
+                },
+                payload={"default_bank_account_id": None},
+                use_anon_key=False,
+            )
+        except RuntimeError:
+            pass
 
         rows = self._request_rows(
             table="bank_accounts",

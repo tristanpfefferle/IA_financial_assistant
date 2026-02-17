@@ -49,20 +49,28 @@ class BackendToolService:
     bank_accounts_repository: BankAccountsRepository | None = None
     profiles_repository: ProfilesRepository | None = None
 
-    def search_transactions(self, filters: TransactionFilters) -> TransactionSearchResult | ToolError:
+    def search_transactions(
+        self, filters: TransactionFilters
+    ) -> TransactionSearchResult | ToolError:
         """Deprecated alias for releves_search kept for compatibility."""
 
         return self.releves_search(filters)
 
-    def sum_transactions(self, filters: TransactionFilters) -> TransactionSumResult | ToolError:
+    def sum_transactions(
+        self, filters: TransactionFilters
+    ) -> TransactionSumResult | ToolError:
         """Deprecated alias for releves_sum kept for compatibility."""
 
         return self.releves_sum(filters)
 
-    def releves_search(self, filters: RelevesFilters) -> RelevesSearchResult | ToolError:
+    def releves_search(
+        self, filters: RelevesFilters
+    ) -> RelevesSearchResult | ToolError:
         try:
             items, total = self.releves_repository.list_releves(filters)
-            return RelevesSearchResult(items=items, limit=filters.limit, offset=filters.offset, total=total)
+            return RelevesSearchResult(
+                items=items, limit=filters.limit, offset=filters.offset, total=total
+            )
         except Exception as exc:  # placeholder normalization at contract boundary
             return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))
 
@@ -98,7 +106,9 @@ class BackendToolService:
         except Exception as exc:  # placeholder normalization at contract boundary
             return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))
 
-    def finance_categories_list(self, profile_id: UUID) -> CategoriesListResult | ToolError:
+    def finance_categories_list(
+        self, profile_id: UUID
+    ) -> CategoriesListResult | ToolError:
         try:
             items = self.categories_repository.list_categories(profile_id=profile_id)
             return CategoriesListResult(items=items)
@@ -143,7 +153,9 @@ class BackendToolService:
         except Exception as exc:  # placeholder normalization at contract boundary
             return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))
 
-    def finance_categories_delete(self, profile_id: UUID, category_id: UUID) -> dict[str, bool] | ToolError:
+    def finance_categories_delete(
+        self, profile_id: UUID, category_id: UUID
+    ) -> dict[str, bool] | ToolError:
         try:
             self.categories_repository.delete_category(
                 CategoryDeleteRequest(profile_id=profile_id, category_id=category_id)
@@ -160,10 +172,15 @@ class BackendToolService:
         fields: list[str] | None = None,
     ) -> ProfileDataResult | ToolError:
         if self.profiles_repository is None:
-            return ToolError(code=ToolErrorCode.BACKEND_ERROR, message="Profiles repository unavailable")
+            return ToolError(
+                code=ToolErrorCode.BACKEND_ERROR,
+                message="Profiles repository unavailable",
+            )
 
         try:
-            data = self.profiles_repository.get_profile_fields(profile_id=profile_id, fields=fields)
+            data = self.profiles_repository.get_profile_fields(
+                profile_id=profile_id, fields=fields
+            )
             return ProfileDataResult(profile_id=profile_id, data=data)
         except ValueError as exc:
             return ToolError(code=ToolErrorCode.NOT_FOUND, message=str(exc))
@@ -176,7 +193,10 @@ class BackendToolService:
         set_fields: dict[str, object | None],
     ) -> ProfileDataResult | ToolError:
         if self.profiles_repository is None:
-            return ToolError(code=ToolErrorCode.BACKEND_ERROR, message="Profiles repository unavailable")
+            return ToolError(
+                code=ToolErrorCode.BACKEND_ERROR,
+                message="Profiles repository unavailable",
+            )
 
         try:
             updated_data = self.profiles_repository.update_profile_fields(
@@ -189,23 +209,39 @@ class BackendToolService:
         except Exception as exc:  # placeholder normalization at contract boundary
             return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))
 
-    def finance_bank_accounts_list(self, profile_id: UUID) -> BankAccountsListResult | ToolError:
+    def finance_bank_accounts_list(
+        self, profile_id: UUID
+    ) -> BankAccountsListResult | ToolError:
         if self.bank_accounts_repository is None:
-            return ToolError(code=ToolErrorCode.BACKEND_ERROR, message="Bank accounts repository unavailable")
+            return ToolError(
+                code=ToolErrorCode.BACKEND_ERROR,
+                message="Bank accounts repository unavailable",
+            )
         try:
-            items = self.bank_accounts_repository.list_bank_accounts(profile_id=profile_id)
-            default_id = None
+            items = self.bank_accounts_repository.list_bank_accounts(
+                profile_id=profile_id
+            )
+            default_id: UUID | None = None
 
             if self.profiles_repository is not None:
-                data = self.profiles_repository.get_profile_fields(
-                    profile_id=profile_id,
-                    fields=["default_bank_account_id"],
-                )
+                try:
+                    data = self.profiles_repository.get_profile_fields(
+                        profile_id=profile_id,
+                        fields=["default_bank_account_id"],
+                    )
+                except ValueError as exc:
+                    return ToolError(code=ToolErrorCode.NOT_FOUND, message=str(exc))
+
                 raw = data.get("default_bank_account_id")
                 if raw:
-                    default_id = UUID(str(raw))
+                    try:
+                        default_id = UUID(str(raw))
+                    except ValueError:
+                        default_id = None
 
-            return BankAccountsListResult(items=items, default_bank_account_id=default_id)
+            return BankAccountsListResult(
+                items=items, default_bank_account_id=default_id
+            )
         except Exception as exc:
             return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))
 
@@ -217,7 +253,10 @@ class BackendToolService:
         account_kind: str | None = None,
     ) -> BankAccount | ToolError:
         if self.bank_accounts_repository is None:
-            return ToolError(code=ToolErrorCode.BACKEND_ERROR, message="Bank accounts repository unavailable")
+            return ToolError(
+                code=ToolErrorCode.BACKEND_ERROR,
+                message="Bank accounts repository unavailable",
+            )
         try:
             return self.bank_accounts_repository.create_bank_account(
                 BankAccountCreateRequest(
@@ -237,7 +276,10 @@ class BackendToolService:
         set_fields: dict[str, str],
     ) -> BankAccount | ToolError:
         if self.bank_accounts_repository is None:
-            return ToolError(code=ToolErrorCode.BACKEND_ERROR, message="Bank accounts repository unavailable")
+            return ToolError(
+                code=ToolErrorCode.BACKEND_ERROR,
+                message="Bank accounts repository unavailable",
+            )
         try:
             return self.bank_accounts_repository.update_bank_account(
                 BankAccountUpdateRequest(
@@ -251,12 +293,19 @@ class BackendToolService:
         except Exception as exc:
             return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))
 
-    def finance_bank_accounts_delete(self, profile_id: UUID, bank_account_id: UUID) -> dict[str, bool] | ToolError:
+    def finance_bank_accounts_delete(
+        self, profile_id: UUID, bank_account_id: UUID
+    ) -> dict[str, bool] | ToolError:
         if self.bank_accounts_repository is None:
-            return ToolError(code=ToolErrorCode.BACKEND_ERROR, message="Bank accounts repository unavailable")
+            return ToolError(
+                code=ToolErrorCode.BACKEND_ERROR,
+                message="Bank accounts repository unavailable",
+            )
         try:
             self.bank_accounts_repository.delete_bank_account(
-                BankAccountDeleteRequest(profile_id=profile_id, bank_account_id=bank_account_id)
+                BankAccountDeleteRequest(
+                    profile_id=profile_id, bank_account_id=bank_account_id
+                )
             )
             return {"ok": True}
         except ValueError as exc:
@@ -272,10 +321,17 @@ class BackendToolService:
         bank_account_id: UUID,
     ) -> dict[str, object] | ToolError:
         if self.bank_accounts_repository is None:
-            return ToolError(code=ToolErrorCode.BACKEND_ERROR, message="Bank accounts repository unavailable")
+            return ToolError(
+                code=ToolErrorCode.BACKEND_ERROR,
+                message="Bank accounts repository unavailable",
+            )
         try:
-            default_bank_account_id = self.bank_accounts_repository.set_default_bank_account(
-                BankAccountSetDefaultRequest(profile_id=profile_id, bank_account_id=bank_account_id)
+            default_bank_account_id = (
+                self.bank_accounts_repository.set_default_bank_account(
+                    BankAccountSetDefaultRequest(
+                        profile_id=profile_id, bank_account_id=bank_account_id
+                    )
+                )
             )
             return {"ok": True, "default_bank_account_id": str(default_bank_account_id)}
         except ValueError as exc:

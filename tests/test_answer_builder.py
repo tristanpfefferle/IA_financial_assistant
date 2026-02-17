@@ -26,10 +26,10 @@ from shared.models import (
 )
 
 
-DEBIT_ONLY_NOTE = "Certaines catégories peuvent être exclues des totaux (ex: Transfert interne)."
-EXCLUDED_HELP_MESSAGE = (
-    "Une catégorie exclue des totaux (ex: Transfert interne) n’est pas comptée dans les dépenses."
+DEBIT_ONLY_NOTE = (
+    "Certaines catégories peuvent être exclues des totaux (ex: Transfert interne)."
 )
+EXCLUDED_HELP_MESSAGE = "Une catégorie exclue des totaux (ex: Transfert interne) n’est pas comptée dans les dépenses."
 
 
 def test_build_final_reply_with_releves_sum_result() -> None:
@@ -39,7 +39,10 @@ def test_build_final_reply_with_releves_sum_result() -> None:
         count=4,
         average=Decimal("30.86"),
         currency="EUR",
-        filters=RelevesFilters(profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"), direction=RelevesDirection.DEBIT_ONLY),
+        filters=RelevesFilters(
+            profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            direction=RelevesDirection.DEBIT_ONLY,
+        ),
     )
 
     reply = build_final_reply(plan=plan, tool_result=result)
@@ -68,7 +71,10 @@ def test_build_final_reply_with_releves_sum_all_is_neutral() -> None:
         count=2,
         average=Decimal("50.00"),
         currency=None,
-        filters=RelevesFilters(profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"), direction=RelevesDirection.ALL),
+        filters=RelevesFilters(
+            profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            direction=RelevesDirection.ALL,
+        ),
     )
 
     reply = build_final_reply(plan=plan, tool_result=result)
@@ -79,7 +85,9 @@ def test_build_final_reply_with_releves_sum_all_is_neutral() -> None:
 
 
 def test_build_final_reply_with_releves_aggregate_result_sorted_and_limited() -> None:
-    plan = ToolCallPlan(tool_name="finance_releves_aggregate", payload={}, user_reply="OK")
+    plan = ToolCallPlan(
+        tool_name="finance_releves_aggregate", payload={}, user_reply="OK"
+    )
     groups = {
         f"g{i}": RelevesAggregateGroup(total=Decimal(str(-i * 10)), count=i)
         for i in range(1, 13)
@@ -107,7 +115,9 @@ def test_build_final_reply_with_releves_aggregate_result_sorted_and_limited() ->
 
 def test_build_final_reply_with_categories_list_marks_excluded() -> None:
     now = datetime.now(timezone.utc)
-    plan = ToolCallPlan(tool_name="finance_categories_list", payload={}, user_reply="OK")
+    plan = ToolCallPlan(
+        tool_name="finance_categories_list", payload={}, user_reply="OK"
+    )
     result = CategoriesListResult(
         items=[
             ProfileCategory(
@@ -142,7 +152,9 @@ def test_build_final_reply_with_categories_mutations() -> None:
     )
 
     create_reply = build_final_reply(
-        plan=ToolCallPlan(tool_name="finance_categories_create", payload={}, user_reply="OK"),
+        plan=ToolCallPlan(
+            tool_name="finance_categories_create", payload={}, user_reply="OK"
+        ),
         tool_result=category,
     )
     update_reply = build_final_reply(
@@ -178,19 +190,35 @@ def test_build_final_reply_with_bank_accounts_mutations() -> None:
     )
 
     create_reply = build_final_reply(
-        plan=ToolCallPlan(tool_name="finance_bank_accounts_create", payload={"name": "Compte courant"}, user_reply="OK"),
+        plan=ToolCallPlan(
+            tool_name="finance_bank_accounts_create",
+            payload={"name": "Compte courant"},
+            user_reply="OK",
+        ),
         tool_result=account,
     )
     update_reply = build_final_reply(
-        plan=ToolCallPlan(tool_name="finance_bank_accounts_update", payload={"name": "Compte courant", "set": {"name": "Compte principal"}}, user_reply="OK"),
+        plan=ToolCallPlan(
+            tool_name="finance_bank_accounts_update",
+            payload={"name": "Compte courant", "set": {"name": "Compte principal"}},
+            user_reply="OK",
+        ),
         tool_result=account.model_copy(update={"name": "Compte principal"}),
     )
     delete_reply = build_final_reply(
-        plan=ToolCallPlan(tool_name="finance_bank_accounts_delete", payload={"name": "Compte principal"}, user_reply="OK"),
+        plan=ToolCallPlan(
+            tool_name="finance_bank_accounts_delete",
+            payload={"name": "Compte principal"},
+            user_reply="OK",
+        ),
         tool_result={"ok": True},
     )
     default_reply = build_final_reply(
-        plan=ToolCallPlan(tool_name="finance_bank_accounts_set_default", payload={"name": "Compte principal"}, user_reply="OK"),
+        plan=ToolCallPlan(
+            tool_name="finance_bank_accounts_set_default",
+            payload={"name": "Compte principal"},
+            user_reply="OK",
+        ),
         tool_result={"ok": True, "default_bank_account_id": str(account.id)},
     )
 
@@ -214,11 +242,88 @@ def test_build_final_reply_with_bank_accounts_list() -> None:
         ]
     )
     reply = build_final_reply(
-        plan=ToolCallPlan(tool_name="finance_bank_accounts_list", payload={}, user_reply="OK"),
+        plan=ToolCallPlan(
+            tool_name="finance_bank_accounts_list", payload={}, user_reply="OK"
+        ),
         tool_result=result,
     )
 
     assert reply == "- Courant (personal_current, individual)"
+
+
+def test_build_final_reply_with_bank_accounts_list_marks_default_account() -> None:
+    ubs_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    result = BankAccountsListResult(
+        items=[
+            BankAccount(
+                id=ubs_id,
+                profile_id=UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+                name="UBS",
+                kind="individual",
+                account_kind="personal_current",
+                is_system=False,
+            ),
+            BankAccount(
+                id=UUID("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+                profile_id=UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+                name="Courant",
+                kind="individual",
+                account_kind="personal_current",
+                is_system=False,
+            ),
+        ],
+        default_bank_account_id=ubs_id,
+    )
+
+    reply = build_final_reply(
+        plan=ToolCallPlan(
+            tool_name="finance_bank_accounts_list", payload={}, user_reply="OK"
+        ),
+        tool_result=result,
+    )
+
+    assert (
+        reply
+        == "- UBS ⭐ (personal_current, individual)\n- Courant (personal_current, individual)"
+    )
+
+
+def test_build_final_reply_with_bank_accounts_list_without_default_shows_no_star() -> (
+    None
+):
+    result = BankAccountsListResult(
+        items=[
+            BankAccount(
+                id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+                profile_id=UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+                name="UBS",
+                kind="individual",
+                account_kind="personal_current",
+                is_system=False,
+            ),
+            BankAccount(
+                id=UUID("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+                profile_id=UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+                name="Courant",
+                kind="individual",
+                account_kind="personal_current",
+                is_system=False,
+            ),
+        ],
+        default_bank_account_id=None,
+    )
+
+    reply = build_final_reply(
+        plan=ToolCallPlan(
+            tool_name="finance_bank_accounts_list", payload={}, user_reply="OK"
+        ),
+        tool_result=result,
+    )
+
+    assert (
+        reply
+        == "- UBS (personal_current, individual)\n- Courant (personal_current, individual)"
+    )
 
 
 def test_build_final_reply_not_found_with_suggestions() -> None:
@@ -238,7 +343,10 @@ def test_build_final_reply_not_found_with_suggestions() -> None:
 
     reply = build_final_reply(plan=plan, tool_result=error)
 
-    assert reply == "Je ne trouve pas la catégorie « transfret interne ». Vouliez-vous dire: Transfert interne, Transport ?"
+    assert (
+        reply
+        == "Je ne trouve pas la catégorie « transfret interne ». Vouliez-vous dire: Transfert interne, Transport ?"
+    )
 
 
 def test_build_final_reply_not_found_without_suggestions() -> None:
@@ -259,7 +367,11 @@ def test_build_final_reply_not_found_without_suggestions() -> None:
 
 
 def test_build_final_reply_profile_get_single_field_with_value() -> None:
-    plan = ToolCallPlan(tool_name="finance_profile_get", payload={"fields": ["first_name"]}, user_reply="OK")
+    plan = ToolCallPlan(
+        tool_name="finance_profile_get",
+        payload={"fields": ["first_name"]},
+        user_reply="OK",
+    )
     result = ProfileDataResult(
         profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
         data={"first_name": "Paul"},
@@ -271,7 +383,11 @@ def test_build_final_reply_profile_get_single_field_with_value() -> None:
 
 
 def test_build_final_reply_profile_get_single_field_empty() -> None:
-    plan = ToolCallPlan(tool_name="finance_profile_get", payload={"fields": ["first_name"]}, user_reply="OK")
+    plan = ToolCallPlan(
+        tool_name="finance_profile_get",
+        payload={"fields": ["first_name"]},
+        user_reply="OK",
+    )
     result = ProfileDataResult(
         profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
         data={"first_name": None},
@@ -299,7 +415,9 @@ def test_build_final_reply_profile_get_multiple_fields() -> None:
 
 
 def test_build_final_reply_profile_update_lists_changes_and_erased_fields() -> None:
-    plan = ToolCallPlan(tool_name="finance_profile_update", payload={"set": {}}, user_reply="OK")
+    plan = ToolCallPlan(
+        tool_name="finance_profile_update", payload={"set": {}}, user_reply="OK"
+    )
     result = ProfileDataResult(
         profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
         data={"first_name": None, "city": "Lausanne"},
@@ -311,7 +429,11 @@ def test_build_final_reply_profile_update_lists_changes_and_erased_fields() -> N
 
 
 def test_build_final_reply_profile_validation_error_is_user_friendly() -> None:
-    plan = ToolCallPlan(tool_name="finance_profile_get", payload={"fields": ["couleur préférée"]}, user_reply="OK")
+    plan = ToolCallPlan(
+        tool_name="finance_profile_get",
+        payload={"fields": ["couleur préférée"]},
+        user_reply="OK",
+    )
     error = ToolError(
         code=ToolErrorCode.VALIDATION_ERROR,
         message="Champ de profil non reconnu.",
@@ -320,11 +442,18 @@ def test_build_final_reply_profile_validation_error_is_user_friendly() -> None:
 
     reply = build_final_reply(plan=plan, tool_result=error)
 
-    assert reply == "Je n’ai pas compris quelle info du profil vous voulez (prénom, nom, ville, etc.)."
+    assert (
+        reply
+        == "Je n’ai pas compris quelle info du profil vous voulez (prénom, nom, ville, etc.)."
+    )
 
 
 def test_build_final_reply_bank_account_delete_conflict_is_user_friendly() -> None:
-    plan = ToolCallPlan(tool_name="finance_bank_accounts_delete", payload={"name": "Compte principal"}, user_reply="OK")
+    plan = ToolCallPlan(
+        tool_name="finance_bank_accounts_delete",
+        payload={"name": "Compte principal"},
+        user_reply="OK",
+    )
     error = ToolError(
         code=ToolErrorCode.CONFLICT,
         message="bank account not empty",
