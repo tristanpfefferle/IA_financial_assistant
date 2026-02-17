@@ -294,6 +294,8 @@ class InMemoryRelevesRepository:
                     "payee": item.payee,
                     "categorie": item.categorie,
                     "bank_account_id": item.bank_account_id,
+                    "meta": None,
+                    "source": None,
                 }
             )
         return rows
@@ -506,7 +508,10 @@ class SupabaseRelevesRepository:
     ) -> list[dict[str, object]]:
         query: list[tuple[str, str | int]] = [
             ("profile_id", f"eq.{profile_id}"),
-            ("select", "id,date,montant,devise,libelle,payee,categorie,bank_account_id"),
+            (
+                "select",
+                "id,date,montant,devise,libelle,payee,categorie,bank_account_id,metadonnees,source",
+            ),
             ("limit", 5000),
             ("offset", 0),
         ]
@@ -523,6 +528,8 @@ class SupabaseRelevesRepository:
                 "payee": row.get("payee"),
                 "categorie": row.get("categorie"),
                 "bank_account_id": UUID(str(row["bank_account_id"])) if row.get("bank_account_id") else None,
+                "meta": row.get("metadonnees"),
+                "source": row.get("source"),
             }
             for row in rows
         ]

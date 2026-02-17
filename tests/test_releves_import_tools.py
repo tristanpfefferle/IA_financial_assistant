@@ -68,20 +68,29 @@ def test_import_commit_then_recommit_marks_identical() -> None:
 def test_modified_line_keep_vs_replace() -> None:
     router = _build_router()
 
-    initial_commit = _fixture_payload()
+    initial_csv = """Numéro de compte: CH00 0000 0000 0000 0000 0
+IBAN: CH00 0000 0000 0000 0000 0
+Du: 01.01.2025
+Au: 31.01.2025
+Date de transaction;Date de comptabilisation;Description1;Description2;Description3;No de transaction;Débit;Crédit;Monnaie
+10.01.2025;10.01.2025;Café Central;;;TRX-001;12,50;;CHF
+11.01.2025;11.01.2025;Salaire Janvier;;;TRX-002;;2500,00;CHF
+""".encode("utf-8")
+
+    initial_commit = _fixture_payload(filename="ubs_with_txn.csv", content=initial_csv)
     initial_commit["import_mode"] = "commit"
     router.call("finance_releves_import_files", initial_commit, profile_id=PROFILE_ID)
 
-    changed_csv = Path("tests/fixtures/ubs_sample.csv").read_text().replace("12,50", "13,50").encode("utf-8")
-    analyze_payload = _fixture_payload(content=changed_csv)
+    changed_csv = initial_csv.decode("utf-8").replace("TRX-001;12,50", "TRX-001;13,50").encode("utf-8")
+    analyze_payload = _fixture_payload(filename="ubs_with_txn.csv", content=changed_csv)
     analyzed = router.call("finance_releves_import_files", analyze_payload, profile_id=PROFILE_ID)
 
-    keep_payload = _fixture_payload(content=changed_csv)
+    keep_payload = _fixture_payload(filename="ubs_with_txn.csv", content=changed_csv)
     keep_payload["import_mode"] = "commit"
     keep_payload["modified_action"] = "keep"
     keep_result = router.call("finance_releves_import_files", keep_payload, profile_id=PROFILE_ID)
 
-    replace_payload = _fixture_payload(content=changed_csv)
+    replace_payload = _fixture_payload(filename="ubs_with_txn.csv", content=changed_csv)
     replace_payload["import_mode"] = "commit"
     replace_payload["modified_action"] = "replace"
     replace_result = router.call("finance_releves_import_files", replace_payload, profile_id=PROFILE_ID)
@@ -89,10 +98,9 @@ def test_modified_line_keep_vs_replace() -> None:
     assert isinstance(analyzed, RelevesImportResult)
     assert isinstance(keep_result, RelevesImportResult)
     assert isinstance(replace_result, RelevesImportResult)
-    assert analyzed.new_count > 0
-    assert analyzed.modified_count == 0
+    assert analyzed.modified_count > 0
     assert keep_result.replaced_count == 0
-    assert replace_result.replaced_count == 0
+    assert replace_result.replaced_count > 0
 
 
 def test_import_analyze_ubs_same_day_distinct_rows_are_not_marked_duplicates() -> None:
