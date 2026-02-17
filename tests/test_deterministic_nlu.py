@@ -53,6 +53,10 @@ def test_parse_accounts_list_variants(message: str) -> None:
     }
 
 
+def test_parse_accounts_list_does_not_match_phrase_in_middle() -> None:
+    assert parse_intent("si possible affiche mes comptes et transactions") is None
+
+
 @pytest.mark.parametrize(
     "message",
     [
@@ -103,6 +107,31 @@ def test_parse_search_with_month_year(message: str, start_date: date, end_date: 
     assert intent is not None
     payload = intent["payload"]
     assert payload["date_range"] == {"start_date": start_date, "end_date": end_date}
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "cherche",
+        "recherche en janvier 2025",
+        "montre les transactions",
+    ],
+)
+def test_parse_search_without_merchant_returns_clarification(message: str) -> None:
+    intent = parse_intent(message)
+
+    assert intent is not None
+    assert intent["type"] == "clarification"
+    assert isinstance(intent["message"], str)
+    assert intent["message"]
+
+
+def test_parse_search_payload_never_contains_none_merchant() -> None:
+    intent = parse_intent("cherche")
+
+    assert intent is not None
+    if intent["type"] == "tool_call" and intent["tool_name"] == "finance_releves_search":
+        assert intent["payload"]["merchant"] is not None
 
 
 @pytest.mark.parametrize(

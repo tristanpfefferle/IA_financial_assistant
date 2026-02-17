@@ -50,10 +50,9 @@ _CREATE_ACCOUNT_PATTERNS = (
 )
 
 _LIST_ACCOUNTS_PATTERNS = (
-    "liste mes comptes",
-    "quels sont mes comptes bancaires",
-    "quels sont mes comptes",
-    "affiche mes comptes",
+    re.compile(r"liste\s+mes\s+comptes", re.IGNORECASE),
+    re.compile(r"quels\s+sont\s+mes\s+comptes(?:\s+bancaires)?", re.IGNORECASE),
+    re.compile(r"affiche\s+mes\s+comptes", re.IGNORECASE),
 )
 
 _IMPORT_PATTERNS = (
@@ -73,6 +72,11 @@ _SEARCH_PREFIXES = (
 
 def _strip_terminal_punctuation(value: str) -> str:
     return value.strip().strip(" .,!?:;\"'“”«»")
+
+
+def _normalize_message_for_match(value: str) -> str:
+    stripped = _strip_terminal_punctuation(value)
+    return re.sub(r"\s+", " ", stripped)
 
 
 def _extract_date_range_from_message(message: str) -> tuple[dict[str, date], str] | None:
@@ -133,6 +137,7 @@ def parse_intent(message: str) -> dict[str, object] | None:
         return None
 
     lower = normalized.lower()
+    normalized_for_match = _normalize_message_for_match(normalized)
 
     for pattern in _CREATE_ACCOUNT_PATTERNS:
         match = pattern.search(normalized)
@@ -150,7 +155,7 @@ def parse_intent(message: str) -> dict[str, object] | None:
             "payload": {"name": account_name},
         }
 
-    if any(pattern in lower for pattern in _LIST_ACCOUNTS_PATTERNS):
+    if any(pattern.fullmatch(normalized_for_match) for pattern in _LIST_ACCOUNTS_PATTERNS):
         return {
             "type": "tool_call",
             "tool_name": "finance_bank_accounts_list",
@@ -165,6 +170,12 @@ def parse_intent(message: str) -> dict[str, object] | None:
 
     if lower.startswith(_SEARCH_PREFIXES):
         merchant, date_range = _extract_search_term(normalized)
+        if not merchant:
+            return {
+                "type": "clarification",
+                "message": "Que voulez-vous rechercher (ex: Migros, coffee, Coop) ?",
+            }
+
         payload: dict[str, object] = {"merchant": merchant, "limit": 50, "offset": 0}
         if date_range is not None:
             payload["date_range"] = date_range
