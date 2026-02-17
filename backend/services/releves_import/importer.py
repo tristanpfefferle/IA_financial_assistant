@@ -49,6 +49,21 @@ class RelevesImportService:
         else:
             amount = Decimal(str(raw_amount))
 
+        external_id: str | None = None
+        raw_meta = parsed_row.get("meta")
+        if isinstance(raw_meta, dict):
+            for key in ("No de transaction", "No de transaction;", "No de transaction "):
+                value = raw_meta.get(key)
+                if isinstance(value, str) and value.strip():
+                    external_id = value.strip()
+                    break
+        if external_id is None:
+            for key in ("no_transaction", "transaction_id"):
+                value = parsed_row.get(key)
+                if isinstance(value, str) and value.strip():
+                    external_id = value.strip()
+                    break
+
         return {
             "profile_id": profile_id,
             "bank_account_id": bank_account_id,
@@ -59,6 +74,7 @@ class RelevesImportService:
             "payee": parsed_row.get("payee"),
             "categorie": parsed_row.get("categorie"),
             "meta": parsed_row.get("meta"),
+            "external_id": external_id,
             "source": source,
         }
 
@@ -106,15 +122,14 @@ class RelevesImportService:
         dedup = compare_rows(normalized_rows, existing_rows)
 
         if dedup.ambiguous_matches_count:
-            errors.extend(
+            errors.append(
                 RelevesImportError(
                     file="dedup",
                     message=(
-                        "Correspondance ambiguë avec des lignes existantes; "
-                        "vérifiez les doublons historiques avant remplacement."
+                        f"{dedup.ambiguous_matches_count} correspondances ambiguës; "
+                        "remplacement non appliqué."
                     ),
                 )
-                for _ in range(dedup.ambiguous_matches_count)
             )
 
         rows_to_insert = list(dedup.new_rows)

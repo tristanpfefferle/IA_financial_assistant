@@ -29,15 +29,8 @@ def _normalize_currency(value: object) -> str:
     return normalized.upper() if normalized else "CHF"
 
 
-def _signature(row: dict[str, object]) -> tuple[date, Decimal, str, str, UUID | None]:
-    key_label = _normalize_str(row.get("libelle") or row.get("payee"))
-    return (
-        row["date"],
-        row["montant"],
-        _normalize_currency(row.get("devise")),
-        key_label,
-        row.get("bank_account_id"),
-    )
+def _normalize_source(value: object) -> str:
+    return _normalize_str(value)
 
 
 def _content_key(row: dict[str, object]) -> tuple[date, Decimal, str, str, str]:
@@ -50,16 +43,51 @@ def _content_key(row: dict[str, object]) -> tuple[date, Decimal, str, str, str]:
     )
 
 
+def _fallback_match_key(row: dict[str, object]) -> tuple[date, UUID | None, str, str]:
+    return (
+        row["date"],
+        row.get("bank_account_id"),
+        _normalize_currency(row.get("devise")),
+        _normalize_str(row.get("libelle") or row.get("payee")),
+    )
+
+
+def _extract_external_id(row: dict[str, object]) -> str | None:
+    explicit_external_id = row.get("external_id")
+    if isinstance(explicit_external_id, str) and explicit_external_id.strip():
+        return explicit_external_id.strip()
+
+    raw_meta = row.get("meta")
+    if isinstance(raw_meta, dict):
+        for key in ("No de transaction", "No de transaction;", "No de transaction "):
+            value = raw_meta.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+
+    return None
+
+
+def _external_match_key(row: dict[str, object], external_id: str) -> tuple[str, UUID | None, str]:
+    return (_normalize_source(row.get("source")), row.get("bank_account_id"), external_id)
+
+
 def compare_rows(
     incoming_rows: list[dict[str, object]],
     existing_rows: list[dict[str, object]],
 ) -> DedupStats:
-    existing_by_signature: dict[tuple[date, Decimal, str, str, UUID | None], list[dict[str, object]]] = {}
-    for existing_row in existing_rows:
-        signature = _signature(existing_row)
-        existing_by_signature.setdefault(signature, []).append(existing_row)
+    existing_by_external_id: dict[tuple[str, UUID | None, str], list[dict[str, object]]] = {}
+    existing_by_fallback: dict[tuple[date, UUID | None, str, str], list[dict[str, object]]] = {}
 
-    seen_file: set[tuple[date, Decimal, str, str, UUID | None]] = set()
+    for existing_row in existing_rows:
+        existing_external_id = _extract_external_id(existing_row)
+        if existing_external_id is not None:
+            external_key = _external_match_key(existing_row, existing_external_id)
+            existing_by_external_id.setdefault(external_key, []).append(existing_row)
+
+        fallback_key = _fallback_match_key(existing_row)
+        existing_by_fallback.setdefault(fallback_key, []).append(existing_row)
+
+    seen_file_content: set[tuple[date, Decimal, str, str, str]] = set()
     duplicates_in_file = 0
     new_rows: list[dict[str, object]] = []
     modified_rows: list[dict[str, object]] = []
@@ -68,13 +96,22 @@ def compare_rows(
     ambiguous_matches_count = 0
 
     for row in incoming_rows:
-        sig = _signature(row)
-        if sig in seen_file:
+        row_content_key = _content_key(row)
+        if row_content_key in seen_file_content:
             duplicates_in_file += 1
             continue
-        seen_file.add(sig)
+        seen_file_content.add(row_content_key)
 
-        matching_existing = existing_by_signature.get(sig, [])
+        matching_existing: list[dict[str, object]]
+        row_external_id = _extract_external_id(row)
+
+        if row_external_id is not None:
+            matching_existing = existing_by_external_id.get(_external_match_key(row, row_external_id), [])
+            if not matching_existing:
+                matching_existing = existing_by_fallback.get(_fallback_match_key(row), [])
+        else:
+            matching_existing = existing_by_fallback.get(_fallback_match_key(row), [])
+
         if not matching_existing:
             new_rows.append(row)
             continue
@@ -85,7 +122,7 @@ def compare_rows(
 
         existing = matching_existing[0]
 
-        if _content_key(existing) == _content_key(row):
+        if _content_key(existing) == row_content_key:
             identical_count += 1
             continue
 
