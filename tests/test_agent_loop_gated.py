@@ -196,6 +196,87 @@ def test_gated_blocks_tool_outside_allowlist(monkeypatch, tool_name: str) -> Non
     assert reply.reply == "deterministic"
 
 
+def test_gated_llm_write_requires_confirmation_does_not_execute_immediately(
+    monkeypatch, caplog
+) -> None:
+    router = _RouterSpy()
+    _configure_gated(
+        monkeypatch,
+        allowlist={"finance_categories_delete"},
+        deterministic_plan=NoopPlan(reply="deterministic"),
+        llm_plan=ToolCallPlan(
+            tool_name="finance_categories_delete",
+            payload={"category_name": "  restaurants  "},
+            user_reply="OK.",
+        ),
+    )
+
+    with caplog.at_level("INFO"):
+        reply = AgentLoop(tool_router=router, llm_planner=object()).handle_user_message(
+            "supprime la catégorie restaurants"
+        )
+
+    assert router.calls == []
+    assert reply.active_task is not None
+    assert reply.active_task["type"] == "needs_confirmation"
+    assert reply.active_task["confirmation_type"] == "confirm_llm_write"
+    assert reply.active_task["context"] == {
+        "tool_name": "finance_categories_delete",
+        "payload": {"category_name": "  restaurants  "},
+    }
+    assert "Confirmez-vous ? (oui/non)" in reply.reply
+    assert any(record.message == "llm_tool_requires_confirmation" for record in caplog.records)
+
+
+def test_confirm_llm_write_yes_executes_tool(monkeypatch) -> None:
+    router = _RouterSpy()
+    _configure_gated(
+        monkeypatch,
+        allowlist={"finance_categories_delete"},
+        deterministic_plan=NoopPlan(reply="deterministic"),
+        llm_plan=ToolCallPlan(
+            tool_name="finance_categories_delete",
+            payload={"category_name": "autres"},
+            user_reply="OK.",
+        ),
+    )
+
+    loop = AgentLoop(tool_router=router, llm_planner=object())
+    first_reply = loop.handle_user_message("supprime la catégorie autres")
+    second_reply = loop.handle_user_message("oui", active_task=first_reply.active_task)
+
+    assert router.calls == [("finance_categories_delete", {"category_name": "autres"})]
+    assert second_reply.plan == {
+        "tool_name": "finance_categories_delete",
+        "payload": {"category_name": "autres"},
+    }
+    assert second_reply.should_update_active_task is True
+    assert second_reply.active_task is None
+
+
+def test_confirm_llm_write_no_cancels(monkeypatch) -> None:
+    router = _RouterSpy()
+    _configure_gated(
+        monkeypatch,
+        allowlist={"finance_categories_delete"},
+        deterministic_plan=NoopPlan(reply="deterministic"),
+        llm_plan=ToolCallPlan(
+            tool_name="finance_categories_delete",
+            payload={"category_name": "autres"},
+            user_reply="OK.",
+        ),
+    )
+
+    loop = AgentLoop(tool_router=router, llm_planner=object())
+    first_reply = loop.handle_user_message("supprime la catégorie autres")
+    second_reply = loop.handle_user_message("non", active_task=first_reply.active_task)
+
+    assert router.calls == []
+    assert second_reply.reply == "Action annulée."
+    assert second_reply.should_update_active_task is True
+    assert second_reply.active_task is None
+
+
 def test_deterministic_tool_call_wins_and_llm_is_not_called(monkeypatch) -> None:
     router = _RouterSpy()
     llm_calls = {"count": 0}
