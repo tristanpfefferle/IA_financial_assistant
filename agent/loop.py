@@ -909,6 +909,20 @@ class AgentLoop:
             and deterministic_plan.reply == "pong"
         ):
             return deterministic_plan
-        if self.llm_planner is not None:
+        if self.llm_planner is None:
+            return deterministic_plan
+
+        if not config.llm_enabled():
+            return deterministic_plan
+
+        if not config.llm_gated():
             return plan_from_message(message, llm_planner=self.llm_planner)
+
+        if not isinstance(deterministic_plan, NoopPlan):
+            return deterministic_plan
+
+        llm_plan = plan_from_message(message, llm_planner=self.llm_planner)
+        if isinstance(llm_plan, ToolCallPlan) and llm_plan.tool_name in config.llm_allowed_tools():
+            return llm_plan
+
         return deterministic_plan

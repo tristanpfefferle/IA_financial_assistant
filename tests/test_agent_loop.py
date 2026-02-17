@@ -7,7 +7,7 @@ from uuid import UUID
 
 import agent.loop
 from agent.loop import AgentLoop
-from agent.planner import ToolCallPlan
+from agent.planner import NoopPlan, ToolCallPlan
 from shared.models import ToolError, ToolErrorCode
 
 
@@ -849,3 +849,132 @@ def test_nlu_tool_call_with_llm_shadow_enabled_calls_plan_from_message_once(
         "payload": {"name": "UBS"},
     }
     assert reply.tool_result == {"id": "new-account"}
+
+
+def test_llm_execution_skipped_when_llm_disabled_even_with_planner(monkeypatch) -> None:
+    def _fake_parse_intent(_message: str):
+        return None
+
+    calls = {"count": 0}
+
+    def _spy_plan_from_message(*_args, **_kwargs):
+        calls["count"] += 1
+        return ToolCallPlan(
+            tool_name="finance_releves_search",
+            payload={"merchant": "coop"},
+            user_reply="OK.",
+        )
+
+    monkeypatch.setattr(agent.loop, "parse_intent", _fake_parse_intent)
+    monkeypatch.setattr(agent.loop, "deterministic_plan_from_message", lambda _m: NoopPlan(reply="Commandes disponibles: 'ping' ou 'search: <term>'."))
+    monkeypatch.setattr(agent.loop, "plan_from_message", _spy_plan_from_message)
+    monkeypatch.setattr(agent.loop.config, "llm_enabled", lambda: False)
+    monkeypatch.setattr(agent.loop.config, "llm_shadow", lambda: False)
+
+    loop = AgentLoop(tool_router=_FailIfCalledRouter(), llm_planner=object())
+    reply = loop.handle_user_message("ignored")
+
+    assert calls["count"] == 0
+    assert reply.reply == "Commandes disponibles: 'ping' ou 'search: <term>'."
+
+
+def test_llm_gated_disallows_tool_outside_allowlist(monkeypatch) -> None:
+    def _fake_parse_intent(_message: str):
+        return None
+
+    calls = {"count": 0}
+
+    def _spy_plan_from_message(*_args, **_kwargs):
+        calls["count"] += 1
+        return ToolCallPlan(
+            tool_name="finance_bank_accounts_delete",
+            payload={"name": "Courant"},
+            user_reply="OK.",
+        )
+
+    monkeypatch.setattr(agent.loop, "parse_intent", _fake_parse_intent)
+    monkeypatch.setattr(agent.loop, "deterministic_plan_from_message", lambda _m: NoopPlan(reply="Commandes disponibles: 'ping' ou 'search: <term>'."))
+    monkeypatch.setattr(agent.loop, "plan_from_message", _spy_plan_from_message)
+    monkeypatch.setattr(agent.loop.config, "llm_enabled", lambda: True)
+    monkeypatch.setattr(agent.loop.config, "llm_gated", lambda: True)
+    monkeypatch.setattr(agent.loop.config, "llm_allowed_tools", lambda: {"finance_releves_search"})
+    monkeypatch.setattr(agent.loop.config, "llm_shadow", lambda: False)
+
+    loop = AgentLoop(tool_router=_FailIfCalledRouter(), llm_planner=object())
+    reply = loop.handle_user_message("ignored")
+
+    assert calls["count"] == 1
+    assert reply.reply == "Commandes disponibles: 'ping' ou 'search: <term>'."
+
+
+def test_llm_gated_executes_allowed_tool(monkeypatch) -> None:
+    router = _SearchRouter()
+
+    def _fake_parse_intent(_message: str):
+        return None
+
+    def _spy_plan_from_message(*_args, **_kwargs):
+        return ToolCallPlan(
+            tool_name="finance_releves_search",
+            payload={"merchant": "coop"},
+            user_reply="OK.",
+        )
+
+    monkeypatch.setattr(agent.loop, "parse_intent", _fake_parse_intent)
+    monkeypatch.setattr(agent.loop, "deterministic_plan_from_message", lambda _m: NoopPlan(reply="Commandes disponibles: 'ping' ou 'search: <term>'."))
+    monkeypatch.setattr(agent.loop, "plan_from_message", _spy_plan_from_message)
+    monkeypatch.setattr(agent.loop.config, "llm_enabled", lambda: True)
+    monkeypatch.setattr(agent.loop.config, "llm_gated", lambda: True)
+    monkeypatch.setattr(agent.loop.config, "llm_allowed_tools", lambda: {"finance_releves_search"})
+    monkeypatch.setattr(agent.loop.config, "llm_shadow", lambda: False)
+
+    loop = AgentLoop(tool_router=router, llm_planner=object())
+    reply = loop.handle_user_message("ignored")
+
+    assert router.calls == [("finance_releves_search", {"merchant": "coop"})]
+    assert reply.plan == {
+        "tool_name": "finance_releves_search",
+        "payload": {"merchant": "coop"},
+    }
+
+
+def test_active_task_never_runs_llm_execution_when_gated(monkeypatch) -> None:
+    def _fail_plan_from_message(*_args, **_kwargs):
+        raise AssertionError("LLM execution should not run when active_task is present")
+
+    monkeypatch.setattr(agent.loop, "plan_from_message", _fail_plan_from_message)
+    monkeypatch.setattr(agent.loop.config, "llm_enabled", lambda: True)
+    monkeypatch.setattr(agent.loop.config, "llm_gated", lambda: True)
+    monkeypatch.setattr(agent.loop.config, "llm_allowed_tools", lambda: {"finance_releves_search"})
+    monkeypatch.setattr(agent.loop.config, "llm_shadow", lambda: False)
+
+    router = _SearchRouter()
+    loop = AgentLoop(tool_router=router, llm_planner=object())
+    reply = loop.handle_user_message(
+        "Coop",
+        active_task={
+            "type": "awaiting_search_merchant",
+            "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
+        },
+    )
+
+    assert router.calls == [
+        (
+            "finance_releves_search",
+            {
+                "merchant": "coop",
+                "limit": 50,
+                "offset": 0,
+                "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
+            },
+        )
+    ]
+    assert reply.plan == {
+        "tool_name": "finance_releves_search",
+        "payload": {
+            "merchant": "coop",
+            "limit": 50,
+            "offset": 0,
+            "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
+        },
+    }
