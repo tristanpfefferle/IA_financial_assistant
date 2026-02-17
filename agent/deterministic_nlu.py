@@ -56,6 +56,8 @@ _LIST_ACCOUNTS_PATTERNS = (
     re.compile(r"liste\s+mes\s+comptes", re.IGNORECASE),
     re.compile(r"quels\s+sont\s+mes\s+comptes(?:\s+bancaires)?", re.IGNORECASE),
     re.compile(r"affiche\s+mes\s+comptes", re.IGNORECASE),
+    re.compile(r"montre(?:-?\s?moi)?\s+mes\s+comptes(?:\s+bancaires)?", re.IGNORECASE),
+    re.compile(r"j['’]ai\s+combien\s+de\s+comptes\s+bancaires", re.IGNORECASE),
 )
 
 _IMPORT_PATTERNS = (

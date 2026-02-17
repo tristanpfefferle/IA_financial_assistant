@@ -331,6 +331,15 @@ def test_planner_bank_accounts_list_affiche_pattern() -> None:
     assert plan.payload == {}
 
 
+def test_planner_bank_accounts_list_montre_and_count_patterns() -> None:
+    for message in ("Montre moi mes comptes bancaires", "J'ai combien de comptes bancaires ?"):
+        plan = plan_from_message(message)
+
+        assert isinstance(plan, ToolCallPlan)
+        assert plan.tool_name == "finance_bank_accounts_list"
+        assert plan.payload == {}
+
+
 def test_planner_bank_account_create_cree_pattern_with_punctuation() -> None:
     plan = plan_from_message("Crée un compte Compte vacances !")
 
