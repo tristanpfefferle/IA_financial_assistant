@@ -37,6 +37,10 @@ _BANK_ACCOUNT_DISAMBIGUATION_TOOLS = {
 _CONFIRM_WORDS = {"oui", "o", "ok", "confirme", "confirmé", "confirmée"}
 
 
+def _normalize_for_match(value: str) -> str:
+    return value.strip().casefold()
+
+
 @dataclass(slots=True)
 class AgentReply:
     """Serializable chat output for API responses."""
@@ -472,10 +476,15 @@ class AgentLoop:
                     tool_name = nlu_intent.get("tool_name")
                     payload = nlu_intent.get("payload")
                     if isinstance(tool_name, str) and isinstance(payload, dict):
+                        meta: dict[str, object] = {}
+                        bank_account_hint = nlu_intent.get("bank_account_hint")
+                        if isinstance(bank_account_hint, str) and bank_account_hint.strip():
+                            meta["bank_account_hint"] = bank_account_hint.strip().casefold()
                         plan = ToolCallPlan(
                             tool_name=tool_name,
                             payload=payload,
                             user_reply="OK.",
+                            meta=meta,
                         )
 
             if plan is None:
@@ -515,6 +524,29 @@ class AgentLoop:
             )
 
         if isinstance(plan, ToolCallPlan):
+            if (
+                plan.tool_name == "finance_releves_search"
+                and profile_id is not None
+                and isinstance(plan.meta.get("bank_account_hint"), str)
+            ):
+                bank_account_hint = str(plan.meta["bank_account_hint"])
+                list_result = self.tool_router.call("finance_bank_accounts_list", {}, profile_id=profile_id)
+                normalized_list_result = self._normalize_tool_result("finance_bank_accounts_list", list_result)
+                if not isinstance(normalized_list_result, ToolError):
+                    items = getattr(normalized_list_result, "items", None)
+                    if isinstance(items, list):
+                        matched_account_id: str | None = None
+                        for account in items:
+                            raw_name = getattr(account, "name", None)
+                            raw_id = getattr(account, "id", None)
+                            if not isinstance(raw_name, str) or raw_id is None:
+                                continue
+                            if _normalize_for_match(raw_name) == _normalize_for_match(bank_account_hint):
+                                matched_account_id = str(raw_id)
+                                break
+                        if matched_account_id is not None:
+                            plan.payload["bank_account_id"] = matched_account_id
+
             logger.info("tool_execution_started tool_name=%s", plan.tool_name)
             raw_result = self.tool_router.call(plan.tool_name, plan.payload, profile_id=profile_id)
             result = self._normalize_tool_result(plan.tool_name, raw_result)

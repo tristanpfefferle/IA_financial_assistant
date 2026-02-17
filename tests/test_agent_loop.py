@@ -104,6 +104,28 @@ class _SearchRouter:
         return {"ok": True, "items": []}
 
 
+class _SearchWithBankHintRouter:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict]] = []
+
+    def call(self, tool_name: str, payload: dict, *, profile_id: UUID | None = None):
+        self.calls.append((tool_name, payload))
+        if tool_name == "finance_bank_accounts_list":
+            return type(
+                "_ListResult",
+                (),
+                {
+                    "items": [
+                        type("_Account", (), {"id": "acc-ubs", "name": "UBS"}),
+                        type("_Account", (), {"id": "acc-revolut", "name": "Revolut"}),
+                    ]
+                },
+            )()
+
+        assert tool_name == "finance_releves_search"
+        return {"ok": True, "items": []}
+
+
 def test_confirm_delete_category_yes_executes_delete() -> None:
     loop = AgentLoop(tool_router=_DeleteRouter())
 
@@ -357,3 +379,61 @@ def test_active_task_search_merchant_without_date_range_runs_search() -> None:
     }
     assert second_reply.should_update_active_task is True
     assert second_reply.active_task is None
+
+
+def test_nlu_search_with_known_bank_hint_adds_bank_account_id() -> None:
+    router = _SearchWithBankHintRouter()
+    loop = AgentLoop(tool_router=router)
+
+    reply = loop.handle_user_message(
+        "cherche Migros UBS",
+        profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+    )
+
+    assert router.calls[0] == ("finance_bank_accounts_list", {})
+    assert router.calls[1] == (
+        "finance_releves_search",
+        {"merchant": "migros", "limit": 50, "offset": 0, "bank_account_id": "acc-ubs"},
+    )
+    assert reply.plan == {
+        "tool_name": "finance_releves_search",
+        "payload": {"merchant": "migros", "limit": 50, "offset": 0, "bank_account_id": "acc-ubs"},
+    }
+
+
+def test_nlu_search_with_unknown_bank_hint_keeps_merchant_without_bank_account_id() -> None:
+    router = _SearchWithBankHintRouter()
+    loop = AgentLoop(tool_router=router)
+
+    reply = loop.handle_user_message(
+        "cherche Migros UnknownBank",
+        profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+    )
+
+    assert router.calls == [
+        ("finance_releves_search", {"merchant": "migros unknownbank", "limit": 50, "offset": 0}),
+    ]
+    assert reply.plan == {
+        "tool_name": "finance_releves_search",
+        "payload": {"merchant": "migros unknownbank", "limit": 50, "offset": 0},
+    }
+
+
+def test_nlu_search_with_punctuated_bank_hint_matches_account() -> None:
+    router = _SearchWithBankHintRouter()
+    loop = AgentLoop(tool_router=router)
+
+    reply = loop.handle_user_message(
+        "cherche Migros UBS!!!",
+        profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+    )
+
+    assert router.calls[0] == ("finance_bank_accounts_list", {})
+    assert router.calls[1] == (
+        "finance_releves_search",
+        {"merchant": "migros", "limit": 50, "offset": 0, "bank_account_id": "acc-ubs"},
+    )
+    assert reply.plan == {
+        "tool_name": "finance_releves_search",
+        "payload": {"merchant": "migros", "limit": 50, "offset": 0, "bank_account_id": "acc-ubs"},
+    }
