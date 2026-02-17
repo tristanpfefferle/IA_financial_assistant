@@ -126,12 +126,13 @@ def test_parse_search_without_merchant_returns_clarification(message: str) -> No
     assert intent["message"]
 
 
-def test_parse_search_payload_never_contains_none_merchant() -> None:
-    intent = parse_intent("cherche")
+def test_parse_search_sets_non_empty_merchant_for_tool_call() -> None:
+    intent = parse_intent("cherche Migros")
 
     assert intent is not None
-    if intent["type"] == "tool_call" and intent["tool_name"] == "finance_releves_search":
-        assert intent["payload"]["merchant"] is not None
+    assert intent["type"] == "tool_call"
+    assert intent["tool_name"] == "finance_releves_search"
+    assert intent["payload"]["merchant"]
 
 
 @pytest.mark.parametrize(
