@@ -8,6 +8,8 @@ from typing import Any
 
 from agent.planner import ToolCallPlan
 from shared.models import (
+    BankAccount,
+    BankAccountsListResult,
     CategoriesListResult,
     ProfileDataResult,
     ProfileCategory,
@@ -113,6 +115,41 @@ def _build_category_ambiguous_reply(error: ToolError) -> str | None:
         return "Plusieurs catégories correspondent. Pouvez-vous préciser ?"
 
     return f"Plusieurs catégories correspondent: {', '.join(candidates)}."
+
+
+def _build_bank_account_not_found_reply(error: ToolError) -> str | None:
+    if error.code != ToolErrorCode.NOT_FOUND:
+        return None
+    details: dict[str, Any] = error.details if isinstance(error.details, dict) else {}
+    if "name" not in details:
+        return None
+    raw_name = details.get("name")
+    account_name = raw_name.strip() if isinstance(raw_name, str) and raw_name.strip() else None
+    base_message = (
+        f"Je ne trouve pas le compte « {account_name} »." if account_name else "Je ne trouve pas ce compte."
+    )
+    close_names = details.get("close_names")
+    if isinstance(close_names, list) and close_names:
+        return f"{base_message} Vouliez-vous dire: {', '.join(str(name) for name in close_names[:3])} ?"
+    return base_message
+
+
+def _build_bank_account_ambiguous_reply(error: ToolError) -> str | None:
+    if error.code != ToolErrorCode.AMBIGUOUS:
+        return None
+    details: dict[str, Any] = error.details if isinstance(error.details, dict) else {}
+    if "candidates" not in details:
+        return None
+    candidates_raw = details.get("candidates")
+    if not isinstance(candidates_raw, list):
+        return None
+    names: list[str] = []
+    for candidate in candidates_raw:
+        if isinstance(candidate, dict) and isinstance(candidate.get("name"), str):
+            names.append(candidate["name"])
+    if not names:
+        return None
+    return f"Plusieurs comptes correspondent: {', '.join(names)}."
 
 
 
@@ -237,6 +274,12 @@ def build_final_reply(*, plan: ToolCallPlan, tool_result: object) -> str:
     """Build a concise French final answer from a tool result."""
 
     if isinstance(tool_result, ToolError):
+        bank_account_not_found_reply = _build_bank_account_not_found_reply(tool_result)
+        if bank_account_not_found_reply is not None:
+            return bank_account_not_found_reply
+        bank_account_ambiguous_reply = _build_bank_account_ambiguous_reply(tool_result)
+        if bank_account_ambiguous_reply is not None:
+            return bank_account_ambiguous_reply
         category_not_found_reply = _build_category_not_found_reply(tool_result)
         if category_not_found_reply is not None:
             return category_not_found_reply
@@ -254,6 +297,15 @@ def build_final_reply(*, plan: ToolCallPlan, tool_result: object) -> str:
     if isinstance(tool_result, CategoriesListResult):
         return _build_categories_list_reply(tool_result)
 
+    if isinstance(tool_result, BankAccountsListResult):
+        if not tool_result.items:
+            return "Vous n'avez aucun compte bancaire pour le moment."
+        lines = [
+            f"- {item.name} ({item.account_kind or 'inconnu'}, {item.kind or 'inconnu'})"
+            for item in tool_result.items
+        ]
+        return "\n".join(lines)
+
     if isinstance(tool_result, ProfileDataResult):
         if plan.tool_name == "finance_profile_get":
             return _build_profile_get_reply(plan, tool_result)
@@ -270,11 +322,29 @@ def build_final_reply(*, plan: ToolCallPlan, tool_result: object) -> str:
                 return f"Catégorie renommée : {requested_old_name} → {requested_new_name}."
             return f"Catégorie mise à jour: {tool_result.name}."
 
+    if isinstance(tool_result, BankAccount):
+        if plan.tool_name == "finance_bank_accounts_create":
+            return f"Compte créé: {tool_result.name}."
+        if plan.tool_name == "finance_bank_accounts_update":
+            return f"Compte mis à jour: {tool_result.name}."
+
     if plan.tool_name == "finance_categories_delete" and isinstance(tool_result, dict) and tool_result.get("ok"):
         deleted_name = plan.payload.get("category_name") if isinstance(plan.payload, dict) else None
         if isinstance(deleted_name, str):
             return f"Catégorie supprimée : {deleted_name}."
         return "Catégorie supprimée."
+
+    if plan.tool_name == "finance_bank_accounts_delete" and isinstance(tool_result, dict) and tool_result.get("ok"):
+        deleted_name = plan.payload.get("name") if isinstance(plan.payload, dict) else None
+        if isinstance(deleted_name, str):
+            return f"Compte supprimé: {deleted_name}."
+        return "Compte supprimé."
+
+    if plan.tool_name == "finance_bank_accounts_set_default" and isinstance(tool_result, dict) and tool_result.get("ok"):
+        account_name = plan.payload.get("name") if isinstance(plan.payload, dict) else None
+        if isinstance(account_name, str):
+            return f"Compte par défaut: {account_name}."
+        return "Compte par défaut défini."
 
     if isinstance(tool_result, RelevesSumResult):
         currency_suffix = f" {tool_result.currency}" if tool_result.currency else ""

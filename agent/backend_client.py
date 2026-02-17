@@ -7,6 +7,8 @@ from uuid import UUID
 
 from backend.services.tools import BackendToolService
 from shared.models import (
+    BankAccount,
+    BankAccountsListResult,
     CategoriesListResult,
     RelevesAggregateRequest,
     RelevesAggregateResult,
@@ -101,3 +103,51 @@ class BackendClient:
         set_fields: dict[str, object | None],
     ) -> ProfileDataResult | ToolError:
         return self.tool_service.finance_profile_update(profile_id=profile_id, set_fields=set_fields)
+
+    def finance_bank_accounts_list(self, *, profile_id: UUID) -> BankAccountsListResult | ToolError:
+        return self.tool_service.finance_bank_accounts_list(profile_id=profile_id)
+
+    def finance_bank_accounts_create(
+        self,
+        *,
+        profile_id: UUID,
+        name: str,
+        kind: str | None = None,
+        account_kind: str | None = None,
+    ) -> BankAccount | ToolError:
+        return self.tool_service.finance_bank_accounts_create(
+            profile_id=profile_id,
+            name=name,
+            kind=kind,
+            account_kind=account_kind,
+        )
+
+    def finance_bank_accounts_update(
+        self,
+        *,
+        profile_id: UUID,
+        bank_account_id: UUID,
+        set_fields: dict[str, str],
+    ) -> BankAccount | ToolError:
+        return self.tool_service.finance_bank_accounts_update(
+            profile_id=profile_id,
+            bank_account_id=bank_account_id,
+            set_fields=set_fields,
+        )
+
+    def finance_bank_accounts_delete(self, *, profile_id: UUID, bank_account_id: UUID) -> dict[str, bool] | ToolError:
+        return self.tool_service.finance_bank_accounts_delete(
+            profile_id=profile_id,
+            bank_account_id=bank_account_id,
+        )
+
+    def finance_bank_accounts_set_default(
+        self,
+        *,
+        profile_id: UUID,
+        bank_account_id: UUID,
+    ) -> dict[str, object] | ToolError:
+        return self.tool_service.finance_bank_accounts_set_default(
+            profile_id=profile_id,
+            bank_account_id=bank_account_id,
+        )

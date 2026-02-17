@@ -9,6 +9,8 @@ from uuid import UUID
 
 from shared.text_utils import normalize_category_name
 from shared.models import (
+    BankAccount,
+    BankAccountsListResult,
     CategoriesListResult,
     ProfileCategory,
     ProfileDataResult,
@@ -56,6 +58,7 @@ class FakeBackendClient:
     """Minimal backend client fake implementing releves and categories tools."""
 
     categories: list[ProfileCategory] = field(default_factory=list)
+    bank_accounts: list[BankAccount] = field(default_factory=list)
     profile_data_by_id: dict[UUID, dict[str, object | None]] = field(default_factory=dict)
 
     def _filtered_items(self, filters: RelevesFilters) -> list[ReleveBancaire]:
@@ -195,6 +198,61 @@ class FakeBackendClient:
                 self.categories.pop(index)
                 return {"ok": True}
         return ToolError(code=ToolErrorCode.NOT_FOUND, message="Category not found")
+
+    def finance_bank_accounts_list(self, *, profile_id: UUID) -> BankAccountsListResult:
+        return BankAccountsListResult(items=[item for item in self.bank_accounts if item.profile_id == profile_id])
+
+    def finance_bank_accounts_create(
+        self,
+        *,
+        profile_id: UUID,
+        name: str,
+        kind: str | None = None,
+        account_kind: str | None = None,
+    ) -> BankAccount:
+        account = BankAccount(
+            id=UUID("66666666-6666-6666-6666-666666666666") if not self.bank_accounts else UUID("77777777-7777-7777-7777-777777777777"),
+            profile_id=profile_id,
+            name=name,
+            kind=kind,
+            account_kind=account_kind,
+            is_system=False,
+        )
+        self.bank_accounts.append(account)
+        return account
+
+    def finance_bank_accounts_update(
+        self,
+        *,
+        profile_id: UUID,
+        bank_account_id: UUID,
+        set_fields: dict[str, str],
+    ) -> BankAccount | ToolError:
+        for index, item in enumerate(self.bank_accounts):
+            if item.profile_id != profile_id or item.id != bank_account_id:
+                continue
+            updated = item.model_copy(update=set_fields)
+            self.bank_accounts[index] = updated
+            return updated
+        return ToolError(code=ToolErrorCode.NOT_FOUND, message="Bank account not found")
+
+    def finance_bank_accounts_delete(self, *, profile_id: UUID, bank_account_id: UUID) -> dict[str, bool] | ToolError:
+        for index, item in enumerate(self.bank_accounts):
+            if item.profile_id == profile_id and item.id == bank_account_id:
+                self.bank_accounts.pop(index)
+                return {"ok": True}
+        return ToolError(code=ToolErrorCode.NOT_FOUND, message="Bank account not found")
+
+    def finance_bank_accounts_set_default(
+        self,
+        *,
+        profile_id: UUID,
+        bank_account_id: UUID,
+    ) -> dict[str, object] | ToolError:
+        for item in self.bank_accounts:
+            if item.profile_id == profile_id and item.id == bank_account_id:
+                return {"ok": True, "default_bank_account_id": str(bank_account_id)}
+        return ToolError(code=ToolErrorCode.NOT_FOUND, message="Bank account not found")
 
 
     def finance_profile_get(

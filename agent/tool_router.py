@@ -12,6 +12,12 @@ from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 
 from agent.backend_client import BackendClient
 from shared.models import (
+    BankAccount,
+    BankAccountCreateRequest,
+    BankAccountDeleteRequest,
+    BankAccountSetDefaultRequest,
+    BankAccountsListResult,
+    BankAccountUpdateRequest,
     CategoriesListResult,
     CategoryCreateRequest,
     CategoryDeleteRequest,
@@ -55,6 +61,46 @@ class _CategoryDeleteByNamePayload(BaseModel):
     def validate_identifier(self) -> "_CategoryDeleteByNamePayload":
         if self.category_id is None and (self.category_name is None or not self.category_name.strip()):
             raise ValueError("Either category_id or category_name must be provided")
+        return self
+
+
+class _BankAccountUpdateByNamePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    bank_account_id: UUID | None = None
+    name: str | None = None
+    set: dict[str, str]
+
+    @model_validator(mode="after")
+    def validate_identifier(self) -> "_BankAccountUpdateByNamePayload":
+        if self.bank_account_id is None and (self.name is None or not self.name.strip()):
+            raise ValueError("Either bank_account_id or name must be provided")
+        return self
+
+
+class _BankAccountDeleteByNamePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    bank_account_id: UUID | None = None
+    name: str | None = None
+
+    @model_validator(mode="after")
+    def validate_identifier(self) -> "_BankAccountDeleteByNamePayload":
+        if self.bank_account_id is None and (self.name is None or not self.name.strip()):
+            raise ValueError("Either bank_account_id or name must be provided")
+        return self
+
+
+class _BankAccountSetDefaultByNamePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    bank_account_id: UUID | None = None
+    name: str | None = None
+
+    @model_validator(mode="after")
+    def validate_identifier(self) -> "_BankAccountSetDefaultByNamePayload":
+        if self.bank_account_id is None and (self.name is None or not self.name.strip()):
+            raise ValueError("Either bank_account_id or name must be provided")
         return self
 
 
@@ -106,6 +152,50 @@ class ToolRouter:
                 "category_name": category_name,
                 "category_name_norm": target_name,
                 "close_category_names": close_category_names,
+            },
+        )
+
+    def _find_bank_account_by_name(
+        self,
+        *,
+        profile_id: UUID,
+        name: str,
+    ) -> BankAccount | ToolError:
+        accounts_result = self.backend_client.finance_bank_accounts_list(profile_id=profile_id)
+        if isinstance(accounts_result, ToolError):
+            return accounts_result
+
+        target_name = name.strip().lower()
+        exact_matches = [item for item in accounts_result.items if item.name.strip().lower() == target_name]
+        if len(exact_matches) == 1:
+            return exact_matches[0]
+        if len(exact_matches) > 1:
+            return ToolError(
+                code=ToolErrorCode.AMBIGUOUS,
+                message="Multiple bank accounts match the provided name.",
+                details={
+                    "name": name,
+                    "candidates": [
+                        {"id": str(item.id), "name": item.name}
+                        for item in exact_matches
+                    ],
+                },
+            )
+
+        close_names = get_close_matches(
+            target_name,
+            [item.name.strip().lower() for item in accounts_result.items],
+            n=3,
+            cutoff=0.6,
+        )
+        return ToolError(
+            code=ToolErrorCode.NOT_FOUND,
+            message="Bank account not found for provided name.",
+            details={
+                "name": name,
+                "close_names": [
+                    item.name for item in accounts_result.items if item.name.strip().lower() in set(close_names)
+                ],
             },
         )
 
@@ -172,8 +262,11 @@ class ToolRouter:
         | RelevesSumResult
         | RelevesAggregateResult
         | CategoriesListResult
+        | BankAccountsListResult
         | ProfileCategory
+        | BankAccount
         | dict[str, bool]
+        | dict[str, object]
         | ProfileDataResult
         | ToolError
     ):
@@ -189,6 +282,11 @@ class ToolRouter:
             "finance_categories_delete",
             "finance_profile_get",
             "finance_profile_update",
+            "finance_bank_accounts_list",
+            "finance_bank_accounts_create",
+            "finance_bank_accounts_update",
+            "finance_bank_accounts_delete",
+            "finance_bank_accounts_set_default",
         } and profile_id is None:
             return ToolError(
                 code=ToolErrorCode.VALIDATION_ERROR,
@@ -364,6 +462,126 @@ class ToolRouter:
             return self.backend_client.finance_categories_delete(
                 profile_id=request.profile_id,
                 category_id=request.category_id,
+            )
+
+        if tool_name == "finance_bank_accounts_list":
+            if payload:
+                return ToolError(
+                    code=ToolErrorCode.VALIDATION_ERROR,
+                    message=f"Invalid payload for tool {tool_name}",
+                    details={"payload": payload},
+                )
+            return self.backend_client.finance_bank_accounts_list(profile_id=profile_id)
+
+        if tool_name == "finance_bank_accounts_create":
+            try:
+                request = BankAccountCreateRequest.model_validate({**payload, "profile_id": str(profile_id)})
+            except ValidationError as exc:
+                return ToolError(
+                    code=ToolErrorCode.VALIDATION_ERROR,
+                    message=f"Invalid payload for tool {tool_name}",
+                    details={"validation_errors": exc.errors(), "payload": payload},
+                )
+            return self.backend_client.finance_bank_accounts_create(
+                profile_id=request.profile_id,
+                name=request.name,
+                kind=request.kind,
+                account_kind=request.account_kind,
+            )
+
+        if tool_name == "finance_bank_accounts_update":
+            try:
+                request_payload = _BankAccountUpdateByNamePayload.model_validate(payload)
+            except ValidationError as exc:
+                return ToolError(
+                    code=ToolErrorCode.VALIDATION_ERROR,
+                    message=f"Invalid payload for tool {tool_name}",
+                    details={"validation_errors": exc.errors(), "payload": payload},
+                )
+            bank_account_id = request_payload.bank_account_id
+            if bank_account_id is None:
+                matched = self._find_bank_account_by_name(profile_id=profile_id, name=request_payload.name or "")
+                if isinstance(matched, ToolError):
+                    return matched
+                bank_account_id = matched.id
+            try:
+                request = BankAccountUpdateRequest.model_validate(
+                    {
+                        "profile_id": str(profile_id),
+                        "bank_account_id": str(bank_account_id),
+                        "set": request_payload.set,
+                    }
+                )
+            except ValidationError as exc:
+                return ToolError(
+                    code=ToolErrorCode.VALIDATION_ERROR,
+                    message=f"Invalid payload for tool {tool_name}",
+                    details={"validation_errors": exc.errors(), "payload": payload},
+                )
+            return self.backend_client.finance_bank_accounts_update(
+                profile_id=request.profile_id,
+                bank_account_id=request.bank_account_id,
+                set_fields=request.set,
+            )
+
+        if tool_name == "finance_bank_accounts_delete":
+            try:
+                request_payload = _BankAccountDeleteByNamePayload.model_validate(payload)
+            except ValidationError as exc:
+                return ToolError(
+                    code=ToolErrorCode.VALIDATION_ERROR,
+                    message=f"Invalid payload for tool {tool_name}",
+                    details={"validation_errors": exc.errors(), "payload": payload},
+                )
+            bank_account_id = request_payload.bank_account_id
+            if bank_account_id is None:
+                matched = self._find_bank_account_by_name(profile_id=profile_id, name=request_payload.name or "")
+                if isinstance(matched, ToolError):
+                    return matched
+                bank_account_id = matched.id
+            try:
+                request = BankAccountDeleteRequest.model_validate(
+                    {"profile_id": str(profile_id), "bank_account_id": str(bank_account_id)}
+                )
+            except ValidationError as exc:
+                return ToolError(
+                    code=ToolErrorCode.VALIDATION_ERROR,
+                    message=f"Invalid payload for tool {tool_name}",
+                    details={"validation_errors": exc.errors(), "payload": payload},
+                )
+            return self.backend_client.finance_bank_accounts_delete(
+                profile_id=request.profile_id,
+                bank_account_id=request.bank_account_id,
+            )
+
+        if tool_name == "finance_bank_accounts_set_default":
+            try:
+                request_payload = _BankAccountSetDefaultByNamePayload.model_validate(payload)
+            except ValidationError as exc:
+                return ToolError(
+                    code=ToolErrorCode.VALIDATION_ERROR,
+                    message=f"Invalid payload for tool {tool_name}",
+                    details={"validation_errors": exc.errors(), "payload": payload},
+                )
+            bank_account_id = request_payload.bank_account_id
+            if bank_account_id is None:
+                matched = self._find_bank_account_by_name(profile_id=profile_id, name=request_payload.name or "")
+                if isinstance(matched, ToolError):
+                    return matched
+                bank_account_id = matched.id
+            try:
+                request = BankAccountSetDefaultRequest.model_validate(
+                    {"profile_id": str(profile_id), "bank_account_id": str(bank_account_id)}
+                )
+            except ValidationError as exc:
+                return ToolError(
+                    code=ToolErrorCode.VALIDATION_ERROR,
+                    message=f"Invalid payload for tool {tool_name}",
+                    details={"validation_errors": exc.errors(), "payload": payload},
+                )
+            return self.backend_client.finance_bank_accounts_set_default(
+                profile_id=request.profile_id,
+                bank_account_id=request.bank_account_id,
             )
 
         return ToolError(

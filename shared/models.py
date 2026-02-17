@@ -20,6 +20,7 @@ class ToolErrorCode(str, Enum):
     BACKEND_ERROR = "BACKEND_ERROR"
     NOT_FOUND = "NOT_FOUND"
     AMBIGUOUS = "AMBIGUOUS"
+    CONFLICT = "CONFLICT"
 
 
 class Money(BaseModel):
@@ -107,6 +108,111 @@ class CategoryDeleteRequest(BaseModel):
 
     profile_id: UUID
     category_id: UUID
+
+
+ALLOWED_BANK_ACCOUNT_KINDS: frozenset[str] = frozenset({"individual", "joint"})
+ALLOWED_BANK_ACCOUNT_ACCOUNT_KINDS: frozenset[str] = frozenset(
+    {"personal_current", "personal_savings", "business_current"}
+)
+
+
+class BankAccount(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: UUID
+    profile_id: UUID
+    name: str
+    kind: str | None = None
+    account_kind: str | None = None
+    is_system: bool = False
+
+
+class BankAccountsListResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[BankAccount]
+
+
+class BankAccountCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    profile_id: UUID
+    name: str
+    kind: str | None = None
+    account_kind: str | None = None
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("name must not be empty")
+        return normalized
+
+    @field_validator("kind")
+    @classmethod
+    def validate_kind(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        if value not in ALLOWED_BANK_ACCOUNT_KINDS:
+            raise ValueError("Invalid kind")
+        return value
+
+    @field_validator("account_kind")
+    @classmethod
+    def validate_account_kind(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        if value not in ALLOWED_BANK_ACCOUNT_ACCOUNT_KINDS:
+            raise ValueError("Invalid account_kind")
+        return value
+
+
+class BankAccountUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    profile_id: UUID
+    bank_account_id: UUID
+    set: dict[str, str]
+
+    @field_validator("set")
+    @classmethod
+    def validate_set(cls, value: dict[str, str]) -> dict[str, str]:
+        allowed_fields = {"name", "kind", "account_kind"}
+        if not value:
+            raise ValueError("set must not be empty")
+        invalid_fields = sorted(set(value) - allowed_fields)
+        if invalid_fields:
+            raise ValueError(f"Unsupported fields: {', '.join(invalid_fields)}")
+
+        normalized_set = dict(value)
+        if "name" in normalized_set:
+            normalized_name = normalized_set["name"].strip()
+            if not normalized_name:
+                raise ValueError("name must not be empty")
+            normalized_set["name"] = normalized_name
+        if "kind" in normalized_set and normalized_set["kind"] not in ALLOWED_BANK_ACCOUNT_KINDS:
+            raise ValueError("Invalid kind")
+        if (
+            "account_kind" in normalized_set
+            and normalized_set["account_kind"] not in ALLOWED_BANK_ACCOUNT_ACCOUNT_KINDS
+        ):
+            raise ValueError("Invalid account_kind")
+        return normalized_set
+
+
+class BankAccountDeleteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    profile_id: UUID
+    bank_account_id: UUID
+
+
+class BankAccountSetDefaultRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    profile_id: UUID
+    bank_account_id: UUID
 
 
 class ToolError(BaseModel):

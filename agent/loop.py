@@ -45,19 +45,30 @@ class AgentLoop:
     @staticmethod
     def plan_from_active_task(message: str, active_task: dict[str, object]):
         active_task_type = active_task.get("type")
-        if active_task_type != "confirm_delete_category":
+        if active_task_type not in {"confirm_delete_category", "confirm_delete_bank_account"}:
             return ClarificationPlan(question="Je n'ai pas compris la tâche en attente.", meta={"keep_active_task": True})
 
-        category_name = str(active_task.get("category_name", "")).strip()
-        if not category_name:
+        target_name = (
+            str(active_task.get("category_name", "")).strip()
+            if active_task_type == "confirm_delete_category"
+            else str(active_task.get("name", "")).strip()
+        )
+        if not target_name:
             return NoopPlan(reply="Suppression annulée.", meta={"clear_active_task": True})
 
         normalized = message.strip().lower()
         if normalized in {"oui", "o", "ok", "confirme", "confirmé", "confirmée"}:
+            tool_name = "finance_categories_delete"
+            payload = {"category_name": target_name}
+            user_reply = "Catégorie supprimée."
+            if active_task_type == "confirm_delete_bank_account":
+                tool_name = "finance_bank_accounts_delete"
+                payload = {"name": target_name}
+                user_reply = "Compte supprimé."
             return ToolCallPlan(
-                tool_name="finance_categories_delete",
-                payload={"category_name": category_name},
-                user_reply="Catégorie supprimée.",
+                tool_name=tool_name,
+                payload=payload,
+                user_reply=user_reply,
                 meta={"clear_active_task": True},
             )
 
@@ -71,7 +82,7 @@ class AgentLoop:
         if result is not None:
             return result
 
-        if tool_name == "finance_categories_delete":
+        if tool_name in {"finance_categories_delete", "finance_bank_accounts_delete"}:
             logger.info("tool_returned_none_defaulting_ok tool_name=%s", tool_name)
             return {"ok": True}
 

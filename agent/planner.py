@@ -137,6 +137,12 @@ _CATEGORY_RENAME_PATTERNS = (
     "appelle la catégorie",
 )
 
+_BANK_ACCOUNT_LIST_PATTERNS = (
+    "liste mes comptes bancaires",
+    "affiche mes comptes",
+    "quels sont mes comptes",
+)
+
 _QUOTED_VALUE_PATTERN = r"[\"'«](?P<value>[^\"'»]+)[\"'»]"
 _PROFILE_FIELD_WHITELIST = {
     "first_name",
@@ -605,6 +611,14 @@ def _build_rename_plan(message: str) -> ToolCallPlan | ClarificationPlan:
     )
 
 
+def _extract_bank_account_name_after(message: str, marker: str) -> str | None:
+    pattern = rf"{marker}\s+(?P<name>.+)$"
+    match = re.search(pattern, message, flags=re.IGNORECASE)
+    if match is None:
+        return None
+    return _strip_terminal_punctuation(match.group("name"))
+
+
 def _parse_search_command(message: str) -> tuple[dict[str, object] | None, ToolError | None]:
     """Parse `search:` commands.
 
@@ -712,6 +726,67 @@ def deterministic_plan_from_message(message: str) -> Plan:
 
     if any(pattern in lower_message for pattern in _CATEGORY_RENAME_PATTERNS):
         return _build_rename_plan(normalized_message)
+
+    if any(pattern in lower_message for pattern in _BANK_ACCOUNT_LIST_PATTERNS):
+        return ToolCallPlan(
+            tool_name="finance_bank_accounts_list",
+            payload={},
+            user_reply="Voici vos comptes bancaires.",
+        )
+
+    create_match = re.search(
+        r"(?:crée|cree|ajoute)\s+(?:un\s+)?compte\s+bancaire?\s+(?P<name>.+)$|(?:ajoute)\s+un\s+compte\s+(?P<name2>.+)$",
+        normalized_message,
+        flags=re.IGNORECASE,
+    )
+    if create_match is not None:
+        name = _strip_terminal_punctuation(create_match.group("name") or create_match.group("name2") or "")
+        if name:
+            return ToolCallPlan(
+                tool_name="finance_bank_accounts_create",
+                payload={"name": name},
+                user_reply="Compte créé.",
+            )
+
+    rename_match = re.search(
+        r"renomme\s+le\s+compte\s+(?P<old>.+?)\s+en\s+(?P<new>.+)$",
+        normalized_message,
+        flags=re.IGNORECASE,
+    )
+    if rename_match is not None:
+        old_name = _strip_terminal_punctuation(rename_match.group("old"))
+        new_name = _strip_terminal_punctuation(rename_match.group("new"))
+        if old_name and new_name:
+            return ToolCallPlan(
+                tool_name="finance_bank_accounts_update",
+                payload={"name": old_name, "set": {"name": new_name}},
+                user_reply="Compte mis à jour.",
+            )
+
+    delete_name = _extract_bank_account_name_after(normalized_message, r"supprime\s+le\s+compte")
+    if delete_name is not None:
+        return SetActiveTaskPlan(
+            reply=f"Confirmez-vous la suppression du compte « {delete_name} » ? Répondez OUI ou NON.",
+            active_task={
+                "type": "confirm_delete_bank_account",
+                "name": delete_name,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+
+    set_default_match = re.search(
+        r"définis\s+(?P<name>.+?)\s+comme\s+compte\s+par\s+défaut",
+        normalized_message,
+        flags=re.IGNORECASE,
+    )
+    if set_default_match is not None:
+        account_name = _strip_terminal_punctuation(set_default_match.group("name"))
+        if account_name:
+            return ToolCallPlan(
+                tool_name="finance_bank_accounts_set_default",
+                payload={"name": account_name},
+                user_reply="Compte par défaut mis à jour.",
+            )
 
     category_to_exclude = _extract_category_name(
         normalized_message,
