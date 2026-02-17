@@ -321,3 +321,18 @@ def test_build_final_reply_profile_validation_error_is_user_friendly() -> None:
     reply = build_final_reply(plan=plan, tool_result=error)
 
     assert reply == "Je n’ai pas compris quelle info du profil vous voulez (prénom, nom, ville, etc.)."
+
+
+def test_build_final_reply_bank_account_delete_conflict_is_user_friendly() -> None:
+    plan = ToolCallPlan(tool_name="finance_bank_accounts_delete", payload={"name": "Compte principal"}, user_reply="OK")
+    error = ToolError(
+        code=ToolErrorCode.CONFLICT,
+        message="bank account not empty",
+    )
+
+    reply = build_final_reply(plan=plan, tool_result=error)
+
+    assert reply == (
+        "Impossible de supprimer ce compte car il contient des transactions. "
+        "Déplacez/supprimez d’abord les transactions ou choisissez un autre compte."
+    )

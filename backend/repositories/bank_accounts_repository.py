@@ -142,22 +142,27 @@ class SupabaseBankAccountsRepository:
         return [BankAccount.model_validate(row) for row in rows]
 
     def create_bank_account(self, request: BankAccountCreateRequest) -> BankAccount:
+        payload: dict[str, object] = {
+            "profile_id": str(request.profile_id),
+            "name": request.name,
+        }
+        if request.kind is not None:
+            payload["kind"] = request.kind
+        if request.account_kind is not None:
+            payload["account_kind"] = request.account_kind
+
         rows = self._request_rows(
             table="bank_accounts",
             method="POST",
             query={"select": "id,profile_id,name,kind,account_kind,is_system"},
-            body={
-                "profile_id": str(request.profile_id),
-                "name": request.name,
-                "kind": request.kind,
-                "account_kind": request.account_kind,
-            },
+            body=payload,
         )
         if not rows:
             raise RuntimeError("Supabase did not return created bank account")
         return BankAccount.model_validate(rows[0])
 
     def update_bank_account(self, request: BankAccountUpdateRequest) -> BankAccount:
+        payload = {field_name: value for field_name, value in request.set.items() if value is not None}
         rows = self._request_rows(
             table="bank_accounts",
             method="PATCH",
@@ -166,7 +171,7 @@ class SupabaseBankAccountsRepository:
                 "profile_id": f"eq.{request.profile_id}",
                 "select": "id,profile_id,name,kind,account_kind,is_system",
             },
-            body=request.set,
+            body=payload,
         )
         if not rows:
             raise ValueError("Bank account not found")

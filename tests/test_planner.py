@@ -320,6 +320,23 @@ def test_planner_bank_account_create_pattern() -> None:
     assert plan.payload == {"name": "Epargne"}
 
 
+
+
+def test_planner_bank_accounts_list_affiche_pattern() -> None:
+    plan = plan_from_message("Affiche mes comptes bancaires")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_bank_accounts_list"
+    assert plan.payload == {}
+
+
+def test_planner_bank_account_create_cree_pattern_with_punctuation() -> None:
+    plan = plan_from_message("Crée un compte Compte vacances !")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_bank_accounts_create"
+    assert plan.payload == {"name": "Compte vacances"}
+
 def test_planner_bank_account_rename_pattern() -> None:
     plan = plan_from_message("Renomme le compte Courant en Compte principal")
 

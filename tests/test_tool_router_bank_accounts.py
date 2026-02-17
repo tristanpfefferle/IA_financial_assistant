@@ -21,6 +21,7 @@ def test_bank_account_delete_by_name_not_found() -> None:
     assert isinstance(result, ToolError)
     assert result.code == ToolErrorCode.NOT_FOUND
     assert result.details is not None
+    assert result.details.get("name") == "compte prinicpal"
     assert result.details.get("close_names") == ["Compte principal"]
 
 
@@ -40,6 +41,12 @@ def test_bank_account_update_by_name_ambiguous() -> None:
 
     assert isinstance(result, ToolError)
     assert result.code == ToolErrorCode.AMBIGUOUS
+    assert result.details is not None
+    assert result.details.get("name") == "joint"
+    assert result.details.get("candidates") == [
+        {"id": str(first.id), "name": "Joint"},
+        {"id": str(second.id), "name": "JOINT"},
+    ]
 
 
 def test_bank_account_update_by_name_ok() -> None:
