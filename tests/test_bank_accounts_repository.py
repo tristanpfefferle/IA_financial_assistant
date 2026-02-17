@@ -18,7 +18,8 @@ BANK_ACCOUNT_ID = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
 
 def _repository() -> SupabaseBankAccountsRepository:
     fake_client = SimpleNamespace(
-        settings=SimpleNamespace(service_role_key="service", url="https://example.test")
+        settings=SimpleNamespace(service_role_key="service", url="https://example.test"),
+        get_rows=lambda **kwargs: ([], None),
     )
     return SupabaseBankAccountsRepository(client=fake_client)  # type: ignore[arg-type]
 
@@ -115,3 +116,18 @@ def test_delete_bank_account_continues_when_default_clear_fails() -> None:
     )
 
     assert calls == ["patch", "DELETE:bank_accounts"]
+
+
+def test_create_bank_account_raises_value_error_when_name_already_exists() -> None:
+    repository = _repository()
+
+    repository._client.get_rows = lambda **kwargs: ([{"id": str(BANK_ACCOUNT_ID)}], None)  # type: ignore[attr-defined]
+
+    try:
+        repository.create_bank_account(
+            BankAccountCreateRequest(profile_id=PROFILE_ID, name="Compte courant")
+        )
+    except ValueError as exc:
+        assert str(exc) == "bank account name already exists"
+    else:
+        raise AssertionError("Expected ValueError for duplicate bank account name")

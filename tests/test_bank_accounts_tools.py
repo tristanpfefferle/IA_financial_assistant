@@ -60,3 +60,22 @@ def test_finance_bank_accounts_list_ignores_invalid_default_bank_account_id() ->
 
     assert isinstance(result, BankAccountsListResult)
     assert result.default_bank_account_id is None
+
+
+def test_finance_bank_accounts_create_returns_conflict_for_duplicate_name() -> None:
+    bank_accounts_repository = SimpleNamespace(
+        create_bank_account=lambda request: (_ for _ in ()).throw(ValueError("bank account name already exists"))
+    )
+    service = BackendToolService(
+        transactions_repository=SimpleNamespace(),
+        releves_repository=SimpleNamespace(),
+        categories_repository=SimpleNamespace(),
+        bank_accounts_repository=bank_accounts_repository,
+        profiles_repository=SimpleNamespace(get_profile_fields=lambda **kwargs: {}),
+    )
+
+    result = service.finance_bank_accounts_create(profile_id=PROFILE_ID, name="UBS")
+
+    assert isinstance(result, ToolError)
+    assert result.code == ToolErrorCode.CONFLICT
+    assert result.message == "bank account name already exists"
