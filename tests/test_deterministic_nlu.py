@@ -253,3 +253,34 @@ def test_parse_search_query_parts_sets_merchant_fallback_for_revolut_pro() -> No
     parts = parse_search_query_parts("cherche Migros revolut pro")
 
     assert parts["merchant_fallback"] == "migros revolut pro"
+
+
+@pytest.mark.parametrize(
+    ("message", "expected_field", "expected_value"),
+    [
+        ("Mets à jour mon profil : ville Choëx", "city", "Choëx"),
+        ("Mets a jour mon profil : code postal 1897", "postal_code", "1897"),
+    ],
+)
+def test_parse_profile_update_requires_confirmation(
+    message: str, expected_field: str, expected_value: str
+) -> None:
+    assert parse_intent(message) == {
+        "type": "needs_confirmation",
+        "confirmation_type": "confirm_llm_write",
+        "message": (
+            f"Je peux mettre à jour votre profil (champ {expected_field} = {expected_value}). "
+            "Confirmez-vous ? (oui/non)"
+        ),
+        "context": {
+            "tool_name": "finance_profile_update",
+            "payload": {"set": {expected_field: expected_value}},
+        },
+    }
+
+
+def test_parse_profile_update_missing_field_or_value_returns_clarification() -> None:
+    assert parse_intent("Mets à jour mon profil :") == {
+        "type": "clarification",
+        "message": "Quel champ voulez-vous mettre à jour ? (ex: ville, code postal, pays…)",
+    }

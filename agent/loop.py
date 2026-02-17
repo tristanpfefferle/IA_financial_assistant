@@ -1098,6 +1098,26 @@ class AgentLoop:
                         meta=meta,
                     )
 
+            if intent_type == "needs_confirmation":
+                confirmation_type = nlu_intent.get("confirmation_type")
+                context = nlu_intent.get("context")
+                reply_message = nlu_intent.get("message")
+                if (
+                    isinstance(confirmation_type, str)
+                    and isinstance(context, dict)
+                    and isinstance(reply_message, str)
+                    and reply_message.strip()
+                ):
+                    return SetActiveTaskPlan(
+                        reply=reply_message,
+                        active_task={
+                            "type": "needs_confirmation",
+                            "confirmation_type": confirmation_type,
+                            "context": context,
+                            "created_at": datetime.now(timezone.utc).isoformat(),
+                        },
+                    )
+
         deterministic_plan = deterministic_plan_from_message(message)
         if isinstance(
             deterministic_plan,
