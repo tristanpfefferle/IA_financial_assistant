@@ -267,3 +267,27 @@ def test_confirm_delete_bank_account_existing_stores_id_in_active_task() -> None
         "tool_name": "finance_bank_accounts_delete",
         "payload": {"bank_account_id": "11111111-1111-1111-1111-111111111111"},
     }
+
+
+def test_nlu_ui_action_open_import_panel_returns_structured_tool_result() -> None:
+    loop = AgentLoop(tool_router=_FailIfCalledRouter())
+
+    reply = loop.handle_user_message("je veux importer un relevé")
+
+    assert reply.reply == "D'accord, j'ouvre le panneau d'import de relevés."
+    assert reply.tool_result == {"type": "ui_action", "action": "open_import_panel"}
+
+
+def test_nlu_tool_call_executes_before_deterministic_planner() -> None:
+    class _CreateAccountRouter:
+        def call(self, tool_name: str, payload: dict, *, profile_id: UUID | None = None):
+            assert tool_name == "finance_bank_accounts_create"
+            assert payload == {"name": "UBS"}
+            return {"id": "new-account"}
+
+    loop = AgentLoop(tool_router=_CreateAccountRouter())
+
+    reply = loop.handle_user_message("Nouveau compte: UBS")
+
+    assert reply.plan == {"tool_name": "finance_bank_accounts_create", "payload": {"name": "UBS"}}
+    assert reply.tool_result == {"id": "new-account"}
