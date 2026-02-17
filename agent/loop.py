@@ -18,6 +18,7 @@ from agent.planner import (
     ClarificationPlan,
     ErrorPlan,
     NoopPlan,
+    Plan,
     SetActiveTaskPlan,
     ToolCallPlan,
     deterministic_plan_from_message,
@@ -514,76 +515,14 @@ class AgentLoop:
         profile_id: UUID | None = None,
         active_task: dict[str, object] | None = None,
     ) -> AgentReply:
-        if active_task is not None:
-            plan = self.plan_from_active_task(message, active_task)
-        else:
-            plan = None
-            nlu_intent = parse_intent(message)
-            if isinstance(nlu_intent, dict):
-                intent_type = nlu_intent.get("type")
-                if intent_type == "clarification":
-                    clarification_message = nlu_intent.get("message")
-                    if isinstance(clarification_message, str):
-                        clarification_type = nlu_intent.get("clarification_type")
-                        if clarification_type == "awaiting_search_merchant":
-                            next_active_task: dict[str, object] = {"type": "awaiting_search_merchant"}
-                            clarification_payload: dict[str, object] = {}
-                            date_range = nlu_intent.get("date_range")
-                            if isinstance(date_range, dict):
-                                next_active_task["date_range"] = date_range
-                                clarification_payload["date_range"] = date_range
-                            return AgentReply(
-                                reply=clarification_message,
-                                tool_result=_build_clarification_tool_result(
-                                    message=clarification_message,
-                                    clarification_type="awaiting_search_merchant",
-                                    payload=clarification_payload or None,
-                                ),
-                                active_task=next_active_task,
-                                should_update_active_task=True,
-                            )
-
-                        return AgentReply(
-                            reply=clarification_message,
-                            tool_result=_build_clarification_tool_result(
-                                message=clarification_message,
-                                clarification_type=str(clarification_type)
-                                if isinstance(clarification_type, str) and clarification_type
-                                else "generic",
-                            ),
-                        )
-                if intent_type == "ui_action":
-                    action = nlu_intent.get("action")
-                    if action == "open_import_panel":
-                        return AgentReply(
-                            reply="D'accord, j'ouvre le panneau d'import de relevés.",
-                            tool_result={"type": "ui_action", "action": "open_import_panel"},
-                        )
-                if intent_type == "tool_call":
-                    tool_name = nlu_intent.get("tool_name")
-                    payload = nlu_intent.get("payload")
-                    if isinstance(tool_name, str) and isinstance(payload, dict):
-                        meta: dict[str, object] = {}
-                        bank_account_hint = nlu_intent.get("bank_account_hint")
-                        if isinstance(bank_account_hint, str) and bank_account_hint.strip():
-                            meta["bank_account_hint"] = bank_account_hint.strip().casefold()
-                        plan = ToolCallPlan(
-                            tool_name=tool_name,
-                            payload=payload,
-                            user_reply="OK.",
-                            meta=meta,
-                        )
-
-            if plan is None:
-                deterministic_plan = deterministic_plan_from_message(message)
-                if isinstance(deterministic_plan, (ToolCallPlan, ErrorPlan, ClarificationPlan, SetActiveTaskPlan)):
-                    plan = deterministic_plan
-                elif isinstance(deterministic_plan, NoopPlan) and deterministic_plan.reply == "pong":
-                    plan = deterministic_plan
-                elif self.llm_planner is not None:
-                    plan = plan_from_message(message, llm_planner=self.llm_planner)
-                else:
-                    plan = deterministic_plan
+        routed = self._route_message(
+            message,
+            profile_id=profile_id,
+            active_task=active_task,
+        )
+        if isinstance(routed, AgentReply):
+            return routed
+        plan = routed
 
         plan_meta = getattr(plan, "meta", {}) if isinstance(getattr(plan, "meta", {}), dict) else {}
         should_update_active_task = False
@@ -687,3 +626,82 @@ class AgentLoop:
             )
 
         return AgentReply(reply="Commandes disponibles: 'ping' ou 'search: <term>'.")
+
+    def _route_message(
+        self,
+        message: str,
+        *,
+        profile_id: UUID | None,
+        active_task: dict[str, object] | None,
+    ) -> Plan | AgentReply:
+        del profile_id
+
+        if active_task is not None:
+            return self.plan_from_active_task(message, active_task)
+
+        nlu_intent = parse_intent(message)
+        if isinstance(nlu_intent, dict):
+            intent_type = nlu_intent.get("type")
+            if intent_type == "clarification":
+                clarification_message = nlu_intent.get("message")
+                if isinstance(clarification_message, str):
+                    clarification_type = nlu_intent.get("clarification_type")
+                    if clarification_type == "awaiting_search_merchant":
+                        next_active_task: dict[str, object] = {"type": "awaiting_search_merchant"}
+                        clarification_payload: dict[str, object] = {}
+                        date_range = nlu_intent.get("date_range")
+                        if isinstance(date_range, dict):
+                            next_active_task["date_range"] = date_range
+                            clarification_payload["date_range"] = date_range
+                        return AgentReply(
+                            reply=clarification_message,
+                            tool_result=_build_clarification_tool_result(
+                                message=clarification_message,
+                                clarification_type="awaiting_search_merchant",
+                                payload=clarification_payload or None,
+                            ),
+                            active_task=next_active_task,
+                            should_update_active_task=True,
+                        )
+
+                    return AgentReply(
+                        reply=clarification_message,
+                        tool_result=_build_clarification_tool_result(
+                            message=clarification_message,
+                            clarification_type=str(clarification_type)
+                            if isinstance(clarification_type, str) and clarification_type
+                            else "generic",
+                        ),
+                    )
+
+            if intent_type == "ui_action":
+                action = nlu_intent.get("action")
+                if action == "open_import_panel":
+                    return AgentReply(
+                        reply="D'accord, j'ouvre le panneau d'import de relevés.",
+                        tool_result={"type": "ui_action", "action": "open_import_panel"},
+                    )
+
+            if intent_type == "tool_call":
+                tool_name = nlu_intent.get("tool_name")
+                payload = nlu_intent.get("payload")
+                if isinstance(tool_name, str) and isinstance(payload, dict):
+                    meta: dict[str, object] = {}
+                    bank_account_hint = nlu_intent.get("bank_account_hint")
+                    if isinstance(bank_account_hint, str) and bank_account_hint.strip():
+                        meta["bank_account_hint"] = bank_account_hint.strip().casefold()
+                    return ToolCallPlan(
+                        tool_name=tool_name,
+                        payload=payload,
+                        user_reply="OK.",
+                        meta=meta,
+                    )
+
+        deterministic_plan = deterministic_plan_from_message(message)
+        if isinstance(deterministic_plan, (ToolCallPlan, ErrorPlan, ClarificationPlan, SetActiveTaskPlan)):
+            return deterministic_plan
+        if isinstance(deterministic_plan, NoopPlan) and deterministic_plan.reply == "pong":
+            return deterministic_plan
+        if self.llm_planner is not None:
+            return plan_from_message(message, llm_planner=self.llm_planner)
+        return deterministic_plan
