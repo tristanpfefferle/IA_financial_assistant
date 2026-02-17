@@ -76,6 +76,9 @@ def llm_strict() -> bool:
 
 def llm_shadow() -> bool:
     """Return whether LLM shadow planning is enabled."""
+    if app_env().strip().lower() in {"test", "ci"}:
+        return False
+
     raw_value = get_env("AGENT_LLM_SHADOW", "") or ""
     return raw_value.strip().lower() in {"1", "true"}
 
