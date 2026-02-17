@@ -94,6 +94,7 @@ def test_llm_allowed_tools_defaults(monkeypatch) -> None:
 
     assert config.llm_allowed_tools() == {
         "finance_releves_search",
+        "finance_releves_aggregate",
         "finance_bank_accounts_list",
     }
 
