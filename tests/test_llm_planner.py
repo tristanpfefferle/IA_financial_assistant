@@ -41,7 +41,7 @@ def test_deterministic_ping_stays_priority_over_llm_planner() -> None:
     assert delegated_plan.reply == "pong"
 
 
-def test_llm_planner_tool_definitions_expose_releves_categories_and_profile_tools() -> None:
+def test_llm_planner_tool_definitions_expose_releves_categories_profile_and_bank_delete_tools() -> None:
     tools = LLMPlanner._tool_definition()
     names = {tool["function"]["name"] for tool in tools}
 
@@ -56,6 +56,7 @@ def test_llm_planner_tool_definitions_expose_releves_categories_and_profile_tool
         "finance_categories_delete",
         "finance_profile_get",
         "finance_profile_update",
+        "finance_bank_accounts_delete",
     }
 
     for tool in tools:

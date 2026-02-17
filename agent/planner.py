@@ -151,6 +151,14 @@ _BANK_ACCOUNT_LIST_PATTERNS = (
     "quels sont mes comptes",
 )
 
+_BANK_ACCOUNT_DELETE_PATTERNS = (
+    r"supprime\s+le\s+compte",
+    r"supprimer\s+le\s+compte",
+    r"delete\s+le\s+compte",
+    r"remove\s+le\s+compte",
+    r"delete\s+account",
+)
+
 _QUOTED_VALUE_PATTERN = r"[\"'«](?P<value>[^\"'»]+)[\"'»]"
 _PROFILE_FIELD_WHITELIST = {
     "first_name",
@@ -807,8 +815,10 @@ def deterministic_plan_from_message(message: str) -> Plan:
                 user_reply="Compte mis à jour.",
             )
 
-    delete_name = _extract_bank_account_name_after(normalized_message, r"supprime\s+le\s+compte")
-    if delete_name is not None:
+    for delete_pattern in _BANK_ACCOUNT_DELETE_PATTERNS:
+        delete_name = _extract_bank_account_name_after(normalized_message, delete_pattern)
+        if delete_name is None:
+            continue
         return SetActiveTaskPlan(
             reply=f"Confirmez-vous la suppression du compte « {delete_name} » ? Répondez OUI ou NON.",
             active_task={

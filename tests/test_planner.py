@@ -355,6 +355,17 @@ def test_planner_bank_account_delete_requires_confirmation() -> None:
     assert plan.active_task["context"] == {"name": "Courant"}
 
 
+
+def test_planner_bank_account_delete_accepts_english_variants() -> None:
+    for message in ("delete le compte test", "remove le compte test", "delete account test"):
+        plan = plan_from_message(message)
+
+        assert isinstance(plan, SetActiveTaskPlan)
+        assert plan.active_task["type"] == "needs_confirmation"
+        assert plan.active_task["confirmation_type"] == "confirm_delete_bank_account"
+        assert plan.active_task["context"] == {"name": "test"}
+
+
 def test_planner_bank_account_set_default_pattern() -> None:
     plan = plan_from_message("Définis Epargne comme compte par défaut")
 
