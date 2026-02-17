@@ -38,6 +38,14 @@ _BANK_ACCOUNT_DISAMBIGUATION_TOOLS = {
     "finance_bank_accounts_set_default",
     "finance_bank_accounts_update",
 }
+_LLM_WRITE_TOOLS = {
+    "finance_bank_accounts_delete",
+    "finance_categories_create",
+    "finance_categories_update",
+    "finance_categories_delete",
+    "finance_profile_update",
+    "finance_releves_import_files",
+}
 _CONFIRM_WORDS = {"oui", "o", "ok", "confirme", "confirmé", "confirmée"}
 _REJECT_WORDS = {"non", "n", "annule", "annuler"}
 
@@ -238,6 +246,8 @@ class AgentLoop:
             )
 
         if normalized in _REJECT_WORDS:
+            if confirmation_type == "confirm_llm_write":
+                return NoopPlan(reply="Action annulée.", meta={"clear_active_task": True})
             return NoopPlan(
                 reply="Suppression annulée.", meta={"clear_active_task": True}
             )
@@ -276,6 +286,24 @@ class AgentLoop:
                 tool_name="finance_bank_accounts_delete",
                 payload=payload,
                 user_reply="Compte supprimé.",
+                meta={"clear_active_task": True},
+            )
+
+        if confirmation_type == "confirm_llm_write":
+            tool_name = context.get("tool_name")
+            payload = context.get("payload")
+            if (
+                not isinstance(tool_name, str)
+                or not tool_name.strip()
+                or tool_name not in _LLM_WRITE_TOOLS
+                or not isinstance(payload, dict)
+            ):
+                return NoopPlan(reply="Action annulée.", meta={"clear_active_task": True})
+
+            return ToolCallPlan(
+                tool_name=tool_name,
+                payload=payload,
+                user_reply="OK.",
                 meta={"clear_active_task": True},
             )
 
@@ -1083,6 +1111,33 @@ class AgentLoop:
                     "payload_keys": sorted(normalized_payload.keys()),
                 },
             )
+
+            if llm_plan.tool_name in _LLM_WRITE_TOOLS:
+                logger.info(
+                    "llm_tool_requires_confirmation",
+                    extra={
+                        "event": "llm_tool_requires_confirmation",
+                        "message_hash": message_hash,
+                        "profile_id": str(profile_id) if profile_id is not None else None,
+                        "tool_name": llm_plan.tool_name,
+                    },
+                )
+                return SetActiveTaskPlan(
+                    reply=(
+                        f"Je peux exécuter l'action « {llm_plan.tool_name} ». "
+                        "Confirmez-vous ? (oui/non)"
+                    ),
+                    active_task={
+                        "type": "needs_confirmation",
+                        "confirmation_type": "confirm_llm_write",
+                        "context": {
+                            "tool_name": llm_plan.tool_name,
+                            "payload": normalized_payload,
+                        },
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                    },
+                )
+
             return ToolCallPlan(
                 tool_name=llm_plan.tool_name,
                 payload=normalized_payload,
