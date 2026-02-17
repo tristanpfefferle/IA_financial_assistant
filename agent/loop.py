@@ -725,17 +725,21 @@ class AgentLoop:
 
             normalized_set: dict[str, object] = {}
             for field_name, field_value in raw_set.items():
-                if not isinstance(field_name, str) or field_name not in PROFILE_ALLOWED_FIELDS:
+                if not isinstance(field_name, str):
+                    return False, "invalid_profile_update", payload
+
+                normalized_field = field_name.strip()
+                if not normalized_field or normalized_field not in PROFILE_ALLOWED_FIELDS:
                     return False, "invalid_profile_update", payload
 
                 if isinstance(field_value, str):
                     stripped_value = field_value.strip()
                     if not stripped_value:
                         continue
-                    normalized_set[field_name] = stripped_value
+                    normalized_set[normalized_field] = stripped_value
                     continue
 
-                normalized_set[field_name] = field_value
+                normalized_set[normalized_field] = field_value
 
             if not normalized_set:
                 return False, "invalid_profile_update", payload
