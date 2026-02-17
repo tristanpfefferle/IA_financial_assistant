@@ -11,6 +11,7 @@ from uuid import UUID
 from pydantic import BaseModel
 
 from agent.answer_builder import build_final_reply
+from agent.deterministic_nlu import parse_intent
 from agent.llm_planner import LLMPlanner
 from agent.planner import (
     ClarificationPlan,
@@ -420,15 +421,41 @@ class AgentLoop:
         if active_task is not None:
             plan = self.plan_from_active_task(message, active_task)
         else:
-            deterministic_plan = deterministic_plan_from_message(message)
-            if isinstance(deterministic_plan, (ToolCallPlan, ErrorPlan, ClarificationPlan, SetActiveTaskPlan)):
-                plan = deterministic_plan
-            elif isinstance(deterministic_plan, NoopPlan) and deterministic_plan.reply == "pong":
-                plan = deterministic_plan
-            elif self.llm_planner is not None:
-                plan = plan_from_message(message, llm_planner=self.llm_planner)
-            else:
-                plan = deterministic_plan
+            plan = None
+            nlu_intent = parse_intent(message)
+            if isinstance(nlu_intent, dict):
+                intent_type = nlu_intent.get("type")
+                if intent_type == "clarification":
+                    clarification_message = nlu_intent.get("message")
+                    if isinstance(clarification_message, str):
+                        return AgentReply(reply=clarification_message)
+                if intent_type == "ui_action":
+                    action = nlu_intent.get("action")
+                    if action == "open_import_panel":
+                        return AgentReply(
+                            reply="D'accord, j'ouvre le panneau d'import de relevés.",
+                            tool_result={"type": "ui_action", "action": "open_import_panel"},
+                        )
+                if intent_type == "tool_call":
+                    tool_name = nlu_intent.get("tool_name")
+                    payload = nlu_intent.get("payload")
+                    if isinstance(tool_name, str) and isinstance(payload, dict):
+                        plan = ToolCallPlan(
+                            tool_name=tool_name,
+                            payload=payload,
+                            user_reply="OK.",
+                        )
+
+            if plan is None:
+                deterministic_plan = deterministic_plan_from_message(message)
+                if isinstance(deterministic_plan, (ToolCallPlan, ErrorPlan, ClarificationPlan, SetActiveTaskPlan)):
+                    plan = deterministic_plan
+                elif isinstance(deterministic_plan, NoopPlan) and deterministic_plan.reply == "pong":
+                    plan = deterministic_plan
+                elif self.llm_planner is not None:
+                    plan = plan_from_message(message, llm_planner=self.llm_planner)
+                else:
+                    plan = deterministic_plan
 
         plan_meta = getattr(plan, "meta", {}) if isinstance(getattr(plan, "meta", {}), dict) else {}
         should_update_active_task = False
