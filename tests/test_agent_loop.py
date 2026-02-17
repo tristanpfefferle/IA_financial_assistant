@@ -57,8 +57,6 @@ class _AmbiguousThenDeleteByIdRouter:
         return {"ok": True}
 
 
-
-
 class _ListThenDeleteRouter:
     def __init__(self, items: list[dict[str, str]], *, can_delete: bool = True) -> None:
         self.items = items
@@ -68,12 +66,17 @@ class _ListThenDeleteRouter:
     def call(self, tool_name: str, payload: dict, *, profile_id: UUID | None = None):
         self.calls.append((tool_name, payload))
         if tool_name == "finance_bank_accounts_list":
-            return type("_ListResult", (), {"items": [type("_Account", (), item) for item in self.items]})()
+            return type(
+                "_ListResult",
+                (),
+                {"items": [type("_Account", (), item) for item in self.items]},
+            )()
         if tool_name == "finance_bank_accounts_can_delete":
             return {"ok": True, "can_delete": self.can_delete}
         if tool_name == "finance_bank_accounts_delete":
             return {"ok": True}
         raise AssertionError(f"Unexpected tool call: {tool_name}")
+
 
 class _NotFoundSuggestionRouter:
     def __init__(self) -> None:
@@ -118,8 +121,34 @@ class _SearchWithBankHintRouter:
                 {
                     "items": [
                         type("_Account", (), {"id": "acc-ubs", "name": "UBS"}),
-                        type("_Account", (), {"id": "acc-credit-suisse", "name": "Credit Suisse"}),
+                        type(
+                            "_Account",
+                            (),
+                            {"id": "acc-credit-suisse", "name": "Credit Suisse"},
+                        ),
                         type("_Account", (), {"id": "acc-revolut", "name": "Revolut"}),
+                    ]
+                },
+            )()
+
+        assert tool_name == "finance_releves_search"
+        return {"ok": True, "items": []}
+
+
+class _SearchWithMissingBankHintRouter:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict]] = []
+
+    def call(self, tool_name: str, payload: dict, *, profile_id: UUID | None = None):
+        self.calls.append((tool_name, payload))
+        if tool_name == "finance_bank_accounts_list":
+            return type(
+                "_ListResult",
+                (),
+                {
+                    "items": [
+                        type("_Account", (), {"id": "acc-ubs", "name": "UBS"}),
+                        type("_Account", (), {"id": "acc-neon", "name": "Neon"}),
                     ]
                 },
             )()
@@ -133,10 +162,17 @@ def test_confirm_delete_category_yes_executes_delete() -> None:
 
     reply = loop.handle_user_message(
         "Oui",
-        active_task={"type": "needs_confirmation", "confirmation_type": "confirm_delete_category", "context": {"category_name": "autres"}},
+        active_task={
+            "type": "needs_confirmation",
+            "confirmation_type": "confirm_delete_category",
+            "context": {"category_name": "autres"},
+        },
     )
 
-    assert reply.plan == {"tool_name": "finance_categories_delete", "payload": {"category_name": "autres"}}
+    assert reply.plan == {
+        "tool_name": "finance_categories_delete",
+        "payload": {"category_name": "autres"},
+    }
     assert reply.should_update_active_task is True
     assert reply.active_task is None
 
@@ -146,7 +182,11 @@ def test_confirm_delete_category_no_cancels() -> None:
 
     reply = loop.handle_user_message(
         "non",
-        active_task={"type": "needs_confirmation", "confirmation_type": "confirm_delete_category", "context": {"category_name": "autres"}},
+        active_task={
+            "type": "needs_confirmation",
+            "confirmation_type": "confirm_delete_category",
+            "context": {"category_name": "autres"},
+        },
     )
 
     assert reply.reply == "Suppression annulée."
@@ -155,7 +195,11 @@ def test_confirm_delete_category_no_cancels() -> None:
 
 
 def test_confirm_delete_category_invalid_prompts_again() -> None:
-    active_task = {"type": "needs_confirmation", "confirmation_type": "confirm_delete_category", "context": {"category_name": "autres"}}
+    active_task = {
+        "type": "needs_confirmation",
+        "confirmation_type": "confirm_delete_category",
+        "context": {"category_name": "autres"},
+    }
     loop = AgentLoop(tool_router=_FailIfCalledRouter())
 
     reply = loop.handle_user_message("peut-être", active_task=active_task)
@@ -170,15 +214,24 @@ def test_confirm_delete_bank_account_yes_executes_delete() -> None:
 
     reply = loop.handle_user_message(
         "oui",
-        active_task={"type": "needs_confirmation", "confirmation_type": "confirm_delete_bank_account", "context": {"name": "Courant"}},
+        active_task={
+            "type": "needs_confirmation",
+            "confirmation_type": "confirm_delete_bank_account",
+            "context": {"name": "Courant"},
+        },
     )
 
-    assert reply.plan == {"tool_name": "finance_bank_accounts_delete", "payload": {"name": "Courant"}}
+    assert reply.plan == {
+        "tool_name": "finance_bank_accounts_delete",
+        "payload": {"name": "Courant"},
+    }
     assert reply.should_update_active_task is True
     assert reply.active_task is None
 
 
-def test_bank_account_ambiguous_sets_select_active_task_then_resolves_by_index() -> None:
+def test_bank_account_ambiguous_sets_select_active_task_then_resolves_by_index() -> (
+    None
+):
     router = _AmbiguousThenDeleteByIdRouter()
     loop = AgentLoop(tool_router=router)
 
@@ -187,7 +240,9 @@ def test_bank_account_ambiguous_sets_select_active_task_then_resolves_by_index()
     assert confirm_reply.should_update_active_task is True
     assert confirm_reply.active_task is not None
     assert confirm_reply.active_task["type"] == "needs_confirmation"
-    assert confirm_reply.active_task["confirmation_type"] == "confirm_delete_bank_account"
+    assert (
+        confirm_reply.active_task["confirmation_type"] == "confirm_delete_bank_account"
+    )
     assert confirm_reply.active_task["context"] == {"name": "joint"}
 
     first_reply = loop.handle_user_message("oui", active_task=confirm_reply.active_task)
@@ -195,7 +250,9 @@ def test_bank_account_ambiguous_sets_select_active_task_then_resolves_by_index()
     assert first_reply.should_update_active_task is True
     assert first_reply.active_task is not None
     assert first_reply.active_task["type"] == "select_bank_account"
-    assert first_reply.active_task["original_tool_name"] == "finance_bank_accounts_delete"
+    assert (
+        first_reply.active_task["original_tool_name"] == "finance_bank_accounts_delete"
+    )
     assert first_reply.active_task["original_payload"] == {"name": "joint"}
     assert first_reply.reply == (
         "Plusieurs comptes correspondent: Joint, JOINT. Répondez avec le nom exact (ou 1/2)."
@@ -220,7 +277,9 @@ def test_bank_account_not_found_suggestion_yes_replays_with_first_name() -> None
     assert confirm_reply.should_update_active_task is True
     assert confirm_reply.active_task is not None
     assert confirm_reply.active_task["type"] == "needs_confirmation"
-    assert confirm_reply.active_task["confirmation_type"] == "confirm_delete_bank_account"
+    assert (
+        confirm_reply.active_task["confirmation_type"] == "confirm_delete_bank_account"
+    )
     assert confirm_reply.active_task["context"] == {"name": "vacnces"}
 
     first_reply = loop.handle_user_message("oui", active_task=confirm_reply.active_task)
@@ -244,8 +303,12 @@ def test_bank_account_not_found_suggestion_yes_replays_with_first_name() -> None
     }
 
 
-def test_confirm_delete_bank_account_not_found_skips_confirmation_when_profile_available() -> None:
-    router = _ListThenDeleteRouter(items=[{"id": "11111111-1111-1111-1111-111111111111", "name": "UBS"}])
+def test_confirm_delete_bank_account_not_found_skips_confirmation_when_profile_available() -> (
+    None
+):
+    router = _ListThenDeleteRouter(
+        items=[{"id": "11111111-1111-1111-1111-111111111111", "name": "UBS"}]
+    )
     loop = AgentLoop(tool_router=router)
 
     reply = loop.handle_user_message(
@@ -258,7 +321,9 @@ def test_confirm_delete_bank_account_not_found_skips_confirmation_when_profile_a
     assert reply.active_task is None
 
 
-def test_confirm_delete_bank_account_conflict_when_not_empty_skips_confirmation() -> None:
+def test_confirm_delete_bank_account_conflict_when_not_empty_skips_confirmation() -> (
+    None
+):
     router = _ListThenDeleteRouter(
         items=[{"id": "11111111-1111-1111-1111-111111111111", "name": "UBS"}],
         can_delete=False,
@@ -291,7 +356,10 @@ def test_confirm_delete_bank_account_existing_stores_id_in_active_task() -> None
         profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
     )
 
-    assert reply.reply == "Confirmez-vous la suppression du compte « UBS » ? Répondez OUI ou NON."
+    assert (
+        reply.reply
+        == "Confirmez-vous la suppression du compte « UBS » ? Répondez OUI ou NON."
+    )
     assert reply.should_update_active_task is True
     assert reply.active_task is not None
     assert reply.active_task["type"] == "needs_confirmation"
@@ -320,7 +388,9 @@ def test_nlu_ui_action_open_import_panel_returns_structured_tool_result() -> Non
 
 def test_nlu_tool_call_executes_before_deterministic_planner() -> None:
     class _CreateAccountRouter:
-        def call(self, tool_name: str, payload: dict, *, profile_id: UUID | None = None):
+        def call(
+            self, tool_name: str, payload: dict, *, profile_id: UUID | None = None
+        ):
             assert tool_name == "finance_bank_accounts_create"
             assert payload == {"name": "UBS"}
             return {"id": "new-account"}
@@ -329,7 +399,10 @@ def test_nlu_tool_call_executes_before_deterministic_planner() -> None:
 
     reply = loop.handle_user_message("Nouveau compte: UBS")
 
-    assert reply.plan == {"tool_name": "finance_bank_accounts_create", "payload": {"name": "UBS"}}
+    assert reply.plan == {
+        "tool_name": "finance_bank_accounts_create",
+        "payload": {"name": "UBS"},
+    }
     assert reply.tool_result == {"id": "new-account"}
 
 
@@ -343,7 +416,12 @@ def test_nlu_search_without_merchant_sets_active_task_with_date_range() -> None:
         "type": "clarification",
         "clarification_type": "awaiting_search_merchant",
         "message": "Que voulez-vous rechercher (ex: Migros, coffee, Coop) ?",
-        "payload": {"date_range": {"start_date": date(2026, 1, 1), "end_date": date(2026, 1, 31)}},
+        "payload": {
+            "date_range": {
+                "start_date": date(2026, 1, 1),
+                "end_date": date(2026, 1, 31),
+            }
+        },
     }
     assert reply.should_update_active_task is True
     assert reply.active_task == {
@@ -362,7 +440,12 @@ def test_nlu_search_without_merchant_starts_active_task_via_plan_meta() -> None:
         "type": "clarification",
         "clarification_type": "awaiting_search_merchant",
         "message": "Que voulez-vous rechercher (ex: Migros, coffee, Coop) ?",
-        "payload": {"date_range": {"start_date": date(2026, 1, 1), "end_date": date(2026, 1, 31)}},
+        "payload": {
+            "date_range": {
+                "start_date": date(2026, 1, 1),
+                "end_date": date(2026, 1, 31),
+            }
+        },
     }
     assert reply.active_task == {
         "type": "awaiting_search_merchant",
@@ -379,7 +462,10 @@ def test_active_task_search_merchant_runs_search_and_clears_active_task() -> Non
         "Coop",
         active_task={
             "type": "awaiting_search_merchant",
-            "date_range": {"start_date": date(2026, 1, 1), "end_date": date(2026, 1, 31)},
+            "date_range": {
+                "start_date": date(2026, 1, 1),
+                "end_date": date(2026, 1, 31),
+            },
         },
     )
 
@@ -389,7 +475,10 @@ def test_active_task_search_merchant_runs_search_and_clears_active_task() -> Non
             "merchant": "coop",
             "limit": 50,
             "offset": 0,
-            "date_range": {"start_date": date(2026, 1, 1), "end_date": date(2026, 1, 31)},
+            "date_range": {
+                "start_date": date(2026, 1, 1),
+                "end_date": date(2026, 1, 31),
+            },
         },
     }
     assert reply.should_update_active_task is True
@@ -401,7 +490,9 @@ def test_active_task_search_merchant_without_date_range_runs_search() -> None:
     loop = AgentLoop(tool_router=router)
 
     first_reply = loop.handle_user_message("cherche")
-    second_reply = loop.handle_user_message("Migros", active_task=first_reply.active_task)
+    second_reply = loop.handle_user_message(
+        "Migros", active_task=first_reply.active_task
+    )
 
     assert first_reply.should_update_active_task is True
     assert first_reply.active_task == {"type": "awaiting_search_merchant"}
@@ -429,11 +520,18 @@ def test_nlu_search_with_known_bank_hint_adds_bank_account_id() -> None:
     )
     assert reply.plan == {
         "tool_name": "finance_releves_search",
-        "payload": {"merchant": "migros", "limit": 50, "offset": 0, "bank_account_id": "acc-ubs"},
+        "payload": {
+            "merchant": "migros",
+            "limit": 50,
+            "offset": 0,
+            "bank_account_id": "acc-ubs",
+        },
     }
 
 
-def test_nlu_search_with_unknown_bank_hint_keeps_merchant_without_bank_account_id() -> None:
+def test_nlu_search_with_unknown_bank_hint_keeps_merchant_without_bank_account_id() -> (
+    None
+):
     router = _SearchWithBankHintRouter()
     loop = AgentLoop(tool_router=router)
 
@@ -443,11 +541,58 @@ def test_nlu_search_with_unknown_bank_hint_keeps_merchant_without_bank_account_i
     )
 
     assert router.calls == [
-        ("finance_releves_search", {"merchant": "migros unknownbank", "limit": 50, "offset": 0}),
+        (
+            "finance_releves_search",
+            {"merchant": "migros unknownbank", "limit": 50, "offset": 0},
+        ),
     ]
     assert reply.plan == {
         "tool_name": "finance_releves_search",
         "payload": {"merchant": "migros unknownbank", "limit": 50, "offset": 0},
+    }
+
+
+def test_nlu_search_with_credit_suisse_hint_without_account_uses_merchant_fallback() -> (
+    None
+):
+    router = _SearchWithMissingBankHintRouter()
+    loop = AgentLoop(tool_router=router)
+
+    reply = loop.handle_user_message(
+        "cherche Migros crédit suisse",
+        profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+    )
+
+    assert router.calls[0] == ("finance_bank_accounts_list", {})
+    assert router.calls[1] == (
+        "finance_releves_search",
+        {"merchant": "migros crédit suisse", "limit": 50, "offset": 0},
+    )
+    assert reply.plan == {
+        "tool_name": "finance_releves_search",
+        "payload": {"merchant": "migros crédit suisse", "limit": 50, "offset": 0},
+    }
+
+
+def test_nlu_search_with_revolut_pro_hint_without_account_uses_merchant_fallback() -> (
+    None
+):
+    router = _SearchWithMissingBankHintRouter()
+    loop = AgentLoop(tool_router=router)
+
+    reply = loop.handle_user_message(
+        "cherche Migros revolut pro",
+        profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+    )
+
+    assert router.calls[0] == ("finance_bank_accounts_list", {})
+    assert router.calls[1] == (
+        "finance_releves_search",
+        {"merchant": "migros revolut pro", "limit": 50, "offset": 0},
+    )
+    assert reply.plan == {
+        "tool_name": "finance_releves_search",
+        "payload": {"merchant": "migros revolut pro", "limit": 50, "offset": 0},
     }
 
 
@@ -467,7 +612,12 @@ def test_nlu_search_with_punctuated_bank_hint_matches_account() -> None:
     )
     assert reply.plan == {
         "tool_name": "finance_releves_search",
-        "payload": {"merchant": "migros", "limit": 50, "offset": 0, "bank_account_id": "acc-ubs"},
+        "payload": {
+            "merchant": "migros",
+            "limit": 50,
+            "offset": 0,
+            "bank_account_id": "acc-ubs",
+        },
     }
 
 
@@ -483,11 +633,21 @@ def test_nlu_search_with_multi_word_bank_hint_matches_account() -> None:
     assert router.calls[0] == ("finance_bank_accounts_list", {})
     assert router.calls[1] == (
         "finance_releves_search",
-        {"merchant": "migros", "limit": 50, "offset": 0, "bank_account_id": "acc-credit-suisse"},
+        {
+            "merchant": "migros",
+            "limit": 50,
+            "offset": 0,
+            "bank_account_id": "acc-credit-suisse",
+        },
     )
     assert reply.plan == {
         "tool_name": "finance_releves_search",
-        "payload": {"merchant": "migros", "limit": 50, "offset": 0, "bank_account_id": "acc-credit-suisse"},
+        "payload": {
+            "merchant": "migros",
+            "limit": 50,
+            "offset": 0,
+            "bank_account_id": "acc-credit-suisse",
+        },
     }
 
 
@@ -503,11 +663,21 @@ def test_nlu_search_with_accented_bank_hint_matches_account() -> None:
     assert router.calls[0] == ("finance_bank_accounts_list", {})
     assert router.calls[1] == (
         "finance_releves_search",
-        {"merchant": "migros", "limit": 50, "offset": 0, "bank_account_id": "acc-credit-suisse"},
+        {
+            "merchant": "migros",
+            "limit": 50,
+            "offset": 0,
+            "bank_account_id": "acc-credit-suisse",
+        },
     )
     assert reply.plan == {
         "tool_name": "finance_releves_search",
-        "payload": {"merchant": "migros", "limit": 50, "offset": 0, "bank_account_id": "acc-credit-suisse"},
+        "payload": {
+            "merchant": "migros",
+            "limit": 50,
+            "offset": 0,
+            "bank_account_id": "acc-credit-suisse",
+        },
     }
 
 
@@ -523,11 +693,21 @@ def test_nlu_search_with_hyphenated_bank_hint_matches_account() -> None:
     assert router.calls[0] == ("finance_bank_accounts_list", {})
     assert router.calls[1] == (
         "finance_releves_search",
-        {"merchant": "migros", "limit": 50, "offset": 0, "bank_account_id": "acc-credit-suisse"},
+        {
+            "merchant": "migros",
+            "limit": 50,
+            "offset": 0,
+            "bank_account_id": "acc-credit-suisse",
+        },
     )
     assert reply.plan == {
         "tool_name": "finance_releves_search",
-        "payload": {"merchant": "migros", "limit": 50, "offset": 0, "bank_account_id": "acc-credit-suisse"},
+        "payload": {
+            "merchant": "migros",
+            "limit": 50,
+            "offset": 0,
+            "bank_account_id": "acc-credit-suisse",
+        },
     }
 
 
@@ -543,11 +723,21 @@ def test_nlu_search_with_revolut_pro_hint_matches_account() -> None:
     assert router.calls[0] == ("finance_bank_accounts_list", {})
     assert router.calls[1] == (
         "finance_releves_search",
-        {"merchant": "migros", "limit": 50, "offset": 0, "bank_account_id": "acc-revolut"},
+        {
+            "merchant": "migros",
+            "limit": 50,
+            "offset": 0,
+            "bank_account_id": "acc-revolut",
+        },
     )
     assert reply.plan == {
         "tool_name": "finance_releves_search",
-        "payload": {"merchant": "migros", "limit": 50, "offset": 0, "bank_account_id": "acc-revolut"},
+        "payload": {
+            "merchant": "migros",
+            "limit": 50,
+            "offset": 0,
+            "bank_account_id": "acc-revolut",
+        },
     }
 
 
@@ -576,9 +766,13 @@ def test_active_task_search_merchant_with_serialized_dates_runs_search() -> None
     assert reply.active_task is None
 
 
-def test_nlu_tool_call_with_llm_planner_does_not_call_plan_from_message(monkeypatch) -> None:
+def test_nlu_tool_call_with_llm_planner_does_not_call_plan_from_message(
+    monkeypatch,
+) -> None:
     class _CreateAccountRouter:
-        def call(self, tool_name: str, payload: dict, *, profile_id: UUID | None = None):
+        def call(
+            self, tool_name: str, payload: dict, *, profile_id: UUID | None = None
+        ):
             assert tool_name == "finance_bank_accounts_create"
             assert payload == {"name": "UBS"}
             return {"id": "new-account"}
@@ -592,7 +786,9 @@ def test_nlu_tool_call_with_llm_planner_does_not_call_plan_from_message(monkeypa
         }
 
     def _fail_plan_from_message(*args, **kwargs):
-        raise AssertionError("plan_from_message should not be called when deterministic NLU returns a tool_call")
+        raise AssertionError(
+            "plan_from_message should not be called when deterministic NLU returns a tool_call"
+        )
 
     monkeypatch.setattr(agent.loop, "parse_intent", _fake_parse_intent)
     monkeypatch.setattr(agent.loop, "plan_from_message", _fail_plan_from_message)
@@ -600,5 +796,8 @@ def test_nlu_tool_call_with_llm_planner_does_not_call_plan_from_message(monkeypa
     loop = AgentLoop(tool_router=_CreateAccountRouter(), llm_planner=object())
     reply = loop.handle_user_message("ignored")
 
-    assert reply.plan == {"tool_name": "finance_bank_accounts_create", "payload": {"name": "UBS"}}
+    assert reply.plan == {
+        "tool_name": "finance_bank_accounts_create",
+        "payload": {"name": "UBS"},
+    }
     assert reply.tool_result == {"id": "new-account"}
