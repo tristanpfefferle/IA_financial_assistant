@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from difflib import get_close_matches
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -75,7 +76,11 @@ class AgentLoop:
             user_reply = "Catégorie supprimée."
             if active_task_type == "confirm_delete_bank_account":
                 tool_name = "finance_bank_accounts_delete"
-                payload = {"name": target_name}
+                bank_account_id = active_task.get("bank_account_id")
+                if isinstance(bank_account_id, str) and bank_account_id.strip():
+                    payload = {"bank_account_id": bank_account_id.strip()}
+                else:
+                    payload = {"name": target_name}
                 user_reply = "Compte supprimé."
             return ToolCallPlan(
                 tool_name=tool_name,
@@ -247,6 +252,100 @@ class AgentLoop:
         return None
 
     @staticmethod
+    def _resolve_delete_bank_account_confirmation(
+        plan: SetActiveTaskPlan,
+        *,
+        tool_router: ToolRouter,
+        profile_id: UUID,
+    ) -> AgentReply | None:
+        active_task = plan.active_task if isinstance(plan.active_task, dict) else {}
+        if active_task.get("type") != "confirm_delete_bank_account":
+            return None
+        raw_name = active_task.get("name")
+        if not isinstance(raw_name, str) or not raw_name.strip():
+            return None
+
+        requested_name = raw_name.strip()
+        list_plan = ToolCallPlan(
+            tool_name="finance_bank_accounts_list",
+            payload={},
+            user_reply="",
+        )
+        list_result = tool_router.call("finance_bank_accounts_list", {}, profile_id=profile_id)
+        normalized_list_result = AgentLoop._normalize_tool_result("finance_bank_accounts_list", list_result)
+        if isinstance(normalized_list_result, ToolError):
+            return AgentReply(
+                reply=build_final_reply(plan=list_plan, tool_result=normalized_list_result),
+                tool_result=AgentLoop._serialize_tool_result(normalized_list_result),
+                plan={"tool_name": list_plan.tool_name, "payload": list_plan.payload},
+            )
+
+        items = getattr(normalized_list_result, "items", None)
+        if not isinstance(items, list):
+            return None
+
+        target = requested_name.lower()
+        exact_matches = [
+            account
+            for account in items
+            if isinstance(getattr(account, "name", None), str)
+            and account.name.strip().lower() == target
+        ]
+
+        if len(exact_matches) == 0:
+            names_by_norm: dict[str, str] = {}
+            for account in items:
+                if not isinstance(getattr(account, "name", None), str):
+                    continue
+                normalized_name = account.name.strip().lower()
+                if normalized_name and normalized_name not in names_by_norm:
+                    names_by_norm[normalized_name] = account.name
+            suggestions = [
+                names_by_norm[name_norm]
+                for name_norm in get_close_matches(target, list(names_by_norm.keys()), n=3, cutoff=0.6)
+            ]
+            error = ToolError(
+                code=ToolErrorCode.NOT_FOUND,
+                message="Bank account not found for provided name.",
+                details={"name": requested_name, "close_names": suggestions},
+            )
+            delete_plan = ToolCallPlan(
+                tool_name="finance_bank_accounts_delete",
+                payload={"name": requested_name},
+                user_reply="",
+            )
+            return AgentReply(
+                reply=build_final_reply(plan=delete_plan, tool_result=error),
+                tool_result=AgentLoop._serialize_tool_result(error),
+                plan={"tool_name": delete_plan.tool_name, "payload": delete_plan.payload},
+                active_task=None,
+                should_update_active_task=True,
+            )
+
+        if len(exact_matches) == 1:
+            account = exact_matches[0]
+            return AgentReply(
+                reply=(
+                    f"Confirmez-vous la suppression du compte « {account.name} » ? "
+                    "Répondez OUI ou NON."
+                ),
+                active_task={
+                    "type": "confirm_delete_bank_account",
+                    "bank_account_id": str(account.id),
+                    "name": account.name,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                },
+                should_update_active_task=True,
+            )
+
+        candidate_names = ", ".join(account.name for account in exact_matches)
+        return AgentReply(
+            reply=f"Plusieurs comptes correspondent: {candidate_names}.",
+            active_task=None,
+            should_update_active_task=True,
+        )
+
+    @staticmethod
     def _normalize_tool_result(tool_name: str, result: object) -> object:
         if result is not None:
             return result
@@ -302,6 +401,14 @@ class AgentLoop:
             updated_active_task = active_task
 
         if isinstance(plan, SetActiveTaskPlan):
+            if profile_id is not None:
+                resolved_reply = self._resolve_delete_bank_account_confirmation(
+                    plan,
+                    tool_router=self.tool_router,
+                    profile_id=profile_id,
+                )
+                if resolved_reply is not None:
+                    return resolved_reply
             return AgentReply(
                 reply=plan.reply,
                 active_task=plan.active_task,

@@ -266,6 +266,10 @@ class BackendToolService:
                     account_kind=account_kind,
                 )
             )
+        except ValueError as exc:
+            if str(exc) == "bank account name already exists":
+                return ToolError(code=ToolErrorCode.CONFLICT, message=str(exc))
+            return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))
         except Exception as exc:
             return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))
 

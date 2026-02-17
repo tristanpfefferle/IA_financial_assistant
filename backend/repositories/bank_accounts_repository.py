@@ -47,6 +47,13 @@ class InMemoryBankAccountsRepository:
         return [item for item in self._accounts if item.profile_id == profile_id]
 
     def create_bank_account(self, request: BankAccountCreateRequest) -> BankAccount:
+        normalized_name = request.name.strip().lower()
+        for account in self._accounts:
+            if account.profile_id != request.profile_id:
+                continue
+            if account.name.strip().lower() == normalized_name:
+                raise ValueError("bank account name already exists")
+
         account = BankAccount(
             id=uuid4(),
             profile_id=request.profile_id,
@@ -150,6 +157,21 @@ class SupabaseBankAccountsRepository:
         return [BankAccount.model_validate(row) for row in rows]
 
     def create_bank_account(self, request: BankAccountCreateRequest) -> BankAccount:
+        normalized_name = request.name.strip()
+        existing_rows, _ = self._client.get_rows(
+            table="bank_accounts",
+            query={
+                "select": "id",
+                "profile_id": f"eq.{request.profile_id}",
+                "name": f"ilike.{normalized_name}",
+                "limit": 1,
+            },
+            with_count=False,
+            use_anon_key=False,
+        )
+        if existing_rows:
+            raise ValueError("bank account name already exists")
+
         payload: dict[str, object] = {
             "profile_id": str(request.profile_id),
             "name": request.name,

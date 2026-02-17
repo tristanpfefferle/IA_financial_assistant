@@ -465,3 +465,19 @@ def test_build_final_reply_bank_account_delete_conflict_is_user_friendly() -> No
         "Impossible de supprimer ce compte car il contient des transactions. "
         "Déplacez/supprimez d’abord les transactions ou choisissez un autre compte."
     )
+
+
+def test_build_final_reply_with_bank_account_create_conflict_is_user_friendly() -> None:
+    reply = build_final_reply(
+        plan=ToolCallPlan(
+            tool_name="finance_bank_accounts_create",
+            payload={"name": "UBS"},
+            user_reply="OK",
+        ),
+        tool_result=ToolError(
+            code=ToolErrorCode.CONFLICT,
+            message="bank account name already exists",
+        ),
+    )
+
+    assert reply == "Un compte nommé « UBS » existe déjà. Choisissez un autre nom."

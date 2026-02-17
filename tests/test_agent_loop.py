@@ -55,6 +55,21 @@ class _AmbiguousThenDeleteByIdRouter:
         return {"ok": True}
 
 
+
+
+class _ListThenDeleteRouter:
+    def __init__(self, items: list[dict[str, str]]) -> None:
+        self.items = items
+        self.calls: list[tuple[str, dict]] = []
+
+    def call(self, tool_name: str, payload: dict, *, profile_id: UUID | None = None):
+        self.calls.append((tool_name, payload))
+        if tool_name == "finance_bank_accounts_list":
+            return type("_ListResult", (), {"items": [type("_Account", (), item) for item in self.items]})()
+        if tool_name == "finance_bank_accounts_delete":
+            return {"ok": True}
+        raise AssertionError(f"Unexpected tool call: {tool_name}")
+
 class _NotFoundSuggestionRouter:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict]] = []
@@ -186,4 +201,42 @@ def test_bank_account_not_found_suggestion_yes_replays_with_first_name() -> None
     assert second_reply.plan == {
         "tool_name": "finance_bank_accounts_delete",
         "payload": {"name": "Compte vacances"},
+    }
+
+
+def test_confirm_delete_bank_account_not_found_skips_confirmation_when_profile_available() -> None:
+    router = _ListThenDeleteRouter(items=[{"id": "11111111-1111-1111-1111-111111111111", "name": "UBS"}])
+    loop = AgentLoop(tool_router=router)
+
+    reply = loop.handle_user_message(
+        "supprime le compte Inexistant",
+        profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+    )
+
+    assert reply.reply == "Je ne trouve pas le compte « Inexistant »."
+    assert reply.should_update_active_task is True
+    assert reply.active_task is None
+
+
+def test_confirm_delete_bank_account_existing_stores_id_in_active_task() -> None:
+    router = _ListThenDeleteRouter(items=[{"id": "11111111-1111-1111-1111-111111111111", "name": "UBS"}])
+    loop = AgentLoop(tool_router=router)
+
+    reply = loop.handle_user_message(
+        "supprime le compte ubs",
+        profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+    )
+
+    assert reply.reply == "Confirmez-vous la suppression du compte « UBS » ? Répondez OUI ou NON."
+    assert reply.should_update_active_task is True
+    assert reply.active_task is not None
+    assert reply.active_task["type"] == "confirm_delete_bank_account"
+    assert reply.active_task["name"] == "UBS"
+    assert reply.active_task["bank_account_id"] == "11111111-1111-1111-1111-111111111111"
+
+    confirmation = loop.handle_user_message("oui", active_task=reply.active_task)
+
+    assert confirmation.plan == {
+        "tool_name": "finance_bank_accounts_delete",
+        "payload": {"bank_account_id": "11111111-1111-1111-1111-111111111111"},
     }

@@ -152,6 +152,15 @@ def _build_bank_account_ambiguous_reply(error: ToolError) -> str | None:
     return f"Plusieurs comptes correspondent: {', '.join(names)}."
 
 
+def _build_bank_account_create_conflict_reply(plan: ToolCallPlan, error: ToolError) -> str | None:
+    if plan.tool_name != "finance_bank_accounts_create":
+        return None
+    if error.code != ToolErrorCode.CONFLICT:
+        return None
+    account_name = plan.payload.get("name") if isinstance(plan.payload, dict) else None
+    if isinstance(account_name, str) and account_name.strip():
+        return f"Un compte nommé « {account_name} » existe déjà. Choisissez un autre nom."
+    return "Un compte portant ce nom existe déjà. Choisissez un autre nom."
 
 def _build_bank_account_delete_conflict_reply(plan: ToolCallPlan, error: ToolError) -> str | None:
     if plan.tool_name != "finance_bank_accounts_delete":
@@ -290,6 +299,9 @@ def build_final_reply(*, plan: ToolCallPlan, tool_result: object) -> str:
         bank_account_ambiguous_reply = _build_bank_account_ambiguous_reply(tool_result)
         if bank_account_ambiguous_reply is not None:
             return bank_account_ambiguous_reply
+        bank_account_create_conflict_reply = _build_bank_account_create_conflict_reply(plan, tool_result)
+        if bank_account_create_conflict_reply is not None:
+            return bank_account_create_conflict_reply
         bank_account_delete_conflict_reply = _build_bank_account_delete_conflict_reply(plan, tool_result)
         if bank_account_delete_conflict_reply is not None:
             return bank_account_delete_conflict_reply
