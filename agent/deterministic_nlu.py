@@ -79,6 +79,10 @@ _BANK_ACCOUNT_HINTS = {
     "credit suisse",
 }
 
+_BANK_HINT_SUFFIXES = {
+    "pro",
+}
+
 
 def _strip_terminal_punctuation(value: str) -> str:
     return value.strip().strip(" .,!?:;\"'“”«»")
@@ -158,9 +162,30 @@ def parse_search_query_parts(message: str) -> dict[str, object]:
             "date_range": date_range,
         }
 
-    candidate = _strip_terminal_punctuation(tokens[-1]).casefold()
-    if candidate in _BANK_ACCOUNT_HINTS:
-        cleaned_merchant = " ".join(tokens[:-1]).strip()
+    normalized_tokens = [_strip_terminal_punctuation(token).casefold() for token in tokens]
+
+    suffix_consumed = 0
+    if normalized_tokens[-1] in _BANK_HINT_SUFFIXES:
+        suffix_consumed = 1
+
+    hint_token_count = 0
+    candidate: str | None = None
+    max_hint_span = len(normalized_tokens) - suffix_consumed
+    if max_hint_span >= 2:
+        two_token_candidate = " ".join(normalized_tokens[-(2 + suffix_consumed) : -suffix_consumed or None]).strip()
+        if two_token_candidate in _BANK_ACCOUNT_HINTS:
+            candidate = two_token_candidate
+            hint_token_count = 2
+
+    if candidate is None and max_hint_span >= 1:
+        one_token_candidate = normalized_tokens[-(1 + suffix_consumed)]
+        if one_token_candidate in _BANK_ACCOUNT_HINTS:
+            candidate = one_token_candidate
+            hint_token_count = 1
+
+    if candidate is not None:
+        consumed_token_count = hint_token_count + suffix_consumed
+        cleaned_merchant = " ".join(tokens[:-consumed_token_count]).strip()
         return {
             "merchant_text": cleaned_merchant,
             "bank_account_hint": candidate,

@@ -168,3 +168,21 @@ def test_parse_search_query_parts_handles_punctuation_on_bank_hint() -> None:
     parts = parse_search_query_parts("cherche Migros UBS!!!")
 
     assert parts == {"merchant_text": "migros", "bank_account_hint": "ubs", "date_range": None}
+
+
+def test_parse_search_query_parts_extracts_multi_word_bank_hint() -> None:
+    parts = parse_search_query_parts("cherche Migros credit suisse")
+
+    assert parts == {"merchant_text": "migros", "bank_account_hint": "credit suisse", "date_range": None}
+
+
+def test_parse_search_query_parts_extracts_bank_hint_before_suffix() -> None:
+    parts = parse_search_query_parts("cherche Migros revolut pro")
+
+    assert parts == {"merchant_text": "migros", "bank_account_hint": "revolut", "date_range": None}
+
+
+def test_parse_search_query_parts_extracts_multi_word_bank_hint_with_punctuation() -> None:
+    parts = parse_search_query_parts("cherche Migros credit suisse!!!")
+
+    assert parts == {"merchant_text": "migros", "bank_account_hint": "credit suisse", "date_range": None}
