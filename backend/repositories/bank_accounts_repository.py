@@ -201,6 +201,16 @@ class SupabaseBankAccountsRepository:
         if self._has_related_transactions(request):
             raise ValueError("bank account not empty")
 
+        self._client.patch_rows(
+            table="profils",
+            query={
+                "id": f"eq.{request.profile_id}",
+                "default_bank_account_id": f"eq.{request.bank_account_id}",
+            },
+            payload={"default_bank_account_id": None},
+            use_anon_key=False,
+        )
+
         rows = self._request_rows(
             table="bank_accounts",
             method="DELETE",

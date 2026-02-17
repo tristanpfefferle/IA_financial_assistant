@@ -313,10 +313,19 @@ def build_final_reply(*, plan: ToolCallPlan, tool_result: object) -> str:
     if isinstance(tool_result, BankAccountsListResult):
         if not tool_result.items:
             return "Vous n'avez aucun compte bancaire pour le moment."
-        lines = [
-            f"- {item.name} ({item.account_kind or 'inconnu'}, {item.kind or 'inconnu'})"
-            for item in tool_result.items
-        ]
+        default_id = tool_result.default_bank_account_id
+
+        lines = []
+
+        for item in tool_result.items:
+            star = ""
+            if default_id is not None and item.id == default_id:
+                star = " ⭐"
+
+            lines.append(
+                f"- {item.name}{star} ({item.account_kind or 'inconnu'}, {item.kind or 'inconnu'})"
+            )
+
         return "\n".join(lines)
 
     if isinstance(tool_result, ProfileDataResult):

@@ -200,7 +200,10 @@ class FakeBackendClient:
         return ToolError(code=ToolErrorCode.NOT_FOUND, message="Category not found")
 
     def finance_bank_accounts_list(self, *, profile_id: UUID) -> BankAccountsListResult:
-        return BankAccountsListResult(items=[item for item in self.bank_accounts if item.profile_id == profile_id])
+        return BankAccountsListResult(
+            items=[item for item in self.bank_accounts if item.profile_id == profile_id],
+            default_bank_account_id=None,
+        )
 
     def finance_bank_accounts_create(
         self,

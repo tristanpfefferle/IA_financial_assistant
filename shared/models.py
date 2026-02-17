@@ -131,6 +131,7 @@ class BankAccountsListResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     items: list[BankAccount]
+    default_bank_account_id: UUID | None = None
 
 
 class BankAccountCreateRequest(BaseModel):
