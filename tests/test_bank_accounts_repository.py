@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from io import BytesIO
 from types import SimpleNamespace
+from urllib.error import HTTPError
 from uuid import UUID
 
 from backend.repositories.bank_accounts_repository import SupabaseBankAccountsRepository
@@ -118,11 +120,26 @@ def test_delete_bank_account_continues_when_default_clear_fails() -> None:
     assert calls == ["patch", "DELETE:bank_accounts"]
 
 
-def test_create_bank_account_raises_value_error_when_name_already_exists() -> None:
+def test_request_rows_maps_unique_constraint_to_value_error() -> None:
     repository = _repository()
 
-    repository._client.get_rows = lambda **kwargs: ([{"id": str(BANK_ACCOUNT_ID)}], None)  # type: ignore[attr-defined]
+    duplicate_body = (
+        b'{"message":"duplicate key value violates unique constraint \"bank_accounts_profile_id_name_lower_unique\""}'
+    )
 
+    def _raise_duplicate(*args: object, **kwargs: object) -> None:
+        raise HTTPError(
+            url="https://example.test/rest/v1/bank_accounts",
+            code=409,
+            msg="Conflict",
+            hdrs=None,
+            fp=BytesIO(duplicate_body),
+        )
+
+    from backend.repositories import bank_accounts_repository as module
+
+    original_urlopen = module.urlopen
+    module.urlopen = _raise_duplicate  # type: ignore[assignment]
     try:
         repository.create_bank_account(
             BankAccountCreateRequest(profile_id=PROFILE_ID, name="Compte courant")
@@ -130,33 +147,6 @@ def test_create_bank_account_raises_value_error_when_name_already_exists() -> No
     except ValueError as exc:
         assert str(exc) == "bank account name already exists"
     else:
-        raise AssertionError("Expected ValueError for duplicate bank account name")
-
-
-def test_create_bank_account_escapes_wildcards_in_ilike_query() -> None:
-    repository = _repository()
-    captured_query: dict[str, object] = {}
-
-    def _capture_get_rows(**kwargs: object):
-        query = kwargs.get("query")
-        if isinstance(query, dict):
-            captured_query.update(query)
-        return ([], None)
-
-    repository._client.get_rows = _capture_get_rows  # type: ignore[attr-defined]
-    repository._request_rows = lambda **kwargs: [  # type: ignore[method-assign]
-        {
-            "id": str(BANK_ACCOUNT_ID),
-            "profile_id": str(PROFILE_ID),
-            "name": "Compte 50%_\\",
-            "kind": "individual",
-            "account_kind": "personal_current",
-            "is_system": False,
-        }
-    ]
-
-    repository.create_bank_account(
-        BankAccountCreateRequest(profile_id=PROFILE_ID, name="Compte 50%_\\")
-    )
-
-    assert captured_query.get("name") == r"ilike.Compte 50\%\_\\"
+        raise AssertionError("Expected ValueError when unique constraint is violated")
+    finally:
+        module.urlopen = original_urlopen

@@ -116,10 +116,6 @@ class SupabaseBankAccountsRepository:
     def __init__(self, client: SupabaseClient) -> None:
         self._client = client
 
-    @staticmethod
-    def _escape_ilike_value(value: str) -> str:
-        return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-
     def _request_rows(
         self,
         *,
@@ -148,9 +144,13 @@ class SupabaseBankAccountsRepository:
             with urlopen(request) as response:  # noqa: S310 - URL comes from trusted env config
                 return json.loads(response.read().decode("utf-8"))
         except HTTPError as exc:
-            body_text = exc.read().decode("utf-8", errors="replace")[:500]
+            body_text = exc.read().decode("utf-8", errors="replace")
+
+            if "duplicate key value violates unique constraint" in body_text.lower():
+                raise ValueError("bank account name already exists") from exc
+
             raise RuntimeError(
-                f"Supabase request failed with status {exc.code}: {body_text}"
+                f"Supabase request failed with status {exc.code}: {body_text[:500]}"
             ) from exc
 
     def list_bank_accounts(self, profile_id: UUID) -> list[BankAccount]:
@@ -167,22 +167,6 @@ class SupabaseBankAccountsRepository:
         return [BankAccount.model_validate(row) for row in rows]
 
     def create_bank_account(self, request: BankAccountCreateRequest) -> BankAccount:
-        normalized_name = request.name.strip()
-        escaped_name = self._escape_ilike_value(normalized_name)
-        existing_rows, _ = self._client.get_rows(
-            table="bank_accounts",
-            query={
-                "select": "id",
-                "profile_id": f"eq.{request.profile_id}",
-                "name": f"ilike.{escaped_name}",
-                "limit": 1,
-            },
-            with_count=False,
-            use_anon_key=False,
-        )
-        if existing_rows:
-            raise ValueError("bank account name already exists")
-
         payload: dict[str, object] = {
             "profile_id": str(request.profile_id),
             "name": request.name,
