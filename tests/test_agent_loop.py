@@ -471,6 +471,26 @@ def test_nlu_search_with_multi_word_bank_hint_matches_account() -> None:
     }
 
 
+def test_nlu_search_with_revolut_pro_hint_matches_account() -> None:
+    router = _SearchWithBankHintRouter()
+    loop = AgentLoop(tool_router=router)
+
+    reply = loop.handle_user_message(
+        "cherche Migros revolut pro",
+        profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+    )
+
+    assert router.calls[0] == ("finance_bank_accounts_list", {})
+    assert router.calls[1] == (
+        "finance_releves_search",
+        {"merchant": "migros", "limit": 50, "offset": 0, "bank_account_id": "acc-revolut"},
+    )
+    assert reply.plan == {
+        "tool_name": "finance_releves_search",
+        "payload": {"merchant": "migros", "limit": 50, "offset": 0, "bank_account_id": "acc-revolut"},
+    }
+
+
 def test_active_task_search_merchant_with_serialized_dates_runs_search() -> None:
     router = _SearchRouter()
     loop = AgentLoop(tool_router=router)
