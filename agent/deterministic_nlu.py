@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import calendar
 import re
+import unicodedata
 from datetime import date
 
 _FRENCH_MONTHS: dict[str, int] = {
@@ -91,6 +92,26 @@ _BANK_HINT_SUFFIXES = {
     "pro",
 }
 
+_PROFILE_UPDATE_PREFIX = re.compile(
+    r"^met(?:s)?\s+[aà]\s+jour\s+mon\s+profil\b",
+    re.IGNORECASE,
+)
+_PROFILE_UPDATE_PATTERN = re.compile(
+    r"^met(?:s)?\s+[aà]\s+jour\s+mon\s+profil\s*(?::|;|,)?\s*(?P<remainder>.+)$",
+    re.IGNORECASE,
+)
+_PROFILE_UPDATE_VALUE_PATTERN = re.compile(
+    r"^(?P<field>ville|commune|localit[eé]|code\s+postal|zip)\s+(?P<value>.+)$",
+    re.IGNORECASE,
+)
+_PROFILE_UPDATE_FIELD_ALIASES = {
+    "ville": "city",
+    "commune": "city",
+    "localite": "city",
+    "code postal": "postal_code",
+    "zip": "postal_code",
+}
+
 
 def _strip_terminal_punctuation(value: str) -> str:
     return value.strip().strip(" .,!?:;\"'“”«»")
@@ -99,6 +120,57 @@ def _strip_terminal_punctuation(value: str) -> str:
 def _normalize_message_for_match(value: str) -> str:
     stripped = _strip_terminal_punctuation(value)
     return re.sub(r"\s+", " ", stripped).strip()
+
+
+def _normalize_profile_alias(value: str) -> str:
+    collapsed = re.sub(r"\s+", " ", value.strip().casefold())
+    without_accents = unicodedata.normalize("NFKD", collapsed)
+    return "".join(
+        char for char in without_accents if not unicodedata.combining(char)
+    )
+
+
+def _extract_profile_update_confirmation_intent(
+    message: str,
+) -> dict[str, object] | None:
+    stripped_message = message.strip()
+    match = _PROFILE_UPDATE_PATTERN.match(stripped_message)
+    if match is None:
+        if _PROFILE_UPDATE_PREFIX.match(stripped_message):
+            return {
+                "type": "clarification",
+                "message": "Quel champ voulez-vous mettre à jour ? (ex: ville, code postal, pays…)",
+            }
+        return None
+
+    value_match = _PROFILE_UPDATE_VALUE_PATTERN.match(match.group("remainder").strip())
+    if value_match is None:
+        return {
+            "type": "clarification",
+            "message": "Quel champ voulez-vous mettre à jour ? (ex: ville, code postal, pays…)",
+        }
+
+    field = _normalize_profile_alias(value_match.group("field"))
+    canonical_field = _PROFILE_UPDATE_FIELD_ALIASES.get(field)
+    value = _strip_terminal_punctuation(value_match.group("value"))
+    if canonical_field is None or not value:
+        return {
+            "type": "clarification",
+            "message": "Quel champ voulez-vous mettre à jour ? (ex: ville, code postal, pays…)",
+        }
+
+    return {
+        "type": "needs_confirmation",
+        "confirmation_type": "confirm_llm_write",
+        "message": (
+            f"Je peux mettre à jour votre profil (champ {canonical_field} = {value}). "
+            "Confirmez-vous ? (oui/non)"
+        ),
+        "context": {
+            "tool_name": "finance_profile_update",
+            "payload": {"set": {canonical_field: value}},
+        },
+    }
 
 
 def _extract_date_range_from_message(
@@ -224,6 +296,10 @@ def parse_intent(message: str) -> dict[str, object] | None:
 
     lower = normalized.lower()
     normalized_for_match = _normalize_message_for_match(normalized)
+
+    profile_update_intent = _extract_profile_update_confirmation_intent(normalized)
+    if profile_update_intent is not None:
+        return profile_update_intent
 
     for pattern in _CREATE_ACCOUNT_PATTERNS:
         match = pattern.search(normalized)

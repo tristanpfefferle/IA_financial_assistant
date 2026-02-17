@@ -160,6 +160,16 @@ class _SearchWithMissingBankHintRouter:
         return {"ok": True, "items": []}
 
 
+class _ProfileUpdateRouter:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict]] = []
+
+    def call(self, tool_name: str, payload: dict, *, profile_id: UUID | None = None):
+        self.calls.append((tool_name, payload))
+        assert tool_name == "finance_profile_update"
+        return {"ok": True}
+
+
 def test_confirm_delete_category_yes_executes_delete() -> None:
     loop = AgentLoop(tool_router=_DeleteRouter())
 
@@ -463,6 +473,50 @@ def test_nlu_tool_call_executes_before_deterministic_planner() -> None:
         "payload": {"name": "UBS"},
     }
     assert reply.tool_result == {"id": "new-account"}
+
+
+@pytest.mark.parametrize(
+    ("message", "expected_payload"),
+    [
+        ("Mets à jour mon profil : ville Choëx", {"set": {"city": "Choëx"}}),
+        (
+            "Mets à jour mon profil : code postal 1897",
+            {"set": {"postal_code": "1897"}},
+        ),
+    ],
+)
+def test_nlu_profile_update_requires_confirmation_before_execution(
+    message: str,
+    expected_payload: dict[str, dict[str, str]],
+) -> None:
+    router = _ProfileUpdateRouter()
+    loop = AgentLoop(tool_router=router)
+
+    confirm_reply = loop.handle_user_message(message)
+
+    assert confirm_reply.reply.startswith("Je peux mettre à jour votre profil")
+    assert confirm_reply.should_update_active_task is True
+    assert confirm_reply.active_task is not None
+    assert confirm_reply.active_task["type"] == "needs_confirmation"
+    assert confirm_reply.active_task["confirmation_type"] == "confirm_llm_write"
+    assert confirm_reply.active_task["context"] == {
+        "tool_name": "finance_profile_update",
+        "payload": expected_payload,
+    }
+
+    accepted_reply = loop.handle_user_message(
+        "oui", active_task=confirm_reply.active_task
+    )
+    assert router.calls == [("finance_profile_update", expected_payload)]
+    assert accepted_reply.plan == {
+        "tool_name": "finance_profile_update",
+        "payload": expected_payload,
+    }
+
+    cancel_reply = loop.handle_user_message(
+        "non", active_task=confirm_reply.active_task
+    )
+    assert cancel_reply.reply == "Action annulée."
 
 
 def test_nlu_search_without_merchant_sets_active_task_with_date_range() -> None:
