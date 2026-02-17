@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import unicodedata
 from dataclasses import dataclass
 from difflib import get_close_matches
 from datetime import datetime, timezone
@@ -55,7 +56,10 @@ def _build_clarification_tool_result(
 
 
 def _normalize_for_match(value: str) -> str:
-    return value.strip().casefold()
+    normalized = value.casefold().replace("-", " ").replace("_", " ")
+    normalized = " ".join(normalized.split())
+    without_accents = unicodedata.normalize("NFKD", normalized)
+    return "".join(char for char in without_accents if not unicodedata.combining(char)).strip()
 
 
 @dataclass(slots=True)
