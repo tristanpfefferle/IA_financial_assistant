@@ -74,6 +74,12 @@ def llm_strict() -> bool:
     return raw_value.strip().lower() in {"1", "true"}
 
 
+def llm_shadow() -> bool:
+    """Return whether LLM shadow planning is enabled."""
+    raw_value = get_env("AGENT_LLM_SHADOW", "") or ""
+    return raw_value.strip().lower() in {"1", "true"}
+
+
 def openai_api_key() -> str | None:
     """Return OpenAI API key when configured."""
     return get_env("OPENAI_API_KEY")

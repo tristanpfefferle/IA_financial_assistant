@@ -7,6 +7,7 @@ from uuid import UUID
 
 import agent.loop
 from agent.loop import AgentLoop
+from agent.planner import ToolCallPlan
 from shared.models import ToolError, ToolErrorCode
 
 
@@ -796,6 +797,53 @@ def test_nlu_tool_call_with_llm_planner_does_not_call_plan_from_message(
     loop = AgentLoop(tool_router=_CreateAccountRouter(), llm_planner=object())
     reply = loop.handle_user_message("ignored")
 
+    assert reply.plan == {
+        "tool_name": "finance_bank_accounts_create",
+        "payload": {"name": "UBS"},
+    }
+    assert reply.tool_result == {"id": "new-account"}
+
+
+def test_nlu_tool_call_with_llm_shadow_enabled_calls_plan_from_message_once(
+    monkeypatch,
+) -> None:
+    class _CreateAccountRouter:
+        def call(
+            self, tool_name: str, payload: dict, *, profile_id: UUID | None = None
+        ):
+            assert tool_name == "finance_bank_accounts_create"
+            assert payload == {"name": "UBS"}
+            return {"id": "new-account"}
+
+    def _fake_parse_intent(message: str):
+        assert message == "ignored"
+        return {
+            "type": "tool_call",
+            "tool_name": "finance_bank_accounts_create",
+            "payload": {"name": "UBS"},
+        }
+
+    calls = {"count": 0}
+
+    def _spy_plan_from_message(*_args, **_kwargs):
+        calls["count"] += 1
+        return ToolCallPlan(
+            tool_name="finance_releves_search",
+            payload={"merchant": "shadow"},
+            user_reply="OK.",
+        )
+
+    monkeypatch.setattr(agent.loop, "parse_intent", _fake_parse_intent)
+    monkeypatch.setattr(agent.loop, "plan_from_message", _spy_plan_from_message)
+
+    loop = AgentLoop(
+        tool_router=_CreateAccountRouter(),
+        llm_planner=object(),
+        shadow_llm=True,
+    )
+    reply = loop.handle_user_message("ignored")
+
+    assert calls["count"] == 1
     assert reply.plan == {
         "tool_name": "finance_bank_accounts_create",
         "payload": {"name": "UBS"},
