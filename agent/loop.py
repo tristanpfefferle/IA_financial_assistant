@@ -681,6 +681,26 @@ class AgentLoop:
         if tool_name == "finance_bank_accounts_list":
             return True, None, {}
 
+        if tool_name == "finance_categories_list":
+            return True, None, {}
+
+        if tool_name == "finance_profile_get":
+            fields = payload.get("fields")
+            if not isinstance(fields, list) or not fields:
+                return False, "missing_fields", payload
+            normalized_fields: list[str] = []
+            for field_name in fields:
+                if not isinstance(field_name, str):
+                    return False, "invalid_fields", payload
+                stripped = field_name.strip()
+                if not stripped:
+                    return False, "invalid_fields", payload
+                normalized_fields.append(stripped)
+
+            normalized_payload = dict(payload)
+            normalized_payload["fields"] = normalized_fields
+            return True, None, normalized_payload
+
         if tool_name == "finance_releves_sum":
             direction = payload.get("direction")
             has_filters = any(
