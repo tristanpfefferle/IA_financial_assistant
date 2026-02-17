@@ -60,7 +60,9 @@ def _normalize_for_match(value: str) -> str:
     normalized = value.casefold().replace("-", " ").replace("_", " ")
     normalized = " ".join(normalized.split())
     without_accents = unicodedata.normalize("NFKD", normalized)
-    return "".join(char for char in without_accents if not unicodedata.combining(char)).strip()
+    return "".join(
+        char for char in without_accents if not unicodedata.combining(char)
+    ).strip()
 
 
 @dataclass(slots=True)
@@ -85,7 +87,9 @@ class AgentLoop:
         if active_task_type == "awaiting_search_merchant":
             merchant = message.strip().lower()
             date_range = active_task.get("date_range")
-            clarification_payload = {"date_range": date_range} if isinstance(date_range, dict) else None
+            clarification_payload = (
+                {"date_range": date_range} if isinstance(date_range, dict) else None
+            )
             if not merchant:
                 return ClarificationPlan(
                     question="Que voulez-vous rechercher (ex: Migros, coffee, Coop) ?",
@@ -96,7 +100,11 @@ class AgentLoop:
                     },
                 )
 
-            payload: dict[str, object] = {"merchant": merchant, "limit": 50, "offset": 0}
+            payload: dict[str, object] = {
+                "merchant": merchant,
+                "limit": 50,
+                "offset": 0,
+            }
             if isinstance(date_range, dict):
                 payload["date_range"] = date_range
 
@@ -108,7 +116,9 @@ class AgentLoop:
             )
 
         if active_task_type == "select_bank_account":
-            return AgentLoop._plan_from_select_bank_account(message=message, active_task=active_task)
+            return AgentLoop._plan_from_select_bank_account(
+                message=message, active_task=active_task
+            )
 
         if active_task_type == "needs_confirmation":
             confirmation_type = active_task.get("confirmation_type")
@@ -124,8 +134,14 @@ class AgentLoop:
                 context=context,
             )
 
-        if active_task_type not in {"confirm_delete_category", "confirm_delete_bank_account"}:
-            return ClarificationPlan(question="Je n'ai pas compris la tâche en attente.", meta={"keep_active_task": True})
+        if active_task_type not in {
+            "confirm_delete_category",
+            "confirm_delete_bank_account",
+        }:
+            return ClarificationPlan(
+                question="Je n'ai pas compris la tâche en attente.",
+                meta={"keep_active_task": True},
+            )
 
         context: dict[str, object] = {}
         if active_task_type == "confirm_delete_category":
@@ -148,18 +164,26 @@ class AgentLoop:
     ):
         normalized = message.strip().lower()
         if not normalized:
-            return ClarificationPlan(question="Répondez OUI ou NON.", meta={"keep_active_task": True})
+            return ClarificationPlan(
+                question="Répondez OUI ou NON.", meta={"keep_active_task": True}
+            )
 
         if normalized in _REJECT_WORDS:
-            return NoopPlan(reply="Suppression annulée.", meta={"clear_active_task": True})
+            return NoopPlan(
+                reply="Suppression annulée.", meta={"clear_active_task": True}
+            )
 
         if normalized not in _CONFIRM_WORDS:
-            return ClarificationPlan(question="Répondez OUI ou NON.", meta={"keep_active_task": True})
+            return ClarificationPlan(
+                question="Répondez OUI ou NON.", meta={"keep_active_task": True}
+            )
 
         if confirmation_type == "confirm_delete_category":
             target_name = str(context.get("category_name", "")).strip()
             if not target_name:
-                return NoopPlan(reply="Suppression annulée.", meta={"clear_active_task": True})
+                return NoopPlan(
+                    reply="Suppression annulée.", meta={"clear_active_task": True}
+                )
             return ToolCallPlan(
                 tool_name="finance_categories_delete",
                 payload={"category_name": target_name},
@@ -170,9 +194,15 @@ class AgentLoop:
         if confirmation_type == "confirm_delete_bank_account":
             target_name = str(context.get("name", "")).strip()
             if not target_name:
-                return NoopPlan(reply="Suppression annulée.", meta={"clear_active_task": True})
+                return NoopPlan(
+                    reply="Suppression annulée.", meta={"clear_active_task": True}
+                )
             bank_account_id = context.get("bank_account_id")
-            payload = {"bank_account_id": bank_account_id.strip()} if isinstance(bank_account_id, str) and bank_account_id.strip() else {"name": target_name}
+            payload = (
+                {"bank_account_id": bank_account_id.strip()}
+                if isinstance(bank_account_id, str) and bank_account_id.strip()
+                else {"name": target_name}
+            )
             return ToolCallPlan(
                 tool_name="finance_bank_accounts_delete",
                 payload=payload,
@@ -180,12 +210,18 @@ class AgentLoop:
                 meta={"clear_active_task": True},
             )
 
-        return ClarificationPlan(question="Je n'ai pas compris la tâche en attente.", meta={"keep_active_task": True})
+        return ClarificationPlan(
+            question="Je n'ai pas compris la tâche en attente.",
+            meta={"keep_active_task": True},
+        )
 
     @staticmethod
     def _plan_from_select_bank_account(message: str, active_task: dict[str, object]):
         original_tool_name = active_task.get("original_tool_name")
-        if not isinstance(original_tool_name, str) or original_tool_name not in _BANK_ACCOUNT_DISAMBIGUATION_TOOLS:
+        if (
+            not isinstance(original_tool_name, str)
+            or original_tool_name not in _BANK_ACCOUNT_DISAMBIGUATION_TOOLS
+        ):
             return ClarificationPlan(
                 question="Je n'ai pas compris la tâche en attente.",
                 meta={"keep_active_task": True},
@@ -209,12 +245,20 @@ class AgentLoop:
                     continue
                 raw_id = candidate.get("id")
                 raw_name = candidate.get("name")
-                if isinstance(raw_id, str) and isinstance(raw_name, str) and raw_name.strip():
+                if (
+                    isinstance(raw_id, str)
+                    and isinstance(raw_name, str)
+                    and raw_name.strip()
+                ):
                     candidates.append({"id": raw_id, "name": raw_name})
 
         suggestions: list[str] = []
         if isinstance(suggestions_raw, list):
-            suggestions = [name.strip() for name in suggestions_raw if isinstance(name, str) and name.strip()]
+            suggestions = [
+                name.strip()
+                for name in suggestions_raw
+                if isinstance(name, str) and name.strip()
+            ]
 
         selected_id: str | None = None
         selected_name: str | None = None
@@ -265,7 +309,9 @@ class AgentLoop:
     ) -> dict[str, object]:
         if tool_name == "finance_bank_accounts_update":
             set_payload = original_payload.get("set")
-            payload: dict[str, object] = {"set": set_payload} if isinstance(set_payload, dict) else {}
+            payload: dict[str, object] = (
+                {"set": set_payload} if isinstance(set_payload, dict) else {}
+            )
             if bank_account_id is not None:
                 payload["bank_account_id"] = bank_account_id
             elif account_name is not None:
@@ -279,7 +325,9 @@ class AgentLoop:
         return dict(original_payload)
 
     @staticmethod
-    def _build_bank_account_selection_active_task(plan: ToolCallPlan, error: ToolError) -> SetActiveTaskPlan | None:
+    def _build_bank_account_selection_active_task(
+        plan: ToolCallPlan, error: ToolError
+    ) -> SetActiveTaskPlan | None:
         if plan.tool_name not in _BANK_ACCOUNT_DISAMBIGUATION_TOOLS:
             return None
 
@@ -294,7 +342,11 @@ class AgentLoop:
                     continue
                 raw_id = candidate.get("id")
                 raw_name = candidate.get("name")
-                if isinstance(raw_id, str) and isinstance(raw_name, str) and raw_name.strip():
+                if (
+                    isinstance(raw_id, str)
+                    and isinstance(raw_name, str)
+                    and raw_name.strip()
+                ):
                     candidates.append({"id": raw_id, "name": raw_name})
             if not candidates:
                 return None
@@ -317,11 +369,23 @@ class AgentLoop:
             close_names_raw = details.get("close_names")
             if not isinstance(close_names_raw, list):
                 return None
-            suggestions = [name.strip() for name in close_names_raw if isinstance(name, str) and name.strip()]
+            suggestions = [
+                name.strip()
+                for name in close_names_raw
+                if isinstance(name, str) and name.strip()
+            ]
             if not suggestions:
                 return None
-            requested_name = details.get("name") if isinstance(details.get("name"), str) else plan.payload.get("name")
-            requested_name_text = requested_name if isinstance(requested_name, str) and requested_name.strip() else ""
+            requested_name = (
+                details.get("name")
+                if isinstance(details.get("name"), str)
+                else plan.payload.get("name")
+            )
+            requested_name_text = (
+                requested_name
+                if isinstance(requested_name, str) and requested_name.strip()
+                else ""
+            )
             suggestion_text = ", ".join(suggestions)
             return SetActiveTaskPlan(
                 reply=(
@@ -366,11 +430,17 @@ class AgentLoop:
             payload={},
             user_reply="",
         )
-        list_result = tool_router.call("finance_bank_accounts_list", {}, profile_id=profile_id)
-        normalized_list_result = AgentLoop._normalize_tool_result("finance_bank_accounts_list", list_result)
+        list_result = tool_router.call(
+            "finance_bank_accounts_list", {}, profile_id=profile_id
+        )
+        normalized_list_result = AgentLoop._normalize_tool_result(
+            "finance_bank_accounts_list", list_result
+        )
         if isinstance(normalized_list_result, ToolError):
             return AgentReply(
-                reply=build_final_reply(plan=list_plan, tool_result=normalized_list_result),
+                reply=build_final_reply(
+                    plan=list_plan, tool_result=normalized_list_result
+                ),
                 tool_result=AgentLoop._serialize_tool_result(normalized_list_result),
                 plan={"tool_name": list_plan.tool_name, "payload": list_plan.payload},
             )
@@ -397,7 +467,9 @@ class AgentLoop:
                     names_by_norm[normalized_name] = account.name
             suggestions = [
                 names_by_norm[name_norm]
-                for name_norm in get_close_matches(target, list(names_by_norm.keys()), n=3, cutoff=0.6)
+                for name_norm in get_close_matches(
+                    target, list(names_by_norm.keys()), n=3, cutoff=0.6
+                )
             ]
             error = ToolError(
                 code=ToolErrorCode.NOT_FOUND,
@@ -412,7 +484,10 @@ class AgentLoop:
             return AgentReply(
                 reply=build_final_reply(plan=delete_plan, tool_result=error),
                 tool_result=AgentLoop._serialize_tool_result(error),
-                plan={"tool_name": delete_plan.tool_name, "payload": delete_plan.payload},
+                plan={
+                    "tool_name": delete_plan.tool_name,
+                    "payload": delete_plan.payload,
+                },
                 active_task=None,
                 should_update_active_task=True,
             )
@@ -435,9 +510,14 @@ class AgentLoop:
                     user_reply="",
                 )
                 return AgentReply(
-                    reply=build_final_reply(plan=can_delete_plan, tool_result=normalized_can_delete),
+                    reply=build_final_reply(
+                        plan=can_delete_plan, tool_result=normalized_can_delete
+                    ),
                     tool_result=AgentLoop._serialize_tool_result(normalized_can_delete),
-                    plan={"tool_name": can_delete_plan.tool_name, "payload": can_delete_plan.payload},
+                    plan={
+                        "tool_name": can_delete_plan.tool_name,
+                        "payload": can_delete_plan.payload,
+                    },
                 )
 
             if (
@@ -445,7 +525,9 @@ class AgentLoop:
                 and normalized_can_delete.get("ok") is True
                 and normalized_can_delete.get("can_delete") is False
             ):
-                error = ToolError(code=ToolErrorCode.CONFLICT, message="bank account not empty")
+                error = ToolError(
+                    code=ToolErrorCode.CONFLICT, message="bank account not empty"
+                )
                 delete_plan = ToolCallPlan(
                     tool_name="finance_bank_accounts_delete",
                     payload={"bank_account_id": str(account.id)},
@@ -454,7 +536,10 @@ class AgentLoop:
                 return AgentReply(
                     reply=build_final_reply(plan=delete_plan, tool_result=error),
                     tool_result=AgentLoop._serialize_tool_result(error),
-                    plan={"tool_name": delete_plan.tool_name, "payload": delete_plan.payload},
+                    plan={
+                        "tool_name": delete_plan.tool_name,
+                        "payload": delete_plan.payload,
+                    },
                     active_task=None,
                     should_update_active_task=True,
                 )
@@ -524,7 +609,11 @@ class AgentLoop:
             return routed
         plan = routed
 
-        plan_meta = getattr(plan, "meta", {}) if isinstance(getattr(plan, "meta", {}), dict) else {}
+        plan_meta = (
+            getattr(plan, "meta", {})
+            if isinstance(getattr(plan, "meta", {}), dict)
+            else {}
+        )
         should_update_active_task = False
         updated_active_task = active_task
         if plan_meta.get("clear_active_task"):
@@ -535,10 +624,7 @@ class AgentLoop:
             updated_active_task = active_task
             clarification_type = plan_meta.get("clarification_type")
             clarification_payload = plan_meta.get("clarification_payload")
-            if (
-                active_task is None
-                and clarification_type == "awaiting_search_merchant"
-            ):
+            if active_task is None and clarification_type == "awaiting_search_merchant":
                 updated_active_task = {"type": "awaiting_search_merchant"}
                 if isinstance(clarification_payload, dict):
                     date_range = clarification_payload.get("date_range")
@@ -567,8 +653,12 @@ class AgentLoop:
                 and isinstance(plan.meta.get("bank_account_hint"), str)
             ):
                 bank_account_hint = str(plan.meta["bank_account_hint"])
-                list_result = self.tool_router.call("finance_bank_accounts_list", {}, profile_id=profile_id)
-                normalized_list_result = self._normalize_tool_result("finance_bank_accounts_list", list_result)
+                list_result = self.tool_router.call(
+                    "finance_bank_accounts_list", {}, profile_id=profile_id
+                )
+                normalized_list_result = self._normalize_tool_result(
+                    "finance_bank_accounts_list", list_result
+                )
                 if not isinstance(normalized_list_result, ToolError):
                     items = getattr(normalized_list_result, "items", None)
                     if isinstance(items, list):
@@ -578,17 +668,30 @@ class AgentLoop:
                             raw_id = getattr(account, "id", None)
                             if not isinstance(raw_name, str) or raw_id is None:
                                 continue
-                            if _normalize_for_match(raw_name) == _normalize_for_match(bank_account_hint):
+                            if _normalize_for_match(raw_name) == _normalize_for_match(
+                                bank_account_hint
+                            ):
                                 matched_account_id = str(raw_id)
                                 break
                         if matched_account_id is not None:
                             plan.payload["bank_account_id"] = matched_account_id
+                        else:
+                            merchant_fallback = plan.meta.get("merchant_fallback")
+                            if (
+                                isinstance(merchant_fallback, str)
+                                and merchant_fallback.strip()
+                            ):
+                                plan.payload["merchant"] = merchant_fallback.strip()
 
             logger.info("tool_execution_started tool_name=%s", plan.tool_name)
-            raw_result = self.tool_router.call(plan.tool_name, plan.payload, profile_id=profile_id)
+            raw_result = self.tool_router.call(
+                plan.tool_name, plan.payload, profile_id=profile_id
+            )
             result = self._normalize_tool_result(plan.tool_name, raw_result)
             if isinstance(result, ToolError):
-                active_task_plan = self._build_bank_account_selection_active_task(plan, result)
+                active_task_plan = self._build_bank_account_selection_active_task(
+                    plan, result
+                )
                 if active_task_plan is not None:
                     return AgentReply(
                         reply=active_task_plan.reply,
@@ -614,10 +717,16 @@ class AgentLoop:
                 reply=plan.question,
                 tool_result=_build_clarification_tool_result(
                     message=plan.question,
-                    clarification_type=clarification_type
-                    if isinstance(clarification_type, str) and clarification_type
-                    else "generic",
-                    payload=clarification_payload if isinstance(clarification_payload, dict) else None,
+                    clarification_type=(
+                        clarification_type
+                        if isinstance(clarification_type, str) and clarification_type
+                        else "generic"
+                    ),
+                    payload=(
+                        clarification_payload
+                        if isinstance(clarification_payload, dict)
+                        else None
+                    ),
                 ),
                 active_task=updated_active_task,
                 should_update_active_task=should_update_active_task,
@@ -674,7 +783,8 @@ class AgentLoop:
                         meta={
                             "clarification_type": (
                                 str(clarification_type)
-                                if isinstance(clarification_type, str) and clarification_type
+                                if isinstance(clarification_type, str)
+                                and clarification_type
                                 else "generic"
                             )
                         },
@@ -685,7 +795,10 @@ class AgentLoop:
                 if action == "open_import_panel":
                     return AgentReply(
                         reply="D'accord, j'ouvre le panneau d'import de relevés.",
-                        tool_result={"type": "ui_action", "action": "open_import_panel"},
+                        tool_result={
+                            "type": "ui_action",
+                            "action": "open_import_panel",
+                        },
                     )
 
             if intent_type == "tool_call":
@@ -696,6 +809,9 @@ class AgentLoop:
                     bank_account_hint = nlu_intent.get("bank_account_hint")
                     if isinstance(bank_account_hint, str) and bank_account_hint.strip():
                         meta["bank_account_hint"] = bank_account_hint.strip().casefold()
+                    merchant_fallback = nlu_intent.get("merchant_fallback")
+                    if isinstance(merchant_fallback, str) and merchant_fallback.strip():
+                        meta["merchant_fallback"] = merchant_fallback.strip()
                     return ToolCallPlan(
                         tool_name=tool_name,
                         payload=payload,
@@ -704,9 +820,15 @@ class AgentLoop:
                     )
 
         deterministic_plan = deterministic_plan_from_message(message)
-        if isinstance(deterministic_plan, (ToolCallPlan, ErrorPlan, ClarificationPlan, SetActiveTaskPlan)):
+        if isinstance(
+            deterministic_plan,
+            (ToolCallPlan, ErrorPlan, ClarificationPlan, SetActiveTaskPlan),
+        ):
             return deterministic_plan
-        if isinstance(deterministic_plan, NoopPlan) and deterministic_plan.reply == "pong":
+        if (
+            isinstance(deterministic_plan, NoopPlan)
+            and deterministic_plan.reply == "pong"
+        ):
             return deterministic_plan
         if self.llm_planner is not None:
             return plan_from_message(message, llm_planner=self.llm_planner)

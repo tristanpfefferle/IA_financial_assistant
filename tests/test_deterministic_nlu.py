@@ -26,7 +26,9 @@ def test_parse_account_create_variants(message: str, expected_name: str) -> None
     }
 
 
-@pytest.mark.parametrize("message", ["Crée un compte", "Créer un compte bancaire", "Nouveau compte:"])
+@pytest.mark.parametrize(
+    "message", ["Crée un compte", "Créer un compte bancaire", "Nouveau compte:"]
+)
 def test_parse_account_create_missing_name_needs_clarification(message: str) -> None:
     intent = parse_intent(message)
 
@@ -98,10 +100,16 @@ def test_parse_search_variants(message: str, merchant: str) -> None:
     [
         ("recherche Migros en janvier 2025", date(2025, 1, 1), date(2025, 1, 31)),
         ("cherche coop en févr. 2024", date(2024, 2, 1), date(2024, 2, 29)),
-        ("montre moi les transactions Migros en decembre 2023", date(2023, 12, 1), date(2023, 12, 31)),
+        (
+            "montre moi les transactions Migros en decembre 2023",
+            date(2023, 12, 1),
+            date(2023, 12, 31),
+        ),
     ],
 )
-def test_parse_search_with_month_year(message: str, start_date: date, end_date: date) -> None:
+def test_parse_search_with_month_year(
+    message: str, start_date: date, end_date: date
+) -> None:
     intent = parse_intent(message)
 
     assert intent is not None
@@ -113,7 +121,10 @@ def test_parse_search_with_month_year(message: str, start_date: date, end_date: 
     ("message", "expected_date_range"),
     [
         ("cherche", None),
-        ("recherche en janvier 2025", {"start_date": date(2025, 1, 1), "end_date": date(2025, 1, 31)}),
+        (
+            "recherche en janvier 2025",
+            {"start_date": date(2025, 1, 1), "end_date": date(2025, 1, 31)},
+        ),
         ("montre les transactions", None),
     ],
 )
@@ -155,40 +166,88 @@ def test_parse_intent_returns_none_for_unsupported_messages(message: str) -> Non
 def test_parse_search_query_parts_extracts_known_bank_hint() -> None:
     parts = parse_search_query_parts("cherche Migros UBS")
 
-    assert parts == {"merchant_text": "migros", "bank_account_hint": "ubs", "date_range": None}
+    assert parts == {
+        "merchant_text": "migros",
+        "bank_account_hint": "ubs",
+        "date_range": None,
+        "merchant_fallback": "migros ubs",
+    }
 
 
 def test_parse_search_query_parts_keeps_unknown_suffix_in_merchant() -> None:
     parts = parse_search_query_parts("cherche Migros UnknownBank")
 
-    assert parts == {"merchant_text": "migros unknownbank", "bank_account_hint": None, "date_range": None}
+    assert parts == {
+        "merchant_text": "migros unknownbank",
+        "bank_account_hint": None,
+        "date_range": None,
+    }
 
 
 def test_parse_search_query_parts_handles_punctuation_on_bank_hint() -> None:
     parts = parse_search_query_parts("cherche Migros UBS!!!")
 
-    assert parts == {"merchant_text": "migros", "bank_account_hint": "ubs", "date_range": None}
+    assert parts == {
+        "merchant_text": "migros",
+        "bank_account_hint": "ubs",
+        "date_range": None,
+        "merchant_fallback": "migros ubs",
+    }
 
 
 def test_parse_search_query_parts_extracts_multi_word_bank_hint() -> None:
     parts = parse_search_query_parts("cherche Migros credit suisse")
 
-    assert parts == {"merchant_text": "migros", "bank_account_hint": "credit suisse", "date_range": None}
+    assert parts == {
+        "merchant_text": "migros",
+        "bank_account_hint": "credit suisse",
+        "date_range": None,
+        "merchant_fallback": "migros credit suisse",
+    }
 
 
 def test_parse_search_query_parts_extracts_accented_multi_word_bank_hint() -> None:
     parts = parse_search_query_parts("cherche Migros crédit suisse")
 
-    assert parts == {"merchant_text": "migros", "bank_account_hint": "crédit suisse", "date_range": None}
+    assert parts == {
+        "merchant_text": "migros",
+        "bank_account_hint": "crédit suisse",
+        "date_range": None,
+        "merchant_fallback": "migros crédit suisse",
+    }
 
 
 def test_parse_search_query_parts_extracts_bank_hint_before_suffix() -> None:
     parts = parse_search_query_parts("cherche Migros revolut pro")
 
-    assert parts == {"merchant_text": "migros", "bank_account_hint": "revolut", "date_range": None}
+    assert parts == {
+        "merchant_text": "migros",
+        "bank_account_hint": "revolut",
+        "date_range": None,
+        "merchant_fallback": "migros revolut pro",
+    }
 
 
-def test_parse_search_query_parts_extracts_multi_word_bank_hint_with_punctuation() -> None:
+def test_parse_search_query_parts_extracts_multi_word_bank_hint_with_punctuation() -> (
+    None
+):
     parts = parse_search_query_parts("cherche Migros credit suisse!!!")
 
-    assert parts == {"merchant_text": "migros", "bank_account_hint": "credit suisse", "date_range": None}
+    assert parts == {
+        "merchant_text": "migros",
+        "bank_account_hint": "credit suisse",
+        "date_range": None,
+        "merchant_fallback": "migros credit suisse",
+    }
+
+
+def test_parse_search_query_parts_sets_merchant_fallback_for_credit_suisse() -> None:
+    parts = parse_search_query_parts("cherche Migros crédit suisse")
+
+    assert parts["merchant_fallback"] == "migros crédit suisse"
+
+
+def test_parse_search_query_parts_sets_merchant_fallback_for_revolut_pro() -> None:
+    parts = parse_search_query_parts("cherche Migros revolut pro")
+
+    assert parts["merchant_fallback"] == "migros revolut pro"

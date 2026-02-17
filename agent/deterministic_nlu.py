@@ -45,7 +45,10 @@ _FRENCH_MONTHS: dict[str, int] = {
 }
 
 _CREATE_ACCOUNT_PATTERNS = (
-    re.compile(r"(?:cr[ée]e?r?|ajoute)\s+(?:un\s+)?compte(?:\s+bancaire)?(?:\s+nomm[ée])?\s*(?P<name>.+)?$", re.IGNORECASE),
+    re.compile(
+        r"(?:cr[ée]e?r?|ajoute)\s+(?:un\s+)?compte(?:\s+bancaire)?(?:\s+nomm[ée])?\s*(?P<name>.+)?$",
+        re.IGNORECASE,
+    ),
     re.compile(r"nouveau\s+compte\s*:\s*(?P<name>.+)?$", re.IGNORECASE),
 )
 
@@ -96,7 +99,9 @@ def _normalize_message_for_match(value: str) -> str:
     return re.sub(r"\s+", " ", stripped).strip()
 
 
-def _extract_date_range_from_message(message: str) -> tuple[dict[str, date], str] | None:
+def _extract_date_range_from_message(
+    message: str,
+) -> tuple[dict[str, date], str] | None:
     lower = message.lower()
     month_tokens = sorted(_FRENCH_MONTHS.keys(), key=len, reverse=True)
     month_pattern = "|".join(re.escape(token) for token in month_tokens)
@@ -157,6 +162,7 @@ def parse_search_query_parts(message: str) -> dict[str, object]:
             "date_range": date_range,
         }
 
+    merchant_fallback = merchant_text
     tokens = [token for token in merchant_text.split() if token]
     if len(tokens) < 2:
         return {
@@ -165,7 +171,9 @@ def parse_search_query_parts(message: str) -> dict[str, object]:
             "date_range": date_range,
         }
 
-    normalized_tokens = [_strip_terminal_punctuation(token).casefold() for token in tokens]
+    normalized_tokens = [
+        _strip_terminal_punctuation(token).casefold() for token in tokens
+    ]
 
     suffix_consumed = 0
     if normalized_tokens[-1] in _BANK_HINT_SUFFIXES:
@@ -175,7 +183,9 @@ def parse_search_query_parts(message: str) -> dict[str, object]:
     candidate: str | None = None
     max_hint_span = len(normalized_tokens) - suffix_consumed
     if max_hint_span >= 2:
-        two_token_candidate = " ".join(normalized_tokens[-(2 + suffix_consumed) : -suffix_consumed or None]).strip()
+        two_token_candidate = " ".join(
+            normalized_tokens[-(2 + suffix_consumed) : -suffix_consumed or None]
+        ).strip()
         if two_token_candidate in _BANK_ACCOUNT_HINTS:
             candidate = two_token_candidate
             hint_token_count = 2
@@ -193,6 +203,7 @@ def parse_search_query_parts(message: str) -> dict[str, object]:
             "merchant_text": cleaned_merchant,
             "bank_account_hint": candidate,
             "date_range": date_range,
+            "merchant_fallback": merchant_fallback,
         }
 
     return {
@@ -228,7 +239,9 @@ def parse_intent(message: str) -> dict[str, object] | None:
             "payload": {"name": account_name},
         }
 
-    if any(pattern.fullmatch(normalized_for_match) for pattern in _LIST_ACCOUNTS_PATTERNS):
+    if any(
+        pattern.fullmatch(normalized_for_match) for pattern in _LIST_ACCOUNTS_PATTERNS
+    ):
         return {
             "type": "tool_call",
             "tool_name": "finance_bank_accounts_list",
@@ -266,6 +279,9 @@ def parse_intent(message: str) -> dict[str, object] | None:
         }
         if isinstance(bank_account_hint, str) and bank_account_hint:
             tool_call_intent["bank_account_hint"] = bank_account_hint
+            merchant_fallback = parts.get("merchant_fallback")
+            if isinstance(merchant_fallback, str) and merchant_fallback.strip():
+                tool_call_intent["merchant_fallback"] = merchant_fallback
         return tool_call_intent
 
     return None
