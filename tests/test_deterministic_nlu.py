@@ -2,7 +2,7 @@ from datetime import date
 
 import pytest
 
-from agent.deterministic_nlu import parse_intent
+from agent.deterministic_nlu import parse_intent, parse_search_query_parts
 
 
 @pytest.mark.parametrize(
@@ -150,3 +150,21 @@ def test_parse_search_sets_non_empty_merchant_for_tool_call() -> None:
 )
 def test_parse_intent_returns_none_for_unsupported_messages(message: str) -> None:
     assert parse_intent(message) is None
+
+
+def test_parse_search_query_parts_extracts_known_bank_hint() -> None:
+    parts = parse_search_query_parts("cherche Migros UBS")
+
+    assert parts == {"merchant_text": "migros", "bank_account_hint": "ubs", "date_range": None}
+
+
+def test_parse_search_query_parts_keeps_unknown_suffix_in_merchant() -> None:
+    parts = parse_search_query_parts("cherche Migros UnknownBank")
+
+    assert parts == {"merchant_text": "migros unknownbank", "bank_account_hint": None, "date_range": None}
+
+
+def test_parse_search_query_parts_handles_punctuation_on_bank_hint() -> None:
+    parts = parse_search_query_parts("cherche Migros UBS!!!")
+
+    assert parts == {"merchant_text": "migros", "bank_account_hint": "ubs", "date_range": None}

@@ -69,6 +69,16 @@ _SEARCH_PREFIXES = (
     "montre les transactions",
 )
 
+_BANK_ACCOUNT_HINTS = {
+    "ubs",
+    "revolut",
+    "neon",
+    "postfinance",
+    "raiffeisen",
+    "cs",
+    "credit suisse",
+}
+
 
 def _strip_terminal_punctuation(value: str) -> str:
     return value.strip().strip(" .,!?:;\"'“”«»")
@@ -129,6 +139,41 @@ def _extract_search_term(message: str) -> tuple[str | None, dict[str, date] | No
     return term or None, date_range
 
 
+def parse_search_query_parts(message: str) -> dict[str, object]:
+    """Split a search message into merchant text, optional bank hint, and date range."""
+
+    merchant_text, date_range = _extract_search_term(message)
+    if merchant_text is None:
+        return {
+            "merchant_text": "",
+            "bank_account_hint": None,
+            "date_range": date_range,
+        }
+
+    tokens = [token for token in merchant_text.split() if token]
+    if len(tokens) < 2:
+        return {
+            "merchant_text": merchant_text,
+            "bank_account_hint": None,
+            "date_range": date_range,
+        }
+
+    candidate = _strip_terminal_punctuation(tokens[-1]).casefold()
+    if candidate in _BANK_ACCOUNT_HINTS:
+        cleaned_merchant = " ".join(tokens[:-1]).strip()
+        return {
+            "merchant_text": cleaned_merchant,
+            "bank_account_hint": candidate,
+            "date_range": date_range,
+        }
+
+    return {
+        "merchant_text": merchant_text,
+        "bank_account_hint": None,
+        "date_range": date_range,
+    }
+
+
 def parse_intent(message: str) -> dict[str, object] | None:
     """Parse deterministic intents from a user message."""
 
@@ -169,7 +214,10 @@ def parse_intent(message: str) -> dict[str, object] | None:
         }
 
     if lower.startswith(_SEARCH_PREFIXES):
-        merchant, date_range = _extract_search_term(normalized)
+        parts = parse_search_query_parts(normalized)
+        merchant = parts.get("merchant_text")
+        bank_account_hint = parts.get("bank_account_hint")
+        date_range = parts.get("date_range")
         if not merchant:
             clarification_payload: dict[str, object] = {
                 "type": "clarification",
@@ -183,10 +231,13 @@ def parse_intent(message: str) -> dict[str, object] | None:
         payload: dict[str, object] = {"merchant": merchant, "limit": 50, "offset": 0}
         if date_range is not None:
             payload["date_range"] = date_range
-        return {
+        tool_call_intent: dict[str, object] = {
             "type": "tool_call",
             "tool_name": "finance_releves_search",
             "payload": payload,
         }
+        if isinstance(bank_account_hint, str) and bank_account_hint:
+            tool_call_intent["bank_account_hint"] = bank_account_hint
+        return tool_call_intent
 
     return None
