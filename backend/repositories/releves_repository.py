@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 from typing import Protocol
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from backend.db.supabase_client import SupabaseClient
 from shared.text_utils import normalize_category_name
@@ -302,7 +302,7 @@ class InMemoryRelevesRepository:
         if not rows:
             return 0
         for row in rows:
-            next_id = UUID(int=len(self._seed) + 1)
+            next_id = uuid4()
             self._seed.append(
                 ReleveBancaire(
                     id=next_id,
@@ -530,8 +530,9 @@ class SupabaseRelevesRepository:
     def insert_releves_bulk(self, *, profile_id: UUID, rows: list[dict[str, object]]) -> int:
         if not rows:
             return 0
-        payload = [
-            {
+        payload: list[dict[str, object]] = []
+        for row in rows:
+            base_payload: dict[str, object] = {
                 "profile_id": str(profile_id),
                 "bank_account_id": str(row["bank_account_id"]) if row.get("bank_account_id") else None,
                 "date": row["date"].isoformat(),
@@ -540,11 +541,12 @@ class SupabaseRelevesRepository:
                 "libelle": row.get("libelle"),
                 "payee": row.get("payee"),
                 "categorie": row.get("categorie"),
-                "metadonnees": row.get("meta"),
-                "source": row.get("source"),
             }
-            for row in rows
-        ]
+            if row.get("meta") is not None:
+                base_payload["metadonnees"] = row.get("meta")
+            if row.get("source") is not None:
+                base_payload["source"] = row.get("source")
+            payload.append(base_payload)
         inserted = self._client.post_rows(table="releves_bancaires", payload=payload, use_anon_key=False)
         return len(inserted)
 

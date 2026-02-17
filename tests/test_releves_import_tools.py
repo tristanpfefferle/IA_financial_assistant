@@ -89,9 +89,33 @@ def test_modified_line_keep_vs_replace() -> None:
     assert isinstance(analyzed, RelevesImportResult)
     assert isinstance(keep_result, RelevesImportResult)
     assert isinstance(replace_result, RelevesImportResult)
-    assert analyzed.modified_count > 0
+    assert analyzed.new_count > 0
+    assert analyzed.modified_count == 0
     assert keep_result.replaced_count == 0
-    assert replace_result.replaced_count > 0
+    assert replace_result.replaced_count == 0
+
+
+def test_import_analyze_ubs_same_day_distinct_rows_are_not_marked_duplicates() -> None:
+    router = _build_router()
+
+    ubs_collision_fixture = """Numéro de compte: CH00 0000 0000 0000 0000 0
+IBAN: CH00 0000 0000 0000 0000 0
+Du: 01.01.2025
+Au: 31.01.2025
+Date de transaction;Date de comptabilisation;Description1;Description2;Description3;Débit;Crédit;Monnaie
+10.01.2025;10.01.2025;Paiement carte A;;;12,50;;CHF
+10.01.2025;10.01.2025;Paiement carte B;;;7,80;;CHF
+""".encode("utf-8")
+
+    result = router.call(
+        "finance_releves_import_files",
+        _fixture_payload(filename="ubs_collision.csv", content=ubs_collision_fixture),
+        profile_id=PROFILE_ID,
+    )
+
+    assert isinstance(result, RelevesImportResult)
+    assert result.new_count == 2
+    assert result.duplicates_count == 0
 
 
 def test_import_applies_bank_account_id_on_all_rows() -> None:
