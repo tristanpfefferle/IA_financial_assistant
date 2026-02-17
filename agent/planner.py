@@ -139,6 +139,8 @@ _CATEGORY_RENAME_PATTERNS = (
 
 _BANK_ACCOUNT_LIST_PATTERNS = (
     "liste mes comptes bancaires",
+    "affiche mes comptes bancaires",
+    "liste mes comptes",
     "affiche mes comptes",
     "quels sont mes comptes",
 )
@@ -735,12 +737,12 @@ def deterministic_plan_from_message(message: str) -> Plan:
         )
 
     create_match = re.search(
-        r"(?:crée|cree|ajoute)\s+(?:un\s+)?compte\s+bancaire?\s+(?P<name>.+)$|(?:ajoute)\s+un\s+compte\s+(?P<name2>.+)$",
+        r"(?:crée|cree|ajoute)\s+(?:un\s+)?compte(?:\s+bancaire)?\s+(?P<name>.+?)\s*[.!?:;,…]*$",
         normalized_message,
         flags=re.IGNORECASE,
     )
     if create_match is not None:
-        name = _strip_terminal_punctuation(create_match.group("name") or create_match.group("name2") or "")
+        name = _strip_terminal_punctuation(create_match.group("name") or "")
         if name:
             return ToolCallPlan(
                 tool_name="finance_bank_accounts_create",

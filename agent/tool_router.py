@@ -182,9 +182,15 @@ class ToolRouter:
                 },
             )
 
-        close_names = get_close_matches(
+        candidate_names_by_norm: dict[str, str] = {}
+        for account in accounts_result.items:
+            normalized_account_name = account.name.strip().lower()
+            if normalized_account_name and normalized_account_name not in candidate_names_by_norm:
+                candidate_names_by_norm[normalized_account_name] = account.name
+
+        close_name_norms = get_close_matches(
             target_name,
-            [item.name.strip().lower() for item in accounts_result.items],
+            list(candidate_names_by_norm.keys()),
             n=3,
             cutoff=0.6,
         )
@@ -193,9 +199,7 @@ class ToolRouter:
             message="Bank account not found for provided name.",
             details={
                 "name": name,
-                "close_names": [
-                    item.name for item in accounts_result.items if item.name.strip().lower() in set(close_names)
-                ],
+                "close_names": [candidate_names_by_norm[normalized_name] for normalized_name in close_name_norms],
             },
         )
 

@@ -153,6 +153,16 @@ def _build_bank_account_ambiguous_reply(error: ToolError) -> str | None:
 
 
 
+def _build_bank_account_delete_conflict_reply(plan: ToolCallPlan, error: ToolError) -> str | None:
+    if plan.tool_name != "finance_bank_accounts_delete":
+        return None
+    if error.code != ToolErrorCode.CONFLICT:
+        return None
+    return (
+        "Impossible de supprimer ce compte car il contient des transactions. "
+        "Déplacez/supprimez d’abord les transactions ou choisissez un autre compte."
+    )
+
 
 def _build_profile_validation_reply(plan: ToolCallPlan, error: ToolError) -> str | None:
     if plan.tool_name not in {"finance_profile_get", "finance_profile_update"}:
@@ -280,6 +290,9 @@ def build_final_reply(*, plan: ToolCallPlan, tool_result: object) -> str:
         bank_account_ambiguous_reply = _build_bank_account_ambiguous_reply(tool_result)
         if bank_account_ambiguous_reply is not None:
             return bank_account_ambiguous_reply
+        bank_account_delete_conflict_reply = _build_bank_account_delete_conflict_reply(plan, tool_result)
+        if bank_account_delete_conflict_reply is not None:
+            return bank_account_delete_conflict_reply
         category_not_found_reply = _build_category_not_found_reply(tool_result)
         if category_not_found_reply is not None:
             return category_not_found_reply
