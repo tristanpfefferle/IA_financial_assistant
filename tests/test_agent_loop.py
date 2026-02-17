@@ -131,7 +131,7 @@ def test_confirm_delete_category_yes_executes_delete() -> None:
 
     reply = loop.handle_user_message(
         "Oui",
-        active_task={"type": "confirm_delete_category", "category_name": "autres"},
+        active_task={"type": "needs_confirmation", "confirmation_type": "confirm_delete_category", "context": {"category_name": "autres"}},
     )
 
     assert reply.plan == {"tool_name": "finance_categories_delete", "payload": {"category_name": "autres"}}
@@ -144,7 +144,7 @@ def test_confirm_delete_category_no_cancels() -> None:
 
     reply = loop.handle_user_message(
         "non",
-        active_task={"type": "confirm_delete_category", "category_name": "autres"},
+        active_task={"type": "needs_confirmation", "confirmation_type": "confirm_delete_category", "context": {"category_name": "autres"}},
     )
 
     assert reply.reply == "Suppression annulée."
@@ -153,7 +153,7 @@ def test_confirm_delete_category_no_cancels() -> None:
 
 
 def test_confirm_delete_category_invalid_prompts_again() -> None:
-    active_task = {"type": "confirm_delete_category", "category_name": "autres"}
+    active_task = {"type": "needs_confirmation", "confirmation_type": "confirm_delete_category", "context": {"category_name": "autres"}}
     loop = AgentLoop(tool_router=_FailIfCalledRouter())
 
     reply = loop.handle_user_message("peut-être", active_task=active_task)
@@ -168,7 +168,7 @@ def test_confirm_delete_bank_account_yes_executes_delete() -> None:
 
     reply = loop.handle_user_message(
         "oui",
-        active_task={"type": "confirm_delete_bank_account", "name": "Courant"},
+        active_task={"type": "needs_confirmation", "confirmation_type": "confirm_delete_bank_account", "context": {"name": "Courant"}},
     )
 
     assert reply.plan == {"tool_name": "finance_bank_accounts_delete", "payload": {"name": "Courant"}}
@@ -184,8 +184,9 @@ def test_bank_account_ambiguous_sets_select_active_task_then_resolves_by_index()
 
     assert confirm_reply.should_update_active_task is True
     assert confirm_reply.active_task is not None
-    assert confirm_reply.active_task["type"] == "confirm_delete_bank_account"
-    assert confirm_reply.active_task["name"] == "joint"
+    assert confirm_reply.active_task["type"] == "needs_confirmation"
+    assert confirm_reply.active_task["confirmation_type"] == "confirm_delete_bank_account"
+    assert confirm_reply.active_task["context"] == {"name": "joint"}
 
     first_reply = loop.handle_user_message("oui", active_task=confirm_reply.active_task)
 
@@ -216,8 +217,9 @@ def test_bank_account_not_found_suggestion_yes_replays_with_first_name() -> None
 
     assert confirm_reply.should_update_active_task is True
     assert confirm_reply.active_task is not None
-    assert confirm_reply.active_task["type"] == "confirm_delete_bank_account"
-    assert confirm_reply.active_task["name"] == "vacnces"
+    assert confirm_reply.active_task["type"] == "needs_confirmation"
+    assert confirm_reply.active_task["confirmation_type"] == "confirm_delete_bank_account"
+    assert confirm_reply.active_task["context"] == {"name": "vacnces"}
 
     first_reply = loop.handle_user_message("oui", active_task=confirm_reply.active_task)
 
@@ -290,9 +292,12 @@ def test_confirm_delete_bank_account_existing_stores_id_in_active_task() -> None
     assert reply.reply == "Confirmez-vous la suppression du compte « UBS » ? Répondez OUI ou NON."
     assert reply.should_update_active_task is True
     assert reply.active_task is not None
-    assert reply.active_task["type"] == "confirm_delete_bank_account"
-    assert reply.active_task["name"] == "UBS"
-    assert reply.active_task["bank_account_id"] == "11111111-1111-1111-1111-111111111111"
+    assert reply.active_task["type"] == "needs_confirmation"
+    assert reply.active_task["confirmation_type"] == "confirm_delete_bank_account"
+    assert reply.active_task["context"] == {
+        "name": "UBS",
+        "bank_account_id": "11111111-1111-1111-1111-111111111111",
+    }
 
     confirmation = loop.handle_user_message("oui", active_task=reply.active_task)
 
@@ -332,6 +337,12 @@ def test_nlu_search_without_merchant_sets_active_task_with_date_range() -> None:
     reply = loop.handle_user_message("recherche en janvier 2026")
 
     assert reply.reply == "Que voulez-vous rechercher (ex: Migros, coffee, Coop) ?"
+    assert reply.tool_result == {
+        "type": "clarification",
+        "clarification_type": "awaiting_search_merchant",
+        "message": "Que voulez-vous rechercher (ex: Migros, coffee, Coop) ?",
+        "payload": {"date_range": {"start_date": date(2026, 1, 1), "end_date": date(2026, 1, 31)}},
+    }
     assert reply.should_update_active_task is True
     assert reply.active_task == {
         "type": "awaiting_search_merchant",
@@ -437,3 +448,28 @@ def test_nlu_search_with_punctuated_bank_hint_matches_account() -> None:
         "tool_name": "finance_releves_search",
         "payload": {"merchant": "migros", "limit": 50, "offset": 0, "bank_account_id": "acc-ubs"},
     }
+
+
+def test_active_task_search_merchant_with_serialized_dates_runs_search() -> None:
+    router = _SearchRouter()
+    loop = AgentLoop(tool_router=router)
+
+    reply = loop.handle_user_message(
+        "Coop",
+        active_task={
+            "type": "awaiting_search_merchant",
+            "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
+        },
+    )
+
+    assert reply.plan == {
+        "tool_name": "finance_releves_search",
+        "payload": {
+            "merchant": "coop",
+            "limit": 50,
+            "offset": 0,
+            "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
+        },
+    }
+    assert reply.should_update_active_task is True
+    assert reply.active_task is None

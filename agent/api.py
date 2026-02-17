@@ -241,7 +241,7 @@ def agent_chat(payload: ChatRequest, authorization: str | None = Header(default=
             if agent_reply.active_task is None:
                 updated_chat_state.pop("active_task", None)
             else:
-                updated_chat_state["active_task"] = agent_reply.active_task
+                updated_chat_state["active_task"] = jsonable_encoder(agent_reply.active_task)
             try:
                 profiles_repository.update_chat_state(
                     profile_id=profile_id,

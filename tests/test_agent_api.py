@@ -309,7 +309,7 @@ def test_agent_chat_delete_confirmation_workflow(monkeypatch) -> None:
     )
     assert first.status_code == 200
     assert "Répondez OUI ou NON" in first.json()["reply"]
-    assert repo.chat_state.get("active_task", {}).get("type") == "confirm_delete_category"
+    assert repo.chat_state.get("active_task", {}).get("type") == "needs_confirmation"
 
     second = client.post(
         "/agent/chat",

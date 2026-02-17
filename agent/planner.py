@@ -617,8 +617,9 @@ def _build_delete_plan(message: str) -> SetActiveTaskPlan | ClarificationPlan:
     return SetActiveTaskPlan(
         reply=f"Confirmez-vous la suppression de « {category_name} » ? Répondez OUI ou NON.",
         active_task={
-            "type": "confirm_delete_category",
-            "category_name": category_name,
+            "type": "needs_confirmation",
+            "confirmation_type": "confirm_delete_category",
+            "context": {"category_name": category_name},
             "created_at": datetime.now(timezone.utc).isoformat(),
         },
     )
@@ -811,8 +812,9 @@ def deterministic_plan_from_message(message: str) -> Plan:
         return SetActiveTaskPlan(
             reply=f"Confirmez-vous la suppression du compte « {delete_name} » ? Répondez OUI ou NON.",
             active_task={
-                "type": "confirm_delete_bank_account",
-                "name": delete_name,
+                "type": "needs_confirmation",
+                "confirmation_type": "confirm_delete_bank_account",
+                "context": {"name": delete_name},
                 "created_at": datetime.now(timezone.utc).isoformat(),
             },
         )
