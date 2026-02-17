@@ -6,6 +6,7 @@ import base64
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
+from typing import Any
 from uuid import UUID
 
 from backend.repositories.releves_repository import RelevesRepository
@@ -24,6 +25,28 @@ from shared.models import (
 @dataclass(slots=True)
 class RelevesImportService:
     releves_repository: RelevesRepository
+
+    @staticmethod
+    def _extract_external_id(parsed_row: dict[str, object]) -> str | None:
+        raw_meta = parsed_row.get("meta")
+        if isinstance(raw_meta, dict):
+            for key in (
+                "No de transaction",
+                "No de transaction;",
+                "No de transaction ",
+                "No. de transaction",
+                "no de transaction",
+            ):
+                value = raw_meta.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+
+        for key in ("no_transaction", "transaction_id"):
+            value = parsed_row.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+
+        return None
 
     def _normalize_row(
         self,
@@ -49,20 +72,14 @@ class RelevesImportService:
         else:
             amount = Decimal(str(raw_amount))
 
-        external_id: str | None = None
+        external_id = self._extract_external_id(parsed_row)
         raw_meta = parsed_row.get("meta")
-        if isinstance(raw_meta, dict):
-            for key in ("No de transaction", "No de transaction;", "No de transaction "):
-                value = raw_meta.get(key)
-                if isinstance(value, str) and value.strip():
-                    external_id = value.strip()
-                    break
-        if external_id is None:
-            for key in ("no_transaction", "transaction_id"):
-                value = parsed_row.get(key)
-                if isinstance(value, str) and value.strip():
-                    external_id = value.strip()
-                    break
+        meta_dict: dict[str, Any] = dict(raw_meta) if isinstance(raw_meta, dict) else {}
+        if external_id is not None:
+            meta_dict["_external_id"] = external_id
+            meta_dict["_external_source"] = source
+
+        raw_dict: dict[str, Any] | None = dict(raw_meta) if isinstance(raw_meta, dict) else None
 
         return {
             "profile_id": profile_id,
@@ -73,8 +90,8 @@ class RelevesImportService:
             "libelle": parsed_row.get("libelle"),
             "payee": parsed_row.get("payee"),
             "categorie": parsed_row.get("categorie"),
-            "meta": parsed_row.get("meta"),
-            "external_id": external_id,
+            "meta": meta_dict,
+            "contenu_brut": raw_dict,
             "source": source,
         }
 
@@ -117,7 +134,7 @@ class RelevesImportService:
 
         existing_rows = self.releves_repository.list_releves_for_import(
             profile_id=request.profile_id,
-            bank_account_id=request.bank_account_id,
+            bank_account_id=None,
         )
         dedup = compare_rows(normalized_rows, existing_rows)
 

@@ -141,6 +141,7 @@ class InMemoryRelevesRepository:
                 merchant_id=None,
             ),
         ]
+        self._import_sidecar: dict[UUID, dict[str, object]] = {}
 
     def _apply_filters(self, filters: RelevesFilters | RelevesAggregateRequest) -> list[ReleveBancaire]:
         items = [item for item in self._seed if item.profile_id == filters.profile_id]
@@ -284,6 +285,7 @@ class InMemoryRelevesRepository:
                 continue
             if bank_account_id is not None and item.bank_account_id != bank_account_id:
                 continue
+            sidecar = self._import_sidecar.get(item.id, {})
             rows.append(
                 {
                     "id": item.id,
@@ -294,8 +296,9 @@ class InMemoryRelevesRepository:
                     "payee": item.payee,
                     "categorie": item.categorie,
                     "bank_account_id": item.bank_account_id,
-                    "meta": None,
-                    "source": None,
+                    "meta": sidecar.get("meta"),
+                    "source": sidecar.get("source"),
+                    "contenu_brut": sidecar.get("contenu_brut"),
                 }
             )
         return rows
@@ -319,12 +322,19 @@ class InMemoryRelevesRepository:
                     bank_account_id=row.get("bank_account_id"),
                 )
             )
+            self._import_sidecar[next_id] = {
+                "meta": row.get("meta"),
+                "source": row.get("source"),
+                "contenu_brut": row.get("contenu_brut"),
+            }
         return len(rows)
 
     def delete_releves_by_ids(self, *, profile_id: UUID, releve_ids: list[UUID]) -> int:
         ids = set(releve_ids)
         before = len(self._seed)
         self._seed = [row for row in self._seed if not (row.profile_id == profile_id and row.id in ids)]
+        for releve_id in ids:
+            self._import_sidecar.pop(releve_id, None)
         return before - len(self._seed)
 
 
@@ -548,11 +558,11 @@ class SupabaseRelevesRepository:
                 "libelle": row.get("libelle"),
                 "payee": row.get("payee"),
                 "categorie": row.get("categorie"),
+                "source": row.get("source"),
+                "metadonnees": row.get("meta") if isinstance(row.get("meta"), dict) else {},
             }
-            if row.get("meta") is not None:
-                base_payload["metadonnees"] = row.get("meta")
-            if row.get("source") is not None:
-                base_payload["source"] = row.get("source")
+            if row.get("contenu_brut") is not None:
+                base_payload["contenu_brut"] = row.get("contenu_brut")
             payload.append(base_payload)
         inserted = self._client.post_rows(table="releves_bancaires", payload=payload, use_anon_key=False)
         return len(inserted)

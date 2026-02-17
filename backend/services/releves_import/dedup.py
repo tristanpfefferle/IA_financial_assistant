@@ -53,29 +53,39 @@ def _fallback_match_key(row: dict[str, object]) -> tuple[date, UUID | None, str,
 
 
 def _extract_external_id(row: dict[str, object]) -> str | None:
-    explicit_external_id = row.get("external_id")
-    if isinstance(explicit_external_id, str) and explicit_external_id.strip():
-        return explicit_external_id.strip()
-
     raw_meta = row.get("meta")
     if isinstance(raw_meta, dict):
-        for key in ("No de transaction", "No de transaction;", "No de transaction "):
+        metadata_external_id = raw_meta.get("_external_id")
+        if isinstance(metadata_external_id, str) and metadata_external_id.strip():
+            return metadata_external_id.strip()
+
+        for key in (
+            "No de transaction",
+            "No de transaction;",
+            "No de transaction ",
+            "No. de transaction",
+            "no de transaction",
+        ):
             value = raw_meta.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()
 
+    explicit_external_id = row.get("external_id")
+    if isinstance(explicit_external_id, str) and explicit_external_id.strip():
+        return explicit_external_id.strip()
+
     return None
 
 
-def _external_match_key(row: dict[str, object], external_id: str) -> tuple[str, UUID | None, str]:
-    return (_normalize_source(row.get("source")), row.get("bank_account_id"), external_id)
+def _external_match_key(row: dict[str, object], external_id: str) -> tuple[str, str]:
+    return (_normalize_source(row.get("source")), external_id)
 
 
 def compare_rows(
     incoming_rows: list[dict[str, object]],
     existing_rows: list[dict[str, object]],
 ) -> DedupStats:
-    existing_by_external_id: dict[tuple[str, UUID | None, str], list[dict[str, object]]] = {}
+    existing_by_external_id: dict[tuple[str, str], list[dict[str, object]]] = {}
     existing_by_fallback: dict[tuple[date, UUID | None, str, str], list[dict[str, object]]] = {}
 
     for existing_row in existing_rows:

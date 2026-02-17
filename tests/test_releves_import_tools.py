@@ -137,3 +137,30 @@ def test_import_applies_bank_account_id_on_all_rows() -> None:
     assert isinstance(result, RelevesImportResult)
     assert result.preview
     assert all(item.bank_account_id == ACCOUNT_ID for item in result.preview)
+
+
+def test_import_external_id_not_duplicated_when_bank_account_assignment_changes() -> None:
+    router = _build_router()
+
+    csv_content = """Numéro de compte: CH00 0000 0000 0000 0000 0
+IBAN: CH00 0000 0000 0000 0000 0
+Du: 01.01.2025
+Au: 31.01.2025
+Date de transaction;Date de comptabilisation;Description1;Description2;Description3;No de transaction;Débit;Crédit;Monnaie
+10.01.2025;10.01.2025;Paiement carte;;;TRX-100;12,50;;CHF
+""".encode("utf-8")
+
+    first_payload = _fixture_payload(filename="ubs_bank_account_switch.csv", content=csv_content)
+    first_payload["import_mode"] = "commit"
+    first_result = router.call("finance_releves_import_files", first_payload, profile_id=PROFILE_ID)
+
+    second_payload = _fixture_payload(filename="ubs_bank_account_switch.csv", content=csv_content)
+    second_payload["import_mode"] = "commit"
+    second_payload["bank_account_id"] = str(ACCOUNT_ID)
+    second_result = router.call("finance_releves_import_files", second_payload, profile_id=PROFILE_ID)
+
+    assert isinstance(first_result, RelevesImportResult)
+    assert isinstance(second_result, RelevesImportResult)
+    assert first_result.imported_count == 1
+    assert second_result.new_count == 0
+    assert (second_result.identical_count + second_result.modified_count) > 0
