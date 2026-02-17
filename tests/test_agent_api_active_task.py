@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 import agent.api as agent_api
 from agent.api import app
+from agent.loop import AgentLoop
 
 
 client = TestClient(app)
@@ -117,3 +118,70 @@ def test_agent_chat_uses_persisted_active_task_and_clears_after_confirmation(mon
     assert repo.update_calls
     assert repo.update_calls[-1]["user_id"] == AUTH_USER_ID
     assert "active_task" not in repo.update_calls[-1]["chat_state"]
+
+
+def test_agent_chat_reuses_persisted_search_active_task_with_serialized_dates(monkeypatch) -> None:
+    monkeypatch.setattr(
+        agent_api,
+        "get_user_from_bearer_token",
+        lambda _token: {"id": str(AUTH_USER_ID), "email": "user@example.com"},
+    )
+
+    repo = _Repo(initial_chat_state={})
+
+    class _SearchRouter:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, object]]] = []
+
+        def call(self, tool_name: str, payload: dict[str, object], *, profile_id: UUID | None = None):
+            self.calls.append((tool_name, payload))
+            assert profile_id == PROFILE_ID
+            assert tool_name == "finance_releves_search"
+            return {"ok": True, "items": []}
+
+    router = _SearchRouter()
+    loop = AgentLoop(tool_router=router)
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: loop)
+
+    first = client.post("/agent/chat", json={"message": "recherche en janvier 2026"}, headers=_auth_headers())
+
+    assert first.status_code == 200
+    assert first.json()["tool_result"] == {
+        "type": "clarification",
+        "clarification_type": "awaiting_search_merchant",
+        "message": "Que voulez-vous rechercher (ex: Migros, coffee, Coop) ?",
+        "payload": {"date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"}},
+    }
+    assert repo.chat_state == {
+        "active_task": {
+            "type": "awaiting_search_merchant",
+            "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
+        }
+    }
+
+    second = client.post("/agent/chat", json={"message": "Coop"}, headers=_auth_headers())
+
+    assert second.status_code == 200
+    assert second.json()["plan"] == {
+        "tool_name": "finance_releves_search",
+        "payload": {
+            "merchant": "coop",
+            "limit": 50,
+            "offset": 0,
+            "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
+        },
+    }
+    assert router.calls == [
+        (
+            "finance_releves_search",
+            {
+                "merchant": "coop",
+                "limit": 50,
+                "offset": 0,
+                "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
+            },
+        )
+    ]
+    assert repo.chat_state == {}

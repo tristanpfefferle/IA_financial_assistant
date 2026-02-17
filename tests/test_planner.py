@@ -260,8 +260,9 @@ def test_delete_requires_confirmation() -> None:
     plan = plan_from_message("Supprime la catégorie 'divers'")
 
     assert isinstance(plan, SetActiveTaskPlan)
-    assert plan.active_task["type"] == "confirm_delete_category"
-    assert plan.active_task["category_name"] == "divers"
+    assert plan.active_task["type"] == "needs_confirmation"
+    assert plan.active_task["confirmation_type"] == "confirm_delete_category"
+    assert plan.active_task["context"] == {"category_name": "divers"}
     assert "Répondez OUI ou NON" in plan.reply
 
 
@@ -349,8 +350,9 @@ def test_planner_bank_account_delete_requires_confirmation() -> None:
     plan = plan_from_message("Supprime le compte Courant")
 
     assert isinstance(plan, SetActiveTaskPlan)
-    assert plan.active_task["type"] == "confirm_delete_bank_account"
-    assert plan.active_task["name"] == "Courant"
+    assert plan.active_task["type"] == "needs_confirmation"
+    assert plan.active_task["confirmation_type"] == "confirm_delete_bank_account"
+    assert plan.active_task["context"] == {"name": "Courant"}
 
 
 def test_planner_bank_account_set_default_pattern() -> None:
