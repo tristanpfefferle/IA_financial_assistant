@@ -105,6 +105,18 @@ class RelevesImportService:
         )
         dedup = compare_rows(normalized_rows, existing_rows)
 
+        if dedup.ambiguous_matches_count:
+            errors.extend(
+                RelevesImportError(
+                    file="dedup",
+                    message=(
+                        "Correspondance ambiguë avec des lignes existantes; "
+                        "vérifiez les doublons historiques avant remplacement."
+                    ),
+                )
+                for _ in range(dedup.ambiguous_matches_count)
+            )
+
         rows_to_insert = list(dedup.new_rows)
         replaced_count = 0
 
