@@ -71,7 +71,9 @@ def get_tool_router() -> ToolRouter:
 @lru_cache(maxsize=1)
 def get_agent_loop() -> AgentLoop:
     """Create and cache the agent loop once per process."""
-    tool_router = get_tool_router()
+    backend_tool_service = build_backend_tool_service()
+    backend_client = BackendClient(tool_service=backend_tool_service)
+    tool_router = ToolRouter(backend_client=backend_client)
     llm_planner: LLMPlanner | None = None
 
     if _config.llm_enabled():
@@ -220,8 +222,8 @@ def agent_chat(payload: ChatRequest, authorization: str | None = Header(default=
     logger.info("agent_chat_received message_length=%s", len(payload.message))
     profile_id: UUID | None = None
     try:
-        profiles_repository = get_profiles_repository()
         auth_user_id, profile_id = _resolve_authenticated_profile(authorization)
+        profiles_repository = get_profiles_repository()
 
         chat_state = profiles_repository.get_chat_state(profile_id=profile_id, user_id=auth_user_id)
         active_task = chat_state.get("active_task") if isinstance(chat_state, dict) else None
