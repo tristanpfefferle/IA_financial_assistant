@@ -171,10 +171,14 @@ def parse_intent(message: str) -> dict[str, object] | None:
     if lower.startswith(_SEARCH_PREFIXES):
         merchant, date_range = _extract_search_term(normalized)
         if not merchant:
-            return {
+            clarification_payload: dict[str, object] = {
                 "type": "clarification",
                 "message": "Que voulez-vous rechercher (ex: Migros, coffee, Coop) ?",
+                "clarification_type": "awaiting_search_merchant",
             }
+            if date_range is not None:
+                clarification_payload["date_range"] = date_range
+            return clarification_payload
 
         payload: dict[str, object] = {"merchant": merchant, "limit": 50, "offset": 0}
         if date_range is not None:

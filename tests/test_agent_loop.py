@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from uuid import UUID
 
 from agent.loop import AgentLoop
@@ -91,6 +92,16 @@ class _NotFoundSuggestionRouter:
         assert tool_name == "finance_bank_accounts_delete"
         assert payload == {"name": "Compte vacances"}
         return {"ok": True}
+
+
+class _SearchRouter:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict]] = []
+
+    def call(self, tool_name: str, payload: dict, *, profile_id: UUID | None = None):
+        self.calls.append((tool_name, payload))
+        assert tool_name == "finance_releves_search"
+        return {"ok": True, "items": []}
 
 
 def test_confirm_delete_category_yes_executes_delete() -> None:
@@ -291,3 +302,58 @@ def test_nlu_tool_call_executes_before_deterministic_planner() -> None:
 
     assert reply.plan == {"tool_name": "finance_bank_accounts_create", "payload": {"name": "UBS"}}
     assert reply.tool_result == {"id": "new-account"}
+
+
+def test_nlu_search_without_merchant_sets_active_task_with_date_range() -> None:
+    loop = AgentLoop(tool_router=_FailIfCalledRouter())
+
+    reply = loop.handle_user_message("recherche en janvier 2026")
+
+    assert reply.reply == "Que voulez-vous rechercher (ex: Migros, coffee, Coop) ?"
+    assert reply.should_update_active_task is True
+    assert reply.active_task == {
+        "type": "awaiting_search_merchant",
+        "date_range": {"start_date": date(2026, 1, 1), "end_date": date(2026, 1, 31)},
+    }
+
+
+def test_active_task_search_merchant_runs_search_and_clears_active_task() -> None:
+    router = _SearchRouter()
+    loop = AgentLoop(tool_router=router)
+
+    reply = loop.handle_user_message(
+        "Coop",
+        active_task={
+            "type": "awaiting_search_merchant",
+            "date_range": {"start_date": date(2026, 1, 1), "end_date": date(2026, 1, 31)},
+        },
+    )
+
+    assert reply.plan == {
+        "tool_name": "finance_releves_search",
+        "payload": {
+            "merchant": "coop",
+            "limit": 50,
+            "offset": 0,
+            "date_range": {"start_date": date(2026, 1, 1), "end_date": date(2026, 1, 31)},
+        },
+    }
+    assert reply.should_update_active_task is True
+    assert reply.active_task is None
+
+
+def test_active_task_search_merchant_without_date_range_runs_search() -> None:
+    router = _SearchRouter()
+    loop = AgentLoop(tool_router=router)
+
+    first_reply = loop.handle_user_message("cherche")
+    second_reply = loop.handle_user_message("Migros", active_task=first_reply.active_task)
+
+    assert first_reply.should_update_active_task is True
+    assert first_reply.active_task == {"type": "awaiting_search_merchant"}
+    assert second_reply.plan == {
+        "tool_name": "finance_releves_search",
+        "payload": {"merchant": "migros", "limit": 50, "offset": 0},
+    }
+    assert second_reply.should_update_active_task is True
+    assert second_reply.active_task is None

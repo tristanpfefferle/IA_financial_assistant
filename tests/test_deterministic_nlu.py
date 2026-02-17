@@ -110,20 +110,25 @@ def test_parse_search_with_month_year(message: str, start_date: date, end_date: 
 
 
 @pytest.mark.parametrize(
-    "message",
+    ("message", "expected_date_range"),
     [
-        "cherche",
-        "recherche en janvier 2025",
-        "montre les transactions",
+        ("cherche", None),
+        ("recherche en janvier 2025", {"start_date": date(2025, 1, 1), "end_date": date(2025, 1, 31)}),
+        ("montre les transactions", None),
     ],
 )
-def test_parse_search_without_merchant_returns_clarification(message: str) -> None:
+def test_parse_search_without_merchant_returns_clarification(
+    message: str,
+    expected_date_range: dict[str, date] | None,
+) -> None:
     intent = parse_intent(message)
 
     assert intent is not None
     assert intent["type"] == "clarification"
     assert isinstance(intent["message"], str)
     assert intent["message"]
+    assert intent["clarification_type"] == "awaiting_search_merchant"
+    assert intent.get("date_range") == expected_date_range
 
 
 def test_parse_search_sets_non_empty_merchant_for_tool_call() -> None:
