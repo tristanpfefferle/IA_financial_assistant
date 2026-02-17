@@ -104,6 +104,25 @@ def test_gated_invalid_releves_search_payload_falls_back(monkeypatch, payload: d
     assert reply.reply == "deterministic"
 
 
+def test_gated_invalid_releves_search_payload_type_falls_back(monkeypatch) -> None:
+    router = _RouterSpy()
+    _configure_gated(
+        monkeypatch,
+        allowlist={"finance_releves_search"},
+        deterministic_plan=NoopPlan(reply="deterministic"),
+        llm_plan=ToolCallPlan(
+            tool_name="finance_releves_search",
+            payload={"merchant": 123},
+            user_reply="OK.",
+        ),
+    )
+
+    reply = AgentLoop(tool_router=router, llm_planner=object()).handle_user_message("query")
+
+    assert router.calls == []
+    assert reply.reply == "deterministic"
+
+
 def test_gated_bank_accounts_list_payload_is_normalized_to_empty_dict(monkeypatch) -> None:
     router = _RouterSpy()
     _configure_gated(
@@ -121,6 +140,44 @@ def test_gated_bank_accounts_list_payload_is_normalized_to_empty_dict(monkeypatc
 
     assert router.calls == [("finance_bank_accounts_list", {})]
     assert reply.plan == {"tool_name": "finance_bank_accounts_list", "payload": {}}
+
+
+def test_gated_categories_list_payload_is_normalized_to_empty_dict(monkeypatch) -> None:
+    router = _RouterSpy()
+    _configure_gated(
+        monkeypatch,
+        allowlist={"finance_categories_list"},
+        deterministic_plan=NoopPlan(reply="deterministic"),
+        llm_plan=ToolCallPlan(
+            tool_name="finance_categories_list",
+            payload={"x": 1},
+            user_reply="OK.",
+        ),
+    )
+
+    reply = AgentLoop(tool_router=router, llm_planner=object()).handle_user_message("query")
+
+    assert router.calls == [("finance_categories_list", {})]
+    assert reply.plan == {"tool_name": "finance_categories_list", "payload": {}}
+
+
+def test_gated_invalid_profile_get_payload_falls_back(monkeypatch) -> None:
+    router = _RouterSpy()
+    _configure_gated(
+        monkeypatch,
+        allowlist={"finance_profile_get"},
+        deterministic_plan=NoopPlan(reply="deterministic"),
+        llm_plan=ToolCallPlan(
+            tool_name="finance_profile_get",
+            payload={},
+            user_reply="OK.",
+        ),
+    )
+
+    reply = AgentLoop(tool_router=router, llm_planner=object()).handle_user_message("query")
+
+    assert router.calls == []
+    assert reply.reply == "deterministic"
 
 
 @pytest.mark.parametrize("tool_name", ["finance_bank_accounts_delete", "finance_categories_delete"])
