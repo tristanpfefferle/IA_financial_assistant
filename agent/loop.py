@@ -662,6 +662,36 @@ class AgentLoop:
             return result
         return {"value": str(result)}
 
+    @staticmethod
+    def _validate_llm_tool_payload(
+        tool_name: str,
+        payload: dict[str, object],
+    ) -> tuple[bool, str | None, dict[str, object]]:
+        """Validate and normalize gated LLM tool payloads."""
+        if tool_name == "finance_releves_search":
+            merchant = payload.get("merchant")
+            if not isinstance(merchant, str) or not merchant.strip():
+                return False, "missing_merchant", payload
+            normalized_payload = dict(payload)
+            normalized_payload["merchant"] = merchant.strip()
+            normalized_payload.setdefault("limit", 50)
+            normalized_payload.setdefault("offset", 0)
+            return True, None, normalized_payload
+
+        if tool_name == "finance_bank_accounts_list":
+            return True, None, {}
+
+        if tool_name == "finance_releves_sum":
+            direction = payload.get("direction")
+            has_filters = any(
+                key in payload for key in ("merchant", "search", "date_range", "filters")
+            )
+            if direction in {"DEBIT_ONLY", "CREDIT_ONLY"} or has_filters:
+                return True, None, dict(payload)
+            return False, "missing_filters_or_direction", payload
+
+        return True, None, dict(payload)
+
     def handle_user_message(
         self,
         message: str,
@@ -921,25 +951,60 @@ class AgentLoop:
         if not isinstance(deterministic_plan, NoopPlan):
             return deterministic_plan
 
+        message_hash = hashlib.sha256(message.encode("utf-8")).hexdigest()[:12]
         llm_plan = plan_from_message(message, llm_planner=self.llm_planner)
-        if isinstance(llm_plan, ToolCallPlan) and llm_plan.tool_name in config.llm_allowed_tools():
-            if llm_plan.tool_name == "finance_releves_search":
-                merchant = llm_plan.payload.get("merchant")
-                if not isinstance(merchant, str) or not merchant.strip():
-                    return deterministic_plan
-
-                normalized_payload = dict(llm_plan.payload)
-                normalized_payload["merchant"] = merchant.strip()
-                normalized_payload.setdefault("limit", 50)
-                normalized_payload.setdefault("offset", 0)
-
-                return ToolCallPlan(
-                    tool_name=llm_plan.tool_name,
-                    payload=normalized_payload,
-                    user_reply=llm_plan.user_reply,
-                    meta=dict(llm_plan.meta),
+        logger.info(
+            "llm_gated_used",
+            extra={
+                "event": "llm_gated_used",
+                "message_hash": message_hash,
+                "profile_id": str(profile_id) if profile_id is not None else None,
+                "deterministic_plan_type": deterministic_plan.__class__.__name__,
+                "llm_plan_type": llm_plan.__class__.__name__,
+            },
+        )
+        if isinstance(llm_plan, ToolCallPlan):
+            allowed_tools = config.llm_allowed_tools()
+            if llm_plan.tool_name not in allowed_tools:
+                logger.info(
+                    "llm_tool_blocked",
+                    extra={
+                        "event": "llm_tool_blocked",
+                        "tool_name": llm_plan.tool_name,
+                        "allowlist": sorted(allowed_tools),
+                    },
                 )
+                return deterministic_plan
 
-            return llm_plan
+            is_valid, reason, normalized_payload = self._validate_llm_tool_payload(
+                llm_plan.tool_name,
+                llm_plan.payload,
+            )
+            if not is_valid:
+                logger.info(
+                    "llm_payload_invalid",
+                    extra={
+                        "event": "llm_payload_invalid",
+                        "tool_name": llm_plan.tool_name,
+                        "reason": reason,
+                    },
+                )
+                return deterministic_plan
+
+            logger.info(
+                "llm_tool_allowed",
+                extra={
+                    "event": "llm_tool_allowed",
+                    "tool_name": llm_plan.tool_name,
+                    "same_as_deterministic": False,
+                    "payload_keys": sorted(normalized_payload.keys()),
+                },
+            )
+            return ToolCallPlan(
+                tool_name=llm_plan.tool_name,
+                payload=normalized_payload,
+                user_reply=llm_plan.user_reply,
+                meta=dict(llm_plan.meta),
+            )
 
         return deterministic_plan
