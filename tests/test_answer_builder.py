@@ -481,3 +481,16 @@ def test_build_final_reply_with_bank_account_create_conflict_is_user_friendly() 
     )
 
     assert reply == "Un compte nommé « UBS » existe déjà. Choisissez un autre nom."
+
+
+def test_build_final_reply_with_releves_set_bank_account_result() -> None:
+    reply = build_final_reply(
+        plan=ToolCallPlan(
+            tool_name="finance_releves_set_bank_account",
+            payload={"bank_account_name": "UBS Principal"},
+            user_reply="OK",
+        ),
+        tool_result={"ok": True, "updated_count": 3},
+    )
+
+    assert reply == "OK — j’ai rattaché 3 transaction(s) au compte « UBS Principal »."

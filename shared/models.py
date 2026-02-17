@@ -244,6 +244,7 @@ class ReleveBancaire(BaseModel):
     categorie: str | None = None
     payee: str | None = None
     merchant_id: UUID | None = None
+    bank_account_id: UUID | None = None
 
 
 class RelevesFilters(BaseModel):
@@ -254,6 +255,7 @@ class RelevesFilters(BaseModel):
     categorie: str | None = None
     merchant: str | None = None
     merchant_id: UUID | None = None
+    bank_account_id: UUID | None = None
     direction: RelevesDirection = RelevesDirection.ALL
     limit: int = Field(default=50, ge=1, le=500)
     offset: int = Field(default=0, ge=0)
@@ -295,6 +297,7 @@ class RelevesAggregateRequest(BaseModel):
     categorie: str | None = None
     merchant: str | None = None
     merchant_id: UUID | None = None
+    bank_account_id: UUID | None = None
     direction: RelevesDirection = RelevesDirection.ALL
 
 

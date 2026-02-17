@@ -380,6 +380,19 @@ def build_final_reply(*, plan: ToolCallPlan, tool_result: object) -> str:
             return f"Compte par défaut: {account_name}."
         return "Compte par défaut défini."
 
+    if plan.tool_name == "finance_releves_set_bank_account" and isinstance(tool_result, dict) and tool_result.get("ok"):
+        updated_count = tool_result.get("updated_count")
+        account_name = None
+        if isinstance(plan.payload, dict):
+            raw_name = plan.payload.get("bank_account_name") or plan.payload.get("name")
+            if isinstance(raw_name, str) and raw_name.strip():
+                account_name = raw_name.strip()
+        if isinstance(updated_count, int):
+            if account_name is not None:
+                return f"OK — j’ai rattaché {updated_count} transaction(s) au compte « {account_name} »."
+            return f"OK — j’ai rattaché {updated_count} transaction(s) au compte."
+        return "OK — transactions rattachées au compte."
+
     if isinstance(tool_result, RelevesSumResult):
         currency_suffix = f" {tool_result.currency}" if tool_result.currency else ""
         direction = tool_result.filters.direction if tool_result.filters is not None else None

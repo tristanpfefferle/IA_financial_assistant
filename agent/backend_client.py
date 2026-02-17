@@ -49,6 +49,22 @@ class BackendClient:
     ) -> RelevesAggregateResult | ToolError:
         return self.tool_service.releves_aggregate(request)
 
+
+    def finance_releves_set_bank_account(
+        self,
+        *,
+        profile_id: UUID,
+        bank_account_id: UUID,
+        filters: dict[str, object] | None = None,
+        releve_ids: list[UUID] | None = None,
+    ) -> dict[str, object] | ToolError:
+        return self.tool_service.finance_releves_set_bank_account(
+            profile_id=profile_id,
+            bank_account_id=bank_account_id,
+            filters=filters,
+            releve_ids=releve_ids,
+        )
+
     def finance_categories_list(self, profile_id: UUID) -> CategoriesListResult | ToolError:
         return self.tool_service.finance_categories_list(profile_id=profile_id)
 

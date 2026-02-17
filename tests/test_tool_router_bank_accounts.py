@@ -75,3 +75,44 @@ def test_bank_account_create_validation_payload() -> None:
 
     assert isinstance(result, ToolError)
     assert result.code == ToolErrorCode.VALIDATION_ERROR
+
+
+def test_releves_set_bank_account_by_name_routes_to_backend() -> None:
+    backend = FakeBackendClient()
+    router = ToolRouter(backend_client=backend)
+    created = router.call("finance_bank_accounts_create", {"name": "UBS Principal"}, profile_id=PROFILE_ID)
+    assert isinstance(created, BankAccount)
+
+    result = router.call(
+        "finance_releves_set_bank_account",
+        {
+            "bank_account_name": "ubs principal",
+            "releves_ids": ["11111111-1111-1111-1111-111111111111"],
+        },
+        profile_id=PROFILE_ID,
+    )
+
+    assert isinstance(result, dict)
+    assert result["ok"] is True
+    assert result["updated_count"] == 1
+
+
+def test_releves_set_bank_account_by_name_ambiguous() -> None:
+    backend = FakeBackendClient()
+    router = ToolRouter(backend_client=backend)
+    first = router.call("finance_bank_accounts_create", {"name": "Joint"}, profile_id=PROFILE_ID)
+    second = router.call("finance_bank_accounts_create", {"name": "JOINT"}, profile_id=PROFILE_ID)
+    assert isinstance(first, BankAccount)
+    assert isinstance(second, BankAccount)
+
+    result = router.call(
+        "finance_releves_set_bank_account",
+        {
+            "bank_account_name": "joint",
+            "releves_ids": ["11111111-1111-1111-1111-111111111111"],
+        },
+        profile_id=PROFILE_ID,
+    )
+
+    assert isinstance(result, ToolError)
+    assert result.code == ToolErrorCode.AMBIGUOUS

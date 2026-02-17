@@ -5,7 +5,7 @@ from __future__ import annotations
 import calendar
 import re
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 from shared.models import ToolError, ToolErrorCode
@@ -137,6 +137,12 @@ _CATEGORY_RENAME_PATTERNS = (
     "appelle la catégorie",
 )
 
+_RELEVES_ASSIGN_PATTERNS = (
+    "rattache les transactions au compte",
+    "assigne les transactions au compte",
+    "mets les transactions sur le compte",
+)
+
 _BANK_ACCOUNT_LIST_PATTERNS = (
     "liste mes comptes bancaires",
     "affiche mes comptes bancaires",
@@ -240,6 +246,23 @@ def _extract_year(message: str) -> int | None:
         return None
     return int(years[0])
 
+
+
+
+def _extract_bank_account_name_for_assignment(message: str) -> str | None:
+    patterns = (
+        r"rattache\s+les\s+transactions\s+au\s+compte\s+(?P<name>.+)$",
+        r"assigne\s+les\s+transactions\s+au\s+compte\s+(?P<name>.+)$",
+        r"mets\s+les\s+transactions\s+sur\s+le\s+compte\s+(?P<name>.+)$",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, message, flags=re.IGNORECASE)
+        if match is None:
+            continue
+        name = _strip_terminal_punctuation(match.group("name"))
+        if name:
+            return name
+    return None
 
 def _extract_merchant_name(message: str) -> str | None:
     """Extract merchant mention from phrases like `chez coop`.
@@ -728,6 +751,24 @@ def deterministic_plan_from_message(message: str) -> Plan:
 
     if any(pattern in lower_message for pattern in _CATEGORY_RENAME_PATTERNS):
         return _build_rename_plan(normalized_message)
+
+    if any(pattern in lower_message for pattern in _RELEVES_ASSIGN_PATTERNS):
+        account_name = _extract_bank_account_name_for_assignment(normalized_message)
+        if account_name:
+            today = _today()
+            return ToolCallPlan(
+                tool_name="finance_releves_set_bank_account",
+                payload={
+                    "bank_account_name": account_name,
+                    "filters": {
+                        "date_range": {
+                            "start_date": today - timedelta(days=30),
+                            "end_date": today,
+                        }
+                    },
+                },
+                user_reply="OK",
+            )
 
     if any(pattern in lower_message for pattern in _BANK_ACCOUNT_LIST_PATTERNS):
         return ToolCallPlan(

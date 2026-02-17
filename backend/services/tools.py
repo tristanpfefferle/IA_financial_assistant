@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from uuid import UUID
 
+from pydantic import ValidationError
+
 from backend.repositories.bank_accounts_repository import BankAccountsRepository
 from backend.repositories.categories_repository import CategoriesRepository
 from backend.repositories.profiles_repository import ProfilesRepository
@@ -104,6 +106,63 @@ class BackendToolService:
                 filters=request,
             )
         except Exception as exc:  # placeholder normalization at contract boundary
+            return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))
+
+
+    def finance_releves_set_bank_account(
+        self,
+        *,
+        profile_id: UUID,
+        bank_account_id: UUID,
+        filters: dict[str, object] | None = None,
+        releve_ids: list[UUID] | None = None,
+    ) -> dict[str, object] | ToolError:
+        if self.bank_accounts_repository is None:
+            return ToolError(
+                code=ToolErrorCode.BACKEND_ERROR,
+                message="Bank accounts repository unavailable",
+            )
+
+        try:
+            accounts = self.bank_accounts_repository.list_bank_accounts(profile_id=profile_id)
+        except Exception as exc:
+            return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))
+
+        if not any(account.id == bank_account_id for account in accounts):
+            return ToolError(code=ToolErrorCode.NOT_FOUND, message="Bank account not found")
+
+        try:
+            if releve_ids is not None:
+                updated_count = self.releves_repository.update_bank_account_id_by_ids(
+                    profile_id=profile_id,
+                    releve_ids=releve_ids,
+                    bank_account_id=bank_account_id,
+                )
+                return {"ok": True, "updated_count": updated_count}
+
+            if filters is None:
+                return ToolError(
+                    code=ToolErrorCode.VALIDATION_ERROR,
+                    message="Either releve_ids or filters must be provided",
+                )
+
+            releves_filters = RelevesFilters.model_validate({
+                **filters,
+                "profile_id": str(profile_id),
+            })
+            updated_count = self.releves_repository.update_bank_account_id_by_filters(
+                profile_id=profile_id,
+                filters=releves_filters,
+                bank_account_id=bank_account_id,
+            )
+            return {"ok": True, "updated_count": updated_count}
+        except ValidationError as exc:
+            return ToolError(
+                code=ToolErrorCode.VALIDATION_ERROR,
+                message="Invalid payload for finance_releves_set_bank_account",
+                details={"validation_errors": exc.errors()},
+            )
+        except Exception as exc:
             return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))
 
     def finance_categories_list(
