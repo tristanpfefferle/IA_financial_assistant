@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import UUID
 
-from agent.answer_builder import build_final_reply
+from agent.answer_builder import build_final_reply, format_money
 from agent.planner import ToolCallPlan
 from shared.models import (
     BankAccount,
@@ -37,7 +37,7 @@ def test_build_final_reply_with_releves_sum_result() -> None:
     result = RelevesSumResult(
         total=Decimal("-123.45"),
         count=4,
-        average=Decimal("30.86"),
+        average=Decimal("-30.86"),
         currency="EUR",
         filters=RelevesFilters(
             profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
@@ -47,11 +47,23 @@ def test_build_final_reply_with_releves_sum_result() -> None:
 
     reply = build_final_reply(plan=plan, tool_result=result)
 
-    assert "123.45" in reply
-    assert "-123.45" not in reply
+    assert "-123.45" in reply
+    assert "Moyenne: -30.86 EUR" in reply
     assert "EUR" in reply
     assert "4" in reply
     assert DEBIT_ONLY_NOTE in reply
+
+
+def test_format_money_rounds_half_up_for_average() -> None:
+    assert format_money(Decimal("-25.816666666666666666666"), "CHF") == "-25.82 CHF"
+
+
+def test_format_money_adds_trailing_zeros_for_total() -> None:
+    assert format_money(423.2, "CHF") == "423.20 CHF"
+
+
+def test_format_money_keeps_string_amount() -> None:
+    assert format_money("77.45", "CHF") == "77.45 CHF"
 
 
 def test_build_final_reply_with_tool_error() -> None:

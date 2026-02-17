@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 
 from agent.planner import ToolCallPlan
@@ -58,10 +58,14 @@ PROFILE_FIELD_POSSESSIVE: dict[str, str] = {
 }
 
 
-def _format_decimal(value: Decimal) -> str:
-    """Format decimals without scientific notation."""
+def format_money(
+    amount: Decimal | int | float | str,
+    currency: str = "CHF",
+) -> str:
+    """Format a monetary amount with two decimals and optional currency."""
 
-    return format(value, "f")
+    decimal_amount = Decimal(str(amount)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    return f"{decimal_amount:.2f} {currency}" if currency else f"{decimal_amount:.2f}"
 
 
 def _debit_only_note(direction: RelevesDirection | None) -> str:
@@ -395,14 +399,13 @@ def build_final_reply(*, plan: ToolCallPlan, tool_result: object) -> str:
         return "OK — transactions rattachées au compte."
 
     if isinstance(tool_result, RelevesSumResult):
-        currency_suffix = f" {tool_result.currency}" if tool_result.currency else ""
+        currency = tool_result.currency or ""
         direction = tool_result.filters.direction if tool_result.filters is not None else None
-        display_total = abs(tool_result.total) if direction == RelevesDirection.DEBIT_ONLY else tool_result.total
         average = ""
         if tool_result.count > 0:
-            average = f" Moyenne: {_format_decimal(tool_result.average)}{currency_suffix}."
+            average = f" Moyenne: {format_money(tool_result.average, currency)}."
         return (
-            f"{_releves_total_label(tool_result)}: {_format_decimal(display_total)}{currency_suffix} "
+            f"{_releves_total_label(tool_result)}: {format_money(tool_result.total, currency)} "
             f"sur {tool_result.count} opération(s).{average}{_debit_only_note(direction)}"
         ).strip()
 
