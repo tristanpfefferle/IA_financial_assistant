@@ -5,6 +5,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from agent.loop import AgentLoop
+from shared.models import ToolError, ToolErrorCode
 
 
 class _FailIfCalledRouter:
@@ -25,6 +26,52 @@ class _DeleteBankAccountRouter:
     def call(self, tool_name: str, payload: dict, *, profile_id: UUID | None = None):
         assert tool_name == "finance_bank_accounts_delete"
         assert payload == {"name": "Courant"}
+        return {"ok": True}
+
+
+class _AmbiguousThenDeleteByIdRouter:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict]] = []
+
+    def call(self, tool_name: str, payload: dict, *, profile_id: UUID | None = None):
+        self.calls.append((tool_name, payload))
+        if len(self.calls) == 1:
+            assert tool_name == "finance_bank_accounts_delete"
+            assert payload == {"name": "joint"}
+            return ToolError(
+                code=ToolErrorCode.AMBIGUOUS,
+                message="Multiple bank accounts match the provided name.",
+                details={
+                    "name": "joint",
+                    "candidates": [
+                        {"id": "11111111-1111-1111-1111-111111111111", "name": "Joint"},
+                        {"id": "22222222-2222-2222-2222-222222222222", "name": "JOINT"},
+                    ],
+                },
+            )
+
+        assert tool_name == "finance_bank_accounts_delete"
+        assert payload == {"bank_account_id": "11111111-1111-1111-1111-111111111111"}
+        return {"ok": True}
+
+
+class _NotFoundSuggestionRouter:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict]] = []
+
+    def call(self, tool_name: str, payload: dict, *, profile_id: UUID | None = None):
+        self.calls.append((tool_name, payload))
+        if len(self.calls) == 1:
+            assert tool_name == "finance_bank_accounts_delete"
+            assert payload == {"name": "vacnces"}
+            return ToolError(
+                code=ToolErrorCode.NOT_FOUND,
+                message="Bank account not found for provided name.",
+                details={"name": "vacnces", "close_names": ["Compte vacances"]},
+            )
+
+        assert tool_name == "finance_bank_accounts_delete"
+        assert payload == {"name": "Compte vacances"}
         return {"ok": True}
 
 
@@ -76,3 +123,67 @@ def test_confirm_delete_bank_account_yes_executes_delete() -> None:
     assert reply.plan == {"tool_name": "finance_bank_accounts_delete", "payload": {"name": "Courant"}}
     assert reply.should_update_active_task is True
     assert reply.active_task is None
+
+
+def test_bank_account_ambiguous_sets_select_active_task_then_resolves_by_index() -> None:
+    router = _AmbiguousThenDeleteByIdRouter()
+    loop = AgentLoop(tool_router=router)
+
+    confirm_reply = loop.handle_user_message("supprime le compte joint")
+
+    assert confirm_reply.should_update_active_task is True
+    assert confirm_reply.active_task is not None
+    assert confirm_reply.active_task["type"] == "confirm_delete_bank_account"
+    assert confirm_reply.active_task["name"] == "joint"
+
+    first_reply = loop.handle_user_message("oui", active_task=confirm_reply.active_task)
+
+    assert first_reply.should_update_active_task is True
+    assert first_reply.active_task is not None
+    assert first_reply.active_task["type"] == "select_bank_account"
+    assert first_reply.active_task["original_tool_name"] == "finance_bank_accounts_delete"
+    assert first_reply.active_task["original_payload"] == {"name": "joint"}
+    assert first_reply.reply == (
+        "Plusieurs comptes correspondent: Joint, JOINT. Répondez avec le nom exact (ou 1/2)."
+    )
+
+    second_reply = loop.handle_user_message("1", active_task=first_reply.active_task)
+
+    assert second_reply.should_update_active_task is True
+    assert second_reply.active_task is None
+    assert second_reply.plan == {
+        "tool_name": "finance_bank_accounts_delete",
+        "payload": {"bank_account_id": "11111111-1111-1111-1111-111111111111"},
+    }
+
+
+def test_bank_account_not_found_suggestion_yes_replays_with_first_name() -> None:
+    router = _NotFoundSuggestionRouter()
+    loop = AgentLoop(tool_router=router)
+
+    confirm_reply = loop.handle_user_message("supprime le compte vacnces")
+
+    assert confirm_reply.should_update_active_task is True
+    assert confirm_reply.active_task is not None
+    assert confirm_reply.active_task["type"] == "confirm_delete_bank_account"
+    assert confirm_reply.active_task["name"] == "vacnces"
+
+    first_reply = loop.handle_user_message("oui", active_task=confirm_reply.active_task)
+
+    assert first_reply.should_update_active_task is True
+    assert first_reply.active_task is not None
+    assert first_reply.active_task["type"] == "select_bank_account"
+    assert first_reply.active_task["suggestions"] == ["Compte vacances"]
+    assert first_reply.reply == (
+        "Je ne trouve pas le compte « vacnces ». Vouliez-vous dire: Compte vacances ? "
+        "Répondez par le nom exact ou OUI pour choisir le premier."
+    )
+
+    second_reply = loop.handle_user_message("oui", active_task=first_reply.active_task)
+
+    assert second_reply.should_update_active_task is True
+    assert second_reply.active_task is None
+    assert second_reply.plan == {
+        "tool_name": "finance_bank_accounts_delete",
+        "payload": {"name": "Compte vacances"},
+    }
