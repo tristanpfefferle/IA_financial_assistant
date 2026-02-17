@@ -544,3 +544,15 @@ def test_profile_messages_do_not_delegate_to_llm() -> None:
     assert isinstance(plan, ToolCallPlan)
     assert plan.tool_name == "finance_profile_update"
     assert plan.payload == {"set": {"city": "Genève"}}
+
+
+def test_planner_releves_set_bank_account_pattern(monkeypatch) -> None:
+    monkeypatch.setattr("agent.planner._today", lambda: date(2025, 2, 10))
+
+    plan = plan_from_message("Rattache les transactions au compte UBS Principal")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_releves_set_bank_account"
+    assert plan.payload["bank_account_name"] == "UBS Principal"
+    assert plan.payload["filters"]["date_range"]["start_date"] == date(2025, 1, 11)
+    assert plan.payload["filters"]["date_range"]["end_date"] == date(2025, 2, 10)

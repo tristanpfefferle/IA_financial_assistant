@@ -33,6 +33,24 @@ class RelevesRepository(Protocol):
     def get_excluded_category_names(self, profile_id: UUID) -> set[str]:
         """Return normalized category names excluded from totals for the profile."""
 
+    def update_bank_account_id_by_ids(
+        self,
+        *,
+        profile_id: UUID,
+        releve_ids: list[UUID],
+        bank_account_id: UUID,
+    ) -> int:
+        """Attach selected releves to the given bank account and return updated row count."""
+
+    def update_bank_account_id_by_filters(
+        self,
+        *,
+        profile_id: UUID,
+        filters: RelevesFilters,
+        bank_account_id: UUID,
+    ) -> int:
+        """Attach filtered releves to the given bank account and return updated row count."""
+
 
 class InMemoryRelevesRepository:
     """In-memory repository used for local dev/tests when Supabase is not configured."""
@@ -132,6 +150,9 @@ class InMemoryRelevesRepository:
             merchant = filters.merchant.lower()
             items = [item for item in items if item.payee and merchant in item.payee.lower()]
 
+        if filters.bank_account_id is not None:
+            items = [item for item in items if item.bank_account_id == filters.bank_account_id]
+
         if filters.direction == RelevesDirection.DEBIT_ONLY:
             items = [item for item in items if item.montant < 0]
         elif filters.direction == RelevesDirection.CREDIT_ONLY:
@@ -206,6 +227,37 @@ class InMemoryRelevesRepository:
 
         return excluded
 
+    def update_bank_account_id_by_ids(
+        self,
+        *,
+        profile_id: UUID,
+        releve_ids: list[UUID],
+        bank_account_id: UUID,
+    ) -> int:
+        releve_ids_set = set(releve_ids)
+        updated = 0
+        for index, item in enumerate(self._seed):
+            if item.profile_id != profile_id or item.id not in releve_ids_set:
+                continue
+            self._seed[index] = item.model_copy(update={"bank_account_id": bank_account_id})
+            updated += 1
+        return updated
+
+    def update_bank_account_id_by_filters(
+        self,
+        *,
+        profile_id: UUID,
+        filters: RelevesFilters,
+        bank_account_id: UUID,
+    ) -> int:
+        scoped_filters = filters.model_copy(update={"profile_id": profile_id})
+        matching_ids = [item.id for item in self._apply_filters(scoped_filters)]
+        return self.update_bank_account_id_by_ids(
+            profile_id=profile_id,
+            releve_ids=matching_ids,
+            bank_account_id=bank_account_id,
+        )
+
 
 class SupabaseRelevesRepository:
     """Supabase-backed repository for releves_bancaires."""
@@ -230,6 +282,9 @@ class SupabaseRelevesRepository:
         elif filters.merchant:
             query.append(("payee", f"ilike.*{filters.merchant}*"))
 
+        if filters.bank_account_id is not None:
+            query.append(("bank_account_id", f"eq.{filters.bank_account_id}"))
+
         if filters.direction == RelevesDirection.DEBIT_ONLY:
             query.append(("montant", "lt.0"))
         elif filters.direction == RelevesDirection.CREDIT_ONLY:
@@ -240,7 +295,7 @@ class SupabaseRelevesRepository:
     def list_releves(self, filters: RelevesFilters) -> tuple[list[ReleveBancaire], int | None]:
         query = [
             *self._build_query(filters),
-            ("select", "id,profile_id,date,libelle,montant,devise,categorie,payee,merchant_id"),
+            ("select", "id,profile_id,date,libelle,montant,devise,categorie,payee,merchant_id,bank_account_id"),
             ("limit", filters.limit),
             ("offset", filters.offset),
         ]
@@ -248,7 +303,7 @@ class SupabaseRelevesRepository:
         return [ReleveBancaire.model_validate(row) for row in rows], total
 
     def sum_releves(self, filters: RelevesFilters) -> tuple[Decimal, int, str | None]:
-        query = [*self._build_query(filters), ("select", "montant,devise,categorie")]
+        query = [*self._build_query(filters), ("select", "montant,devise,categorie,bank_account_id")]
         rows, _ = self._client.get_rows(table="releves_bancaires", query=query, with_count=False)
 
         if filters.direction == RelevesDirection.DEBIT_ONLY:
@@ -274,7 +329,7 @@ class SupabaseRelevesRepository:
     def aggregate_releves(
         self, request: RelevesAggregateRequest
     ) -> tuple[dict[str, tuple[Decimal, int]], str | None]:
-        query = [*self._build_query(request), ("select", "montant,devise,date,categorie,payee")]
+        query = [*self._build_query(request), ("select", "montant,devise,date,categorie,payee,bank_account_id")]
         rows, _ = self._client.get_rows(table="releves_bancaires", query=query, with_count=False)
 
         if request.direction == RelevesDirection.DEBIT_ONLY:
@@ -330,3 +385,48 @@ class SupabaseRelevesRepository:
                 excluded.add(normalize_category_name(name))
 
         return excluded
+
+    def update_bank_account_id_by_ids(
+        self,
+        *,
+        profile_id: UUID,
+        releve_ids: list[UUID],
+        bank_account_id: UUID,
+    ) -> int:
+        if not releve_ids:
+            return 0
+
+        ids_filter = ",".join(str(releve_id) for releve_id in releve_ids)
+        rows = self._client.patch_rows(
+            table="releves_bancaires",
+            query={
+                "profile_id": f"eq.{profile_id}",
+                "id": f"in.({ids_filter})",
+                "select": "id",
+            },
+            payload={"bank_account_id": str(bank_account_id)},
+            use_anon_key=False,
+        )
+        return len(rows)
+
+    def update_bank_account_id_by_filters(
+        self,
+        *,
+        profile_id: UUID,
+        filters: RelevesFilters,
+        bank_account_id: UUID,
+    ) -> int:
+        scoped_filters = filters.model_copy(update={"profile_id": profile_id, "limit": 500, "offset": 0})
+        query = [*self._build_query(scoped_filters), ("select", "id")]
+        matching_rows, _ = self._client.get_rows(
+            table="releves_bancaires",
+            query=query,
+            with_count=False,
+            use_anon_key=False,
+        )
+        releve_ids = [UUID(str(row["id"])) for row in matching_rows if row.get("id")]
+        return self.update_bank_account_id_by_ids(
+            profile_id=profile_id,
+            releve_ids=releve_ids,
+            bank_account_id=bank_account_id,
+        )

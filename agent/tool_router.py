@@ -104,6 +104,33 @@ class _BankAccountSetDefaultByNamePayload(BaseModel):
         return self
 
 
+class _RelevesSetBankAccountPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    bank_account_id: UUID | None = None
+    bank_account_name: str | None = None
+    filters: dict[str, object] | None = None
+    releve_ids: list[UUID] | None = None
+    releves_ids: list[UUID] | None = None
+
+    @model_validator(mode="after")
+    def validate_payload(self) -> "_RelevesSetBankAccountPayload":
+        has_account_identifier = self.bank_account_id is not None or (
+            self.bank_account_name is not None and self.bank_account_name.strip()
+        )
+        if not has_account_identifier:
+            raise ValueError("Either bank_account_id or bank_account_name must be provided")
+
+        has_ids = bool(self.releve_ids or self.releves_ids)
+        if not has_ids and self.filters is None:
+            raise ValueError("Either releve_ids/releves_ids or filters must be provided")
+
+        if has_ids and self.filters is not None:
+            raise ValueError("Provide either releve_ids/releves_ids or filters, not both")
+
+        return self
+
+
 @dataclass(slots=True)
 class ToolRouter:
     backend_client: BackendClient
@@ -280,6 +307,7 @@ class ToolRouter:
             "finance_transactions_sum",
             "finance_releves_sum",
             "finance_releves_aggregate",
+            "finance_releves_set_bank_account",
             "finance_categories_list",
             "finance_categories_create",
             "finance_categories_update",
@@ -297,6 +325,15 @@ class ToolRouter:
                 code=ToolErrorCode.VALIDATION_ERROR,
                 message=f"Missing profile_id context for tool {tool_name}",
             )
+
+        if profile_id is not None and not isinstance(profile_id, UUID):
+            try:
+                profile_id = UUID(str(profile_id))
+            except ValueError:
+                return ToolError(
+                    code=ToolErrorCode.VALIDATION_ERROR,
+                    message=f"Invalid profile_id context for tool {tool_name}",
+                )
 
         if tool_name in {"finance_transactions_search", "finance_releves_search"}:
             try:
@@ -332,6 +369,34 @@ class ToolRouter:
                     details={"validation_errors": exc.errors(), "payload": payload},
                 )
             return self.backend_client.releves_aggregate(request)
+
+        if tool_name == "finance_releves_set_bank_account":
+            try:
+                request_payload = _RelevesSetBankAccountPayload.model_validate(payload)
+            except ValidationError as exc:
+                return ToolError(
+                    code=ToolErrorCode.VALIDATION_ERROR,
+                    message=f"Invalid payload for tool {tool_name}",
+                    details={"validation_errors": exc.errors(), "payload": payload},
+                )
+
+            bank_account_id = request_payload.bank_account_id
+            if bank_account_id is None:
+                matched = self._find_bank_account_by_name(
+                    profile_id=profile_id,
+                    name=request_payload.bank_account_name or "",
+                )
+                if isinstance(matched, ToolError):
+                    return matched
+                bank_account_id = matched.id
+
+            releve_ids = request_payload.releve_ids or request_payload.releves_ids
+            return self.backend_client.finance_releves_set_bank_account(
+                profile_id=profile_id,
+                bank_account_id=bank_account_id,
+                filters=request_payload.filters,
+                releve_ids=releve_ids,
+            )
 
         if tool_name == "finance_categories_list":
             if payload:

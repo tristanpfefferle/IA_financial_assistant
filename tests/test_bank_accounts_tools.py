@@ -97,3 +97,59 @@ def test_finance_bank_accounts_can_delete_returns_not_empty_reason() -> None:
     )
 
     assert result == {"ok": True, "can_delete": False, "reason": "not_empty"}
+
+
+def test_finance_releves_set_bank_account_returns_updated_count() -> None:
+    bank_accounts_repository = SimpleNamespace(
+        list_bank_accounts=lambda *, profile_id: [
+            BankAccount(
+                id=BANK_ACCOUNT_ID,
+                profile_id=profile_id,
+                name="UBS",
+                kind="individual",
+                account_kind="personal_current",
+                is_system=False,
+            )
+        ]
+    )
+    releves_repository = SimpleNamespace(
+        update_bank_account_id_by_ids=lambda **kwargs: 2,
+        update_bank_account_id_by_filters=lambda **kwargs: 0,
+    )
+    service = BackendToolService(
+        transactions_repository=SimpleNamespace(),
+        releves_repository=releves_repository,
+        categories_repository=SimpleNamespace(),
+        bank_accounts_repository=bank_accounts_repository,
+        profiles_repository=SimpleNamespace(get_profile_fields=lambda **kwargs: {}),
+    )
+
+    result = service.finance_releves_set_bank_account(
+        profile_id=PROFILE_ID,
+        bank_account_id=BANK_ACCOUNT_ID,
+        releve_ids=[UUID("11111111-1111-1111-1111-111111111111")],
+    )
+
+    assert result == {"ok": True, "updated_count": 2}
+
+
+def test_finance_releves_set_bank_account_returns_not_found_when_unknown_account() -> None:
+    service = BackendToolService(
+        transactions_repository=SimpleNamespace(),
+        releves_repository=SimpleNamespace(
+            update_bank_account_id_by_ids=lambda **kwargs: 2,
+            update_bank_account_id_by_filters=lambda **kwargs: 0,
+        ),
+        categories_repository=SimpleNamespace(),
+        bank_accounts_repository=SimpleNamespace(list_bank_accounts=lambda *, profile_id: []),
+        profiles_repository=SimpleNamespace(get_profile_fields=lambda **kwargs: {}),
+    )
+
+    result = service.finance_releves_set_bank_account(
+        profile_id=PROFILE_ID,
+        bank_account_id=BANK_ACCOUNT_ID,
+        releve_ids=[UUID("11111111-1111-1111-1111-111111111111")],
+    )
+
+    assert isinstance(result, ToolError)
+    assert result.code == ToolErrorCode.NOT_FOUND

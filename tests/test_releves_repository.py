@@ -19,9 +19,11 @@ from shared.models import (
 
 
 class _ClientStub:
-    def __init__(self, rows: list[dict[str, object]] | None = None) -> None:
+    def __init__(self, rows: list[dict[str, object]] | None = None, patch_rows: list[dict[str, object]] | None = None) -> None:
         self.calls: list[dict[str, object]] = []
+        self.patch_calls: list[dict[str, object]] = []
         self._rows = rows or []
+        self._patch_rows = patch_rows or []
 
     def get_rows(self, *, table, query, with_count, use_anon_key=False):
         self.calls.append(
@@ -33,6 +35,17 @@ class _ClientStub:
             }
         )
         return self._rows, 0
+
+    def patch_rows(self, *, table, query, payload, use_anon_key=False):
+        self.patch_calls.append(
+            {
+                "table": table,
+                "query": query,
+                "payload": payload,
+                "use_anon_key": use_anon_key,
+            }
+        )
+        return self._patch_rows
 
 
 def test_build_query_repeats_date_key_for_date_range() -> None:
@@ -215,3 +228,61 @@ def test_supabase_credit_only_does_not_apply_excluded_categories(monkeypatch) ->
     assert total == Decimal("100")
     assert count == 1
     assert currency == "EUR"
+
+
+def test_build_query_includes_bank_account_filter() -> None:
+    client = _ClientStub()
+    repository = SupabaseRelevesRepository(client=client)
+
+    filters = RelevesFilters(
+        profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+        bank_account_id=UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+        limit=10,
+        offset=0,
+    )
+
+    repository.list_releves(filters)
+
+    query = client.calls[0]["query"]
+    assert ("bank_account_id", "eq.bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb") in query
+
+
+def test_update_bank_account_id_by_ids_uses_patch_rows() -> None:
+    client = _ClientStub(patch_rows=[{"id": "1"}, {"id": "2"}])
+    repository = SupabaseRelevesRepository(client=client)
+
+    updated_count = repository.update_bank_account_id_by_ids(
+        profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+        releve_ids=[
+            UUID("11111111-1111-1111-1111-111111111111"),
+            UUID("22222222-2222-2222-2222-222222222222"),
+        ],
+        bank_account_id=UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+    )
+
+    assert updated_count == 2
+    assert client.patch_calls[0]["table"] == "releves_bancaires"
+    assert client.patch_calls[0]["payload"] == {"bank_account_id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"}
+
+
+def test_update_bank_account_id_by_filters_fetches_ids_then_updates() -> None:
+    client = _ClientStub(
+        rows=[{"id": "11111111-1111-1111-1111-111111111111"}],
+        patch_rows=[{"id": "11111111-1111-1111-1111-111111111111"}],
+    )
+    repository = SupabaseRelevesRepository(client=client)
+
+    updated_count = repository.update_bank_account_id_by_filters(
+        profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+        filters=RelevesFilters(
+            profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            bank_account_id=None,
+            limit=50,
+            offset=0,
+        ),
+        bank_account_id=UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+    )
+
+    assert updated_count == 1
+    assert client.calls[0]["table"] == "releves_bancaires"
+    assert client.patch_calls[0]["query"]["id"].startswith("in.(")

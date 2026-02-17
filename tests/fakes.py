@@ -60,9 +60,10 @@ class FakeBackendClient:
     categories: list[ProfileCategory] = field(default_factory=list)
     bank_accounts: list[BankAccount] = field(default_factory=list)
     profile_data_by_id: dict[UUID, dict[str, object | None]] = field(default_factory=dict)
+    releves: list[ReleveBancaire] = field(default_factory=lambda: [item.model_copy() for item in _FIXED_RELEVES])
 
     def _filtered_items(self, filters: RelevesFilters) -> list[ReleveBancaire]:
-        items = list(_FIXED_RELEVES)
+        items = list(self.releves)
 
         if filters.merchant:
             needle = filters.merchant.lower()
@@ -85,6 +86,9 @@ class FakeBackendClient:
         if filters.categorie:
             categorie = filters.categorie.lower()
             items = [item for item in items if (item.categorie or "").lower() == categorie]
+
+        if filters.bank_account_id is not None:
+            items = [item for item in items if item.bank_account_id == filters.bank_account_id]
 
         return items
 
@@ -140,6 +144,46 @@ class FakeBackendClient:
             currency="CHF",
             filters=request,
         )
+
+
+
+    def finance_releves_set_bank_account(
+        self,
+        *,
+        profile_id: UUID,
+        bank_account_id: UUID,
+        filters: dict[str, object] | None = None,
+        releve_ids: list[UUID] | None = None,
+    ) -> dict[str, object] | ToolError:
+        matches = [account for account in self.bank_accounts if account.profile_id == profile_id and account.id == bank_account_id]
+        if not matches:
+            return ToolError(code=ToolErrorCode.NOT_FOUND, message="Bank account not found")
+
+        if releve_ids is not None:
+            ids = set(releve_ids)
+            updated_count = 0
+            for index, item in enumerate(self.releves):
+                if item.id not in ids:
+                    continue
+                self.releves[index] = item.model_copy(update={"bank_account_id": bank_account_id})
+                updated_count += 1
+            return {"ok": True, "updated_count": updated_count}
+
+        releves_filters = RelevesFilters.model_validate({
+            **(filters or {}),
+            "profile_id": str(profile_id),
+            "limit": 500,
+            "offset": 0,
+        })
+        filtered = self._filtered_items(releves_filters)
+        ids = {item.id for item in filtered}
+        updated_count = 0
+        for index, item in enumerate(self.releves):
+            if item.id not in ids:
+                continue
+            self.releves[index] = item.model_copy(update={"bank_account_id": bank_account_id})
+            updated_count += 1
+        return {"ok": True, "updated_count": updated_count}
 
     def finance_categories_list(self, profile_id: UUID) -> CategoriesListResult:
         return CategoriesListResult(items=[item for item in self.categories if item.profile_id == profile_id])
