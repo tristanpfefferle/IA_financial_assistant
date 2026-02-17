@@ -194,7 +194,18 @@ class BackendToolService:
             return ToolError(code=ToolErrorCode.BACKEND_ERROR, message="Bank accounts repository unavailable")
         try:
             items = self.bank_accounts_repository.list_bank_accounts(profile_id=profile_id)
-            return BankAccountsListResult(items=items)
+            default_id = None
+
+            if self.profiles_repository is not None:
+                data = self.profiles_repository.get_profile_fields(
+                    profile_id=profile_id,
+                    fields=["default_bank_account_id"],
+                )
+                raw = data.get("default_bank_account_id")
+                if raw:
+                    default_id = UUID(str(raw))
+
+            return BankAccountsListResult(items=items, default_bank_account_id=default_id)
         except Exception as exc:
             return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))
 
