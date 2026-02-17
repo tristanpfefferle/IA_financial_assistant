@@ -304,6 +304,46 @@ def test_planner_categories_rename_change_pattern() -> None:
     assert plan.payload == {"category_name": "Autres", "name": "Divers"}
 
 
+def test_planner_bank_accounts_list_pattern() -> None:
+    plan = plan_from_message("Liste mes comptes bancaires")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_bank_accounts_list"
+    assert plan.payload == {}
+
+
+def test_planner_bank_account_create_pattern() -> None:
+    plan = plan_from_message("Ajoute un compte Epargne")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_bank_accounts_create"
+    assert plan.payload == {"name": "Epargne"}
+
+
+def test_planner_bank_account_rename_pattern() -> None:
+    plan = plan_from_message("Renomme le compte Courant en Compte principal")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_bank_accounts_update"
+    assert plan.payload == {"name": "Courant", "set": {"name": "Compte principal"}}
+
+
+def test_planner_bank_account_delete_requires_confirmation() -> None:
+    plan = plan_from_message("Supprime le compte Courant")
+
+    assert isinstance(plan, SetActiveTaskPlan)
+    assert plan.active_task["type"] == "confirm_delete_bank_account"
+    assert plan.active_task["name"] == "Courant"
+
+
+def test_planner_bank_account_set_default_pattern() -> None:
+    plan = plan_from_message("Définis Epargne comme compte par défaut")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_bank_accounts_set_default"
+    assert plan.payload == {"name": "Epargne"}
+
+
 def test_planner_profile_get_first_name() -> None:
     plan = plan_from_message("Quel est mon prénom ?")
 

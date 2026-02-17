@@ -9,6 +9,8 @@ from uuid import UUID
 from agent.answer_builder import build_final_reply
 from agent.planner import ToolCallPlan
 from shared.models import (
+    BankAccount,
+    BankAccountsListResult,
     CategoriesListResult,
     ProfileDataResult,
     ProfileCategory,
@@ -163,6 +165,60 @@ def test_build_final_reply_with_categories_mutations() -> None:
     assert create_reply == "Catégorie créée: Transport."
     assert update_reply == "Catégorie renommée : Transport → Mobilité."
     assert delete_reply == "Catégorie supprimée : Transport."
+
+
+def test_build_final_reply_with_bank_accounts_mutations() -> None:
+    account = BankAccount(
+        id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+        profile_id=UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+        name="Compte courant",
+        kind="individual",
+        account_kind="personal_current",
+        is_system=False,
+    )
+
+    create_reply = build_final_reply(
+        plan=ToolCallPlan(tool_name="finance_bank_accounts_create", payload={"name": "Compte courant"}, user_reply="OK"),
+        tool_result=account,
+    )
+    update_reply = build_final_reply(
+        plan=ToolCallPlan(tool_name="finance_bank_accounts_update", payload={"name": "Compte courant", "set": {"name": "Compte principal"}}, user_reply="OK"),
+        tool_result=account.model_copy(update={"name": "Compte principal"}),
+    )
+    delete_reply = build_final_reply(
+        plan=ToolCallPlan(tool_name="finance_bank_accounts_delete", payload={"name": "Compte principal"}, user_reply="OK"),
+        tool_result={"ok": True},
+    )
+    default_reply = build_final_reply(
+        plan=ToolCallPlan(tool_name="finance_bank_accounts_set_default", payload={"name": "Compte principal"}, user_reply="OK"),
+        tool_result={"ok": True, "default_bank_account_id": str(account.id)},
+    )
+
+    assert create_reply == "Compte créé: Compte courant."
+    assert update_reply == "Compte mis à jour: Compte principal."
+    assert delete_reply == "Compte supprimé: Compte principal."
+    assert default_reply == "Compte par défaut: Compte principal."
+
+
+def test_build_final_reply_with_bank_accounts_list() -> None:
+    result = BankAccountsListResult(
+        items=[
+            BankAccount(
+                id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+                profile_id=UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+                name="Courant",
+                kind="individual",
+                account_kind="personal_current",
+                is_system=False,
+            )
+        ]
+    )
+    reply = build_final_reply(
+        plan=ToolCallPlan(tool_name="finance_bank_accounts_list", payload={}, user_reply="OK"),
+        tool_result=result,
+    )
+
+    assert reply == "- Courant (personal_current, individual)"
 
 
 def test_build_final_reply_not_found_with_suggestions() -> None:

@@ -9,11 +9,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from uuid import UUID
 
+from backend.repositories.bank_accounts_repository import BankAccountsRepository
 from backend.repositories.categories_repository import CategoriesRepository
 from backend.repositories.profiles_repository import ProfilesRepository
 from backend.repositories.releves_repository import RelevesRepository
 from backend.repositories.transactions_repository import TransactionsRepository
 from shared.models import (
+    BankAccount,
+    BankAccountCreateRequest,
+    BankAccountDeleteRequest,
+    BankAccountSetDefaultRequest,
+    BankAccountsListResult,
+    BankAccountUpdateRequest,
     CategoriesListResult,
     CategoryCreateRequest,
     CategoryDeleteRequest,
@@ -39,6 +46,7 @@ class BackendToolService:
     transactions_repository: TransactionsRepository
     releves_repository: RelevesRepository
     categories_repository: CategoriesRepository
+    bank_accounts_repository: BankAccountsRepository | None = None
     profiles_repository: ProfilesRepository | None = None
 
     def search_transactions(self, filters: TransactionFilters) -> TransactionSearchResult | ToolError:
@@ -179,4 +187,87 @@ class BackendToolService:
         except ValueError as exc:
             return ToolError(code=ToolErrorCode.NOT_FOUND, message=str(exc))
         except Exception as exc:  # placeholder normalization at contract boundary
+            return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))
+
+    def finance_bank_accounts_list(self, profile_id: UUID) -> BankAccountsListResult | ToolError:
+        if self.bank_accounts_repository is None:
+            return ToolError(code=ToolErrorCode.BACKEND_ERROR, message="Bank accounts repository unavailable")
+        try:
+            items = self.bank_accounts_repository.list_bank_accounts(profile_id=profile_id)
+            return BankAccountsListResult(items=items)
+        except Exception as exc:
+            return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))
+
+    def finance_bank_accounts_create(
+        self,
+        profile_id: UUID,
+        name: str,
+        kind: str | None = None,
+        account_kind: str | None = None,
+    ) -> BankAccount | ToolError:
+        if self.bank_accounts_repository is None:
+            return ToolError(code=ToolErrorCode.BACKEND_ERROR, message="Bank accounts repository unavailable")
+        try:
+            return self.bank_accounts_repository.create_bank_account(
+                BankAccountCreateRequest(
+                    profile_id=profile_id,
+                    name=name,
+                    kind=kind,
+                    account_kind=account_kind,
+                )
+            )
+        except Exception as exc:
+            return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))
+
+    def finance_bank_accounts_update(
+        self,
+        profile_id: UUID,
+        bank_account_id: UUID,
+        set_fields: dict[str, str],
+    ) -> BankAccount | ToolError:
+        if self.bank_accounts_repository is None:
+            return ToolError(code=ToolErrorCode.BACKEND_ERROR, message="Bank accounts repository unavailable")
+        try:
+            return self.bank_accounts_repository.update_bank_account(
+                BankAccountUpdateRequest(
+                    profile_id=profile_id,
+                    bank_account_id=bank_account_id,
+                    set=set_fields,
+                )
+            )
+        except ValueError as exc:
+            return ToolError(code=ToolErrorCode.NOT_FOUND, message=str(exc))
+        except Exception as exc:
+            return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))
+
+    def finance_bank_accounts_delete(self, profile_id: UUID, bank_account_id: UUID) -> dict[str, bool] | ToolError:
+        if self.bank_accounts_repository is None:
+            return ToolError(code=ToolErrorCode.BACKEND_ERROR, message="Bank accounts repository unavailable")
+        try:
+            self.bank_accounts_repository.delete_bank_account(
+                BankAccountDeleteRequest(profile_id=profile_id, bank_account_id=bank_account_id)
+            )
+            return {"ok": True}
+        except ValueError as exc:
+            if str(exc) == "bank account not empty":
+                return ToolError(code=ToolErrorCode.CONFLICT, message=str(exc))
+            return ToolError(code=ToolErrorCode.NOT_FOUND, message=str(exc))
+        except Exception as exc:
+            return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))
+
+    def finance_bank_accounts_set_default(
+        self,
+        profile_id: UUID,
+        bank_account_id: UUID,
+    ) -> dict[str, object] | ToolError:
+        if self.bank_accounts_repository is None:
+            return ToolError(code=ToolErrorCode.BACKEND_ERROR, message="Bank accounts repository unavailable")
+        try:
+            default_bank_account_id = self.bank_accounts_repository.set_default_bank_account(
+                BankAccountSetDefaultRequest(profile_id=profile_id, bank_account_id=bank_account_id)
+            )
+            return {"ok": True, "default_bank_account_id": str(default_bank_account_id)}
+        except ValueError as exc:
+            return ToolError(code=ToolErrorCode.NOT_FOUND, message=str(exc))
+        except Exception as exc:
             return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))

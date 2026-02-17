@@ -21,6 +21,13 @@ class _DeleteRouter:
         return {"ok": True}
 
 
+class _DeleteBankAccountRouter:
+    def call(self, tool_name: str, payload: dict, *, profile_id: UUID | None = None):
+        assert tool_name == "finance_bank_accounts_delete"
+        assert payload == {"name": "Courant"}
+        return {"ok": True}
+
+
 def test_confirm_delete_category_yes_executes_delete() -> None:
     loop = AgentLoop(tool_router=_DeleteRouter())
 
@@ -56,3 +63,16 @@ def test_confirm_delete_category_invalid_prompts_again() -> None:
     assert reply.reply == "Répondez OUI ou NON."
     assert reply.should_update_active_task is True
     assert reply.active_task == active_task
+
+
+def test_confirm_delete_bank_account_yes_executes_delete() -> None:
+    loop = AgentLoop(tool_router=_DeleteBankAccountRouter())
+
+    reply = loop.handle_user_message(
+        "oui",
+        active_task={"type": "confirm_delete_bank_account", "name": "Courant"},
+    )
+
+    assert reply.plan == {"tool_name": "finance_bank_accounts_delete", "payload": {"name": "Courant"}}
+    assert reply.should_update_active_task is True
+    assert reply.active_task is None
