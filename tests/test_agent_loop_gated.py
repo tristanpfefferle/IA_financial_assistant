@@ -316,6 +316,48 @@ def test_gated_invalid_releves_sum_payload_falls_back(monkeypatch) -> None:
     assert reply.reply == "deterministic"
 
 
+def test_gated_allows_releves_aggregate_with_valid_payload(monkeypatch) -> None:
+    router = _RouterSpy()
+    _configure_gated(
+        monkeypatch,
+        allowlist={"finance_releves_aggregate"},
+        deterministic_plan=NoopPlan(reply="deterministic"),
+        llm_plan=ToolCallPlan(
+            tool_name="finance_releves_aggregate",
+            payload={"group_by": "categorie", "direction": "DEBIT_ONLY"},
+            user_reply="OK.",
+        ),
+    )
+
+    AgentLoop(tool_router=router, llm_planner=object()).handle_user_message("query")
+
+    assert router.calls == [
+        (
+            "finance_releves_aggregate",
+            {"group_by": "categorie", "direction": "DEBIT_ONLY"},
+        )
+    ]
+
+
+def test_gated_invalid_releves_aggregate_payload_falls_back(monkeypatch) -> None:
+    router = _RouterSpy()
+    _configure_gated(
+        monkeypatch,
+        allowlist={"finance_releves_aggregate"},
+        deterministic_plan=NoopPlan(reply="deterministic"),
+        llm_plan=ToolCallPlan(
+            tool_name="finance_releves_aggregate",
+            payload={"group_by": ""},
+            user_reply="OK.",
+        ),
+    )
+
+    reply = AgentLoop(tool_router=router, llm_planner=object()).handle_user_message("query")
+
+    assert router.calls == []
+    assert reply.reply == "deterministic"
+
+
 def test_gated_logs_tool_blocked_event(monkeypatch, caplog) -> None:
     router = _RouterSpy()
     _configure_gated(
