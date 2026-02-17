@@ -494,3 +494,29 @@ def test_build_final_reply_with_releves_set_bank_account_result() -> None:
     )
 
     assert reply == "OK — j’ai rattaché 3 transaction(s) au compte « UBS Principal »."
+
+
+def test_build_final_reply_with_releves_import_analyze_requires_confirmation() -> None:
+    from shared.models import RelevesImportResult
+
+    plan = ToolCallPlan(
+        tool_name="finance_releves_import_files",
+        payload={"import_mode": "analyze"},
+        user_reply="OK",
+    )
+    result = RelevesImportResult(
+        imported_count=0,
+        failed_count=0,
+        duplicates_count=0,
+        replaced_count=0,
+        identical_count=1,
+        modified_count=2,
+        new_count=3,
+        requires_confirmation=True,
+        errors=[],
+        preview=[],
+    )
+
+    reply = build_final_reply(plan=plan, tool_result=result)
+
+    assert "Confirmer pour importer" in reply

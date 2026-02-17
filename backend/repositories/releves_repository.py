@@ -51,6 +51,20 @@ class RelevesRepository(Protocol):
     ) -> int:
         """Attach filtered releves to the given bank account and return updated row count."""
 
+    def list_releves_for_import(
+        self,
+        *,
+        profile_id: UUID,
+        bank_account_id: UUID | None,
+    ) -> list[dict[str, object]]:
+        """Return rows used for dedup/compare during releves import."""
+
+    def insert_releves_bulk(self, *, profile_id: UUID, rows: list[dict[str, object]]) -> int:
+        """Insert multiple releves rows and return inserted count."""
+
+    def delete_releves_by_ids(self, *, profile_id: UUID, releve_ids: list[UUID]) -> int:
+        """Delete releves by ids and return deleted count."""
+
 
 class InMemoryRelevesRepository:
     """In-memory repository used for local dev/tests when Supabase is not configured."""
@@ -258,6 +272,59 @@ class InMemoryRelevesRepository:
             bank_account_id=bank_account_id,
         )
 
+    def list_releves_for_import(
+        self,
+        *,
+        profile_id: UUID,
+        bank_account_id: UUID | None,
+    ) -> list[dict[str, object]]:
+        rows: list[dict[str, object]] = []
+        for item in self._seed:
+            if item.profile_id != profile_id:
+                continue
+            if bank_account_id is not None and item.bank_account_id != bank_account_id:
+                continue
+            rows.append(
+                {
+                    "id": item.id,
+                    "date": item.date,
+                    "montant": item.montant,
+                    "devise": item.devise,
+                    "libelle": item.libelle,
+                    "payee": item.payee,
+                    "categorie": item.categorie,
+                    "bank_account_id": item.bank_account_id,
+                }
+            )
+        return rows
+
+    def insert_releves_bulk(self, *, profile_id: UUID, rows: list[dict[str, object]]) -> int:
+        if not rows:
+            return 0
+        for row in rows:
+            next_id = UUID(int=len(self._seed) + 1)
+            self._seed.append(
+                ReleveBancaire(
+                    id=next_id,
+                    profile_id=profile_id,
+                    date=row["date"],
+                    libelle=row.get("libelle"),
+                    montant=row["montant"],
+                    devise=str(row.get("devise") or "CHF"),
+                    categorie=row.get("categorie"),
+                    payee=row.get("payee"),
+                    merchant_id=None,
+                    bank_account_id=row.get("bank_account_id"),
+                )
+            )
+        return len(rows)
+
+    def delete_releves_by_ids(self, *, profile_id: UUID, releve_ids: list[UUID]) -> int:
+        ids = set(releve_ids)
+        before = len(self._seed)
+        self._seed = [row for row in self._seed if not (row.profile_id == profile_id and row.id in ids)]
+        return before - len(self._seed)
+
 
 class SupabaseRelevesRepository:
     """Supabase-backed repository for releves_bancaires."""
@@ -430,3 +497,68 @@ class SupabaseRelevesRepository:
             releve_ids=releve_ids,
             bank_account_id=bank_account_id,
         )
+
+    def list_releves_for_import(
+        self,
+        *,
+        profile_id: UUID,
+        bank_account_id: UUID | None,
+    ) -> list[dict[str, object]]:
+        query: list[tuple[str, str | int]] = [
+            ("profile_id", f"eq.{profile_id}"),
+            ("select", "id,date,montant,devise,libelle,payee,categorie,bank_account_id"),
+            ("limit", 5000),
+            ("offset", 0),
+        ]
+        if bank_account_id is not None:
+            query.insert(1, ("bank_account_id", f"eq.{bank_account_id}"))
+        rows, _ = self._client.get_rows(table="releves_bancaires", query=query, with_count=False)
+        return [
+            {
+                "id": UUID(str(row["id"])),
+                "date": date.fromisoformat(str(row["date"])),
+                "montant": Decimal(str(row["montant"])),
+                "devise": row.get("devise"),
+                "libelle": row.get("libelle"),
+                "payee": row.get("payee"),
+                "categorie": row.get("categorie"),
+                "bank_account_id": UUID(str(row["bank_account_id"])) if row.get("bank_account_id") else None,
+            }
+            for row in rows
+        ]
+
+    def insert_releves_bulk(self, *, profile_id: UUID, rows: list[dict[str, object]]) -> int:
+        if not rows:
+            return 0
+        payload = [
+            {
+                "profile_id": str(profile_id),
+                "bank_account_id": str(row["bank_account_id"]) if row.get("bank_account_id") else None,
+                "date": row["date"].isoformat(),
+                "montant": str(row["montant"]),
+                "devise": row.get("devise") or "CHF",
+                "libelle": row.get("libelle"),
+                "payee": row.get("payee"),
+                "categorie": row.get("categorie"),
+                "metadonnees": row.get("meta"),
+                "source": row.get("source"),
+            }
+            for row in rows
+        ]
+        inserted = self._client.post_rows(table="releves_bancaires", payload=payload, use_anon_key=False)
+        return len(inserted)
+
+    def delete_releves_by_ids(self, *, profile_id: UUID, releve_ids: list[UUID]) -> int:
+        if not releve_ids:
+            return 0
+        ids_filter = ",".join(str(releve_id) for releve_id in releve_ids)
+        rows = self._client.delete_rows(
+            table="releves_bancaires",
+            query={
+                "profile_id": f"eq.{profile_id}",
+                "id": f"in.({ids_filter})",
+                "select": "id",
+            },
+            use_anon_key=False,
+        )
+        return len(rows)

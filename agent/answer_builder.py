@@ -15,6 +15,7 @@ from shared.models import (
     ProfileCategory,
     RelevesAggregateResult,
     RelevesDirection,
+    RelevesImportResult,
     RelevesSearchResult,
     RelevesSumResult,
     ToolError,
@@ -418,5 +419,27 @@ def build_final_reply(*, plan: ToolCallPlan, tool_result: object) -> str:
         if examples:
             return f"J'ai trouvé {count} opération(s), par exemple: {', '.join(examples)}."
         return f"J'ai trouvé {count} opération(s)."
+
+    if isinstance(tool_result, RelevesImportResult):
+        if plan.payload.get("import_mode", "analyze") == "commit":
+            message = (
+                f"Import terminé : {tool_result.imported_count} importée(s), "
+                f"{tool_result.replaced_count} remplacée(s), {tool_result.identical_count} identique(s)."
+            )
+        elif tool_result.requires_confirmation:
+            message = (
+                f"Analyse terminée : {tool_result.new_count} nouvelles, "
+                f"{tool_result.identical_count} identiques, {tool_result.modified_count} modifiées. "
+                "Confirmer pour importer (commit) / choisir replace si besoin."
+            )
+        else:
+            message = (
+                f"Analyse terminée : {tool_result.new_count} nouvelles, "
+                f"{tool_result.identical_count} identiques, {tool_result.modified_count} modifiées."
+            )
+        if tool_result.errors:
+            samples = [f"{error.file}: {error.message}" for error in tool_result.errors[:3]]
+            message = f"{message} Erreurs: {' | '.join(samples)}"
+        return message
 
     return f"{plan.user_reply} (résultat indisponible)"

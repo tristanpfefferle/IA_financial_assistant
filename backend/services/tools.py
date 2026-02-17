@@ -16,6 +16,7 @@ from backend.repositories.categories_repository import CategoriesRepository
 from backend.repositories.profiles_repository import ProfilesRepository
 from backend.repositories.releves_repository import RelevesRepository
 from backend.repositories.transactions_repository import TransactionsRepository
+from backend.services.releves_import import RelevesImportService
 from shared.models import (
     BankAccount,
     BankAccountCreateRequest,
@@ -33,6 +34,8 @@ from shared.models import (
     RelevesAggregateRequest,
     RelevesAggregateResult,
     RelevesFilters,
+    RelevesImportRequest,
+    RelevesImportResult,
     RelevesSearchResult,
     RelevesSumResult,
     ToolError,
@@ -50,6 +53,17 @@ class BackendToolService:
     categories_repository: CategoriesRepository
     bank_accounts_repository: BankAccountsRepository | None = None
     profiles_repository: ProfilesRepository | None = None
+
+    def finance_releves_import_files(
+        self,
+        *,
+        request: RelevesImportRequest,
+    ) -> RelevesImportResult | ToolError:
+        try:
+            service = RelevesImportService(releves_repository=self.releves_repository)
+            return service.import_releves(request)
+        except Exception as exc:
+            return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))
 
     def search_transactions(
         self, filters: TransactionFilters

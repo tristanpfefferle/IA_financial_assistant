@@ -13,6 +13,8 @@ from shared.models import (
     RelevesAggregateRequest,
     RelevesAggregateResult,
     RelevesFilters,
+    RelevesImportRequest,
+    RelevesImportResult,
     RelevesSearchResult,
     RelevesSumResult,
     ProfileCategory,
@@ -64,6 +66,13 @@ class BackendClient:
             filters=filters,
             releve_ids=releve_ids,
         )
+
+    def finance_releves_import_files(
+        self,
+        *,
+        request: RelevesImportRequest,
+    ) -> RelevesImportResult | ToolError:
+        return self.tool_service.finance_releves_import_files(request=request)
 
     def finance_categories_list(self, profile_id: UUID) -> CategoriesListResult | ToolError:
         return self.tool_service.finance_categories_list(profile_id=profile_id)
