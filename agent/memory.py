@@ -61,6 +61,21 @@ _EXPLICIT_FILTER_KEYWORDS = {
     "marchand",
 }
 _DATE_LITERAL_PATTERN = re.compile(r"\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}/\d{1,2}/\d{2,4}\b")
+_CATEGORY_STOPWORDS = {
+    "salut",
+    "bonjour",
+    "merci",
+    "ok",
+    "oui",
+    "non",
+    "depenses",
+    "dépenses",
+    "revenus",
+    "revenu",
+    "credit",
+    "debit",
+    "les deux",
+}
 _NON_FOCUS_MESSAGES = {
     "ok",
     "oui",
@@ -678,6 +693,10 @@ def _sanitize_memory_filters(
             filters.pop("categorie", None)
             return
         filters["categorie"] = matched
+        return
+
+    if normalized_category in _CATEGORY_STOPWORDS:
+        filters.pop("categorie", None)
         return
 
     if _DATE_LITERAL_PATTERN.search(raw_category) is not None:

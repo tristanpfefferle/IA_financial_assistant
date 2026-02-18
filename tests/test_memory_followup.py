@@ -165,3 +165,18 @@ def test_extract_memory_from_plan_drops_invalid_category_from_filters() -> None:
     assert memory is not None
     assert memory.filters.get("direction") == "DEBIT_ONLY"
     assert "categorie" not in memory.filters
+
+
+def test_extract_memory_from_plan_without_known_categories_drops_stopword_category() -> None:
+    memory = extract_memory_from_plan(
+        "finance_releves_sum",
+        {
+            "direction": "DEBIT_ONLY",
+            "categorie": "Salut",
+            "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
+        },
+    )
+
+    assert memory is not None
+    assert memory.filters.get("direction") == "DEBIT_ONLY"
+    assert "categorie" not in memory.filters
