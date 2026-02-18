@@ -189,6 +189,8 @@ def test_agent_chat_reuses_persisted_search_active_task_with_serialized_dates(mo
     assert repo.chat_state == {
         "memory": {
             "last_query": {
+                "last_tool_name": "finance_releves_search",
+                "last_intent": "search",
                 "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
                 "filters": {"merchant": "coop"},
             }
