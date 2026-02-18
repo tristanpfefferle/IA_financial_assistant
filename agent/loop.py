@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from agent.answer_builder import build_final_reply
 from agent.deterministic_nlu import parse_intent
 from agent.llm_planner import LLMPlanner
+from agent.memory import QueryMemory, apply_memory_to_plan, extract_memory_from_plan
 from agent.planner import (
     ClarificationPlan,
     ErrorPlan,
@@ -147,6 +148,7 @@ class AgentReply:
     plan: dict[str, object] | None = None
     active_task: dict[str, object] | None = None
     should_update_active_task: bool = False
+    memory_update: dict[str, object] | None = None
 
 
 @dataclass(slots=True)
@@ -1023,6 +1025,7 @@ class AgentLoop:
         *,
         profile_id: UUID | None = None,
         active_task: dict[str, object] | None = None,
+        memory: dict[str, object] | None = None,
     ) -> AgentReply:
         routed = self._route_message(
             message,
@@ -1141,6 +1144,8 @@ class AgentLoop:
             )
 
         if isinstance(plan, ToolCallPlan):
+            query_memory = QueryMemory.from_dict(memory.get("last_query")) if isinstance(memory, dict) else None
+            plan, _memory_reason = apply_memory_to_plan(message, plan, query_memory)
 
             if (
                 plan.tool_name == "finance_releves_search"
@@ -1199,12 +1204,26 @@ class AgentLoop:
                     )
             final_reply = build_final_reply(plan=plan, tool_result=result)
             logger.info("tool_execution_completed tool_name=%s", plan.tool_name)
+            extracted_memory = (
+                extract_memory_from_plan(
+                    plan.tool_name,
+                    plan.payload,
+                    plan.meta,
+                )
+                if not isinstance(result, ToolError)
+                else None
+            )
             return AgentReply(
                 reply=final_reply,
                 tool_result=self._serialize_tool_result(result),
                 plan={"tool_name": plan.tool_name, "payload": plan.payload},
                 active_task=updated_active_task,
                 should_update_active_task=should_update_active_task,
+                memory_update=(
+                    {"last_query": extracted_memory.to_dict()}
+                    if extracted_memory is not None
+                    else None
+                ),
             )
 
         if isinstance(plan, ClarificationPlan):

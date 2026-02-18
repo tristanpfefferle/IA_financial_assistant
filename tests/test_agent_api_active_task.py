@@ -54,10 +54,11 @@ def test_agent_chat_sets_active_task_on_delete_confirmation_request(monkeypatch)
     repo = _Repo(initial_chat_state={})
 
     class _Loop:
-        def handle_user_message(self, message: str, *, profile_id: UUID | None = None, active_task=None):
+        def handle_user_message(self, message: str, *, profile_id: UUID | None = None, active_task=None, memory=None):
             assert message == "Supprime la catégorie X"
             assert profile_id == PROFILE_ID
             assert active_task is None
+            assert memory is None
             return SimpleNamespace(
                 reply="Répondez OUI ou NON pour confirmer.",
                 tool_result=None,
@@ -96,10 +97,11 @@ def test_agent_chat_uses_persisted_active_task_and_clears_after_confirmation(mon
     )
 
     class _Loop:
-        def handle_user_message(self, message: str, *, profile_id: UUID | None = None, active_task=None):
+        def handle_user_message(self, message: str, *, profile_id: UUID | None = None, active_task=None, memory=None):
             assert message == "oui"
             assert profile_id == PROFILE_ID
             assert active_task == {"type": "confirm_delete_category", "category_name": "X"}
+            assert memory is None
             return SimpleNamespace(
                 reply="Catégorie supprimée.",
                 tool_result={"ok": True},
@@ -184,4 +186,71 @@ def test_agent_chat_reuses_persisted_search_active_task_with_serialized_dates(mo
             },
         )
     ]
-    assert repo.chat_state == {}
+    assert repo.chat_state == {
+        "memory": {
+            "last_query": {
+                "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
+                "filters": {"merchant": "coop"},
+            }
+        }
+    }
+
+
+def test_agent_chat_persists_memory_update(monkeypatch) -> None:
+    monkeypatch.setattr(
+        agent_api,
+        "get_user_from_bearer_token",
+        lambda _token: {"id": str(AUTH_USER_ID), "email": "user@example.com"},
+    )
+
+    repo = _Repo(initial_chat_state={"active_task": {"type": "awaiting_search_merchant"}})
+
+    class _Loop:
+        def handle_user_message(
+            self,
+            message: str,
+            *,
+            profile_id: UUID | None = None,
+            active_task=None,
+            memory=None,
+        ):
+            assert message == "Total dépenses"
+            assert profile_id == PROFILE_ID
+            assert active_task == {"type": "awaiting_search_merchant"}
+            assert memory is None
+            return SimpleNamespace(
+                reply="Montant total: 100",
+                tool_result={"ok": True, "total": 100},
+                plan={"tool_name": "finance_releves_sum", "payload": {"direction": "DEBIT_ONLY"}},
+                should_update_active_task=False,
+                active_task=None,
+                memory_update={
+                    "last_query": {
+                        "date_range": {
+                            "start_date": "2026-01-01",
+                            "end_date": "2026-01-31",
+                        },
+                        "filters": {"direction": "DEBIT_ONLY"},
+                    }
+                },
+            )
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _Loop())
+
+    response = client.post("/agent/chat", json={"message": "Total dépenses"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert repo.update_calls
+    assert repo.chat_state == {
+        "active_task": {"type": "awaiting_search_merchant"},
+        "memory": {
+            "last_query": {
+                "date_range": {
+                    "start_date": "2026-01-01",
+                    "end_date": "2026-01-31",
+                },
+                "filters": {"direction": "DEBIT_ONLY"},
+            }
+        },
+    }
