@@ -2009,6 +2009,105 @@ def test_followup_prevent_write_clarification_category_executes_sum(monkeypatch)
     assert second.active_task is None
 
 
+def test_followup_pizza_chez_migros_clarification_creates_active_task_with_context() -> None:
+    router = _MemoryRouter()
+    loop = AgentLoop(tool_router=router)
+
+    first = loop.handle_user_message(
+        "Et la pizza chez Migros ?",
+        memory={
+            "last_query": {
+                "last_tool_name": "finance_releves_search",
+                "date_range": {
+                    "start_date": "2026-02-01",
+                    "end_date": "2026-02-28",
+                },
+                "filters": {"direction": "DEBIT_ONLY", "merchant": "pizza"},
+            }
+        },
+    )
+
+    assert first.reply == "Tu veux chercher le marchand ‘Migros’ ou le mot-clé ‘pizza’ ?"
+    assert first.should_update_active_task is True
+    assert isinstance(first.active_task, dict)
+    assert first.active_task.get("type") == "clarification_pending"
+    context = first.active_task.get("context")
+    assert isinstance(context, dict)
+    assert context.get("clarification_type") == "merchant_vs_keyword"
+    assert context.get("merchant") == "Migros"
+    assert context.get("keyword") == "pizza"
+    assert context.get("period_payload") == {
+        "date_range": {
+            "start_date": "2026-02-01",
+            "end_date": "2026-02-28",
+        }
+    }
+
+
+@pytest.mark.parametrize(
+    ("answer", "expected_filter"),
+    [
+        ("Migros", {"merchant": "migros"}),
+        ("Marchand", {"merchant": "migros"}),
+        ("pizza", {"merchant": "pizza"}),
+        ("mot-clé", {"merchant": "pizza"}),
+    ],
+)
+def test_followup_pizza_chez_migros_clarification_resolves_to_search(
+    answer: str,
+    expected_filter: dict[str, str],
+) -> None:
+    router = _MemoryRouter()
+    loop = AgentLoop(tool_router=router)
+
+    first = loop.handle_user_message(
+        "Et la pizza chez Migros ?",
+        memory={
+            "last_query": {
+                "last_tool_name": "finance_releves_search",
+                "date_range": {
+                    "start_date": "2026-02-01",
+                    "end_date": "2026-02-28",
+                },
+                "filters": {"direction": "DEBIT_ONLY", "merchant": "pizza"},
+            }
+        },
+    )
+
+    assert isinstance(first.active_task, dict)
+
+    reply = loop.handle_user_message(
+        answer,
+        active_task=first.active_task,
+        memory={
+            "last_query": {
+                "last_tool_name": "finance_releves_search",
+                "date_range": {
+                    "start_date": "2026-02-01",
+                    "end_date": "2026-02-28",
+                },
+                "filters": {"direction": "DEBIT_ONLY"},
+            }
+        },
+    )
+
+    assert reply.plan == {
+        "tool_name": "finance_releves_search",
+        "payload": {
+            **expected_filter,
+            "limit": 50,
+            "offset": 0,
+            "direction": "DEBIT_ONLY",
+            "date_range": {
+                "start_date": "2026-02-01",
+                "end_date": "2026-02-28",
+            },
+        },
+    }
+    assert reply.should_update_active_task is True
+    assert reply.active_task is None
+
+
 def test_followup_known_category_reuses_period_when_implicit() -> None:
     router = _MemoryRouter()
     loop = AgentLoop(tool_router=router)

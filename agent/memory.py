@@ -401,7 +401,11 @@ def followup_plan_from_message(
                 ),
                 meta={
                     "keep_active_task": True,
-                    "clarification_type": "prevent_write_on_followup",
+                    "clarification_type": "merchant_vs_keyword",
+                    "clarification_payload": {
+                        "merchant": merchant_focus,
+                        "keyword": search_term,
+                    },
                 },
             )
 

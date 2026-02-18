@@ -107,8 +107,12 @@ def test_followup_pizza_chez_migros_returns_clarification_when_search_field_not_
     assert isinstance(plan, ClarificationPlan)
     assert "marchand ‘Migros’" in plan.question
     assert "mot-clé ‘pizza’" in plan.question
-    assert plan.meta.get("clarification_type") == "prevent_write_on_followup"
+    assert plan.meta.get("clarification_type") == "merchant_vs_keyword"
     assert plan.meta.get("keep_active_task") is True
+    assert plan.meta.get("clarification_payload") == {
+        "merchant": "Migros",
+        "keyword": "pizza",
+    }
 
 
 def test_followup_sum_merchant_focus_uses_merchant_filter() -> None:
