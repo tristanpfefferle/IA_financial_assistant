@@ -26,6 +26,9 @@ _FOLLOWUP_KEYWORDS = {
 }
 _FOLLOWUP_START_PATTERN = re.compile(r"^(?:ok\s+)?(?:et|pareil|idem)\b")
 _FOLLOWUP_EXPLICIT_INTENT_PATTERN = re.compile(r"^(?:ok\s+)?et\b")
+_FULL_INTENT_PREFIX_PATTERN = re.compile(
+    r"^(?:depenses|revenus?|total)\b"
+)
 _INTENT_KEYWORDS = {
     "depense",
     "depenses",
@@ -254,6 +257,9 @@ def followup_plan_from_message(
     """Build deterministic follow-up plan from short messages and memory."""
 
     normalized_message = _normalize_text(message)
+    if _FULL_INTENT_PREFIX_PATTERN.match(normalized_message):
+        return None
+
     tokens = normalized_message.replace("?", " ").split()
     if len(tokens) >= 3 and not is_followup_message(message):
         return None
@@ -344,6 +350,29 @@ def followup_plan_from_message(
     category = (
         _match_known_category(focus, known_categories or []) if isinstance(focus, str) else None
     )
+
+    if category_focus is not None:
+        direction = memory.filters.get("direction")
+        normalized_direction = (
+            direction.strip().upper()
+            if isinstance(direction, str) and direction.strip()
+            else "DEBIT_ONLY"
+        )
+        payload = {
+            "direction": normalized_direction,
+            "categorie": category_focus,
+            **period_payload,
+        }
+        return ToolCallPlan(
+            tool_name="finance_releves_sum",
+            payload=payload,
+            user_reply="OK.",
+            meta={
+                "followup_from_memory": True,
+                "followup_focus": category_focus,
+                "followup_reason": "known_category_after_search",
+            },
+        )
 
     if merchant_focus is not None:
         normalized_merchant = _normalize_text(merchant_focus)

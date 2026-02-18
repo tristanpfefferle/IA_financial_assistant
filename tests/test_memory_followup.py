@@ -261,6 +261,41 @@ def test_followup_does_not_hijack_complete_query_after_search_memory() -> None:
     assert plan is None
 
 
+def test_followup_category_is_prioritized_over_merchant_after_search() -> None:
+    plan = followup_plan_from_message(
+        "Et en loisir ?",
+        QueryMemory(
+            date_range={"start_date": "2026-02-01", "end_date": "2026-02-28"},
+            last_tool_name="finance_releves_search",
+            last_intent="search",
+            filters={"merchant": "pizza", "direction": "DEBIT_ONLY"},
+        ),
+        known_categories=["Loisir", "Alimentation"],
+    )
+
+    assert plan is not None
+    assert plan.tool_name == "finance_releves_sum"
+    assert plan.payload == {
+        "direction": "DEBIT_ONLY",
+        "categorie": "Loisir",
+        "date_range": {"start_date": "2026-02-01", "end_date": "2026-02-28"},
+    }
+
+
+def test_followup_depenses_category_query_is_treated_as_full_query() -> None:
+    plan = followup_plan_from_message(
+        "Dépenses loisir",
+        QueryMemory(
+            last_tool_name="finance_releves_search",
+            last_intent="search",
+            filters={"merchant": "pizza", "direction": "DEBIT_ONLY"},
+        ),
+        known_categories=["Loisir", "Alimentation"],
+    )
+
+    assert plan is None
+
+
 def test_extract_memory_from_plan_drops_invalid_category_from_filters() -> None:
     memory = extract_memory_from_plan(
         "finance_releves_sum",
