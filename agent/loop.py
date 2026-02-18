@@ -1037,6 +1037,12 @@ class AgentLoop:
             if isinstance(memory, dict)
             else None
         )
+        logger.info(
+            "handle_user_message_started active_task_present=%s query_memory_present=%s query_last_tool_name=%s",
+            isinstance(active_task, dict),
+            query_memory is not None,
+            query_memory.last_tool_name if query_memory is not None else None,
+        )
         known_categories = self._known_categories_from_memory(memory)
         followup_plan = None
         if active_task is None and query_memory is not None:
@@ -1045,6 +1051,12 @@ class AgentLoop:
                 query_memory,
                 known_categories=known_categories,
             )
+            if isinstance(followup_plan, ToolCallPlan):
+                logger.info(
+                    "handle_user_message_followup_plan tool_name=%s payload=%s",
+                    followup_plan.tool_name,
+                    followup_plan.payload,
+                )
 
         if followup_plan is not None:
             plan = followup_plan
