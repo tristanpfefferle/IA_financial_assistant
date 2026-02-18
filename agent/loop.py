@@ -37,7 +37,13 @@ from agent.planner import (
 )
 from agent.tool_router import ToolRouter
 from shared import config
-from shared.models import PROFILE_ALLOWED_FIELDS, RelevesGroupBy, ToolError, ToolErrorCode
+from shared.models import (
+    PROFILE_ALLOWED_FIELDS,
+    RelevesFilters,
+    RelevesGroupBy,
+    ToolError,
+    ToolErrorCode,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -283,6 +289,44 @@ def _write_prevention_choice_from_message(message: str) -> str | None:
         return "merchant"
     if tokens & category_tokens:
         return "category"
+    return None
+
+
+def _merchant_vs_keyword_choice_from_message(
+    message: str,
+    *,
+    merchant: str,
+    keyword: str,
+) -> str | None:
+    normalized = _normalize_for_match(message)
+    if not normalized:
+        return None
+
+    tokens = set(normalized.split())
+    compact = normalized.replace(" ", "")
+    merchant_tokens = {"marchand", "merchant", "payee"}
+    keyword_tokens = {"motcle", "motclef", "keyword"}
+
+    merchant_match = bool(tokens & merchant_tokens)
+    keyword_match = bool(tokens & keyword_tokens)
+    if compact in keyword_tokens:
+        keyword_match = True
+
+    normalized_merchant = _normalize_for_match(merchant)
+    normalized_keyword = _normalize_for_match(keyword)
+    if normalized_merchant and normalized_merchant in normalized:
+        merchant_match = True
+    if normalized_keyword and normalized_keyword in normalized:
+        keyword_match = True
+    if normalized_keyword and normalized_keyword.replace(" ", "") in compact:
+        keyword_match = True
+
+    if merchant_match and keyword_match:
+        return None
+    if merchant_match:
+        return "merchant"
+    if keyword_match:
+        return "keyword"
     return None
 
 
@@ -854,6 +898,90 @@ class AgentLoop:
                     payload["date_range"] = date_range
                 return ToolCallPlan(
                     tool_name="finance_releves_sum",
+                    payload=payload,
+                    user_reply="OK.",
+                    meta={"clear_active_task": True},
+                )
+
+            if clarification_type == "merchant_vs_keyword":
+                merchant_raw = context.get("merchant")
+                keyword_raw = context.get("keyword")
+                if not isinstance(merchant_raw, str) or not merchant_raw.strip():
+                    clarification_payload = context.get("clarification_payload")
+                    if isinstance(clarification_payload, dict):
+                        merchant_from_payload = clarification_payload.get("merchant")
+                        if (
+                            isinstance(merchant_from_payload, str)
+                            and merchant_from_payload.strip()
+                        ):
+                            merchant_raw = merchant_from_payload
+                if not isinstance(keyword_raw, str) or not keyword_raw.strip():
+                    clarification_payload = context.get("clarification_payload")
+                    if isinstance(clarification_payload, dict):
+                        keyword_from_payload = clarification_payload.get("keyword")
+                        if (
+                            isinstance(keyword_from_payload, str)
+                            and keyword_from_payload.strip()
+                        ):
+                            keyword_raw = keyword_from_payload
+
+                if (
+                    not isinstance(merchant_raw, str)
+                    or not merchant_raw.strip()
+                    or not isinstance(keyword_raw, str)
+                    or not keyword_raw.strip()
+                ):
+                    return ClarificationPlan(
+                        question="Je n’ai pas compris les options proposées.",
+                        meta={"clear_active_task": True},
+                    )
+
+                choice = _merchant_vs_keyword_choice_from_message(
+                    message,
+                    merchant=merchant_raw,
+                    keyword=keyword_raw,
+                )
+                if choice is None:
+                    return ClarificationPlan(
+                        question=(
+                            f"Tu veux le marchand ‘{merchant_raw}’ "
+                            f"ou le mot-clé ‘{keyword_raw}’ ?"
+                        ),
+                        meta={
+                            "keep_active_task": True,
+                            "clarification_type": "merchant_vs_keyword",
+                        },
+                    )
+
+                direction = "DEBIT_ONLY"
+                if (
+                    isinstance(query_memory, QueryMemory)
+                    and isinstance(query_memory.filters, dict)
+                    and query_memory.filters.get("direction")
+                    in {"DEBIT_ONLY", "CREDIT_ONLY", "ALL"}
+                ):
+                    direction = str(query_memory.filters["direction"])
+
+                payload: dict[str, object] = {
+                    "limit": 50,
+                    "offset": 0,
+                    "direction": direction,
+                }
+                date_range = _date_range_from_pending_context(context, query_memory)
+                if isinstance(date_range, dict):
+                    payload["date_range"] = date_range
+
+                if choice == "merchant":
+                    payload["merchant"] = _normalize_for_match(merchant_raw)
+                else:
+                    normalized_keyword = _normalize_for_match(keyword_raw)
+                    if "search" in RelevesFilters.model_fields:
+                        payload["search"] = normalized_keyword
+                    else:
+                        payload["merchant"] = normalized_keyword
+
+                return ToolCallPlan(
+                    tool_name="finance_releves_search",
                     payload=payload,
                     user_reply="OK.",
                     meta={"clear_active_task": True},
@@ -2171,6 +2299,18 @@ class AgentLoop:
                         pending_context["focus"] = focus
                     if known_categories:
                         pending_context["known_categories"] = list(known_categories)
+
+                if clarification_type == "merchant_vs_keyword":
+                    if isinstance(clarification_payload, dict):
+                        pending_context["clarification_payload"] = dict(
+                            clarification_payload
+                        )
+                        merchant = clarification_payload.get("merchant")
+                        keyword = clarification_payload.get("keyword")
+                        if isinstance(merchant, str) and merchant.strip():
+                            pending_context["merchant"] = merchant
+                        if isinstance(keyword, str) and keyword.strip():
+                            pending_context["keyword"] = keyword
 
                 updated_active_task = {
                     "type": "clarification_pending",
