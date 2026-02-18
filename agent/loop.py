@@ -239,10 +239,9 @@ class AgentLoop:
             for token in _CONFIDENCE_AMBIGUOUS_TIME_REFERENCES
         )
         has_plan_date_range = isinstance(payload.get("date_range"), dict)
-        period_came_from_memory = bool(plan.meta.get("followup_from_memory")) or (
-            isinstance(plan.meta.get("memory_reason"), str)
-            and "period_from_memory" in str(plan.meta.get("memory_reason"))
-        )
+        memory_reason = str(plan.meta.get("memory_reason", ""))
+        period_injected_from_memory = "period_from_memory" in memory_reason
+        period_came_from_memory = bool(plan.meta.get("followup_from_memory")) or period_injected_from_memory
         is_regex_followup = bool(
             _CONFIDENCE_SHORT_FOLLOWUP_PATTERN.match(normalized_message)
         )
@@ -259,7 +258,7 @@ class AgentLoop:
             has_category_value_in_message or has_merchant_value_in_message
         )
 
-        if (
+        followup_short_detected = (
             is_releves_query_tool
             and is_followup_message(message)
             and (
@@ -272,33 +271,38 @@ class AgentLoop:
             and not has_explicit_intent
             and not has_explicit_filter
             and not has_payload_filter_value_in_message
-        ):
-            confidence = "low"
+        )
+        if followup_short_detected:
+            if confidence == "high":
+                confidence = "medium"
             reasons.append("followup_short")
 
         if is_releves_query_tool and has_ambiguous_time_reference:
-            if confidence != "low":
-                confidence = "medium"
+            confidence = "low"
             reasons.append("ambiguous_time_reference")
 
         if is_releves_query_tool and has_plan_date_range and not has_explicit_period:
             if confidence != "low":
                 confidence = "medium"
             reasons.append("period_missing_in_message")
-            if query_memory is not None and period_came_from_memory:
+            if period_injected_from_memory:
                 confidence = "low"
                 reasons.append("period_injected_from_memory")
 
         if (
-            is_releves_query_tool
-            and is_followup_message(message)
-            and query_memory is not None
+            followup_short_detected
+            and query_memory is None
+            and has_plan_date_range
             and not has_explicit_period
-            and not has_explicit_filter
-            and not has_explicit_intent
         ):
             confidence = "low"
-            reasons.append("followup_short")
+
+        has_inferred_filter_conflict = (
+            (bool(category_value) and not has_category_value_in_message)
+            or (bool(merchant_value) and not has_merchant_value_in_message)
+        )
+        if followup_short_detected and has_inferred_filter_conflict and not has_explicit_filter:
+            confidence = "low"
 
         if plan.tool_name in {"finance_releves_sum", "finance_releves_search"}:
             has_categorie = isinstance(payload.get("categorie"), str) and bool(str(payload.get("categorie")).strip())
