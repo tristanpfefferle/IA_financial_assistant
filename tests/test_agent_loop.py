@@ -268,8 +268,82 @@ def test_categories_delete_not_found_with_close_suggestions() -> None:
         profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
     )
 
-    assert "Je ne trouve pas la catégorie « transfret interne »." in reply.reply
-    assert "Voulez-vous dire : Transfert interne" in reply.reply
+    assert (
+        reply.reply
+        == "Je ne trouve pas « transfret interne ». Voulez-vous dire « Transfert interne » ? (oui/non)"
+    )
+    assert reply.active_task is not None
+    assert reply.active_task["type"] == "needs_confirmation"
+    assert (
+        reply.active_task["confirmation_type"]
+        == "confirm_delete_category_suggestion"
+    )
+    assert reply.active_task["context"] == {
+        "requested_name": "transfret interne",
+        "suggested_name": "Transfert interne",
+        "suggestions": ["Transfert interne"],
+    }
+    assert router.calls == [("finance_categories_list", {})]
+
+
+def test_categories_delete_not_found_suggestion_yes_then_confirm_then_delete() -> None:
+    router = _CategoriesPrecheckRouter(["Transfert interne", "Transport", "Loisirs"])
+    loop = AgentLoop(tool_router=router)
+
+    first = loop.handle_user_message(
+        "supprime la catégorie transfret interne",
+        profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+    )
+    second = loop.handle_user_message(
+        "oui",
+        active_task=first.active_task,
+        profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+    )
+    third = loop.handle_user_message(
+        "oui",
+        active_task=second.active_task,
+        profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+    )
+
+    assert first.active_task is not None
+    assert first.active_task["confirmation_type"] == "confirm_delete_category_suggestion"
+
+    assert second.active_task is not None
+    assert second.active_task["type"] == "needs_confirmation"
+    assert second.active_task["confirmation_type"] == "confirm_delete_category"
+    assert second.active_task["context"] == {
+        "category_name": "Transfert interne",
+        "category_prechecked": True,
+    }
+
+    assert third.plan == {
+        "tool_name": "finance_categories_delete",
+        "payload": {"category_name": "Transfert interne"},
+    }
+    assert router.calls == [
+        ("finance_categories_list", {}),
+        ("finance_categories_list", {}),
+        ("finance_categories_delete", {"category_name": "Transfert interne"}),
+    ]
+
+
+def test_categories_delete_not_found_suggestion_no_cancels_without_tool_call() -> None:
+    router = _CategoriesPrecheckRouter(["Transfert interne", "Transport", "Loisirs"])
+    loop = AgentLoop(tool_router=router)
+
+    first = loop.handle_user_message(
+        "supprime la catégorie transfret interne",
+        profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+    )
+    second = loop.handle_user_message(
+        "non",
+        active_task=first.active_task,
+        profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+    )
+
+    assert second.reply == "D’accord, suppression annulée."
+    assert second.active_task is None
+    assert second.should_update_active_task is True
     assert router.calls == [("finance_categories_list", {})]
 
 

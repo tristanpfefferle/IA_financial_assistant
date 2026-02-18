@@ -311,6 +311,11 @@ class AgentLoop:
         if normalized in _REJECT_WORDS:
             if confirmation_type == "confirm_llm_write":
                 return NoopPlan(reply="Action annulée.", meta={"clear_active_task": True})
+            if confirmation_type == "confirm_delete_category_suggestion":
+                return NoopPlan(
+                    reply="D’accord, suppression annulée.",
+                    meta={"clear_active_task": True},
+                )
             return NoopPlan(
                 reply="Suppression annulée.", meta={"clear_active_task": True}
             )
@@ -334,6 +339,26 @@ class AgentLoop:
                 payload={"category_name": target_name},
                 user_reply="Catégorie supprimée.",
                 meta=meta,
+            )
+
+        if confirmation_type == "confirm_delete_category_suggestion":
+            suggested_name = str(context.get("suggested_name", "")).strip()
+            if not suggested_name:
+                return NoopPlan(
+                    reply="D’accord, suppression annulée.",
+                    meta={"clear_active_task": True},
+                )
+            return SetActiveTaskPlan(
+                reply=(
+                    f"Confirmez-vous la suppression de la catégorie « {suggested_name} » ? "
+                    "Répondez OUI ou NON."
+                ),
+                active_task={
+                    "type": "needs_confirmation",
+                    "confirmation_type": "confirm_delete_category",
+                    "context": {"category_name": suggested_name},
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                },
             )
 
         if confirmation_type == "confirm_delete_bank_account":
@@ -805,7 +830,26 @@ class AgentLoop:
 
         reply = f"Je ne trouve pas la catégorie « {requested_name} »."
         if suggestions:
-            reply = f"{reply} Voulez-vous dire : {', '.join(suggestions)} ?"
+            suggested_name = suggestions[0]
+            return AgentReply(
+                reply=(
+                    f"Je ne trouve pas « {requested_name} ». "
+                    f"Voulez-vous dire « {suggested_name} » ? (oui/non)"
+                ),
+                tool_result=AgentLoop._serialize_tool_result(error),
+                plan={"tool_name": plan.tool_name, "payload": plan.payload},
+                active_task={
+                    "type": "needs_confirmation",
+                    "confirmation_type": "confirm_delete_category_suggestion",
+                    "context": {
+                        "requested_name": requested_name,
+                        "suggested_name": suggested_name,
+                        "suggestions": suggestions,
+                    },
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                },
+                should_update_active_task=True,
+            )
         elif category_names:
             reply = f"{reply} Voici vos catégories disponibles : {', '.join(category_names)}."
 
