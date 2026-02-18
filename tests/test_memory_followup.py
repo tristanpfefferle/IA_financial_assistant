@@ -246,6 +246,21 @@ def test_followup_month_only_requires_context_returns_none() -> None:
     assert plan is None
 
 
+def test_followup_does_not_hijack_complete_query_after_search_memory() -> None:
+    plan = followup_plan_from_message(
+        "Dépenses en loisir en janvier 2026",
+        QueryMemory(
+            date_range={"start_date": "2026-04-01", "end_date": "2026-04-30"},
+            last_tool_name="finance_releves_search",
+            last_intent="search",
+            filters={"merchant": "pizza", "direction": "DEBIT_ONLY"},
+        ),
+        known_categories=["Loisir", "Alimentation"],
+    )
+
+    assert plan is None
+
+
 def test_extract_memory_from_plan_drops_invalid_category_from_filters() -> None:
     memory = extract_memory_from_plan(
         "finance_releves_sum",

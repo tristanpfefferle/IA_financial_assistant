@@ -253,6 +253,11 @@ def followup_plan_from_message(
 ) -> ToolCallPlan | None:
     """Build deterministic follow-up plan from short messages and memory."""
 
+    normalized_message = _normalize_text(message)
+    tokens = normalized_message.replace("?", " ").split()
+    if len(tokens) >= 3 and not is_followup_message(message):
+        return None
+
     if memory is None or not isinstance(memory.last_tool_name, str):
         return None
     if memory.last_tool_name not in _RELEVES_TOOLS:
