@@ -61,7 +61,20 @@ def test_profile_update_reply_is_direct_without_parasite_text(monkeypatch) -> No
         profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
     )
 
-    assert response.reply.startswith("Infos mises à jour.")
-    assert "- Ville: Zurich" in response.reply
-    assert "voulez-vous" not in response.reply.lower()
-    assert "finances" not in response.reply.lower()
+    assert response.reply.startswith("Je peux exécuter l'action") or "Confirmez-vous ?" in response.reply
+    assert response.active_task is not None
+    assert response.active_task["type"] == "needs_confirmation"
+    assert response.active_task["confirmation_type"] == "confirm_llm_write"
+    assert response.active_task["context"]["tool_name"] == "finance_profile_update"
+    assert response.active_task["context"]["payload"] == {"set": {"city": "Zurich"}}
+
+    response_confirmed = agent_loop.handle_user_message(
+        "oui",
+        active_task=response.active_task,
+        profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+    )
+
+    assert response_confirmed.reply.startswith("Infos mises à jour.")
+    assert "- Ville: Zurich" in response_confirmed.reply
+    assert "voulez-vous" not in response_confirmed.reply.lower()
+    assert "finances" not in response_confirmed.reply.lower()
