@@ -326,46 +326,26 @@ def test_agent_chat_clarification_pending_uses_new_period_across_requests(monkey
     second = client.post(
         "/agent/chat",
         json={"message": "Et en janvier 2026 ?"},
-        headers=_auth_headers(),
+        headers={**_auth_headers(), "X-Debug": "1"},
     )
     assert second.status_code == 200
-    assert second.json()["tool_result"]["type"] == "clarification"
-    persisted_active_task = repo.chat_state.get("active_task")
-    assert isinstance(persisted_active_task, dict)
-    assert persisted_active_task.get("type") == "clarification_pending"
-    persisted_context = persisted_active_task.get("context")
-    assert isinstance(persisted_context, dict)
-    assert persisted_context.get("period_payload") == {
+    second_plan = second.json()["plan"]
+    assert second_plan["tool_name"] == "finance_releves_sum"
+    assert second_plan["payload"] == {
+        "direction": "DEBIT_ONLY",
         "date_range": {
             "start_date": "2026-01-01",
             "end_date": "2026-01-31",
-        }
+        },
+        "categorie": "Loisir",
     }
-    base_last_query = persisted_context.get("base_last_query")
-    assert isinstance(base_last_query, dict)
-    assert base_last_query.get("date_range") == {
-        "start_date": "2025-12-01",
-        "end_date": "2025-12-31",
-    }
-    assert isinstance(base_last_query.get("filters"), dict)
-    assert base_last_query["filters"].get("direction") == "DEBIT_ONLY"
-    assert base_last_query["filters"].get("categorie") == "Loisir"
-
-    third = client.post(
-        "/agent/chat",
-        json={"message": "Pour la catégorie Loisir"},
-        headers=_auth_headers(),
-    )
-    assert third.status_code == 200
-    assert third.json()["plan"] == {
-        "tool_name": "finance_releves_sum",
-        "payload": {
-            "direction": "DEBIT_ONLY",
-            "date_range": {
-                "start_date": "2026-01-01",
-                "end_date": "2026-01-31",
-            },
-            "categorie": "Loisir",
+    assert second_plan["meta"]["debug_source"] == "followup"
+    assert second_plan["meta"]["debug_period_detected"] == {
+        "month": 1,
+        "year": 2026,
+        "date_range": {
+            "start_date": "2026-01-01",
+            "end_date": "2026-01-31",
         },
     }
     assert len(router.calls) == 2
