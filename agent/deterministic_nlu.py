@@ -61,14 +61,6 @@ _LIST_ACCOUNTS_PATTERNS = (
     re.compile(r"j['’]ai\s+combien\s+de\s+comptes\s+bancaires", re.IGNORECASE),
 )
 
-_LIST_CATEGORIES_PATTERNS = (
-    re.compile(r"liste\s+moi\s+mes\s+cat[ée]gories", re.IGNORECASE),
-    re.compile(r"liste\s+mes\s+cat[ée]gories", re.IGNORECASE),
-    re.compile(r"montre(?:-?\s?moi)?\s+mes\s+cat[ée]gories", re.IGNORECASE),
-    re.compile(r"quelles\s+sont\s+mes\s+cat[ée]gories", re.IGNORECASE),
-    re.compile(r"affiche\s+mes\s+cat[ée]gories", re.IGNORECASE),
-)
-
 _IMPORT_PATTERNS = (
     re.compile(r"\bimporter\b.*\b(relev[ée]|csv)\b", re.IGNORECASE),
     re.compile(r"\bje\s+veux\s+importer\b", re.IGNORECASE),
@@ -325,17 +317,12 @@ def parse_intent(message: str) -> dict[str, object] | None:
             "payload": {"name": account_name},
         }
 
-    if any(pattern.fullmatch(normalized_for_match) for pattern in _LIST_ACCOUNTS_PATTERNS):
+    if any(
+        pattern.fullmatch(normalized_for_match) for pattern in _LIST_ACCOUNTS_PATTERNS
+    ):
         return {
             "type": "tool_call",
             "tool_name": "finance_bank_accounts_list",
-            "payload": {},
-        }
-
-    if is_categories_list_message(normalized):
-        return {
-            "type": "tool_call",
-            "tool_name": "finance_categories_list",
             "payload": {},
         }
 
@@ -376,13 +363,3 @@ def parse_intent(message: str) -> dict[str, object] | None:
         return tool_call_intent
 
     return None
-
-
-def is_categories_list_message(message: str) -> bool:
-    """Return True when a message is a strict categories list request."""
-
-    normalized_for_match = _normalize_message_for_match(message)
-    return any(
-        pattern.fullmatch(normalized_for_match)
-        for pattern in _LIST_CATEGORIES_PATTERNS
-    )

@@ -226,12 +226,12 @@ def test_agent_chat_period_followup_reuses_category_and_updates_month(monkeypatc
     assert len(router.calls) == 1
     assert router.calls[0][0] == "finance_releves_sum"
     assert router.calls[0][1]["categorie"] == "Alimentation"
-    assert _as_iso_date(router.calls[0][1]["date_range"]["start_date"]) == "2026-01-01"
-    assert _as_iso_date(router.calls[0][1]["date_range"]["end_date"]) == "2026-01-31"
+    assert _as_iso_date(router.calls[0][1]["date_range"]["start_date"]) == "2025-01-01"
+    assert _as_iso_date(router.calls[0][1]["date_range"]["end_date"]) == "2025-01-31"
     body = second.json()
     assert body["plan"]["meta"]["debug_source"] == "followup"
     assert body["plan"]["meta"]["debug_period_detected"] == {
         "month": 1,
-        "year": 2026,
-        "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
+        "year": 2025,
+        "date_range": {"start_date": "2025-01-01", "end_date": "2025-01-31"},
     }
