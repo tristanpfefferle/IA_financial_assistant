@@ -365,7 +365,7 @@ def _build_period_change_followup_plan(
     year: int | None = explicit_year if isinstance(explicit_year, int) else None
 
     if year is None:
-        inferred_year = _year_from_memory_date_range(memory)
+        inferred_year = _infer_followup_year_from_memory(month, memory)
         if inferred_year is None:
             return ClarificationPlan(
                 question="Tu veux ce mois de quelle année ?",
@@ -427,6 +427,30 @@ def _year_from_memory_date_range(memory: QueryMemory) -> int | None:
     if match is None:
         return None
     return int(match.group("year"))
+
+
+def _month_from_memory_date_range(memory: QueryMemory) -> int | None:
+    if not isinstance(memory.date_range, dict):
+        return None
+    start_date = memory.date_range.get("start_date")
+    if not isinstance(start_date, str):
+        return None
+    match = re.match(r"^(?:19\d{2}|20\d{2}|21\d{2})-(?P<month>0[1-9]|1[0-2])-\d{2}$", start_date)
+    if match is None:
+        return None
+    return int(match.group("month"))
+
+
+def _infer_followup_year_from_memory(requested_month: int, memory: QueryMemory) -> int | None:
+    last_year = _year_from_memory_date_range(memory)
+    if last_year is None:
+        return None
+    last_month = _month_from_memory_date_range(memory)
+    if last_month is None:
+        return last_year
+    if requested_month < last_month:
+        return last_year + 1
+    return last_year
 
 
 def _period_context_from_message(message: str) -> dict[str, object] | None:
@@ -730,6 +754,8 @@ def _looks_like_period_phrase(value: str) -> bool:
     normalized = _normalize_text(value)
     if not normalized:
         return False
-    if "et en" in normalized:
+    if re.search(r"\b(?:et\s+)?(?:en|sur)\s+", normalized):
         return True
-    return any(month_name in normalized for month_name in _MONTH_LOOKUP)
+    if re.search(r"\b(19\d{2}|20\d{2}|21\d{2})\b", normalized):
+        return True
+    return any(re.search(rf"\b{re.escape(month_name)}\b", normalized) for month_name in _MONTH_LOOKUP)

@@ -134,6 +134,19 @@ class _SearchRouter:
         return {"ok": True, "items": []}
 
 
+class _RecordingRouter:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict]] = []
+
+    def call(self, tool_name: str, payload: dict, *, profile_id: UUID | None = None):
+        self.calls.append((tool_name, payload))
+        if tool_name == "finance_categories_list":
+            return type("_CategoriesResult", (), {"items": []})()
+        if tool_name == "finance_releves_sum":
+            return {"ok": True, "total": 123.0}
+        raise AssertionError(f"Unexpected tool call: {tool_name} {payload}")
+
+
 class _SearchWithBankHintRouter:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict]] = []
@@ -257,6 +270,40 @@ def test_categories_delete_not_found_returns_human_message() -> None:
     assert reply.reply.startswith("Je ne trouve pas la catégorie « Voyages ».")
     assert "Voici vos catégories disponibles" in reply.reply
     assert router.calls == [("finance_categories_list", {})]
+
+
+def test_list_categories_followup_memory_always_routes_to_categories_list(monkeypatch) -> None:
+    router = _RecordingRouter()
+    loop = AgentLoop(tool_router=router)
+
+    first = loop.handle_user_message(
+        "Total dépenses en janvier 2026",
+        profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+    )
+    assert first.plan is not None
+    assert first.plan["tool_name"] == "finance_releves_sum"
+
+    monkeypatch.setattr(agent.loop, "parse_intent", lambda _message: None)
+
+    second = loop.handle_user_message(
+        "Liste mes catégories",
+        profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+        memory={
+            "last_query": {
+                "date_range": {
+                    "start_date": "2026-01-01",
+                    "end_date": "2026-01-31",
+                },
+                "last_tool_name": "finance_releves_sum",
+                "last_intent": "sum",
+                "filters": {"direction": "DEBIT_ONLY", "categorie": "Loisir"},
+            }
+        },
+    )
+
+    assert second.plan == {"tool_name": "finance_categories_list", "payload": {}}
+    assert second.plan["tool_name"] != "finance_releves_sum"
+    assert router.calls[-1] == ("finance_categories_list", {})
 
 
 def test_categories_delete_not_found_with_close_suggestions() -> None:
