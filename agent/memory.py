@@ -196,23 +196,69 @@ def followup_plan_from_message(
     if memory.last_tool_name not in _RELEVES_TOOLS:
         return None
 
+    merchant_focus = _extract_merchant_focus(message)
     focus = _extract_followup_focus(message)
     category_focus = _known_category_in_message(message, known_categories or [])
     if focus is None and category_focus is None:
-        return None
+        if merchant_focus is None:
+            return None
     if focus is None and category_focus is not None:
         focus = category_focus
 
     explicit_period_payload = _period_payload_from_message(message)
     period_payload = explicit_period_payload or _period_payload_from_memory(memory)
-    category = _match_known_category(focus, known_categories or [])
-    normalized_focus = _normalize_text(focus)
-    if not normalized_focus:
-        return None
+    normalized_focus = _normalize_text(focus) if isinstance(focus, str) else ""
+    category = (
+        _match_known_category(focus, known_categories or []) if isinstance(focus, str) else None
+    )
+
+    if merchant_focus is not None:
+        normalized_merchant = _normalize_text(merchant_focus)
+        if not normalized_merchant:
+            return None
+        if memory.last_tool_name == "finance_releves_search":
+            payload = {
+                "merchant": normalized_merchant,
+                "limit": 50,
+                "offset": 0,
+                **period_payload,
+            }
+            return ToolCallPlan(
+                tool_name="finance_releves_search",
+                payload=payload,
+                user_reply="OK.",
+                meta={
+                    "followup_from_memory": True,
+                    "followup_focus": merchant_focus,
+                    "followup_reason": "merchant_followup",
+                },
+            )
+
+        payload = {
+            "direction": "DEBIT_ONLY",
+            "merchant": normalized_merchant,
+            **period_payload,
+        }
+        return ToolCallPlan(
+            tool_name="finance_releves_sum",
+            payload=payload,
+            user_reply="OK.",
+            meta={
+                "followup_from_memory": True,
+                "followup_focus": merchant_focus,
+                "followup_reason": "merchant_followup",
+            },
+        )
 
     if memory.last_tool_name == "finance_releves_sum":
+        if not normalized_focus:
+            return None
+        if not known_categories:
+            return None
+        if category is None:
+            return None
         payload: dict[str, object] = {"direction": "DEBIT_ONLY", **period_payload}
-        payload["categorie"] = category or normalized_focus
+        payload["categorie"] = category
         return ToolCallPlan(
             tool_name="finance_releves_sum",
             payload=payload,
@@ -221,6 +267,8 @@ def followup_plan_from_message(
         )
 
     if memory.last_tool_name == "finance_releves_search":
+        if not normalized_focus:
+            return None
         payload = {
             "merchant": normalized_focus,
             "limit": 50,
@@ -292,6 +340,19 @@ def _extract_followup_focus(message: str) -> str | None:
         return None
 
     return focus or None
+
+
+def _extract_merchant_focus(message: str) -> str | None:
+    collapsed = re.sub(r"\s+", " ", message.strip())
+    if not collapsed:
+        return None
+    match = re.search(r"\bchez\s+(.+?)\??$", collapsed, flags=re.IGNORECASE)
+    if match is None:
+        return None
+    focus = match.group(1).strip(" .,!?:;\"'“”«»")
+    if not focus:
+        return None
+    return focus
 
 
 def _period_payload_from_message(message: str) -> dict[str, object]:
