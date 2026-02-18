@@ -125,3 +125,42 @@ def test_confidence_explicit_merchant_conflict_is_low() -> None:
 
     assert updated.meta["confidence"] == "low"
     assert "merchant_conflict" in updated.meta["confidence_reasons"]
+
+
+def test_confidence_period_conflict_is_low() -> None:
+    memory = QueryMemory(
+        date_range={"start_date": "2025-12-01", "end_date": "2025-12-31"},
+        last_tool_name="finance_releves_sum",
+    )
+    plan = _plan(
+        payload={
+            "direction": "DEBIT_ONLY",
+            "date_range": {"start_date": "2025-12-01", "end_date": "2025-12-31"},
+        },
+        meta={"followup_from_memory": True},
+    )
+
+    updated = AgentLoop._with_confidence_meta("et en janvier 2026", plan, query_memory=memory)
+
+    assert updated.meta["confidence"] == "low"
+    assert "period_conflict" in updated.meta["confidence_reasons"]
+
+
+def test_confidence_explicit_merchant_conflict_multiword_is_low() -> None:
+    memory = QueryMemory(
+        date_range={"start_date": "2026-01-01", "end_date": "2026-01-31"},
+        last_tool_name="finance_releves_sum",
+    )
+    plan = _plan(
+        payload={
+            "direction": "DEBIT_ONLY",
+            "merchant": "coop",
+            "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
+        },
+        meta={"followup_from_memory": True},
+    )
+
+    updated = AgentLoop._with_confidence_meta("Et chez Migros Online ?", plan, query_memory=memory)
+
+    assert updated.meta["confidence"] == "low"
+    assert "merchant_conflict" in updated.meta["confidence_reasons"]

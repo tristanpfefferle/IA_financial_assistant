@@ -209,3 +209,4 @@ def test_low_confidence_plan_with_unavailable_judge_client_requires_clarificatio
 
     assert "confirmer la période" in reply.reply.lower()
     assert not router.calls
+    assert reply.plan is None
