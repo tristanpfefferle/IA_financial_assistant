@@ -211,6 +211,21 @@ def _normalize_for_match(value: str) -> str:
     ).strip()
 
 
+def _canonicalize_category(
+    payload: dict[str, object],
+    known_categories: list[str],
+) -> None:
+    raw_category = payload.get("categorie")
+    if not isinstance(raw_category, str) or not raw_category.strip():
+        return
+
+    normalized = _normalize_for_match(raw_category)
+    for category_name in known_categories:
+        if _normalize_for_match(category_name) == normalized:
+            payload["categorie"] = category_name
+            break
+
+
 def _normalize_profile_field_key(key: str) -> str:
     raw = key.strip()
     if raw and raw in PROFILE_ALLOWED_FIELDS:
@@ -481,6 +496,21 @@ class AgentLoop:
             user_reply=plan.user_reply,
             meta=updated_meta,
         )
+
+    @staticmethod
+    def _canonicalize_plan_payload(
+        plan: ToolCallPlan,
+        known_categories: list[str] | None,
+    ) -> None:
+        if not known_categories:
+            return
+        if plan.tool_name not in {
+            "finance_releves_sum",
+            "finance_releves_search",
+            "finance_releves_aggregate",
+        }:
+            return
+        _canonicalize_category(plan.payload, known_categories)
 
     def _guard_plan_with_llm_judge(
         self,
@@ -1832,6 +1862,7 @@ class AgentLoop:
         if isinstance(plan, ToolCallPlan):
             payload_before_memory = dict(plan.payload)
             plan, _memory_reason = apply_memory_to_plan(message, plan, query_memory)
+            self._canonicalize_plan_payload(plan, known_categories)
 
             payload_after_memory = dict(plan.payload)
             injected_fields = {

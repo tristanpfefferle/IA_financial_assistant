@@ -1465,6 +1465,110 @@ def test_memory_does_not_override_explicit_period(monkeypatch) -> None:
     }
 
 
+def test_explicit_category_is_canonicalized_before_tool_call(monkeypatch) -> None:
+    router = _MemoryRouter()
+    loop = AgentLoop(tool_router=router)
+
+    monkeypatch.setattr(
+        AgentLoop,
+        "_route_message",
+        lambda self, message, *, profile_id, active_task: ToolCallPlan(
+            tool_name="finance_releves_sum",
+            payload={
+                "categorie": "alimentation",
+                "direction": "DEBIT_ONLY",
+            },
+            user_reply="OK.",
+        ),
+    )
+
+    loop.handle_user_message(
+        "Dépenses alimentation",
+        memory={
+            "last_query": {
+                "last_tool_name": "finance_releves_sum",
+                "last_intent": "sum",
+                "filters": {
+                    "categorie": "Alimentation",
+                    "direction": "DEBIT_ONLY",
+                },
+                "date_range": {
+                    "start_date": "2026-01-01",
+                    "end_date": "2026-01-31",
+                },
+            },
+            "known_categories": ["Alimentation", "Loisir"],
+        },
+    )
+
+    assert router.calls[0][1]["categorie"] == "Alimentation"
+
+
+def test_explicit_category_is_not_canonicalized_without_known_categories(monkeypatch) -> None:
+    router = _MemoryRouter()
+    loop = AgentLoop(tool_router=router)
+
+    monkeypatch.setattr(
+        AgentLoop,
+        "_route_message",
+        lambda self, message, *, profile_id, active_task: ToolCallPlan(
+            tool_name="finance_releves_sum",
+            payload={
+                "categorie": "alimentation",
+                "direction": "DEBIT_ONLY",
+            },
+            user_reply="OK.",
+        ),
+    )
+
+    loop.handle_user_message(
+        "Dépenses alimentation",
+        memory={
+            "last_query": {
+                "last_tool_name": "finance_releves_sum",
+                "last_intent": "sum",
+                "filters": {
+                    "categorie": "Alimentation",
+                    "direction": "DEBIT_ONLY",
+                },
+                "date_range": {
+                    "start_date": "2026-01-01",
+                    "end_date": "2026-01-31",
+                },
+            }
+        },
+    )
+
+    assert router.calls[0][1]["categorie"] == "alimentation"
+
+
+def test_explicit_category_canonicalization_is_case_accent_insensitive(monkeypatch) -> None:
+    router = _MemoryRouter()
+    loop = AgentLoop(tool_router=router)
+
+    monkeypatch.setattr(
+        AgentLoop,
+        "_route_message",
+        lambda self, message, *, profile_id, active_task: ToolCallPlan(
+            tool_name="finance_releves_sum",
+            payload={
+                "categorie": "LOISIR",
+                "direction": "DEBIT_ONLY",
+            },
+            user_reply="OK.",
+        ),
+    )
+
+    loop.handle_user_message(
+        "Dépenses loisir",
+        memory={
+            "known_categories": ["Alimentation", "Loisir"],
+        },
+    )
+
+    assert router.calls[0][1]["categorie"] == "Loisir"
+
+
 def test_memory_not_updated_on_tool_error(monkeypatch) -> None:
     router = _MemoryRouter(fail=True)
     loop = AgentLoop(tool_router=router)
