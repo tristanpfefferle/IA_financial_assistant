@@ -48,7 +48,8 @@ export function ChatPage({ email }: ChatPageProps) {
   const [importResult, setImportResult] = useState<RelevesImportResult | null>(null)
   const [importError, setImportError] = useState<string | null>(null)
   const [isImporting, setIsImporting] = useState(false)
-  const debugEnabled = import.meta.env.VITE_UI_DEBUG === 'true'
+  const envDebugEnabled = import.meta.env.VITE_UI_DEBUG === 'true'
+  const [debugMode, setDebugMode] = useState(false)
   const apiBaseUrl = useMemo(() => {
     const rawBaseUrl = import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:8000'
     return rawBaseUrl.replace(/\/+$/, '')
@@ -60,6 +61,9 @@ export function ChatPage({ email }: ChatPageProps) {
   )
 
   useEffect(() => {
+    const storedDebugMode = localStorage.getItem('chat_debug_mode')
+    setDebugMode(storedDebugMode === '1')
+
     let active = true
 
     supabase.auth.getSession().then(({ data }) => {
@@ -79,6 +83,10 @@ export function ChatPage({ email }: ChatPageProps) {
       subscription.unsubscribe()
     }
   }, [])
+
+  useEffect(() => {
+    localStorage.setItem('chat_debug_mode', debugMode ? '1' : '0')
+  }, [debugMode])
 
   useEffect(() => {
     if (!hasToken) {
@@ -209,7 +217,7 @@ export function ChatPage({ email }: ChatPageProps) {
     setIsLoading(true)
 
     try {
-      const response = await sendChatMessage(trimmedMessage)
+      const response = await sendChatMessage(trimmedMessage, { debug: debugMode })
       const assistantMessage: ChatMessage = {
         id: crypto.randomUUID(),
         role: 'assistant',
@@ -236,12 +244,19 @@ export function ChatPage({ email }: ChatPageProps) {
           </button>
         </header>
 
-        {debugEnabled ? (
+        {envDebugEnabled ? (
           <div className="debug-banner" role="status" aria-live="polite">
             Connecté: {isConnected ? 'oui' : 'non'} | Email: {email ?? 'inconnu'} | Token: {hasToken ? 'présent' : 'absent'} |
             API: {apiBaseUrl}
           </div>
         ) : null}
+
+        <section className="import-panel">
+          <h2>Paramètres du chat</h2>
+          <label>
+            <input type="checkbox" checked={debugMode} onChange={(event) => setDebugMode(event.target.checked)} /> Debug
+          </label>
+        </section>
 
         <section className="import-panel">
           <h2>Importer un relevé (CSV)</h2>
@@ -326,17 +341,42 @@ export function ChatPage({ email }: ChatPageProps) {
             <article key={chatMessage.id} className={`message message-${chatMessage.role}`}>
               <p className="message-role">{chatMessage.role === 'user' ? 'Vous' : 'Assistant'}</p>
               <p>{chatMessage.content}</p>
-              {debugEnabled && chatMessage.role === 'assistant' && chatMessage.toolResult ? (
-                <details>
-                  <summary>tool_result</summary>
-                  <pre>{JSON.stringify(chatMessage.toolResult, null, 2)}</pre>
-                </details>
-              ) : null}
-              {debugEnabled && chatMessage.role === 'assistant' && chatMessage.plan ? (
-                <details>
-                  <summary>plan</summary>
-                  <pre>{JSON.stringify(chatMessage.plan, null, 2)}</pre>
-                </details>
+              {debugMode && chatMessage.role === 'assistant' && chatMessage.plan ? (
+                (() => {
+                  const plan = chatMessage.plan as Record<string, unknown>
+                  const planToolName = typeof plan['tool_name'] === 'string' ? plan['tool_name'] : null
+                  const planPayload = plan['payload']
+                  const planMeta = plan['meta']
+                  const memoryInjected =
+                    planMeta && typeof planMeta === 'object'
+                      ? (planMeta as Record<string, unknown>)['debug_memory_injected']
+                      : undefined
+
+                  return (
+                    <details>
+                      <summary>Debug</summary>
+                      {planToolName ? <p>Tool: {planToolName}</p> : null}
+                      {planPayload !== undefined ? (
+                        <>
+                          <p>Payload:</p>
+                          <pre>{JSON.stringify(planPayload, null, 2)}</pre>
+                        </>
+                      ) : null}
+                      {planMeta !== undefined ? (
+                        <>
+                          <p>Meta:</p>
+                          <pre>{JSON.stringify(planMeta, null, 2)}</pre>
+                        </>
+                      ) : null}
+                      {memoryInjected !== undefined ? (
+                        <>
+                          <p>Memory injected:</p>
+                          <pre>{JSON.stringify(memoryInjected, null, 2)}</pre>
+                        </>
+                      ) : null}
+                    </details>
+                  )
+                })()
               ) : null}
             </article>
           ))}

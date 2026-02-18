@@ -216,7 +216,11 @@ def health() -> dict[str, str]:
 
 
 @app.post("/agent/chat", response_model=ChatResponse)
-def agent_chat(payload: ChatRequest, authorization: str | None = Header(default=None)) -> ChatResponse:
+def agent_chat(
+    payload: ChatRequest,
+    authorization: str | None = Header(default=None),
+    x_debug: str | None = Header(default=None),
+) -> ChatResponse:
     """Handle a user chat message through the agent loop."""
 
     logger.info("agent_chat_received message_length=%s", len(payload.message))
@@ -235,11 +239,13 @@ def agent_chat(payload: ChatRequest, authorization: str | None = Header(default=
             sorted(memory.keys()) if isinstance(memory, dict) else [],
         )
 
+        debug_enabled = isinstance(x_debug, str) and x_debug.strip() == "1"
         agent_reply = get_agent_loop().handle_user_message(
             payload.message,
             profile_id=profile_id,
             active_task=active_task if isinstance(active_task, dict) else None,
             memory=memory if isinstance(memory, dict) else None,
+            debug=debug_enabled,
         )
 
         response_plan = dict(agent_reply.plan) if isinstance(agent_reply.plan, dict) else agent_reply.plan
