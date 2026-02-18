@@ -186,3 +186,26 @@ def test_low_confidence_wrong_deterministic_plan_is_repaired(monkeypatch) -> Non
     loop.handle_user_message("et en janvier 2026", memory=memory)
 
     assert router.calls[0][1]["date_range"] == {"start_date": "2026-01-01", "end_date": "2026-01-31"}
+
+
+def test_low_confidence_plan_with_unavailable_judge_client_requires_clarification(monkeypatch) -> None:
+    _enable_llm(monkeypatch)
+    router = _Router()
+    judge = _JudgeStub(
+        LLMJudgeResult(verdict="approve", meta={"reason": "judge_client_unavailable"})
+    )
+    loop = AgentLoop(tool_router=router, llm_judge=judge)
+
+    memory = {
+        "last_query": QueryMemory(
+            date_range={"start_date": "2025-12-01", "end_date": "2025-12-31"},
+            last_tool_name="finance_releves_sum",
+            filters={"categorie": "Loisir"},
+        ).to_dict()
+    }
+    monkeypatch.setattr(agent.loop, "followup_plan_from_message", _followup_sum_plan)
+
+    reply = loop.handle_user_message("et en janvier 2026", memory=memory)
+
+    assert "confirmer la période" in reply.reply.lower()
+    assert not router.calls
