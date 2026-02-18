@@ -356,7 +356,10 @@ class AgentLoop:
                 active_task={
                     "type": "needs_confirmation",
                     "confirmation_type": "confirm_delete_category",
-                    "context": {"category_name": suggested_name},
+                    "context": {
+                        "category_name": suggested_name,
+                        "category_prechecked": True,
+                    },
                     "created_at": datetime.now(timezone.utc).isoformat(),
                 },
             )
@@ -1074,7 +1077,16 @@ class AgentLoop:
                         if isinstance(context, dict)
                         else None
                     )
-                    if isinstance(category_name, str) and category_name.strip():
+                    category_prechecked = (
+                        context.get("category_prechecked") is True
+                        if isinstance(context, dict)
+                        else False
+                    )
+                    if (
+                        isinstance(category_name, str)
+                        and category_name.strip()
+                        and not category_prechecked
+                    ):
                         precheck_reply = self._precheck_categories_delete_by_name(
                             ToolCallPlan(
                                 tool_name="finance_categories_delete",
