@@ -1625,13 +1625,20 @@ def test_followup_search_merchant_reuses_period_from_memory(monkeypatch) -> None
     assert second.plan["tool_name"] == "finance_releves_search"
 
 
-def test_followup_sum_category_reuses_period_without_clarification() -> None:
+def test_followup_sum_category_reuses_period_without_clarification(monkeypatch) -> None:
     router = _MemoryRouter()
     loop = AgentLoop(tool_router=router)
 
     first = loop.handle_user_message("Total dépenses en janvier 2026")
     assert first.memory_update is not None
 
+    monkeypatch.setattr(
+        AgentLoop,
+        "_route_message",
+        lambda self, message, *, profile_id, active_task: ClarificationPlan(
+            question="unused"
+        ),
+    )
     second = loop.handle_user_message(
         "Ok et en logement ?",
         memory={
@@ -1649,8 +1656,70 @@ def test_followup_sum_category_reuses_period_without_clarification() -> None:
             "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
         },
     )
-    assert second.tool_result is not None
-    assert second.tool_result.get("type") != "clarification"
+    assert second.plan == {
+        "tool_name": "finance_releves_sum",
+        "payload": {
+            "direction": "DEBIT_ONLY",
+            "category": "logement",
+            "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
+        },
+    }
+
+
+def test_followup_short_message_coop_reuses_search_period_without_clarification(monkeypatch) -> None:
+    router = _MemoryRouter()
+    loop = AgentLoop(tool_router=router)
+
+    monkeypatch.setattr(
+        AgentLoop,
+        "_route_message",
+        lambda self, message, *, profile_id, active_task: ToolCallPlan(
+            tool_name="finance_releves_search",
+            payload={
+                "merchant": "migros",
+                "limit": 50,
+                "offset": 0,
+                "date_range": {
+                    "start_date": "2026-01-01",
+                    "end_date": "2026-01-31",
+                },
+            },
+            user_reply="OK.",
+        ),
+    )
+    first = loop.handle_user_message("Transactions Migros en janvier 2026")
+    assert first.memory_update is not None
+
+    monkeypatch.setattr(
+        AgentLoop,
+        "_route_message",
+        lambda self, message, *, profile_id, active_task: ClarificationPlan(
+            question="unused"
+        ),
+    )
+    second = loop.handle_user_message(
+        "Coop",
+        memory={"last_query": first.memory_update["last_query"]},
+    )
+
+    assert router.calls[-1] == (
+        "finance_releves_search",
+        {
+            "merchant": "coop",
+            "limit": 50,
+            "offset": 0,
+            "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
+        },
+    )
+    assert second.plan == {
+        "tool_name": "finance_releves_search",
+        "payload": {
+            "merchant": "coop",
+            "limit": 50,
+            "offset": 0,
+            "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
+        },
+    }
 
 
 def test_followup_known_category_prefers_category_over_profile_intent() -> None:

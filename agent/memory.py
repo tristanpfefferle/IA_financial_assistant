@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import re
 import unicodedata
 from typing import Any
@@ -25,6 +25,41 @@ _FOLLOWUP_KEYWORDS = {
     "dans",
     "en",
     "?",
+}
+_NON_FOCUS_MESSAGES = {
+    "ok",
+    "oui",
+    "non",
+    "merci",
+    "daccord",
+    "d'accord",
+}
+_MONTH_LOOKUP = {
+    "janvier": 1,
+    "janv": 1,
+    "fevrier": 2,
+    "février": 2,
+    "fevr": 2,
+    "févr": 2,
+    "mars": 3,
+    "avril": 4,
+    "avr": 4,
+    "mai": 5,
+    "juin": 6,
+    "juillet": 7,
+    "juil": 7,
+    "aout": 8,
+    "août": 8,
+    "septembre": 9,
+    "sept": 9,
+    "octobre": 10,
+    "oct": 10,
+    "novembre": 11,
+    "nov": 11,
+    "decembre": 12,
+    "décembre": 12,
+    "dec": 12,
+    "déc": 12,
 }
 _INTENT_BY_TOOL = {
     "finance_releves_sum": "sum",
@@ -154,7 +189,8 @@ def followup_plan_from_message(
     if focus is None and category_focus is not None:
         focus = category_focus
 
-    period_payload = _period_payload_from_memory(memory)
+    explicit_period_payload = _period_payload_from_message(message)
+    period_payload = explicit_period_payload or _period_payload_from_memory(memory)
     category = _match_known_category(focus, known_categories or [])
     normalized_focus = _normalize_text(focus)
     if not normalized_focus:
@@ -215,12 +251,57 @@ def _extract_followup_focus(message: str) -> str | None:
     if not collapsed:
         return None
 
-    matched = re.match(r"^(?:ok\s+)?(?:et|en)\s+(.+?)\??$", collapsed, flags=re.IGNORECASE)
+    matched = re.match(
+        r"^(?:ok[\s,.!]+)?(?:et\s+)?(?:en|dans)\s+(.+?)\??$",
+        collapsed,
+        flags=re.IGNORECASE,
+    )
+    if matched is None:
+        matched = re.match(r"^(?:ok[\s,.!]+)?et\s+(.+?)\??$", collapsed, flags=re.IGNORECASE)
     if matched is not None:
-        focus = matched.group(1).strip(" .,!?:;\"'“”«»")
-        focus = re.sub(r"^(?:en|dans|de)\s+", "", focus, flags=re.IGNORECASE)
-        return focus or None
-    return None
+        focus = matched.group(1)
+    else:
+        focus = collapsed
+
+    focus = focus.strip(" .,!?:;\"'“”«»")
+    focus = re.sub(r"^(?:en|dans|de)\s+", "", focus, flags=re.IGNORECASE)
+    normalized_focus = _normalize_text(focus)
+    if not normalized_focus or normalized_focus in _NON_FOCUS_MESSAGES:
+        return None
+    if matched is None and len(normalized_focus.split()) > 3:
+        return None
+    if normalized_focus in _MONTH_LOOKUP or re.fullmatch(r"(?:19\d{2}|20\d{2}|21\d{2})", normalized_focus):
+        return None
+
+    return focus or None
+
+
+def _period_payload_from_message(message: str) -> dict[str, object]:
+    lowered = message.lower()
+    for month_name, month_number in _MONTH_LOOKUP.items():
+        month_match = re.search(rf"\b{re.escape(month_name)}\b", lowered)
+        if month_match is None:
+            continue
+        year_match = re.search(r"\b(19\d{2}|20\d{2}|21\d{2})\b", lowered)
+        if year_match is None:
+            continue
+        year = int(year_match.group(1))
+        start_date = date(year, month_number, 1)
+        if month_number == 12:
+            next_month_start = date(year + 1, 1, 1)
+        else:
+            next_month_start = date(year, month_number + 1, 1)
+        return {
+            "date_range": {
+                "start_date": start_date.isoformat(),
+                "end_date": (next_month_start - timedelta(days=1)).isoformat(),
+            }
+        }
+
+    year_match = re.search(r"\b(19\d{2}|20\d{2}|21\d{2})\b", lowered)
+    if year_match is not None:
+        return {"year": int(year_match.group(1))}
+    return {}
 
 
 def _normalize_text(value: str) -> str:
