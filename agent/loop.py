@@ -973,12 +973,15 @@ class AgentLoop:
 
                 if choice == "merchant":
                     payload["merchant"] = _normalize_for_match(merchant_raw)
+                    payload.pop("search", None)
                 else:
                     normalized_keyword = _normalize_for_match(keyword_raw)
                     if "search" in RelevesFilters.model_fields:
                         payload["search"] = normalized_keyword
+                        payload.pop("merchant", None)
                     else:
                         payload["merchant"] = normalized_keyword
+                        payload.pop("search", None)
 
                 return ToolCallPlan(
                     tool_name="finance_releves_search",
