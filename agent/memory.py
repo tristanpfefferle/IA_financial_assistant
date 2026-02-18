@@ -687,7 +687,7 @@ def _merge_missing_filters(
         if key in _PERIOD_KEYS:
             continue
         target_key = "categorie" if key in {"category", "categorie"} else key
-        if target_key == "merchant" and block_merchant_injection:
+        if target_key in {"merchant", "search"} and block_merchant_injection:
             continue
         if key in {"merchant", "search"} and (
             "merchant" in payload or "search" in payload
