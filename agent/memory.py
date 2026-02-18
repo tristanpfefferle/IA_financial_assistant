@@ -8,7 +8,7 @@ import re
 import unicodedata
 from typing import Any
 
-from agent.planner import ToolCallPlan
+from agent.planner import ClarificationPlan, ToolCallPlan
 
 _READ_TOOLS = {
     "finance_releves_search",
@@ -206,6 +206,9 @@ def extract_memory_from_plan(
         for key, value in normalized_payload.items()
         if key not in _SKIP_FILTER_KEYS
     }
+    category_candidate = filters.get("categorie")
+    if isinstance(category_candidate, str) and _looks_like_period_phrase(category_candidate):
+        filters.pop("categorie", None)
 
     return QueryMemory(
         date_range=_normalize_date_range(normalized_payload.get("date_range")),
@@ -222,13 +225,17 @@ def followup_plan_from_message(
     memory: QueryMemory | None,
     *,
     known_categories: list[str] | None = None,
-) -> ToolCallPlan | None:
+) -> ToolCallPlan | ClarificationPlan | None:
     """Build deterministic follow-up plan from short messages and memory."""
 
     if memory is None or not isinstance(memory.last_tool_name, str):
         return None
     if memory.last_tool_name not in _RELEVES_TOOLS:
         return None
+
+    period_followup_plan = _build_period_change_followup_plan(message, memory)
+    if period_followup_plan is not None:
+        return period_followup_plan
 
     merchant_focus = _extract_merchant_focus(message)
     focus = _extract_followup_focus(message)
@@ -265,6 +272,7 @@ def followup_plan_from_message(
                     "followup_from_memory": True,
                     "followup_focus": merchant_focus,
                     "followup_reason": "merchant_followup",
+                    "source": "followup",
                 },
             )
 
@@ -281,6 +289,7 @@ def followup_plan_from_message(
                 "followup_from_memory": True,
                 "followup_focus": merchant_focus,
                 "followup_reason": "merchant_followup",
+                "source": "followup",
             },
         )
 
@@ -297,7 +306,7 @@ def followup_plan_from_message(
             tool_name="finance_releves_sum",
             payload=payload,
             user_reply="OK.",
-            meta={"followup_from_memory": True, "followup_focus": focus},
+            meta={"followup_from_memory": True, "followup_focus": focus, "source": "followup"},
         )
 
     if memory.last_tool_name == "finance_releves_search":
@@ -313,7 +322,7 @@ def followup_plan_from_message(
             tool_name="finance_releves_search",
             payload=payload,
             user_reply="OK.",
-            meta={"followup_from_memory": True, "followup_focus": focus},
+            meta={"followup_from_memory": True, "followup_focus": focus, "source": "followup"},
         )
 
     if category is not None:
@@ -326,6 +335,7 @@ def followup_plan_from_message(
                 "followup_from_memory": True,
                 "followup_focus": focus,
                 "followup_reason": "known_category",
+                "source": "followup",
             },
         )
 
@@ -340,6 +350,107 @@ def _period_payload_from_memory(memory: QueryMemory) -> dict[str, object]:
     if memory.year is not None:
         return {"year": memory.year}
     return {}
+
+
+def _build_period_change_followup_plan(
+    message: str,
+    memory: QueryMemory,
+) -> ToolCallPlan | ClarificationPlan | None:
+    period_context = _period_context_from_message(message)
+    if period_context is None:
+        return None
+
+    month = period_context["month"]
+    explicit_year = period_context.get("year")
+    year: int | None = explicit_year if isinstance(explicit_year, int) else None
+
+    if year is None:
+        inferred_year = _year_from_memory_date_range(memory)
+        if inferred_year is None:
+            return ClarificationPlan(
+                question="Tu veux ce mois de quelle année ?",
+                meta={
+                    "source": "followup",
+                    "clarification_type": "missing_year_for_period",
+                    "period_detected": {
+                        "month": month,
+                        "year": None,
+                        "date_range": None,
+                    },
+                },
+            )
+        year = inferred_year
+
+    start_date = date(year, month, 1)
+    if month == 12:
+        next_month_start = date(year + 1, 1, 1)
+    else:
+        next_month_start = date(year, month + 1, 1)
+    period_payload = {
+        "date_range": {
+            "start_date": start_date.isoformat(),
+            "end_date": (next_month_start - timedelta(days=1)).isoformat(),
+        }
+    }
+
+    payload = {
+        key: value
+        for key, value in memory.filters.items()
+        if key not in _PERIOD_KEYS
+    }
+    payload.update(period_payload)
+
+    return ToolCallPlan(
+        tool_name=memory.last_tool_name,
+        payload=payload,
+        user_reply="OK.",
+        meta={
+            "followup_from_memory": True,
+            "followup_reason": "period_change_followup",
+            "source": "followup",
+            "period_detected": {
+                "month": month,
+                "year": year,
+                "date_range": period_payload["date_range"],
+            },
+        },
+    )
+
+
+def _year_from_memory_date_range(memory: QueryMemory) -> int | None:
+    if not isinstance(memory.date_range, dict):
+        return None
+    start_date = memory.date_range.get("start_date")
+    if not isinstance(start_date, str):
+        return None
+    match = re.match(r"^(?P<year>19\d{2}|20\d{2}|21\d{2})-\d{2}-\d{2}$", start_date)
+    if match is None:
+        return None
+    return int(match.group("year"))
+
+
+def _period_context_from_message(message: str) -> dict[str, object] | None:
+    lowered = message.lower()
+    month_pattern = "|".join(
+        sorted((re.escape(name) for name in _MONTH_LOOKUP), key=len, reverse=True)
+    )
+    match = re.search(
+        rf"\b(?:et\s+)?(?:en|sur)\s+(?P<month>{month_pattern})(?:\s+(?P<year>19\d{{2}}|20\d{{2}}|21\d{{2}}))?\b",
+        lowered,
+    )
+    if match is None:
+        return None
+
+    month_name = match.group("month")
+    month = _MONTH_LOOKUP.get(month_name)
+    if month is None:
+        return None
+
+    year_raw = match.group("year")
+    return {
+        "month": month,
+        "year": int(year_raw) if isinstance(year_raw, str) else None,
+    }
 
 
 def _extract_followup_focus(message: str) -> str | None:
@@ -613,3 +724,12 @@ def _normalize_year(value: Any) -> int | None:
     if isinstance(value, str) and value.strip().isdigit():
         return int(value.strip())
     return None
+
+
+def _looks_like_period_phrase(value: str) -> bool:
+    normalized = _normalize_text(value)
+    if not normalized:
+        return False
+    if "et en" in normalized:
+        return True
+    return any(month_name in normalized for month_name in _MONTH_LOOKUP)

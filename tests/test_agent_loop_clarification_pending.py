@@ -76,36 +76,14 @@ def test_clarification_pending_keeps_explicit_period_context(monkeypatch) -> Non
     )
 
     assert second_reply.tool_result is not None
-    assert second_reply.tool_result["type"] == "clarification"
-    assert second_reply.should_update_active_task is True
-    assert second_reply.active_task is not None
-    assert second_reply.active_task["type"] == "clarification_pending"
-    context = second_reply.active_task["context"]
-    assert context["period_payload"] == {
-        "date_range": {
-            "start_date": "2026-01-01",
-            "end_date": "2026-01-31",
-        }
+    assert second_reply.plan is not None
+    assert second_reply.plan["tool_name"] == "finance_releves_sum"
+    assert second_reply.plan["meta"]["debug_source"] == "followup"
+    assert second_reply.plan["meta"]["debug_period_detected"] == {
+        "month": 1,
+        "year": 2026,
+        "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
     }
-    assert context["base_last_query"]["date_range"] == {
-        "start_date": "2025-12-01",
-        "end_date": "2025-12-31",
-    }
-    assert second_reply.tool_result["payload"]["debug_pending_clarification_context"] == {
-        "period_payload": {
-            "date_range": {
-                "start_date": "2026-01-01",
-                "end_date": "2026-01-31",
-            }
-        }
-    }
-
-    third_reply = loop.handle_user_message(
-        "Pour la catégorie Loisir",
-        profile_id=PROFILE_ID,
-        active_task=second_reply.active_task,
-        memory=memory_state,
-    )
 
     assert len(router.calls) == 2
     assert router.calls[1] == (
@@ -119,5 +97,5 @@ def test_clarification_pending_keeps_explicit_period_context(monkeypatch) -> Non
             "categorie": "Loisir",
         },
     )
-    assert third_reply.should_update_active_task is True
-    assert third_reply.active_task is None
+    assert second_reply.should_update_active_task is False
+    assert second_reply.active_task is None
