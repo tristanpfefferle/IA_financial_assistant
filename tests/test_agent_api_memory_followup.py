@@ -64,7 +64,7 @@ class _Router:
         raise AssertionError(f"unexpected tool call: {tool_name}")
 
 
-def test_agent_chat_reuses_last_period_for_logement_followup(monkeypatch) -> None:
+def test_agent_chat_does_not_guess_category_followup_without_known_categories(monkeypatch) -> None:
     monkeypatch.setattr(
         agent_api,
         "get_user_from_bearer_token",
@@ -106,23 +106,9 @@ def test_agent_chat_reuses_last_period_for_logement_followup(monkeypatch) -> Non
     )
 
     assert second.status_code == 200
-    assert second.json()["plan"] == {
-        "tool_name": "finance_releves_sum",
-        "payload": {
-            "direction": "DEBIT_ONLY",
-            "categorie": "logement",
-            "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
-        },
-    }
-    assert second.json()["tool_result"] == {"ok": True, "total": 123.45}
-    assert router.calls[1] == (
-        "finance_releves_sum",
-        {
-            "direction": "DEBIT_ONLY",
-            "categorie": "logement",
-            "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
-        },
-    )
+    assert second.json()["plan"] is None
+    assert second.json()["tool_result"] is None
+    assert len(router.calls) == 1
 
 
 def test_agent_chat_list_categories_is_not_hijacked_by_followup_memory(monkeypatch) -> None:

@@ -1419,7 +1419,7 @@ def test_memory_persists_last_month_from_sum_then_followup_category_uses_same_mo
                 "finance_releves_sum",
                 {
                     "direction": "DEBIT_ONLY",
-                    "categorie": "logement",
+                    "category": "logement",
                     "date_range": {
                         "start_date": "2026-01-01",
                         "end_date": "2026-01-31",
@@ -1661,6 +1661,59 @@ def test_followup_sum_category_reuses_period_without_clarification(monkeypatch) 
         "payload": {
             "direction": "DEBIT_ONLY",
             "categorie": "logement",
+            "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
+        },
+    }
+
+
+def test_followup_sum_merchant_focus_reuses_period_without_clarification(monkeypatch) -> None:
+    router = _MemoryRouter()
+    loop = AgentLoop(tool_router=router)
+
+    monkeypatch.setattr(
+        AgentLoop,
+        "_route_message",
+        lambda self, message, *, profile_id, active_task: ToolCallPlan(
+            tool_name="finance_releves_sum",
+            payload={
+                "direction": "DEBIT_ONLY",
+                "merchant": "migros",
+                "date_range": {
+                    "start_date": "2026-01-01",
+                    "end_date": "2026-01-31",
+                },
+            },
+            user_reply="OK.",
+        ),
+    )
+    first = loop.handle_user_message("Dépenses chez Migros en janvier 2026")
+    assert first.memory_update is not None
+
+    monkeypatch.setattr(
+        AgentLoop,
+        "_route_message",
+        lambda self, message, *, profile_id, active_task: ClarificationPlan(
+            question="unused"
+        ),
+    )
+    second = loop.handle_user_message(
+        "Et chez Coop ?",
+        memory={"last_query": first.memory_update["last_query"]},
+    )
+
+    assert router.calls[-1] == (
+        "finance_releves_sum",
+        {
+            "direction": "DEBIT_ONLY",
+            "merchant": "coop",
+            "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
+        },
+    )
+    assert second.plan == {
+        "tool_name": "finance_releves_sum",
+        "payload": {
+            "direction": "DEBIT_ONLY",
+            "merchant": "coop",
             "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
         },
     }
