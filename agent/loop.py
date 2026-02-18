@@ -87,6 +87,31 @@ _CONFIDENCE_MONTH_TOKENS = (
     "decembre",
     "décembre",
 )
+_CONFIDENCE_MONTH_TO_NUMBER = {
+    "janvier": 1,
+    "fevrier": 2,
+    "mars": 3,
+    "avril": 4,
+    "mai": 5,
+    "juin": 6,
+    "juillet": 7,
+    "aout": 8,
+    "septembre": 9,
+    "octobre": 10,
+    "novembre": 11,
+    "decembre": 12,
+}
+_FILTER_PREFIXES_TO_STRIP = (
+    "le ",
+    "la ",
+    "les ",
+    "un ",
+    "une ",
+    "du ",
+    "des ",
+    "de ",
+    "d'",
+)
 _PROFILE_FIELD_ALIASES = {
     "ville": "city",
     "city": "city",
@@ -176,6 +201,26 @@ def _normalize_profile_field_key(key: str) -> str:
     return _PROFILE_FIELD_ALIASES.get(normalized, normalized)
 
 
+def _strip_filter_prefixes(value: str) -> str:
+    normalized = _normalize_for_match(value)
+    for prefix in _FILTER_PREFIXES_TO_STRIP:
+        if normalized.startswith(prefix):
+            normalized = normalized[len(prefix) :].strip()
+            break
+    return normalized
+
+
+def _cleanup_explicit_filter_value(value: str) -> str:
+    cleaned = _strip_filter_prefixes(value)
+    month_tokens_pattern = "|".join(_CONFIDENCE_MONTH_TO_NUMBER.keys())
+    cleaned = re.sub(
+        rf"\s+en\s+(?:{month_tokens_pattern})\b.*$",
+        "",
+        cleaned,
+    ).strip()
+    return cleaned
+
+
 @dataclass(slots=True)
 class AgentReply:
     """Serializable chat output for API responses."""
@@ -258,27 +303,68 @@ class AgentLoop:
             has_category_value_in_message or has_merchant_value_in_message
         )
 
-        merchant_match = re.search(r"\b(?:chez|merchant|marchand)\s+([\w\-']+)", normalized_message_no_accents)
+        merchant_match = re.search(
+            r"\b(?:chez|merchant|marchand)\s+([^?!.;,]+)",
+            normalized_message_no_accents,
+        )
         explicit_merchant_in_message = (
-            merchant_match.group(1).strip() if merchant_match is not None else ""
+            _cleanup_explicit_filter_value(merchant_match.group(1).strip())
+            if merchant_match is not None
+            else ""
         )
         merchant_conflict = (
             bool(merchant_value)
             and bool(explicit_merchant_in_message)
-            and _normalize_for_match(merchant_value)
-            != _normalize_for_match(explicit_merchant_in_message)
+            and _cleanup_explicit_filter_value(merchant_value) != explicit_merchant_in_message
         )
 
-        category_match = re.search(r"\bcat[eé]gorie\s+([\w\-']+)", normalized_message_no_accents)
+        category_match = re.search(
+            r"\bcat[eé]gorie\s+([^?!.;,]+)",
+            normalized_message_no_accents,
+        )
         explicit_category_in_message = (
-            category_match.group(1).strip() if category_match is not None else ""
+            _cleanup_explicit_filter_value(category_match.group(1).strip())
+            if category_match is not None
+            else ""
         )
         category_conflict = (
             bool(category_value)
             and bool(explicit_category_in_message)
-            and _normalize_for_match(category_value)
-            != _normalize_for_match(explicit_category_in_message)
+            and _cleanup_explicit_filter_value(category_value) != explicit_category_in_message
         )
+
+        period_conflict = False
+        date_range = payload.get("date_range")
+        if (
+            has_explicit_month
+            and has_explicit_year
+            and isinstance(date_range, dict)
+            and isinstance(date_range.get("start_date"), str)
+        ):
+            start_date = str(date_range["start_date"])
+            payload_parts = start_date.split("-")
+            if len(payload_parts) == 3 and all(part.isdigit() for part in payload_parts):
+                payload_year = int(payload_parts[0])
+                payload_month = int(payload_parts[1])
+                year_match = _CONFIDENCE_YEAR_PATTERN.search(normalized_message_no_accents)
+                month_token = next(
+                    (
+                        token
+                        for token in _CONFIDENCE_MONTH_TO_NUMBER
+                        if token in normalized_message_no_accents
+                    ),
+                    None,
+                )
+                if year_match is not None and month_token is not None:
+                    requested_year = int(year_match.group(0))
+                    requested_month = _CONFIDENCE_MONTH_TO_NUMBER[month_token]
+                    period_conflict = (payload_year, payload_month) != (
+                        requested_year,
+                        requested_month,
+                    )
+        if period_conflict:
+            confidence = "low"
+            reasons.append("period_conflict")
 
         followup_short_detected = (
             is_releves_query_tool
