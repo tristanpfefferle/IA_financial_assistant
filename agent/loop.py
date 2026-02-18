@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import hashlib
 import unicodedata
 from dataclasses import dataclass
@@ -20,6 +21,7 @@ from agent.memory import (
     apply_memory_to_plan,
     extract_memory_from_plan,
     followup_plan_from_message,
+    period_payload_from_message,
 )
 from agent.planner import (
     ClarificationPlan,
@@ -229,7 +231,12 @@ class AgentLoop:
         )
 
     @staticmethod
-    def plan_from_active_task(message: str, active_task: dict[str, object]):
+    def plan_from_active_task(
+        message: str,
+        active_task: dict[str, object],
+        *,
+        known_categories: list[str] | None = None,
+    ):
         active_task_type = active_task.get("type")
         if active_task_type == "awaiting_search_merchant":
             merchant = message.strip().lower()
@@ -257,6 +264,51 @@ class AgentLoop:
 
             return ToolCallPlan(
                 tool_name="finance_releves_search",
+                payload=payload,
+                user_reply="OK.",
+                meta={"clear_active_task": True},
+            )
+
+        if active_task_type == "clarification_pending":
+            context = active_task.get("context")
+            if not isinstance(context, dict):
+                return ClarificationPlan(
+                    question="Je n'ai pas compris la tâche en attente.",
+                    meta={"clear_active_task": True},
+                )
+            period_payload = context.get("period_payload")
+            if not isinstance(period_payload, dict) or not period_payload:
+                return ClarificationPlan(
+                    question="Je n'ai pas compris la période demandée.",
+                    meta={"clear_active_task": True},
+                )
+
+            category = AgentLoop._category_from_clarification_message(
+                message,
+                known_categories or [],
+            )
+            if not category:
+                return ClarificationPlan(
+                    question="Pour quelle catégorie veux-tu ce calcul ?",
+                    meta={"keep_active_task": True},
+                )
+
+            base_last_query = context.get("base_last_query")
+            direction = "DEBIT_ONLY"
+            if isinstance(base_last_query, dict):
+                filters = base_last_query.get("filters")
+                if isinstance(filters, dict):
+                    raw_direction = filters.get("direction")
+                    if raw_direction in {"DEBIT_ONLY", "CREDIT_ONLY", "ALL"}:
+                        direction = raw_direction
+
+            payload: dict[str, object] = {
+                "direction": direction,
+                **period_payload,
+                "categorie": category,
+            }
+            return ToolCallPlan(
+                tool_name="finance_releves_sum",
                 payload=payload,
                 user_reply="OK.",
                 meta={"clear_active_task": True},
@@ -301,6 +353,37 @@ class AgentLoop:
             confirmation_type=str(active_task_type),
             context=context,
         )
+
+    @staticmethod
+    def _category_from_clarification_message(
+        message: str,
+        known_categories: list[str],
+    ) -> str | None:
+        cleaned = message.strip().strip(" .,!?:;\"'“”«»")
+        if not cleaned:
+            return None
+
+        normalized_message = _normalize_for_match(cleaned)
+        for category_name in known_categories:
+            normalized_category = _normalize_for_match(category_name)
+            if normalized_category and normalized_category in normalized_message:
+                return category_name
+
+        match = re.search(
+            r"(?:pour\s+)?(?:la\s+)?cat[eé]gorie\s+(.+)$",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        candidate = match.group(1).strip() if match is not None else cleaned
+        candidate = candidate.strip(" .,!?:;\"'“”«»")
+        if not candidate:
+            return None
+
+        for category_name in known_categories:
+            if _normalize_for_match(category_name) == _normalize_for_match(candidate):
+                return category_name
+
+        return candidate
 
     @staticmethod
     def _plan_from_needs_confirmation(
@@ -1077,6 +1160,12 @@ class AgentLoop:
 
         if followup_plan is not None:
             plan = followup_plan
+        elif isinstance(active_task, dict) and active_task.get("type") == "clarification_pending":
+            plan = self.plan_from_active_task(
+                message,
+                active_task,
+                known_categories=known_categories,
+            )
         else:
             routed = self._route_message(
                 message,
@@ -1300,6 +1389,38 @@ class AgentLoop:
         if isinstance(plan, ClarificationPlan):
             clarification_type = plan_meta.get("clarification_type")
             clarification_payload = plan_meta.get("clarification_payload")
+            pending_period_payload = period_payload_from_message(message)
+            if (
+                active_task is None
+                and pending_period_payload
+                and clarification_type != "awaiting_search_merchant"
+            ):
+                pending_context: dict[str, object] = {
+                    "period_payload": pending_period_payload,
+                }
+                if query_memory is not None:
+                    pending_context["base_last_query"] = query_memory.to_dict()
+                updated_active_task = {
+                    "type": "clarification_pending",
+                    "context": pending_context,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                }
+                should_update_active_task = True
+
+            response_payload = (
+                clarification_payload if isinstance(clarification_payload, dict) else None
+            )
+            if debug and isinstance(updated_active_task, dict):
+                pending_context = updated_active_task.get("context")
+                if isinstance(pending_context, dict):
+                    pending_debug = pending_context.get("period_payload")
+                    if isinstance(pending_debug, dict) and pending_debug:
+                        if response_payload is None:
+                            response_payload = {}
+                        response_payload["debug_pending_clarification_context"] = {
+                            "period_payload": pending_debug
+                        }
+
             return AgentReply(
                 reply=plan.question,
                 tool_result=_build_clarification_tool_result(
@@ -1309,11 +1430,7 @@ class AgentLoop:
                         if isinstance(clarification_type, str) and clarification_type
                         else "generic"
                     ),
-                    payload=(
-                        clarification_payload
-                        if isinstance(clarification_payload, dict)
-                        else None
-                    ),
+                    payload=response_payload,
                 ),
                 active_task=updated_active_task,
                 should_update_active_task=should_update_active_task,
