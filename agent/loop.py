@@ -15,7 +15,12 @@ from pydantic import BaseModel
 from agent.answer_builder import build_final_reply
 from agent.deterministic_nlu import parse_intent
 from agent.llm_planner import LLMPlanner
-from agent.memory import QueryMemory, apply_memory_to_plan, extract_memory_from_plan
+from agent.memory import (
+    QueryMemory,
+    apply_memory_to_plan,
+    extract_memory_from_plan,
+    followup_plan_from_message,
+)
 from agent.planner import (
     ClarificationPlan,
     ErrorPlan,
@@ -1027,14 +1032,32 @@ class AgentLoop:
         active_task: dict[str, object] | None = None,
         memory: dict[str, object] | None = None,
     ) -> AgentReply:
-        routed = self._route_message(
-            message,
-            profile_id=profile_id,
-            active_task=active_task,
+        query_memory = (
+            QueryMemory.from_dict(memory.get("last_query"))
+            if isinstance(memory, dict)
+            else None
         )
-        if isinstance(routed, AgentReply):
-            return routed
-        plan = routed
+        known_categories = self._known_categories_from_memory(memory)
+        followup_plan = None
+        if active_task is None:
+            followup_plan = followup_plan_from_message(
+                message,
+                query_memory,
+                known_categories=known_categories,
+            )
+
+        if followup_plan is not None:
+            plan = followup_plan
+        else:
+            routed = self._route_message(
+                message,
+                profile_id=profile_id,
+                active_task=active_task,
+            )
+            if isinstance(routed, AgentReply):
+                return routed
+            plan = routed
+
         self._run_llm_shadow(
             message,
             profile_id=profile_id,
@@ -1144,7 +1167,6 @@ class AgentLoop:
             )
 
         if isinstance(plan, ToolCallPlan):
-            query_memory = QueryMemory.from_dict(memory.get("last_query")) if isinstance(memory, dict) else None
             plan, _memory_reason = apply_memory_to_plan(message, plan, query_memory)
 
             if (
@@ -1213,17 +1235,24 @@ class AgentLoop:
                 if not isinstance(result, ToolError)
                 else None
             )
+            categories_cache_update = self._categories_cache_update(
+                tool_name=plan.tool_name,
+                result=result,
+            )
+            merged_memory_update: dict[str, object] | None = None
+            if extracted_memory is not None:
+                merged_memory_update = {"last_query": extracted_memory.to_dict()}
+            if categories_cache_update is not None:
+                if merged_memory_update is None:
+                    merged_memory_update = {}
+                merged_memory_update.update(categories_cache_update)
             return AgentReply(
                 reply=final_reply,
                 tool_result=self._serialize_tool_result(result),
                 plan={"tool_name": plan.tool_name, "payload": plan.payload},
                 active_task=updated_active_task,
                 should_update_active_task=should_update_active_task,
-                memory_update=(
-                    {"last_query": extracted_memory.to_dict()}
-                    if extracted_memory is not None
-                    else None
-                ),
+                memory_update=merged_memory_update,
             )
 
         if isinstance(plan, ClarificationPlan):
@@ -1262,6 +1291,42 @@ class AgentLoop:
             )
 
         return AgentReply(reply="Commandes disponibles: 'ping' ou 'search: <term>'.")
+
+    @staticmethod
+    def _known_categories_from_memory(
+        memory: dict[str, object] | None,
+    ) -> list[str]:
+        if not isinstance(memory, dict):
+            return []
+        raw_categories = memory.get("known_categories")
+        if not isinstance(raw_categories, list):
+            return []
+        return [
+            category.strip()
+            for category in raw_categories
+            if isinstance(category, str) and category.strip()
+        ]
+
+    @staticmethod
+    def _categories_cache_update(
+        *,
+        tool_name: str,
+        result: object,
+    ) -> dict[str, object] | None:
+        if tool_name != "finance_categories_list" or isinstance(result, ToolError):
+            return None
+
+        items = getattr(result, "items", None)
+        if not isinstance(items, list):
+            return None
+
+        names: list[str] = []
+        for item in items:
+            name = getattr(item, "name", None)
+            if isinstance(name, str) and name.strip():
+                names.append(name.strip())
+
+        return {"known_categories": names}
 
     def _route_message(
         self,

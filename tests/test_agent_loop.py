@@ -9,7 +9,7 @@ import pytest
 
 import agent.loop
 from agent.loop import AgentLoop
-from agent.planner import NoopPlan, ToolCallPlan
+from agent.planner import ClarificationPlan, NoopPlan, ToolCallPlan
 from shared.models import ToolError, ToolErrorCode
 
 
@@ -1385,6 +1385,8 @@ def test_memory_persists_last_month_from_sum_then_followup_category_uses_same_mo
                 "start_date": "2026-01-01",
                 "end_date": "2026-01-31",
             },
+            "last_tool_name": "finance_releves_sum",
+            "last_intent": "sum",
         }
     }
 
@@ -1553,3 +1555,135 @@ def test_memory_applies_to_aggregate_group_by_month_when_missing_period(monkeypa
 
     assert second.plan is not None
     assert second.plan["payload"]["year"] == 2025
+
+
+def test_followup_search_merchant_reuses_period_from_memory(monkeypatch) -> None:
+    router = _MemoryRouter()
+    loop = AgentLoop(tool_router=router)
+
+    def _route_first(message: str, *, profile_id: UUID | None, active_task):
+        assert message == "Transactions Migros en janvier 2026"
+        return ToolCallPlan(
+            tool_name="finance_releves_search",
+            payload={
+                "merchant": "migros",
+                "limit": 50,
+                "offset": 0,
+                "date_range": {
+                    "start_date": "2026-01-01",
+                    "end_date": "2026-01-31",
+                },
+            },
+            user_reply="OK.",
+        )
+
+    monkeypatch.setattr(
+        AgentLoop,
+        "_route_message",
+        lambda self, message, *, profile_id, active_task: _route_first(
+            message,
+            profile_id=profile_id,
+            active_task=active_task,
+        ),
+    )
+    first = loop.handle_user_message("Transactions Migros en janvier 2026")
+    assert first.memory_update is not None
+
+    monkeypatch.setattr(
+        AgentLoop,
+        "_route_message",
+        lambda self, message, *, profile_id, active_task: ClarificationPlan(
+            question="unused"
+        ),
+    )
+    second = loop.handle_user_message(
+        "Et Coop ?",
+        memory={"last_query": first.memory_update["last_query"]},
+    )
+
+    assert router.calls == [
+        (
+            "finance_releves_search",
+            {
+                "merchant": "migros",
+                "limit": 50,
+                "offset": 0,
+                "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
+            },
+        ),
+        (
+            "finance_releves_search",
+            {
+                "merchant": "coop",
+                "limit": 50,
+                "offset": 0,
+                "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
+            },
+        ),
+    ]
+    assert second.plan is not None
+    assert second.plan["tool_name"] == "finance_releves_search"
+
+
+def test_followup_sum_category_reuses_period_without_clarification() -> None:
+    router = _MemoryRouter()
+    loop = AgentLoop(tool_router=router)
+
+    first = loop.handle_user_message("Total dépenses en janvier 2026")
+    assert first.memory_update is not None
+
+    second = loop.handle_user_message(
+        "Ok et en logement ?",
+        memory={
+            "last_query": first.memory_update["last_query"],
+            "known_categories": ["logement", "alimentation"],
+        },
+    )
+
+    assert router.calls[0][0] == "finance_releves_sum"
+    assert router.calls[1] == (
+        "finance_releves_sum",
+        {
+            "direction": "DEBIT_ONLY",
+            "category": "logement",
+            "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
+        },
+    )
+    assert second.tool_result is not None
+    assert second.tool_result.get("type") != "clarification"
+
+
+def test_followup_known_category_prefers_category_over_profile_intent() -> None:
+    router = _MemoryRouter()
+    loop = AgentLoop(tool_router=router)
+
+    reply = loop.handle_user_message(
+        "logement",
+        memory={
+            "last_query": {
+                "last_tool_name": "finance_releves_aggregate",
+                "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
+                "filters": {},
+            },
+            "known_categories": ["logement", "alimentation"],
+        },
+    )
+
+    assert router.calls == [
+        (
+            "finance_releves_sum",
+            {
+                "direction": "DEBIT_ONLY",
+                "category": "logement",
+                "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
+            },
+        )
+    ]
+    assert reply.plan == {
+        "tool_name": "finance_releves_sum",
+        "payload": {
+            "direction": "DEBIT_ONLY",
+            "category": "logement",
+            "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
+        },
+    }

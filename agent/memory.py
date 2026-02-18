@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date, datetime
+import re
+import unicodedata
 from typing import Any
 
 from agent.planner import ToolCallPlan
@@ -24,6 +26,12 @@ _FOLLOWUP_KEYWORDS = {
     "en",
     "?",
 }
+_INTENT_BY_TOOL = {
+    "finance_releves_sum": "sum",
+    "finance_releves_search": "search",
+    "finance_releves_aggregate": "aggregate",
+}
+_RELEVES_TOOLS = frozenset(_INTENT_BY_TOOL.keys())
 
 
 @dataclass(slots=True)
@@ -33,6 +41,8 @@ class QueryMemory:
     date_range: dict[str, str] | None = None
     month: str | None = None
     year: int | None = None
+    last_tool_name: str | None = None
+    last_intent: str | None = None
     filters: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -45,6 +55,10 @@ class QueryMemory:
             result["month"] = self.month
         if self.year is not None:
             result["year"] = self.year
+        if self.last_tool_name is not None:
+            result["last_tool_name"] = self.last_tool_name
+        if self.last_intent is not None:
+            result["last_intent"] = self.last_intent
         return result
 
     @classmethod
@@ -58,11 +72,15 @@ class QueryMemory:
         date_range = raw.get("date_range")
         month = raw.get("month")
         year = raw.get("year")
+        last_tool_name = raw.get("last_tool_name")
+        last_intent = raw.get("last_intent")
 
         return cls(
             date_range=_normalize_date_range(date_range),
             month=_normalize_month(month),
             year=_normalize_year(year),
+            last_tool_name=_normalize_string(last_tool_name),
+            last_intent=_normalize_string(last_intent),
             filters=_normalize_dict(filters) if isinstance(filters, dict) else {},
         )
 
@@ -110,8 +128,141 @@ def extract_memory_from_plan(
         date_range=_normalize_date_range(normalized_payload.get("date_range")),
         month=_normalize_month(normalized_payload.get("month")),
         year=_normalize_year(normalized_payload.get("year")),
+        last_tool_name=tool_name,
+        last_intent=_INTENT_BY_TOOL.get(tool_name),
         filters=filters,
     )
+
+
+def followup_plan_from_message(
+    message: str,
+    memory: QueryMemory | None,
+    *,
+    known_categories: list[str] | None = None,
+) -> ToolCallPlan | None:
+    """Build deterministic follow-up plan from short messages and memory."""
+
+    if memory is None or not isinstance(memory.last_tool_name, str):
+        return None
+    if memory.last_tool_name not in _RELEVES_TOOLS:
+        return None
+
+    focus = _extract_followup_focus(message)
+    category_focus = _known_category_in_message(message, known_categories or [])
+    if focus is None and category_focus is None:
+        return None
+    if focus is None and category_focus is not None:
+        focus = category_focus
+
+    period_payload = _period_payload_from_memory(memory)
+    category = _match_known_category(focus, known_categories or [])
+    normalized_focus = _normalize_text(focus)
+    if not normalized_focus:
+        return None
+
+    if memory.last_tool_name == "finance_releves_sum":
+        payload: dict[str, object] = {"direction": "DEBIT_ONLY", **period_payload}
+        payload["category"] = category or normalized_focus
+        return ToolCallPlan(
+            tool_name="finance_releves_sum",
+            payload=payload,
+            user_reply="OK.",
+            meta={"followup_from_memory": True, "followup_focus": focus},
+        )
+
+    if memory.last_tool_name == "finance_releves_search":
+        payload = {
+            "merchant": normalized_focus,
+            "limit": 50,
+            "offset": 0,
+            **period_payload,
+        }
+        return ToolCallPlan(
+            tool_name="finance_releves_search",
+            payload=payload,
+            user_reply="OK.",
+            meta={"followup_from_memory": True, "followup_focus": focus},
+        )
+
+    if category is not None:
+        payload = {"direction": "DEBIT_ONLY", "category": category, **period_payload}
+        return ToolCallPlan(
+            tool_name="finance_releves_sum",
+            payload=payload,
+            user_reply="OK.",
+            meta={
+                "followup_from_memory": True,
+                "followup_focus": focus,
+                "followup_reason": "known_category",
+            },
+        )
+
+    return None
+
+
+def _period_payload_from_memory(memory: QueryMemory) -> dict[str, object]:
+    if memory.date_range is not None:
+        return {"date_range": dict(memory.date_range)}
+    if memory.month is not None:
+        return {"month": memory.month}
+    if memory.year is not None:
+        return {"year": memory.year}
+    return {}
+
+
+def _extract_followup_focus(message: str) -> str | None:
+    collapsed = re.sub(r"\s+", " ", message.strip())
+    if not collapsed:
+        return None
+
+    matched = re.match(r"^(?:ok\s+)?(?:et|en)\s+(.+?)\??$", collapsed, flags=re.IGNORECASE)
+    if matched is not None:
+        focus = matched.group(1).strip(" .,!?:;\"'“”«»")
+        focus = re.sub(r"^(?:en|dans|de)\s+", "", focus, flags=re.IGNORECASE)
+        return focus or None
+    return None
+
+
+def _normalize_text(value: str) -> str:
+    lowered = value.strip().casefold()
+    without_accents = unicodedata.normalize("NFKD", lowered)
+    normalized = "".join(
+        char for char in without_accents if not unicodedata.combining(char)
+    )
+    return " ".join(normalized.split())
+
+
+def _match_known_category(value: str, known_categories: list[str]) -> str | None:
+    normalized_target = _normalize_text(value)
+    if not normalized_target:
+        return None
+    for category_name in known_categories:
+        if not isinstance(category_name, str):
+            continue
+        cleaned = category_name.strip()
+        if cleaned and _normalize_text(cleaned) == normalized_target:
+            return cleaned
+    return None
+
+
+
+def _known_category_in_message(message: str, known_categories: list[str]) -> str | None:
+    normalized_message = _normalize_text(message)
+    if not normalized_message:
+        return None
+    for category_name in known_categories:
+        if not isinstance(category_name, str):
+            continue
+        cleaned = category_name.strip()
+        normalized_category = _normalize_text(cleaned)
+        if cleaned and normalized_category and normalized_category in normalized_message:
+            return cleaned
+    return None
+
+def _normalize_string(value: Any) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
 
 
 def apply_memory_to_plan(
