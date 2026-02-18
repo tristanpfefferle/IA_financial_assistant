@@ -186,13 +186,13 @@ def test_agent_chat_reuses_persisted_search_active_task_with_serialized_dates(mo
             },
         )
     ]
-    assert isinstance(repo.chat_state.get("memory"), dict)
-    assert isinstance(repo.chat_state["memory"].get("last_query"), dict)
-    assert repo.chat_state["memory"]["last_query"]["date_range"] == {
+    assert isinstance(repo.chat_state.get("state"), dict)
+    assert isinstance(repo.chat_state["state"].get("last_query"), dict)
+    assert repo.chat_state["state"]["last_query"]["date_range"] == {
         "start_date": "2026-01-01",
         "end_date": "2026-01-31",
     }
-    assert repo.chat_state["memory"]["last_query"]["filters"] == {"merchant": "coop"}
+    assert repo.chat_state["state"]["last_query"]["filters"] == {"merchant": "coop"}
 
 
 def test_agent_chat_persists_memory_update(monkeypatch) -> None:
@@ -243,7 +243,7 @@ def test_agent_chat_persists_memory_update(monkeypatch) -> None:
     assert repo.update_calls
     assert repo.chat_state == {
         "active_task": {"type": "awaiting_search_merchant"},
-        "memory": {
+        "state": {
             "last_query": {
                 "date_range": {
                     "start_date": "2026-01-01",

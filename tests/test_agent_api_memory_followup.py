@@ -87,13 +87,13 @@ def test_agent_chat_reuses_last_period_for_logement_followup(monkeypatch) -> Non
     assert router.calls[0][1]["direction"] == "DEBIT_ONLY"
     assert _as_iso_date(router.calls[0][1]["date_range"]["start_date"]) == "2026-01-01"
     assert _as_iso_date(router.calls[0][1]["date_range"]["end_date"]) == "2026-01-31"
-    assert isinstance(repo.chat_state.get("memory"), dict)
-    assert isinstance(repo.chat_state["memory"].get("last_query"), dict)
-    assert repo.chat_state["memory"]["last_query"]["date_range"] == {
+    assert isinstance(repo.chat_state.get("state"), dict)
+    assert isinstance(repo.chat_state["state"].get("last_query"), dict)
+    assert repo.chat_state["state"]["last_query"]["date_range"] == {
         "start_date": "2026-01-01",
         "end_date": "2026-01-31",
     }
-    assert repo.chat_state["memory"]["last_query"]["filters"] == {
+    assert repo.chat_state["state"]["last_query"]["filters"] == {
         "direction": "DEBIT_ONLY"
     }
 
