@@ -92,7 +92,7 @@ def test_followup_known_category_fallback_uses_categorie_key() -> None:
 
 
 
-def test_followup_pizza_chez_migros_returns_clarification_when_search_field_not_supported() -> None:
+def test_followup_pizza_chez_migros_returns_merchant_vs_keyword_clarification() -> None:
     plan = followup_plan_from_message(
         "Et la pizza chez Migros ?",
         QueryMemory(

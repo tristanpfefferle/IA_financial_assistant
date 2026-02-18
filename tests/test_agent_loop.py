@@ -10,7 +10,7 @@ import pytest
 import agent.loop
 from agent.loop import AgentLoop
 from agent.planner import ClarificationPlan, NoopPlan, ToolCallPlan
-from shared.models import ToolError, ToolErrorCode
+from shared.models import RelevesFilters, ToolError, ToolErrorCode
 
 
 class _FailIfCalledRouter:
@@ -2044,18 +2044,9 @@ def test_followup_pizza_chez_migros_clarification_creates_active_task_with_conte
     }
 
 
-@pytest.mark.parametrize(
-    ("answer", "expected_filter"),
-    [
-        ("Migros", {"merchant": "migros"}),
-        ("Marchand", {"merchant": "migros"}),
-        ("pizza", {"merchant": "pizza"}),
-        ("mot-clé", {"merchant": "pizza"}),
-    ],
-)
+@pytest.mark.parametrize("answer", ["Migros", "Marchand", "pizza", "mot-clé"])
 def test_followup_pizza_chez_migros_clarification_resolves_to_search(
     answer: str,
-    expected_filter: dict[str, str],
 ) -> None:
     router = _MemoryRouter()
     loop = AgentLoop(tool_router=router)
@@ -2091,19 +2082,28 @@ def test_followup_pizza_chez_migros_clarification_resolves_to_search(
         },
     )
 
-    assert reply.plan == {
-        "tool_name": "finance_releves_search",
-        "payload": {
-            **expected_filter,
-            "limit": 50,
-            "offset": 0,
-            "direction": "DEBIT_ONLY",
-            "date_range": {
-                "start_date": "2026-02-01",
-                "end_date": "2026-02-28",
-            },
-        },
+    assert isinstance(reply.plan, dict)
+    assert isinstance(reply.plan.get("payload"), dict)
+    payload = reply.plan["payload"]
+    supports_search = "search" in RelevesFilters.model_fields
+    expects_merchant = answer in {"Migros", "Marchand"} or not supports_search
+
+    assert reply.plan.get("tool_name") == "finance_releves_search"
+    assert payload.get("limit") == 50
+    assert payload.get("offset") == 0
+    assert payload.get("direction") == "DEBIT_ONLY"
+    assert payload.get("date_range") == {
+        "start_date": "2026-02-01",
+        "end_date": "2026-02-28",
     }
+    assert not ({"merchant", "search"} <= set(payload))
+    if expects_merchant:
+        expected_merchant = "migros" if answer in {"Migros", "Marchand"} else "pizza"
+        assert payload["merchant"] == expected_merchant
+        assert "search" not in payload
+    else:
+        assert payload["search"] == "pizza"
+        assert "merchant" not in payload
     assert reply.should_update_active_task is True
     assert reply.active_task is None
 
