@@ -282,6 +282,33 @@ def test_followup_category_is_prioritized_over_merchant_after_search() -> None:
     }
 
 
+
+
+def test_followup_category_after_search_does_not_include_merchant() -> None:
+    plan = followup_plan_from_message(
+        "Et en loisir ?",
+        QueryMemory(
+            date_range={"start_date": "2026-02-01", "end_date": "2026-02-28"},
+            last_tool_name="finance_releves_search",
+            last_intent="search",
+            filters={
+                "merchant": "pizza",
+                "direction": "DEBIT_ONLY",
+                "limit": 50,
+                "offset": 0,
+            },
+        ),
+        known_categories=["Loisir", "Alimentation"],
+    )
+
+    assert plan is not None
+    assert plan.tool_name == "finance_releves_sum"
+    assert plan.payload == {
+        "direction": "DEBIT_ONLY",
+        "categorie": "Loisir",
+        "date_range": {"start_date": "2026-02-01", "end_date": "2026-02-28"},
+    }
+
 def test_followup_depenses_category_query_is_treated_as_full_query() -> None:
     plan = followup_plan_from_message(
         "Dépenses loisir",

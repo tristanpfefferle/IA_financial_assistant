@@ -351,7 +351,7 @@ def followup_plan_from_message(
         _match_known_category(focus, known_categories or []) if isinstance(focus, str) else None
     )
 
-    if category_focus is not None:
+    if category_focus is not None and memory.last_tool_name == "finance_releves_search":
         direction = memory.filters.get("direction")
         normalized_direction = (
             direction.strip().upper()
@@ -623,6 +623,12 @@ def apply_memory_to_plan(
         return plan, None
 
     reason_parts: list[str] = []
+    had_explicit_merchant = "merchant" in payload
+    sum_has_category = (
+        plan.tool_name == "finance_releves_sum"
+        and isinstance(payload.get("categorie"), str)
+        and bool(str(payload.get("categorie", "")).strip())
+    )
     period_injected = False
     filter_injected = False
     has_period = any(key in payload for key in _PERIOD_KEYS)
@@ -641,9 +647,16 @@ def apply_memory_to_plan(
             period_injected = True
 
     if is_followup_message(message):
-        filter_injected = _merge_missing_filters(payload, memory.filters)
+        filter_injected = _merge_missing_filters(
+            payload,
+            memory.filters,
+            block_merchant_injection=sum_has_category,
+        )
         if filter_injected:
             reason_parts.append("followup_filters_from_memory")
+
+    if sum_has_category and not had_explicit_merchant:
+        payload.pop("merchant", None)
 
     if not period_injected and not filter_injected:
         return plan, None
@@ -666,12 +679,16 @@ def apply_memory_to_plan(
 def _merge_missing_filters(
     payload: dict[str, Any],
     memory_filters: dict[str, Any],
+    *,
+    block_merchant_injection: bool = False,
 ) -> bool:
     injected = False
     for key, value in memory_filters.items():
         if key in _PERIOD_KEYS:
             continue
         target_key = "categorie" if key in {"category", "categorie"} else key
+        if target_key == "merchant" and block_merchant_injection:
+            continue
         if key in {"merchant", "search"} and (
             "merchant" in payload or "search" in payload
         ):
