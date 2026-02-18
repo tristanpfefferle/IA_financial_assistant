@@ -105,3 +105,23 @@ def test_confidence_followup_with_memory_stays_medium() -> None:
 
     assert updated.meta["confidence"] == "medium"
     assert "period_missing_in_message" in updated.meta["confidence_reasons"]
+
+
+def test_confidence_explicit_merchant_conflict_is_low() -> None:
+    memory = QueryMemory(
+        date_range={"start_date": "2026-01-01", "end_date": "2026-01-31"},
+        last_tool_name="finance_releves_sum",
+    )
+    plan = _plan(
+        payload={
+            "direction": "DEBIT_ONLY",
+            "merchant": "coop",
+            "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
+        },
+        meta={"followup_from_memory": True},
+    )
+
+    updated = AgentLoop._with_confidence_meta("Et chez Migros ?", plan, query_memory=memory)
+
+    assert updated.meta["confidence"] == "low"
+    assert "merchant_conflict" in updated.meta["confidence_reasons"]
