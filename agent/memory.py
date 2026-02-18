@@ -285,6 +285,17 @@ def followup_plan_from_message(
                     last_year = last_start_date.year
                     last_month = last_start_date.month
 
+        if last_month is None and isinstance(memory.month, str):
+            memory_month = memory.month.strip()
+            extracted_month: int | None = None
+            year_month_match = re.fullmatch(r"\d{4}-(\d{2})", memory_month)
+            if year_month_match is not None:
+                extracted_month = int(year_month_match.group(1))
+            elif re.fullmatch(r"\d{1,2}", memory_month):
+                extracted_month = int(memory_month)
+            if extracted_month is not None and 1 <= extracted_month <= 12:
+                last_month = extracted_month
+
         if last_year is None and memory.year is not None:
             last_year = memory.year
 
@@ -306,6 +317,9 @@ def followup_plan_from_message(
             **dict(memory.filters),
             **explicit_period_payload,
         }
+        if "date_range" in explicit_period_payload:
+            payload.pop("month", None)
+            payload.pop("year", None)
         payload.pop("limit", None)
         payload.pop("offset", None)
         return ToolCallPlan(
