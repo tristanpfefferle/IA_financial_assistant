@@ -59,6 +59,34 @@ _SOFT_WRITE_TOOLS = {
 }
 _CONFIRM_WORDS = {"oui", "o", "ok", "confirme", "confirmé", "confirmée"}
 _REJECT_WORDS = {"non", "n", "annule", "annuler"}
+_CONFIDENCE_SHORT_FOLLOWUP_PATTERN = re.compile(r"^(et\s+en|et|ok|pareil|idem)\b", re.IGNORECASE)
+_CONFIDENCE_EXPLICIT_DATE_PATTERN = re.compile(
+    r"\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}/\d{1,2}/\d{2,4}\b",
+    re.IGNORECASE,
+)
+_CONFIDENCE_YEAR_PATTERN = re.compile(r"\b(?:19|20)\d{2}\b")
+_CONFIDENCE_AMBIGUOUS_TIME_REFERENCES = (
+    "mois suivant",
+    "mois d'apres",
+    "mois d'après",
+)
+_CONFIDENCE_MONTH_TOKENS = (
+    "janvier",
+    "fevrier",
+    "février",
+    "mars",
+    "avril",
+    "mai",
+    "juin",
+    "juillet",
+    "aout",
+    "août",
+    "septembre",
+    "octobre",
+    "novembre",
+    "decembre",
+    "décembre",
+)
 _PROFILE_FIELD_ALIASES = {
     "ville": "city",
     "city": "city",
@@ -176,65 +204,129 @@ class AgentLoop:
     ) -> ToolCallPlan:
         confidence = "high"
         reasons: list[str] = []
-        normalized_message = message.strip().lower()
+        stripped_message = message.strip()
+        normalized_message = stripped_message.lower()
+        normalized_message_no_accents = _normalize_for_match(stripped_message)
         payload = plan.payload
+        is_releves_query_tool = plan.tool_name in {
+            "finance_releves_sum",
+            "finance_releves_search",
+            "finance_releves_aggregate",
+        }
         has_explicit_intent = any(
             keyword in normalized_message
-            for keyword in ("dépense", "depense", "revenu", "recherche", "cherche", "somme", "total")
+            for keyword in (
+                "dépense",
+                "depense",
+                "revenu",
+                "recherche",
+                "cherche",
+                "search",
+                "somme",
+                "total",
+            )
+        )
+        has_explicit_filter = any(
+            token in normalized_message
+            for token in ("chez", "catégorie", "categorie", "merchant", "marchand")
+        )
+        has_explicit_year = bool(_CONFIDENCE_YEAR_PATTERN.search(normalized_message))
+        has_explicit_month = any(month in normalized_message for month in _CONFIDENCE_MONTH_TOKENS)
+        has_explicit_date_literal = bool(_CONFIDENCE_EXPLICIT_DATE_PATTERN.search(normalized_message))
+        has_explicit_period = (has_explicit_month and has_explicit_year) or has_explicit_date_literal
+        has_ambiguous_time_reference = any(
+            token in normalized_message_no_accents
+            for token in _CONFIDENCE_AMBIGUOUS_TIME_REFERENCES
+        )
+        has_plan_date_range = isinstance(payload.get("date_range"), dict)
+        period_came_from_memory = bool(plan.meta.get("followup_from_memory")) or (
+            isinstance(plan.meta.get("memory_reason"), str)
+            and "period_from_memory" in str(plan.meta.get("memory_reason"))
+        )
+        is_regex_followup = bool(
+            _CONFIDENCE_SHORT_FOLLOWUP_PATTERN.match(normalized_message)
+        )
+        is_short_followup = len(stripped_message) <= 25
+        category_value = str(payload.get("categorie", "")).strip()
+        merchant_value = str(payload.get("merchant", "")).strip()
+        has_category_value_in_message = bool(category_value) and (
+            _normalize_for_match(category_value) in normalized_message_no_accents
+        )
+        has_merchant_value_in_message = bool(merchant_value) and (
+            _normalize_for_match(merchant_value) in normalized_message_no_accents
+        )
+        has_payload_filter_value_in_message = (
+            has_category_value_in_message or has_merchant_value_in_message
         )
 
-        if is_followup_message(message) and query_memory is not None:
-            has_filter_hint_in_message = any(
-                token in normalized_message
-                for token in ("chez", "catégorie", "categorie", "merchant", "marchand")
-            )
-            has_period_hint = any(
-                token in normalized_message
-                for token in (
-                    "janvier",
-                    "février",
-                    "fevrier",
-                    "mars",
-                    "avril",
-                    "mai",
-                    "juin",
-                    "juillet",
-                    "août",
-                    "aout",
-                    "septembre",
-                    "octobre",
-                    "novembre",
-                    "décembre",
-                    "decembre",
+        if (
+            is_releves_query_tool
+            and is_followup_message(message)
+            and (
+                is_regex_followup
+                or (
+                    is_short_followup
+                    and (query_memory is not None or period_came_from_memory)
                 )
             )
-            if has_period_hint and not has_filter_hint_in_message:
-                confidence = "low"
-                reasons.append("short_followup_with_memory_dependency")
-
-        if isinstance(plan.meta.get("memory_reason"), str) and "period_from_memory" in str(plan.meta.get("memory_reason")):
+            and not has_explicit_intent
+            and not has_explicit_filter
+            and not has_payload_filter_value_in_message
+        ):
             confidence = "low"
-            reasons.append("period_defaulted_from_memory")
+            reasons.append("followup_short")
+
+        if is_releves_query_tool and has_ambiguous_time_reference:
+            if confidence != "low":
+                confidence = "medium"
+            reasons.append("ambiguous_time_reference")
+
+        if is_releves_query_tool and has_plan_date_range and not has_explicit_period:
+            if confidence != "low":
+                confidence = "medium"
+            reasons.append("period_missing_in_message")
+            if query_memory is not None and period_came_from_memory:
+                confidence = "low"
+                reasons.append("period_injected_from_memory")
+
+        if (
+            is_releves_query_tool
+            and is_followup_message(message)
+            and query_memory is not None
+            and not has_explicit_period
+            and not has_explicit_filter
+            and not has_explicit_intent
+        ):
+            confidence = "low"
+            reasons.append("followup_short")
 
         if plan.tool_name in {"finance_releves_sum", "finance_releves_search"}:
             has_categorie = isinstance(payload.get("categorie"), str) and bool(str(payload.get("categorie")).strip())
-            if has_categorie and not any(token in normalized_message for token in ("catégorie", "categorie")):
+            if has_categorie and not any(token in normalized_message for token in ("catégorie", "categorie")) and not has_category_value_in_message:
                 if confidence != "low":
                     confidence = "medium"
-                reasons.append("category_likely_inferred")
+                reasons.append("category_inferred")
 
-        if has_explicit_intent and isinstance(payload.get("date_range"), dict):
-            start_date = payload.get("date_range", {}).get("start_date")
-            end_date = payload.get("date_range", {}).get("end_date")
-            if isinstance(start_date, str) and isinstance(end_date, str):
-                if confidence == "high":
-                    reasons.append("explicit_intent_and_period")
-        elif confidence == "high":
-            reasons.append("limited_explicit_signals")
+            has_merchant = isinstance(payload.get("merchant"), str) and bool(str(payload.get("merchant")).strip())
+            if has_merchant and "chez" not in normalized_message and "merchant" not in normalized_message and "marchand" not in normalized_message and not has_merchant_value_in_message:
+                if confidence != "low":
+                    confidence = "medium"
+                reasons.append("merchant_inferred")
+
+        if has_explicit_intent:
+            reasons.append("explicit_intent")
+        if has_explicit_period:
+            reasons.append("explicit_period")
+        if has_explicit_filter:
+            reasons.append("explicit_filter")
+
+        has_obvious_tool = is_releves_query_tool
+        if is_releves_query_tool and confidence == "high" and not ((has_explicit_intent or has_obvious_tool) and has_explicit_period):
+            confidence = "medium"
 
         updated_meta = dict(plan.meta)
         updated_meta["confidence"] = confidence
-        updated_meta["confidence_reasons"] = reasons
+        updated_meta["confidence_reasons"] = list(dict.fromkeys(reasons))
         return ToolCallPlan(
             tool_name=plan.tool_name,
             payload=dict(plan.payload),
