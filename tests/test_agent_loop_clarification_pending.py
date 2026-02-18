@@ -27,9 +27,9 @@ class _Router:
         raise AssertionError(f"unexpected tool call: {tool_name}")
 
 
-def test_clarification_pending_keeps_explicit_period_context(monkeypatch) -> None:
+def test_followup_explicit_period_reuses_last_tool_filters_without_clarification(monkeypatch) -> None:
     def _parse_intent(message: str):
-        if message == "Dépenses en Loisir en décembre 2025":
+        if message == "Total dépenses Loisir en décembre 2025":
             return {
                 "type": "tool_call",
                 "tool_name": "finance_releves_sum",
@@ -42,13 +42,7 @@ def test_clarification_pending_keeps_explicit_period_context(monkeypatch) -> Non
                     },
                 },
             }
-        if message == "Et en janvier 2026 ?":
-            return {
-                "type": "clarification",
-                "message": "Tu veux les dépenses, revenus ou le solde ?",
-                "clarification_type": "missing_direction",
-            }
-        return {"type": "noop"}
+        raise AssertionError(f"Unexpected parse_intent call for: {message}")
 
     monkeypatch.setattr(loop_module, "parse_intent", _parse_intent)
 
@@ -58,7 +52,7 @@ def test_clarification_pending_keeps_explicit_period_context(monkeypatch) -> Non
     memory_state: dict[str, object] = {"known_categories": ["Loisir"]}
 
     first_reply = loop.handle_user_message(
-        "Dépenses en Loisir en décembre 2025",
+        "Total dépenses Loisir en décembre 2025",
         profile_id=PROFILE_ID,
         memory=memory_state,
     )
@@ -69,55 +63,52 @@ def test_clarification_pending_keeps_explicit_period_context(monkeypatch) -> Non
     memory_state = {**memory_state, **first_reply.memory_update}
 
     second_reply = loop.handle_user_message(
-        "Et en janvier 2026 ?",
+        "et en janvier 2026",
         profile_id=PROFILE_ID,
         memory=memory_state,
         debug=True,
     )
 
-    assert second_reply.tool_result is not None
-    assert second_reply.tool_result["type"] == "clarification"
-    assert second_reply.should_update_active_task is True
-    assert second_reply.active_task is not None
-    assert second_reply.active_task["type"] == "clarification_pending"
-    context = second_reply.active_task["context"]
-    assert context["period_payload"] == {
+    assert second_reply.plan is not None
+    assert second_reply.plan["tool_name"] == "finance_releves_sum"
+    assert second_reply.plan["payload"] == {
+        "direction": "DEBIT_ONLY",
+        "categorie": "Loisir",
         "date_range": {
             "start_date": "2026-01-01",
             "end_date": "2026-01-31",
-        }
+        },
     }
-    assert context["base_last_query"]["date_range"] == {
-        "start_date": "2025-12-01",
-        "end_date": "2025-12-31",
-    }
-    assert second_reply.tool_result["payload"]["debug_pending_clarification_context"] == {
-        "period_payload": {
-            "date_range": {
-                "start_date": "2026-01-01",
-                "end_date": "2026-01-31",
-            }
-        }
-    }
-
-    third_reply = loop.handle_user_message(
-        "Pour la catégorie Loisir",
-        profile_id=PROFILE_ID,
-        active_task=second_reply.active_task,
-        memory=memory_state,
-    )
-
+    assert second_reply.tool_result is not None
+    assert second_reply.tool_result.get("type") != "clarification"
     assert len(router.calls) == 2
-    assert router.calls[1] == (
-        "finance_releves_sum",
-        {
-            "direction": "DEBIT_ONLY",
-            "date_range": {
-                "start_date": "2026-01-01",
-                "end_date": "2026-01-31",
+
+
+def test_direction_clarification_does_not_overwrite_category() -> None:
+    router = _Router()
+    loop = AgentLoop(tool_router=router)
+
+    reply = loop.handle_user_message(
+        "Dépenses",
+        profile_id=PROFILE_ID,
+        active_task={
+            "type": "clarification_pending",
+            "context": {
+                "clarification_type": "direction_choice",
+                "period_payload": {
+                    "date_range": {
+                        "start_date": "2026-01-01",
+                        "end_date": "2026-01-31",
+                    }
+                },
+                "base_payload": {"categorie": "Loisir"},
             },
-            "categorie": "Loisir",
         },
     )
-    assert third_reply.should_update_active_task is True
-    assert third_reply.active_task is None
+
+    assert reply.plan is not None
+    assert reply.plan["tool_name"] == "finance_releves_sum"
+    payload = reply.plan["payload"]
+    assert payload["direction"] == "DEBIT_ONLY"
+    assert payload.get("categorie") == "Loisir"
+    assert payload.get("categorie") != "Dépenses"

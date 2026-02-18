@@ -51,6 +51,16 @@ _INTENT_KEYWORDS = {
     "agrégat",
     "somme",
 }
+_EXPLICIT_FILTER_KEYWORDS = {
+    "chez",
+    "categorie",
+    "categories",
+    "catégorie",
+    "catégories",
+    "merchant",
+    "marchand",
+}
+_DATE_LITERAL_PATTERN = re.compile(r"\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}/\d{1,2}/\d{2,4}\b")
 _NON_FOCUS_MESSAGES = {
     "ok",
     "oui",
@@ -190,6 +200,8 @@ def extract_memory_from_plan(
     tool_name: str,
     payload: dict[str, object],
     meta: dict[str, object] | None = None,
+    *,
+    known_categories: list[str] | None = None,
 ) -> QueryMemory | None:
     """Build query memory from an executed read tool payload."""
 
@@ -206,6 +218,7 @@ def extract_memory_from_plan(
         for key, value in normalized_payload.items()
         if key not in _SKIP_FILTER_KEYS
     }
+    _sanitize_memory_filters(filters, known_categories=known_categories or [])
 
     return QueryMemory(
         date_range=_normalize_date_range(normalized_payload.get("date_range")),
@@ -240,6 +253,24 @@ def followup_plan_from_message(
         focus = category_focus
 
     explicit_period_payload = _period_payload_from_message(message)
+    if explicit_period_payload and _is_memory_period_followup_candidate(message):
+        payload = {
+            **_period_payload_from_memory(memory),
+            **dict(memory.filters),
+            **explicit_period_payload,
+        }
+        payload.pop("limit", None)
+        payload.pop("offset", None)
+        return ToolCallPlan(
+            tool_name=memory.last_tool_name,
+            payload=payload,
+            user_reply="OK.",
+            meta={
+                "followup_from_memory": True,
+                "followup_reason": "explicit_period_reuses_last_query",
+            },
+        )
+
     period_payload = explicit_period_payload or _period_payload_from_memory(memory)
     normalized_focus = _normalize_text(focus) if isinstance(focus, str) else ""
     category = (
@@ -613,3 +644,41 @@ def _normalize_year(value: Any) -> int | None:
     if isinstance(value, str) and value.strip().isdigit():
         return int(value.strip())
     return None
+
+
+def _is_memory_period_followup_candidate(message: str) -> bool:
+    normalized = _normalize_text(message)
+    if not normalized:
+        return False
+
+    tokens = set(normalized.replace("?", " ").split())
+    has_explicit_intent = any(token in _INTENT_KEYWORDS for token in tokens)
+    has_explicit_filter = any(token in _EXPLICIT_FILTER_KEYWORDS for token in tokens)
+
+    return not has_explicit_intent and not has_explicit_filter
+
+
+def _sanitize_memory_filters(
+    filters: dict[str, Any],
+    *,
+    known_categories: list[str],
+) -> None:
+    raw_category = filters.get("categorie")
+    if not isinstance(raw_category, str) or not raw_category.strip():
+        return
+
+    normalized_category = _normalize_text(raw_category)
+    if not normalized_category:
+        filters.pop("categorie", None)
+        return
+
+    if known_categories:
+        matched = _match_known_category(raw_category, known_categories)
+        if matched is None:
+            filters.pop("categorie", None)
+            return
+        filters["categorie"] = matched
+        return
+
+    if _DATE_LITERAL_PATTERN.search(raw_category) is not None:
+        filters.pop("categorie", None)
