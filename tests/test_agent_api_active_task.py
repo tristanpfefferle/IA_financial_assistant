@@ -253,3 +253,43 @@ def test_agent_chat_persists_memory_update(monkeypatch) -> None:
             }
         },
     }
+
+
+def test_agent_chat_with_debug_header_works_when_loop_does_not_accept_debug(monkeypatch) -> None:
+    monkeypatch.setattr(
+        agent_api,
+        "get_user_from_bearer_token",
+        lambda _token: {"id": str(AUTH_USER_ID), "email": "user@example.com"},
+    )
+
+    repo = _Repo(initial_chat_state={"active_task": {"type": "awaiting_search_merchant"}})
+
+    class _LegacyLoop:
+        def handle_user_message(self, message: str, *, profile_id: UUID | None = None, active_task=None, memory=None):
+            assert message == "Montre mes dépenses"
+            assert profile_id == PROFILE_ID
+            assert active_task == {"type": "awaiting_search_merchant"}
+            assert memory is None
+            return SimpleNamespace(
+                reply="Voici vos dépenses.",
+                tool_result={"ok": True},
+                plan={"tool_name": "finance_releves_sum", "payload": {"direction": "DEBIT_ONLY"}},
+                should_update_active_task=False,
+                active_task=None,
+            )
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LegacyLoop())
+
+    response = client.post(
+        "/agent/chat",
+        json={"message": "Montre mes dépenses"},
+        headers={**_auth_headers(), "X-Debug": "1"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["reply"] == "Voici vos dépenses."
+    assert response.json()["plan"] == {
+        "tool_name": "finance_releves_sum",
+        "payload": {"direction": "DEBIT_ONLY"},
+    }
