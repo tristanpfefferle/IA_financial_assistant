@@ -9,7 +9,7 @@ from agent.memory import (
     followup_plan_from_message,
     is_followup_message,
 )
-from agent.planner import ToolCallPlan
+from agent.planner import ClarificationPlan, ToolCallPlan
 
 
 def _memory_for_sum() -> QueryMemory:
@@ -88,6 +88,27 @@ def test_followup_known_category_fallback_uses_categorie_key() -> None:
     assert category_plan is not None
     assert category_plan.payload["categorie"] == "Logement"
     assert "category" not in category_plan.payload
+
+
+
+
+def test_followup_pizza_chez_migros_returns_clarification_when_search_field_not_supported() -> None:
+    plan = followup_plan_from_message(
+        "Et la pizza chez Migros ?",
+        QueryMemory(
+            date_range={"start_date": "2026-02-01", "end_date": "2026-02-28"},
+            last_tool_name="finance_releves_search",
+            last_intent="search",
+            filters={"direction": "DEBIT_ONLY", "merchant": "pizza"},
+        ),
+        known_categories=["Loisir", "Alimentation"],
+    )
+
+    assert isinstance(plan, ClarificationPlan)
+    assert "marchand ‘Migros’" in plan.question
+    assert "mot-clé ‘pizza’" in plan.question
+    assert plan.meta.get("clarification_type") == "prevent_write_on_followup"
+    assert plan.meta.get("keep_active_task") is True
 
 
 def test_followup_sum_merchant_focus_uses_merchant_filter() -> None:

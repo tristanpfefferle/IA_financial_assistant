@@ -1875,7 +1875,139 @@ def test_followup_message_cannot_trigger_write_tool(monkeypatch) -> None:
     if isinstance(reply.tool_result, dict):
         assert reply.tool_result["type"] == "clarification"
         assert reply.tool_result["clarification_type"] == "prevent_write_on_followup"
-    assert reply.should_update_active_task is False
+    assert reply.should_update_active_task is True
+
+
+
+def test_followup_prevent_write_clarification_keeps_active_task_then_merchant_executes_search(monkeypatch) -> None:
+    router = _MemoryRouter()
+    loop = AgentLoop(tool_router=router)
+
+    monkeypatch.setattr(
+        AgentLoop,
+        "_route_message",
+        lambda self, message, *, profile_id, active_task: ToolCallPlan(
+            tool_name="finance_categories_delete",
+            payload={"category_name": "X"},
+            user_reply="OK.",
+        ),
+    )
+
+    first = loop.handle_user_message(
+        "Et pizza ?",
+        memory={
+            "last_query": {
+                "last_tool_name": "finance_releves_sum",
+                "date_range": {
+                    "start_date": "2026-01-01",
+                    "end_date": "2026-01-31",
+                },
+                "filters": {"direction": "DEBIT_ONLY"},
+            }
+        },
+    )
+
+    assert first.reply == "Tu parles de « pizza » comme marchand ou comme catégorie ?"
+    assert first.should_update_active_task is True
+    assert isinstance(first.active_task, dict)
+    assert first.active_task.get("type") == "clarification_pending"
+    first_context = first.active_task.get("context")
+    assert isinstance(first_context, dict)
+    assert first_context.get("clarification_type") == "prevent_write_on_followup"
+    assert first_context.get("focus") == "pizza"
+
+    second = loop.handle_user_message(
+        "Marchand",
+        active_task=first.active_task,
+        memory={
+            "last_query": {
+                "last_tool_name": "finance_releves_sum",
+                "date_range": {
+                    "start_date": "2026-01-01",
+                    "end_date": "2026-01-31",
+                },
+                "filters": {"direction": "DEBIT_ONLY"},
+            }
+        },
+    )
+
+    assert second.plan == {
+        "tool_name": "finance_releves_search",
+        "payload": {
+            "merchant": "pizza",
+            "limit": 50,
+            "offset": 0,
+            "direction": "DEBIT_ONLY",
+            "date_range": {
+                "start_date": "2026-01-01",
+                "end_date": "2026-01-31",
+            },
+        },
+    }
+    assert second.should_update_active_task is True
+    assert second.active_task is None
+
+
+def test_followup_prevent_write_clarification_category_executes_sum(monkeypatch) -> None:
+    router = _MemoryRouter()
+    loop = AgentLoop(tool_router=router)
+
+    monkeypatch.setattr(
+        AgentLoop,
+        "_route_message",
+        lambda self, message, *, profile_id, active_task: ToolCallPlan(
+            tool_name="finance_categories_delete",
+            payload={"category_name": "X"},
+            user_reply="OK.",
+        ),
+    )
+
+    first = loop.handle_user_message(
+        "Et Pizza ?",
+        memory={
+            "last_query": {
+                "last_tool_name": "finance_releves_sum",
+                "date_range": {
+                    "start_date": "2026-01-01",
+                    "end_date": "2026-01-31",
+                },
+                "filters": {"direction": "DEBIT_ONLY"},
+            },
+        },
+    )
+
+    assert isinstance(first.active_task, dict)
+
+    second = loop.handle_user_message(
+        "Catégorie",
+        active_task=first.active_task,
+        memory={
+            "last_query": {
+                "last_tool_name": "finance_releves_sum",
+                "date_range": {
+                    "start_date": "2026-01-01",
+                    "end_date": "2026-01-31",
+                },
+                "filters": {"direction": "DEBIT_ONLY"},
+            },
+            "known_categories": ["Pizza", "Transport"],
+        },
+    )
+
+    assert second.plan == {
+        "tool_name": "finance_releves_sum",
+        "payload": {
+            "direction": "DEBIT_ONLY",
+            "categorie": "Pizza",
+            "date_range": {
+                "start_date": "2026-01-01",
+                "end_date": "2026-01-31",
+            },
+        },
+    }
+    assert second.should_update_active_task is True
+    assert second.active_task is None
+
 
 def test_followup_known_category_reuses_period_when_implicit() -> None:
     router = _MemoryRouter()

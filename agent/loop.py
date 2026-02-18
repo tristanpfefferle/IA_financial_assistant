@@ -270,6 +270,43 @@ def _extract_followup_focus_for_write_prevention(message: str) -> str | None:
     return focus
 
 
+def _write_prevention_choice_from_message(message: str) -> str | None:
+    normalized = _normalize_for_match(message)
+    if not normalized:
+        return None
+
+    merchant_tokens = {"marchand", "merchant", "payee", "commercant", "commerçant"}
+    category_tokens = {"categorie", "category", "cat"}
+    tokens = set(normalized.split())
+
+    if tokens & merchant_tokens:
+        return "merchant"
+    if tokens & category_tokens:
+        return "category"
+    return None
+
+
+def _date_range_from_pending_context(
+    context: dict[str, object],
+    query_memory: QueryMemory | None,
+) -> dict[str, str] | None:
+    period_payload = context.get("period_payload")
+    if isinstance(period_payload, dict):
+        date_range = period_payload.get("date_range")
+        if isinstance(date_range, dict):
+            start_date = date_range.get("start_date")
+            end_date = date_range.get("end_date")
+            if isinstance(start_date, str) and isinstance(end_date, str):
+                return {"start_date": start_date, "end_date": end_date}
+
+    if isinstance(query_memory, QueryMemory) and isinstance(query_memory.date_range, dict):
+        start_date = query_memory.date_range.get("start_date")
+        end_date = query_memory.date_range.get("end_date")
+        if isinstance(start_date, str) and isinstance(end_date, str):
+            return {"start_date": start_date, "end_date": end_date}
+    return None
+
+
 @dataclass(slots=True)
 class AgentReply:
     """Serializable chat output for API responses."""
@@ -691,6 +728,7 @@ class AgentLoop:
         active_task: dict[str, object],
         *,
         known_categories: list[str] | None = None,
+        query_memory: QueryMemory | None = None,
     ):
         active_task_type = active_task.get("type")
         if active_task_type == "awaiting_search_merchant":
@@ -731,6 +769,96 @@ class AgentLoop:
                     question="Je n'ai pas compris la tâche en attente.",
                     meta={"clear_active_task": True},
                 )
+
+            clarification_type = context.get("clarification_type")
+            if clarification_type == "prevent_write_on_followup":
+                choice = _write_prevention_choice_from_message(message)
+                focus_raw = context.get("focus")
+                focus = (
+                    _normalize_for_match(focus_raw)
+                    if isinstance(focus_raw, str) and focus_raw.strip()
+                    else ""
+                )
+
+                if choice is None:
+                    return ClarificationPlan(
+                        question="Tu veux parler d’un marchand ou d’une catégorie ?",
+                        meta={
+                            "keep_active_task": True,
+                            "clarification_type": "prevent_write_on_followup",
+                        },
+                    )
+
+                if not focus:
+                    return ClarificationPlan(
+                        question="Je n’ai pas trouvé le focus à analyser.",
+                        meta={"clear_active_task": True},
+                    )
+
+                direction = "DEBIT_ONLY"
+                base_last_query = context.get("base_last_query")
+                if isinstance(base_last_query, dict):
+                    filters = base_last_query.get("filters")
+                    if isinstance(filters, dict):
+                        raw_direction = filters.get("direction")
+                        if raw_direction in {"DEBIT_ONLY", "CREDIT_ONLY", "ALL"}:
+                            direction = raw_direction
+                if (
+                    isinstance(query_memory, QueryMemory)
+                    and isinstance(query_memory.filters, dict)
+                    and query_memory.filters.get("direction")
+                    in {"DEBIT_ONLY", "CREDIT_ONLY", "ALL"}
+                ):
+                    direction = str(query_memory.filters["direction"])
+
+                date_range = _date_range_from_pending_context(context, query_memory)
+
+                if choice == "merchant":
+                    payload: dict[str, object] = {
+                        "merchant": focus,
+                        "limit": 50,
+                        "offset": 0,
+                        "direction": direction,
+                    }
+                    if isinstance(date_range, dict):
+                        payload["date_range"] = date_range
+                    return ToolCallPlan(
+                        tool_name="finance_releves_search",
+                        payload=payload,
+                        user_reply="OK.",
+                        meta={"clear_active_task": True},
+                    )
+
+                matched_category = None
+                for category_name in known_categories or []:
+                    if _normalize_for_match(category_name) == focus:
+                        matched_category = category_name
+                        break
+                if matched_category is None:
+                    categories_display = ", ".join(known_categories or [])
+                    question = f"Je ne trouve pas la catégorie « {focus_raw} »."
+                    if categories_display:
+                        question = (
+                            f"{question} Voici vos catégories disponibles : {categories_display}."
+                        )
+                    return ClarificationPlan(
+                        question=question,
+                        meta={"clear_active_task": True},
+                    )
+
+                payload = {
+                    "direction": direction,
+                    "categorie": matched_category,
+                }
+                if isinstance(date_range, dict):
+                    payload["date_range"] = date_range
+                return ToolCallPlan(
+                    tool_name="finance_releves_sum",
+                    payload=payload,
+                    user_reply="OK.",
+                    meta={"clear_active_task": True},
+                )
+
             period_payload = context.get("period_payload")
             if not isinstance(period_payload, dict) or not period_payload:
                 return ClarificationPlan(
@@ -738,7 +866,6 @@ class AgentLoop:
                     meta={"clear_active_task": True},
                 )
 
-            clarification_type = context.get("clarification_type")
             if clarification_type in {"direction_choice", "missing_direction"}:
                 direction = AgentLoop._direction_from_clarification_message(message)
                 if direction is None:
@@ -1735,6 +1862,7 @@ class AgentLoop:
                 message,
                 active_task_effective,
                 known_categories=known_categories,
+                query_memory=query_memory,
             )
         else:
             routed = self._route_message(
@@ -1789,7 +1917,10 @@ class AgentLoop:
             )
             plan = ClarificationPlan(
                 question=clarification_question,
-                meta={"clarification_type": "prevent_write_on_followup"},
+                meta={
+                    "keep_active_task": True,
+                    "clarification_type": "prevent_write_on_followup",
+                },
             )
 
         plan_meta = (
@@ -2006,13 +2137,14 @@ class AgentLoop:
             clarification_payload = plan_meta.get("clarification_payload")
             pending_period_payload = period_payload_from_message(message)
             if (
-                active_task is None
-                and pending_period_payload
+                active_task_effective is None
+                and plan_meta.get("keep_active_task")
                 and clarification_type != "awaiting_search_merchant"
             ):
-                pending_context: dict[str, object] = {
-                    "period_payload": pending_period_payload,
-                }
+                pending_context: dict[str, object] = {}
+                if pending_period_payload and clarification_type != "awaiting_search_merchant":
+                    pending_context["period_payload"] = pending_period_payload
+
                 if isinstance(clarification_type, str) and clarification_type:
                     normalized_clarification_type = clarification_type
                     if clarification_type in {
@@ -2022,12 +2154,24 @@ class AgentLoop:
                     }:
                         normalized_clarification_type = "direction_choice"
                     pending_context["clarification_type"] = normalized_clarification_type
-                if isinstance(plan, ClarificationPlan):
-                    pending_context["clarification_question"] = plan.question
-                if query_memory is not None:
+
+                pending_context["clarification_question"] = plan.question
+                if isinstance(query_memory, QueryMemory):
                     pending_context["base_last_query"] = query_memory.to_dict()
-                if isinstance(query_memory, QueryMemory) and isinstance(query_memory.filters, dict):
-                    pending_context["base_payload"] = dict(query_memory.filters)
+                    if isinstance(query_memory.filters, dict):
+                        pending_context["base_payload"] = dict(query_memory.filters)
+                    if isinstance(query_memory.date_range, dict):
+                        pending_context["period_payload"] = {
+                            "date_range": dict(query_memory.date_range)
+                        }
+
+                if clarification_type == "prevent_write_on_followup":
+                    focus = _extract_followup_focus_for_write_prevention(message)
+                    if focus:
+                        pending_context["focus"] = focus
+                    if known_categories:
+                        pending_context["known_categories"] = list(known_categories)
+
                 updated_active_task = {
                     "type": "clarification_pending",
                     "context": pending_context,
