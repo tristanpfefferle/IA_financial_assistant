@@ -417,6 +417,12 @@ def _period_payload_from_message(message: str) -> dict[str, object]:
     return {}
 
 
+def period_payload_from_message(message: str) -> dict[str, object]:
+    """Expose explicit period extraction for non-tool clarification turns."""
+
+    return _period_payload_from_message(message)
+
+
 def _normalize_text(value: str) -> str:
     lowered = value.strip().casefold()
     without_accents = unicodedata.normalize("NFKD", lowered)
