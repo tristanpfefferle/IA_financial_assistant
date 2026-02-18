@@ -221,6 +221,60 @@ def test_llm_planner_parses_categories_update_tool_call(monkeypatch) -> None:
     assert plan.payload["exclude_from_totals"] is True
 
 
+
+
+
+
+def test_llm_planner_messages_include_category_delete_and_city_few_shots() -> None:
+    messages = LLMPlanner._messages("test")
+
+    contents = [message["content"] for message in messages if message["role"] == "system"]
+
+    assert any("supprimer ma catégorie restaurants" in content.casefold() for content in contents)
+    assert any("mettre choëx comme ville" in content.casefold() for content in contents)
+    assert any("ne génère jamais 'ville'/'pays'" in content.casefold() for content in contents)
+
+
+def test_llm_planner_parses_categories_delete_from_french_delete_prompt(monkeypatch) -> None:
+    monkeypatch.setenv("AGENT_LLM_ENABLED", "true")
+    monkeypatch.setenv("APP_ENV", "dev")
+
+    planner = LLMPlanner(
+        client=FakeClient(
+            _response_with_tool_call(
+                "finance_categories_delete",
+                '{"category_name": "restaurants"}',
+            )
+        )
+    )
+
+    plan = planner.plan("Peux-tu supprimer ma catégorie restaurants stp ?")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_categories_delete"
+    assert plan.payload == {"category_name": "restaurants"}
+
+
+def test_llm_planner_parses_city_update_with_accented_value(monkeypatch) -> None:
+    monkeypatch.setenv("AGENT_LLM_ENABLED", "true")
+    monkeypatch.setenv("APP_ENV", "dev")
+
+    planner = LLMPlanner(
+        client=FakeClient(
+            _response_with_tool_call(
+                "finance_profile_update",
+                '{"set": {"city": "Choëx"}}',
+            )
+        )
+    )
+
+    plan = planner.plan("Peux-tu mettre CHOËX comme ville stp ?")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_profile_update"
+    assert plan.payload == {"set": {"city": "Choëx"}}
+
+
 def test_llm_planner_rewrites_incorrect_no_tool_bank_delete_fallback(monkeypatch) -> None:
     monkeypatch.setenv("AGENT_LLM_ENABLED", "true")
     monkeypatch.setenv("APP_ENV", "dev")
