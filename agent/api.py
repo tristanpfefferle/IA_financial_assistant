@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import inspect
 from functools import lru_cache
 from typing import Any
 from uuid import UUID
@@ -27,6 +28,21 @@ from shared.models import ToolError
 
 
 logger = logging.getLogger(__name__)
+
+
+def _handler_accepts_debug_kwarg(handler: Any) -> bool:
+    """Return True when handler supports a `debug` keyword argument."""
+
+    try:
+        signature = inspect.signature(handler)
+    except (TypeError, ValueError):
+        return False
+
+    parameters = signature.parameters
+    if "debug" in parameters:
+        return True
+
+    return any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values())
 
 
 class ChatRequest(BaseModel):
@@ -240,13 +256,17 @@ def agent_chat(
         )
 
         debug_enabled = isinstance(x_debug, str) and x_debug.strip() == "1"
-        agent_reply = get_agent_loop().handle_user_message(
-            payload.message,
-            profile_id=profile_id,
-            active_task=active_task if isinstance(active_task, dict) else None,
-            memory=memory if isinstance(memory, dict) else None,
-            debug=debug_enabled,
-        )
+        loop = get_agent_loop()
+        handler = loop.handle_user_message
+        handler_kwargs: dict[str, Any] = {
+            "profile_id": profile_id,
+            "active_task": active_task if isinstance(active_task, dict) else None,
+            "memory": memory if isinstance(memory, dict) else None,
+        }
+        if debug_enabled and _handler_accepts_debug_kwarg(handler):
+            handler_kwargs["debug"] = True
+
+        agent_reply = handler(payload.message, **handler_kwargs)
 
         response_plan = dict(agent_reply.plan) if isinstance(agent_reply.plan, dict) else agent_reply.plan
 
