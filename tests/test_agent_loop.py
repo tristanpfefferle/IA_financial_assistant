@@ -249,13 +249,8 @@ def test_categories_delete_not_found_returns_human_message() -> None:
     router = _CategoriesPrecheckRouter(["Logement", "Transport", "Alimentation"])
     loop = AgentLoop(tool_router=router)
 
-    first = loop.handle_user_message(
-        "supprime la catégorie Voyages",
-        profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
-    )
     reply = loop.handle_user_message(
-        "oui",
-        active_task=first.active_task,
+        "supprime la catégorie Voyages",
         profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
     )
 
@@ -268,13 +263,8 @@ def test_categories_delete_not_found_with_close_suggestions() -> None:
     router = _CategoriesPrecheckRouter(["Transfert interne", "Transport", "Loisirs"])
     loop = AgentLoop(tool_router=router)
 
-    first = loop.handle_user_message(
-        "supprime la catégorie transfret interne",
-        profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
-    )
     reply = loop.handle_user_message(
-        "oui",
-        active_task=first.active_task,
+        "supprime la catégorie transfret interne",
         profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
     )
 

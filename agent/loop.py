@@ -326,11 +326,14 @@ class AgentLoop:
                 return NoopPlan(
                     reply="Suppression annulée.", meta={"clear_active_task": True}
                 )
+            meta: dict[str, object] = {"clear_active_task": True}
+            if context.get("category_prechecked") is True:
+                meta["category_prechecked"] = True
             return ToolCallPlan(
                 tool_name="finance_categories_delete",
                 payload={"category_name": target_name},
                 user_reply="Catégorie supprimée.",
-                meta={"clear_active_task": True},
+                meta=meta,
             )
 
         if confirmation_type == "confirm_delete_bank_account":
@@ -1013,6 +1016,35 @@ class AgentLoop:
 
         if isinstance(plan, SetActiveTaskPlan):
             if profile_id is not None:
+                active_task_context = (
+                    plan.active_task if isinstance(plan.active_task, dict) else {}
+                )
+                if (
+                    active_task_context.get("type") == "needs_confirmation"
+                    and active_task_context.get("confirmation_type")
+                    == "confirm_delete_category"
+                ):
+                    context = active_task_context.get("context")
+                    category_name = (
+                        context.get("category_name")
+                        if isinstance(context, dict)
+                        else None
+                    )
+                    if isinstance(category_name, str) and category_name.strip():
+                        precheck_reply = self._precheck_categories_delete_by_name(
+                            ToolCallPlan(
+                                tool_name="finance_categories_delete",
+                                payload={"category_name": category_name.strip()},
+                                user_reply="",
+                            ),
+                            tool_router=self.tool_router,
+                            profile_id=profile_id,
+                        )
+                        if precheck_reply is not None:
+                            return precheck_reply
+                        if isinstance(context, dict):
+                            context["category_prechecked"] = True
+
                 resolved_reply = self._resolve_delete_bank_account_confirmation(
                     plan,
                     tool_router=self.tool_router,
@@ -1025,6 +1057,20 @@ class AgentLoop:
                 active_task=plan.active_task,
                 should_update_active_task=True,
             )
+
+        if isinstance(plan, ToolCallPlan):
+            if (
+                plan.tool_name == "finance_categories_delete"
+                and profile_id is not None
+                and plan.meta.get("category_prechecked") is not True
+            ):
+                precheck_reply = self._precheck_categories_delete_by_name(
+                    plan,
+                    tool_router=self.tool_router,
+                    profile_id=profile_id,
+                )
+                if precheck_reply is not None:
+                    return precheck_reply
 
         if (
             isinstance(plan, ToolCallPlan)
@@ -1039,14 +1085,6 @@ class AgentLoop:
             )
 
         if isinstance(plan, ToolCallPlan):
-            if plan.tool_name == "finance_categories_delete" and profile_id is not None:
-                precheck_reply = self._precheck_categories_delete_by_name(
-                    plan,
-                    tool_router=self.tool_router,
-                    profile_id=profile_id,
-                )
-                if precheck_reply is not None:
-                    return precheck_reply
 
             if (
                 plan.tool_name == "finance_releves_search"
