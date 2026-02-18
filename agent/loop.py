@@ -15,12 +15,14 @@ from pydantic import BaseModel
 
 from agent.answer_builder import build_final_reply
 from agent.deterministic_nlu import parse_intent
+from agent.llm_judge import LLMJudge
 from agent.llm_planner import LLMPlanner
 from agent.memory import (
     QueryMemory,
     apply_memory_to_plan,
     extract_memory_from_plan,
     followup_plan_from_message,
+    is_followup_message,
     period_payload_from_message,
 )
 from agent.planner import (
@@ -162,7 +164,160 @@ class AgentReply:
 class AgentLoop:
     tool_router: ToolRouter
     llm_planner: LLMPlanner | None = None
+    llm_judge: LLMJudge | None = None
     shadow_llm: bool = False
+
+    @staticmethod
+    def _with_confidence_meta(
+        message: str,
+        plan: ToolCallPlan,
+        *,
+        query_memory: QueryMemory | None,
+    ) -> ToolCallPlan:
+        confidence = "high"
+        reasons: list[str] = []
+        normalized_message = message.strip().lower()
+        payload = plan.payload
+        has_explicit_intent = any(
+            keyword in normalized_message
+            for keyword in ("dépense", "depense", "revenu", "recherche", "cherche", "somme", "total")
+        )
+
+        if is_followup_message(message) and query_memory is not None:
+            has_filter_hint_in_message = any(
+                token in normalized_message
+                for token in ("chez", "catégorie", "categorie", "merchant", "marchand")
+            )
+            has_period_hint = any(
+                token in normalized_message
+                for token in (
+                    "janvier",
+                    "février",
+                    "fevrier",
+                    "mars",
+                    "avril",
+                    "mai",
+                    "juin",
+                    "juillet",
+                    "août",
+                    "aout",
+                    "septembre",
+                    "octobre",
+                    "novembre",
+                    "décembre",
+                    "decembre",
+                )
+            )
+            if has_period_hint and not has_filter_hint_in_message:
+                confidence = "low"
+                reasons.append("short_followup_with_memory_dependency")
+
+        if isinstance(plan.meta.get("memory_reason"), str) and "period_from_memory" in str(plan.meta.get("memory_reason")):
+            confidence = "low"
+            reasons.append("period_defaulted_from_memory")
+
+        if plan.tool_name in {"finance_releves_sum", "finance_releves_search"}:
+            has_categorie = isinstance(payload.get("categorie"), str) and bool(str(payload.get("categorie")).strip())
+            if has_categorie and not any(token in normalized_message for token in ("catégorie", "categorie")):
+                if confidence != "low":
+                    confidence = "medium"
+                reasons.append("category_likely_inferred")
+
+        if has_explicit_intent and isinstance(payload.get("date_range"), dict):
+            start_date = payload.get("date_range", {}).get("start_date")
+            end_date = payload.get("date_range", {}).get("end_date")
+            if isinstance(start_date, str) and isinstance(end_date, str):
+                if confidence == "high":
+                    reasons.append("explicit_intent_and_period")
+        elif confidence == "high":
+            reasons.append("limited_explicit_signals")
+
+        updated_meta = dict(plan.meta)
+        updated_meta["confidence"] = confidence
+        updated_meta["confidence_reasons"] = reasons
+        return ToolCallPlan(
+            tool_name=plan.tool_name,
+            payload=dict(plan.payload),
+            user_reply=plan.user_reply,
+            meta=updated_meta,
+        )
+
+    def _guard_plan_with_llm_judge(
+        self,
+        message: str,
+        plan: ToolCallPlan,
+        *,
+        query_memory: QueryMemory | None,
+        known_categories: list[str] | None,
+    ) -> ToolCallPlan | ClarificationPlan:
+        confidence = plan.meta.get("confidence")
+        if confidence == "high":
+            return plan
+
+        if self.llm_judge is None or not config.llm_enabled():
+            if confidence == "low":
+                return ClarificationPlan(
+                    question=(
+                        "Je veux éviter une erreur: pouvez-vous confirmer la période ou le filtre attendu ?"
+                    ),
+                    meta={"clarification_type": "low_confidence_plan"},
+                )
+            return plan
+
+        context = query_memory.to_dict() if query_memory is not None else {}
+        verdict = self.llm_judge.judge(
+            user_message=message,
+            deterministic_plan={
+                "tool_name": plan.tool_name,
+                "payload": dict(plan.payload),
+            },
+            conversation_context=context,
+            known_categories=known_categories,
+        )
+
+        if verdict.verdict == "clarify":
+            question = verdict.question or "Pouvez-vous préciser votre demande ?"
+            return ClarificationPlan(
+                question=question,
+                meta={"clarification_type": "llm_guardian", "llm_guardian": verdict.meta},
+            )
+
+        if verdict.verdict == "repair":
+            tool_name = verdict.tool_name
+            payload = verdict.payload
+            if not isinstance(tool_name, str) or not isinstance(payload, dict):
+                return plan
+            allowed_tools = config.llm_allowed_tools()
+            if tool_name not in allowed_tools:
+                return ClarificationPlan(
+                    question="Pouvez-vous préciser votre demande pour éviter une action incorrecte ?",
+                    meta={"clarification_type": "llm_guardian_blocked_tool"},
+                )
+            is_valid, _, normalized_payload = self._validate_llm_tool_payload(
+                tool_name,
+                payload,
+            )
+            if not is_valid:
+                return plan
+            repaired_meta = dict(plan.meta)
+            repaired_meta["llm_guardian"] = verdict.meta
+            repaired_meta["llm_guardian_verdict"] = "repair"
+            return ToolCallPlan(
+                tool_name=tool_name,
+                payload=normalized_payload,
+                user_reply=verdict.user_reply or plan.user_reply,
+                meta=repaired_meta,
+            )
+
+        approved_meta = dict(plan.meta)
+        approved_meta["llm_guardian"] = verdict.meta
+        approved_meta["llm_guardian_verdict"] = "approve"
+        return ToolCallPlan(
+            tool_name=plan.tool_name,
+            payload=dict(plan.payload),
+            user_reply=plan.user_reply,
+            meta=approved_meta,
+        )
 
     def _run_llm_shadow(
         self,
@@ -1182,6 +1337,19 @@ class AgentLoop:
             active_task=active_task,
             deterministic_plan=plan,
         )
+
+        if isinstance(plan, ToolCallPlan):
+            plan = self._with_confidence_meta(
+                message,
+                plan,
+                query_memory=query_memory,
+            )
+            plan = self._guard_plan_with_llm_judge(
+                message,
+                plan,
+                query_memory=query_memory,
+                known_categories=known_categories,
+            )
 
         plan_meta = (
             getattr(plan, "meta", {})

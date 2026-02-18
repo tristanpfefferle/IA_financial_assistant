@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from agent.backend_client import BackendClient
+from agent.llm_judge import LLMJudge
 from agent.llm_planner import LLMPlanner
 from agent.loop import AgentLoop
 from agent.tool_router import ToolRouter
@@ -17,11 +18,14 @@ def build_agent_loop() -> AgentLoop:
     backend_client = BackendClient(tool_service=backend_tool_service)
     tool_router = ToolRouter(backend_client=backend_client)
     llm_planner: LLMPlanner | None = None
+    llm_judge: LLMJudge | None = None
 
     if config.llm_enabled():
         llm_planner = LLMPlanner(strict=config.llm_strict())
+        llm_judge = LLMJudge()
 
     return AgentLoop(
         tool_router=tool_router,
         llm_planner=llm_planner,
+        llm_judge=llm_judge,
     )
