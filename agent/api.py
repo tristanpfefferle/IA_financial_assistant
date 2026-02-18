@@ -227,7 +227,7 @@ def agent_chat(payload: ChatRequest, authorization: str | None = Header(default=
 
         chat_state = profiles_repository.get_chat_state(profile_id=profile_id, user_id=auth_user_id)
         active_task = chat_state.get("active_task") if isinstance(chat_state, dict) else None
-        memory = chat_state.get("memory") if isinstance(chat_state, dict) else None
+        memory = chat_state.get("state") if isinstance(chat_state, dict) else None
         logger.info(
             "agent_chat_state_loaded active_task_present=%s memory_present=%s memory_keys=%s",
             isinstance(active_task, dict),
@@ -259,14 +259,14 @@ def agent_chat(payload: ChatRequest, authorization: str | None = Header(default=
                     updated_chat_state["active_task"] = jsonable_encoder(agent_reply.active_task)
 
             if isinstance(memory_update, dict):
-                existing_memory = updated_chat_state.get("memory")
-                merged_memory = (
-                    dict(existing_memory)
-                    if isinstance(existing_memory, dict)
+                existing_state = updated_chat_state.get("state")
+                merged_state = (
+                    dict(existing_state)
+                    if isinstance(existing_state, dict)
                     else {}
                 )
-                merged_memory.update(jsonable_encoder(memory_update))
-                updated_chat_state["memory"] = merged_memory
+                merged_state.update(jsonable_encoder(memory_update))
+                updated_chat_state["state"] = merged_state
 
             logger.info(
                 "agent_chat_state_updating has_memory_update=%s memory_update_keys=%s",
