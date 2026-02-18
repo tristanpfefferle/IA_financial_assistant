@@ -112,3 +112,33 @@ def test_direction_clarification_does_not_overwrite_category() -> None:
     assert payload["direction"] == "DEBIT_ONLY"
     assert payload.get("categorie") == "Loisir"
     assert payload.get("categorie") != "Dépenses"
+
+
+def test_direction_clarification_legacy_type_missing_direction_keeps_category() -> None:
+    router = _Router()
+    loop = AgentLoop(tool_router=router)
+
+    reply = loop.handle_user_message(
+        "Dépenses",
+        profile_id=PROFILE_ID,
+        active_task={
+            "type": "clarification_pending",
+            "context": {
+                "clarification_type": "missing_direction",
+                "period_payload": {
+                    "date_range": {
+                        "start_date": "2026-01-01",
+                        "end_date": "2026-01-31",
+                    }
+                },
+                "base_payload": {"categorie": "Loisir"},
+            },
+        },
+    )
+
+    assert reply.plan is not None
+    assert reply.plan["tool_name"] == "finance_releves_sum"
+    payload = reply.plan["payload"]
+    assert payload["direction"] == "DEBIT_ONLY"
+    assert payload.get("categorie") == "Loisir"
+    assert payload.get("categorie") != "Dépenses"

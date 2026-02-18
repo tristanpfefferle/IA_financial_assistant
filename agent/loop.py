@@ -673,7 +673,7 @@ class AgentLoop:
                 )
 
             clarification_type = context.get("clarification_type")
-            if clarification_type == "direction_choice":
+            if clarification_type in {"direction_choice", "missing_direction"}:
                 direction = AgentLoop._direction_from_clarification_message(message)
                 if direction is None:
                     return ClarificationPlan(
@@ -1838,7 +1838,14 @@ class AgentLoop:
                     "period_payload": pending_period_payload,
                 }
                 if isinstance(clarification_type, str) and clarification_type:
-                    pending_context["clarification_type"] = clarification_type
+                    normalized_clarification_type = clarification_type
+                    if clarification_type in {
+                        "missing_direction",
+                        "direction",
+                        "missing_direction_choice",
+                    }:
+                        normalized_clarification_type = "direction_choice"
+                    pending_context["clarification_type"] = normalized_clarification_type
                 if isinstance(plan, ClarificationPlan):
                     pending_context["clarification_question"] = plan.question
                 if query_memory is not None:
