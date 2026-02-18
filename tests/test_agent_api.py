@@ -293,6 +293,12 @@ def test_agent_chat_delete_confirmation_workflow(monkeypatch) -> None:
 
     class _Router:
         def call(self, tool_name: str, payload: dict, *, profile_id: UUID | None = None):
+            if tool_name == "finance_categories_list":
+                return type(
+                    "_CategoriesListResult",
+                    (),
+                    {"items": [type("_Category", (), {"name": "autres"})]},
+                )()
             assert tool_name == "finance_categories_delete"
             assert payload == {"category_name": "autres"}
             return {"ok": True}

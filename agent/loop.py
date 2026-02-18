@@ -730,6 +730,91 @@ class AgentLoop:
         )
 
     @staticmethod
+    def _precheck_categories_delete_by_name(
+        plan: ToolCallPlan,
+        *,
+        tool_router: ToolRouter,
+        profile_id: UUID,
+    ) -> AgentReply | None:
+        if plan.tool_name != "finance_categories_delete":
+            return None
+
+        category_name = plan.payload.get("category_name") if isinstance(plan.payload, dict) else None
+        if not isinstance(category_name, str) or not category_name.strip():
+            return None
+
+        requested_name = category_name.strip()
+        list_plan = ToolCallPlan(tool_name="finance_categories_list", payload={}, user_reply="")
+        list_result = tool_router.call("finance_categories_list", {}, profile_id=profile_id)
+        normalized_list_result = AgentLoop._normalize_tool_result("finance_categories_list", list_result)
+        if isinstance(normalized_list_result, ToolError):
+            return AgentReply(
+                reply=build_final_reply(plan=list_plan, tool_result=normalized_list_result),
+                tool_result=AgentLoop._serialize_tool_result(normalized_list_result),
+                plan={"tool_name": list_plan.tool_name, "payload": list_plan.payload},
+            )
+
+        items = getattr(normalized_list_result, "items", None)
+        if not isinstance(items, list):
+            return None
+
+        requested_norm = _normalize_for_match(requested_name)
+        category_names = [
+            item.name.strip()
+            for item in items
+            if isinstance(getattr(item, "name", None), str) and item.name.strip()
+        ]
+        if any(_normalize_for_match(name) == requested_norm for name in category_names):
+            return None
+
+        names_by_norm: dict[str, str] = {}
+        for name in category_names:
+            name_norm = _normalize_for_match(name)
+            if name_norm and name_norm not in names_by_norm:
+                names_by_norm[name_norm] = name
+
+        suggestions: list[str] = []
+        for name_norm, display_name in names_by_norm.items():
+            if requested_norm in name_norm or name_norm in requested_norm:
+                suggestions.append(display_name)
+
+        if len(suggestions) < 3:
+            close_norms = get_close_matches(
+                requested_norm,
+                list(names_by_norm.keys()),
+                n=3,
+                cutoff=0.6,
+            )
+            for close_norm in close_norms:
+                display_name = names_by_norm[close_norm]
+                if display_name not in suggestions:
+                    suggestions.append(display_name)
+
+        error = ToolError(
+            code=ToolErrorCode.NOT_FOUND,
+            message="Category not found for provided name.",
+            details={
+                "category_name": requested_name,
+                "close_category_names": suggestions,
+                "available_category_names": category_names,
+            },
+        )
+
+        reply = f"Je ne trouve pas la catégorie « {requested_name} »."
+        if suggestions:
+            reply = f"{reply} Voulez-vous dire : {', '.join(suggestions)} ?"
+        elif category_names:
+            reply = f"{reply} Voici vos catégories disponibles : {', '.join(category_names)}."
+
+        return AgentReply(
+            reply=reply,
+            tool_result=AgentLoop._serialize_tool_result(error),
+            plan={"tool_name": plan.tool_name, "payload": plan.payload},
+            active_task=None,
+            should_update_active_task=True,
+        )
+
+    @staticmethod
     def _normalize_tool_result(tool_name: str, result: object) -> object:
         if result is not None:
             return result
@@ -954,6 +1039,15 @@ class AgentLoop:
             )
 
         if isinstance(plan, ToolCallPlan):
+            if plan.tool_name == "finance_categories_delete" and profile_id is not None:
+                precheck_reply = self._precheck_categories_delete_by_name(
+                    plan,
+                    tool_router=self.tool_router,
+                    profile_id=profile_id,
+                )
+                if precheck_reply is not None:
+                    return precheck_reply
+
             if (
                 plan.tool_name == "finance_releves_search"
                 and profile_id is not None
