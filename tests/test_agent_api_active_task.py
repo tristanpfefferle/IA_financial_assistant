@@ -8,6 +8,7 @@ from uuid import UUID
 from fastapi.testclient import TestClient
 
 import agent.api as agent_api
+import agent.loop as loop_module
 from agent.api import app
 from agent.loop import AgentLoop
 
@@ -253,6 +254,137 @@ def test_agent_chat_persists_memory_update(monkeypatch) -> None:
             }
         },
     }
+
+
+def test_agent_chat_clarification_pending_uses_new_period_across_requests(monkeypatch) -> None:
+    monkeypatch.setattr(
+        agent_api,
+        "get_user_from_bearer_token",
+        lambda _token: {"id": str(AUTH_USER_ID), "email": "user@example.com"},
+    )
+
+    def _parse_intent(message: str):
+        if message == "Dépenses en Loisir en décembre 2025":
+            return {
+                "type": "tool_call",
+                "tool_name": "finance_releves_sum",
+                "payload": {
+                    "direction": "DEBIT_ONLY",
+                    "categorie": "Loisir",
+                    "date_range": {
+                        "start_date": "2025-12-01",
+                        "end_date": "2025-12-31",
+                    },
+                },
+            }
+        if message == "Et en janvier 2026 ?":
+            return {
+                "type": "clarification",
+                "message": "Tu veux les dépenses, revenus ou le solde ?",
+                "clarification_type": "missing_direction",
+            }
+        return {"type": "noop"}
+
+    monkeypatch.setattr(loop_module, "parse_intent", _parse_intent)
+
+    repo = _Repo(initial_chat_state={"state": {"known_categories": ["Loisir"]}})
+
+    class _Router:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, object]]] = []
+
+        def call(self, tool_name: str, payload: dict[str, object], *, profile_id: UUID | None = None):
+            assert profile_id == PROFILE_ID
+            self.calls.append((tool_name, dict(payload)))
+            assert tool_name == "finance_releves_sum"
+            return {"ok": True, "total": 10.0}
+
+    router = _Router()
+    loop = AgentLoop(tool_router=router)
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: loop)
+
+    first = client.post(
+        "/agent/chat",
+        json={"message": "Dépenses en Loisir en décembre 2025"},
+        headers=_auth_headers(),
+    )
+    assert first.status_code == 200
+    assert first.json()["plan"] == {
+        "tool_name": "finance_releves_sum",
+        "payload": {
+            "direction": "DEBIT_ONLY",
+            "categorie": "Loisir",
+            "date_range": {
+                "start_date": "2025-12-01",
+                "end_date": "2025-12-31",
+            },
+        },
+    }
+
+    second = client.post(
+        "/agent/chat",
+        json={"message": "Et en janvier 2026 ?"},
+        headers=_auth_headers(),
+    )
+    assert second.status_code == 200
+    assert second.json()["tool_result"]["type"] == "clarification"
+    persisted_active_task = repo.chat_state.get("active_task")
+    assert isinstance(persisted_active_task, dict)
+    assert persisted_active_task.get("type") == "clarification_pending"
+    persisted_context = persisted_active_task.get("context")
+    assert isinstance(persisted_context, dict)
+    assert persisted_context.get("period_payload") == {
+        "date_range": {
+            "start_date": "2026-01-01",
+            "end_date": "2026-01-31",
+        }
+    }
+    base_last_query = persisted_context.get("base_last_query")
+    assert isinstance(base_last_query, dict)
+    assert base_last_query.get("date_range") == {
+        "start_date": "2025-12-01",
+        "end_date": "2025-12-31",
+    }
+    assert isinstance(base_last_query.get("filters"), dict)
+    assert base_last_query["filters"].get("direction") == "DEBIT_ONLY"
+    assert base_last_query["filters"].get("categorie") == "Loisir"
+
+    third = client.post(
+        "/agent/chat",
+        json={"message": "Pour la catégorie Loisir"},
+        headers=_auth_headers(),
+    )
+    assert third.status_code == 200
+    assert third.json()["plan"] == {
+        "tool_name": "finance_releves_sum",
+        "payload": {
+            "direction": "DEBIT_ONLY",
+            "date_range": {
+                "start_date": "2026-01-01",
+                "end_date": "2026-01-31",
+            },
+            "categorie": "Loisir",
+        },
+    }
+    assert len(router.calls) == 2
+    assert router.calls[1] == (
+        "finance_releves_sum",
+        {
+            "direction": "DEBIT_ONLY",
+            "date_range": {
+                "start_date": "2026-01-01",
+                "end_date": "2026-01-31",
+            },
+            "categorie": "Loisir",
+        },
+    )
+    assert router.calls[1][1]["date_range"] != {
+        "start_date": "2025-12-01",
+        "end_date": "2025-12-31",
+    }
+    assert "active_task" not in repo.chat_state
 
 
 def test_agent_chat_with_debug_header_works_when_loop_does_not_accept_debug(monkeypatch) -> None:
