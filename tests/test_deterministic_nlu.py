@@ -64,6 +64,29 @@ def test_parse_accounts_list_does_not_match_phrase_in_middle() -> None:
 @pytest.mark.parametrize(
     "message",
     [
+        "liste mes catégories",
+        "liste moi mes catégories",
+        "montre mes catégories",
+        "quelles sont mes catégories",
+        "affiche mes catégories",
+        "Liste mes categories",
+    ],
+)
+def test_parse_categories_list_variants(message: str) -> None:
+    assert parse_intent(message) == {
+        "type": "tool_call",
+        "tool_name": "finance_categories_list",
+        "payload": {},
+    }
+
+
+def test_parse_categories_list_does_not_match_phrase_in_middle() -> None:
+    assert parse_intent("si possible affiche mes catégories et le total") is None
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
         "je veux importer un relevé",
         "importer un csv",
         "ajouter un relevé UBS",

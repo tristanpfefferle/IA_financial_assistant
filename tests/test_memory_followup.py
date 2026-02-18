@@ -143,8 +143,8 @@ def test_followup_period_change_reuses_filters_and_replaces_only_period() -> Non
     assert isinstance(plan, ToolCallPlan)
     assert plan.tool_name == "finance_releves_sum"
     assert plan.payload["date_range"] == {
-        "start_date": "2026-01-01",
-        "end_date": "2026-01-31",
+        "start_date": "2027-01-01",
+        "end_date": "2027-01-31",
     }
     assert plan.payload["categorie"] == "Alimentation"
     assert plan.payload["categorie"] != "Et en janvier"
@@ -172,6 +172,22 @@ def test_extract_memory_from_plan_drops_period_like_category_phrase() -> None:
             "direction": "DEBIT_ONLY",
             "categorie": "Et en décembre 2025",
             "date_range": {"start_date": "2025-12-01", "end_date": "2025-12-31"},
+        },
+    )
+
+    assert memory is not None
+    assert "categorie" not in memory.filters
+
+
+def test_extract_memory_from_plan_drops_period_like_category_when_phrase_is_en_month() -> None:
+    from agent.memory import extract_memory_from_plan
+
+    memory = extract_memory_from_plan(
+        "finance_releves_sum",
+        {
+            "direction": "DEBIT_ONLY",
+            "categorie": "en janvier",
+            "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
         },
     )
 

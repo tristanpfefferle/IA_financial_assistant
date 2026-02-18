@@ -266,7 +266,22 @@ def agent_chat(
         if _handler_accepts_debug_kwarg(handler):
             handler_kwargs["debug"] = debug_enabled
 
-        agent_reply = handler(payload.message, **handler_kwargs)
+        try:
+            agent_reply = handler(payload.message, **handler_kwargs)
+        except TypeError as exc:
+            if "debug" not in handler_kwargs:
+                raise
+            logger.info(
+                "agent_chat_legacy_loop_without_debug_kwarg handler=%s.%s",
+                handler.__class__.__module__,
+                handler.__class__.__name__,
+            )
+            legacy_kwargs = dict(handler_kwargs)
+            legacy_kwargs.pop("debug", None)
+            try:
+                agent_reply = handler(payload.message, **legacy_kwargs)
+            except TypeError:
+                raise exc
 
         response_plan = dict(agent_reply.plan) if isinstance(agent_reply.plan, dict) else agent_reply.plan
 
