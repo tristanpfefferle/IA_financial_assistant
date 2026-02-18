@@ -61,7 +61,7 @@ class SupabaseProfilesRepository:
         rows, _ = self._client.get_rows(
             table="chat_state",
             query={
-                "select": "active_task",
+                "select": "active_task,memory",
                 "conversation_id": f"eq.{conversation_id}",
                 "profile_id": f"eq.{profile_id}",
                 "user_id": f"eq.{user_id}",
@@ -73,18 +73,24 @@ class SupabaseProfilesRepository:
         if not rows:
             return {}
         row = rows[0] or {}
-        state = row.get("active_task")
-        return {"active_task": state} if state is not None else {}
+        state: dict[str, Any] = {}
+        if "active_task" in row and row.get("active_task") is not None:
+            state["active_task"] = row.get("active_task")
+        if "memory" in row and row.get("memory") is not None:
+            state["memory"] = row.get("memory")
+        return state
 
     def update_chat_state(self, *, profile_id: UUID, user_id: UUID, chat_state: dict[str, Any]) -> None:
         conversation_id = str(profile_id)
-        active_task = chat_state.get("active_task")
         payload = {
             "conversation_id": conversation_id,
             "user_id": str(user_id),
             "profile_id": str(profile_id),
-            "active_task": active_task,
         }
+        if "active_task" in chat_state:
+            payload["active_task"] = chat_state.get("active_task")
+        if "memory" in chat_state:
+            payload["memory"] = chat_state.get("memory")
 
         self._client.upsert_row(
             table="chat_state",

@@ -122,13 +122,55 @@ def test_get_chat_state_returns_empty_dict_when_row_missing() -> None:
     assert chat_state == {}
     assert client.calls[0]["table"] == "chat_state"
     assert client.calls[0]["query"] == {
-        "select": "active_task",
+        "select": "active_task,memory",
         "conversation_id": f"eq.{profile_id}",
         "profile_id": f"eq.{profile_id}",
         "user_id": f"eq.{user_id}",
         "limit": 1,
     }
 
+
+def test_get_chat_state_returns_active_task_dict() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    user_id = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+    client = _ClientStub(
+        responses=[
+            [
+                {
+                    "active_task": {"type": "needs_confirmation"},
+                    "memory": {"last_query": {"date_range": {"start": "2026-01-01", "end": "2026-01-31"}}},
+                }
+            ]
+        ]
+    )
+    repository = SupabaseProfilesRepository(client=client)
+
+    chat_state = repository.get_chat_state(profile_id=profile_id, user_id=user_id)
+
+    assert chat_state == {
+        "active_task": {"type": "needs_confirmation"},
+        "memory": {"last_query": {"date_range": {"start": "2026-01-01", "end": "2026-01-31"}}},
+    }
+    assert client.calls[0]["query"] == {
+        "select": "active_task,memory",
+        "conversation_id": f"eq.{profile_id}",
+        "profile_id": f"eq.{profile_id}",
+        "user_id": f"eq.{user_id}",
+        "limit": 1,
+    }
+
+
+
+
+def test_get_chat_state_ignores_null_memory() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    user_id = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+    client = _ClientStub(responses=[[{"active_task": {"type": "x"}, "memory": None}]])
+    repository = SupabaseProfilesRepository(client=client)
+
+    chat_state = repository.get_chat_state(profile_id=profile_id, user_id=user_id)
+
+    assert chat_state == {"active_task": {"type": "x"}}
 
 def test_update_chat_state_uses_upsert() -> None:
     profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
@@ -139,7 +181,7 @@ def test_update_chat_state_uses_upsert() -> None:
     repository.update_chat_state(
         profile_id=profile_id,
         user_id=user_id,
-        chat_state={"active_task": {"type": "x"}, "state": {"step": "confirm"}},
+        chat_state={"active_task": {"type": "x"}, "memory": {"step": "confirm"}, "state": {"ignored": True}},
     )
 
     assert client.upsert_calls == [
@@ -150,6 +192,7 @@ def test_update_chat_state_uses_upsert() -> None:
                 "user_id": str(user_id),
                 "profile_id": str(profile_id),
                 "active_task": {"type": "x"},
+                "memory": {"step": "confirm"},
             },
             "on_conflict": "conversation_id",
             "use_anon_key": False,
