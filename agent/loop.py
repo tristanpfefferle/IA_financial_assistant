@@ -874,14 +874,12 @@ class AgentLoop:
 
         normalized_message = _normalize_for_match(stripped_message)
         tokens = normalized_message.split()
-        if len(tokens) >= 4:
-            return True
 
         if _CONFIDENCE_EXPLICIT_DATE_PATTERN.search(stripped_message):
             return True
         if _CONFIDENCE_YEAR_PATTERN.search(normalized_message):
             return True
-        if any(month in normalized_message for month in _CONFIDENCE_MONTH_TO_NUMBER):
+        if any(month in normalized_message for month in _CONFIDENCE_MONTH_TOKENS):
             return True
         if any(intent_word in tokens for intent_word in _NEW_REQUEST_INTENT_WORDS):
             return True
@@ -1695,6 +1693,15 @@ class AgentLoop:
                 active_task=active_task_effective,
             )
             if isinstance(routed, AgentReply):
+                if should_force_clear_active_task:
+                    return AgentReply(
+                        reply=routed.reply,
+                        tool_result=routed.tool_result,
+                        plan=routed.plan,
+                        active_task=None,
+                        should_update_active_task=True,
+                        memory_update=routed.memory_update,
+                    )
                 return routed
             plan = routed
 

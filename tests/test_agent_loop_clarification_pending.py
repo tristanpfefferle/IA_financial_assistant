@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 import agent.loop as loop_module
-from agent.loop import AgentLoop
+from agent.loop import AgentLoop, AgentReply
 
 
 PROFILE_ID = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
@@ -275,3 +275,43 @@ def test_clarification_pending_still_handles_short_direction_answer() -> None:
     assert reply.plan["payload"]["categorie"] == "Loisir"
     assert reply.active_task is None
     assert reply.should_update_active_task is True
+
+
+def test_forced_clear_active_task_even_when_routing_returns_reply(monkeypatch) -> None:
+    router = _Router()
+    loop = AgentLoop(tool_router=router)
+
+    def _route_message(
+        self: AgentLoop,
+        message: str,
+        *,
+        profile_id: UUID | None = None,
+        active_task: dict[str, object] | None = None,
+    ) -> AgentReply:
+        del self, message, profile_id, active_task
+        return AgentReply(reply="hi")
+
+    monkeypatch.setattr(AgentLoop, "_route_message", _route_message)
+
+    reply = loop.handle_user_message(
+        "Total dépenses Loisir en mars 2026",
+        profile_id=PROFILE_ID,
+        active_task={
+            "type": "clarification_pending",
+            "context": {
+                "clarification_type": "direction_choice",
+                "period_payload": {
+                    "date_range": {
+                        "start_date": "2025-01-01",
+                        "end_date": "2025-01-31",
+                    }
+                },
+            },
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        },
+        memory={"known_categories": ["Loisir"]},
+    )
+
+    assert reply.reply == "hi"
+    assert reply.should_update_active_task is True
+    assert reply.active_task is None
