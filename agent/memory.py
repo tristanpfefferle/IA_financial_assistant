@@ -317,6 +317,8 @@ def followup_plan_from_message(
             **dict(memory.filters),
             **explicit_period_payload,
         }
+        if category_focus is not None:
+            payload["categorie"] = category_focus
         if "date_range" in explicit_period_payload:
             payload.pop("month", None)
             payload.pop("year", None)

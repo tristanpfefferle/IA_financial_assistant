@@ -171,6 +171,26 @@ def test_followup_month_only_reuses_year_from_memory_same_year() -> None:
     }
 
 
+def test_followup_month_and_category_overrides_previous_category() -> None:
+    plan = followup_plan_from_message(
+        "et en avril logement",
+        QueryMemory(
+            date_range={"start_date": "2026-01-01", "end_date": "2026-01-31"},
+            last_tool_name="finance_releves_sum",
+            last_intent="sum",
+            filters={"direction": "DEBIT_ONLY", "categorie": "Loisir"},
+        ),
+        known_categories=["Loisir", "Logement"],
+    )
+
+    assert plan is not None
+    assert plan.payload == {
+        "direction": "DEBIT_ONLY",
+        "categorie": "Logement",
+        "date_range": {"start_date": "2026-04-01", "end_date": "2026-04-30"},
+    }
+
+
 def test_followup_month_only_rollover_dec_to_jan() -> None:
     plan = followup_plan_from_message(
         "et en janvier",
