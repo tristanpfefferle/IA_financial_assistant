@@ -507,7 +507,6 @@ class AgentLoop:
         if plan.tool_name not in {
             "finance_releves_sum",
             "finance_releves_search",
-            "finance_releves_aggregate",
         }:
             return
         _canonicalize_category(plan.payload, known_categories)

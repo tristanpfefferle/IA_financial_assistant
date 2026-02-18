@@ -1477,6 +1477,10 @@ def test_explicit_category_is_canonicalized_before_tool_call(monkeypatch) -> Non
             payload={
                 "categorie": "alimentation",
                 "direction": "DEBIT_ONLY",
+                "date_range": {
+                    "start_date": "2026-01-01",
+                    "end_date": "2026-01-31",
+                },
             },
             user_reply="OK.",
         ),
@@ -1516,6 +1520,10 @@ def test_explicit_category_is_not_canonicalized_without_known_categories(monkeyp
             payload={
                 "categorie": "alimentation",
                 "direction": "DEBIT_ONLY",
+                "date_range": {
+                    "start_date": "2026-01-01",
+                    "end_date": "2026-01-31",
+                },
             },
             user_reply="OK.",
         ),
@@ -1554,6 +1562,10 @@ def test_explicit_category_canonicalization_is_case_accent_insensitive(monkeypat
             payload={
                 "categorie": "LOISIR",
                 "direction": "DEBIT_ONLY",
+                "date_range": {
+                    "start_date": "2026-03-01",
+                    "end_date": "2026-03-31",
+                },
             },
             user_reply="OK.",
         ),
