@@ -47,6 +47,65 @@ _DELETE_BANK_ACCOUNT_FALLBACK = (
 )
 
 
+def _planner_system_prompt() -> str:
+    """Return the planner system prompt with explicit routing constraints."""
+    return (
+        "Tu planifies un appel d'outil financier. "
+        "Transactions et relevés désignent la même source de vérité (releves_bancaires). "
+        "Utilise toujours finance_releves_search pour lister/rechercher et finance_releves_sum pour total/somme/dépenses/revenus. "
+        "Lister les comptes bancaires => finance_bank_accounts_list. "
+        "Supprimer un compte => finance_bank_accounts_delete (avec confirmation). "
+        "Dates au format YYYY-MM-DD si présentes. "
+        "Direction: DEBIT_ONLY pour dépenses, CREDIT_ONLY pour revenus, sinon ALL. "
+        "Pour le profil, utilise toujours les champs canoniques: first_name, last_name, birth_date, gender, address_line1, address_line2, postal_code, city, canton, country, personal_situation, professional_situation. "
+        "Ne génère jamais 'ville'/'pays' dans le payload: utilise 'city'/'country'. "
+        "Règle explicite catégories: si le message contient une intention de suppression (supprime/efface/enlève/delete) + 'catégorie' + un nom, choisis finance_categories_delete avec {'category_name': <nom>}. "
+        "Règle explicite profil: 'ville', 'j'habite', ou 'mettre <X> comme ville' cible par défaut le champ canonical 'city' sauf si l'utilisateur demande explicitement une autre clé canonique (ex: address_line2)."
+    )
+
+
+def _planner_few_shots() -> list[dict[str, str]]:
+    """Return few-shot examples anchoring planner decisions."""
+    return [
+        {
+            "role": "system",
+            "content": (
+                "Exemple 1\n"
+                "User: Supprime la catégorie Restaurants\n"
+                "Tool: finance_categories_delete\n"
+                "Arguments JSON: {\"category_name\":\"Restaurants\"}"
+            ),
+        },
+        {
+            "role": "system",
+            "content": (
+                "Exemple 2\n"
+                "User: Peux-tu supprimer ma catégorie restaurants stp ?\n"
+                "Tool: finance_categories_delete\n"
+                "Arguments JSON: {\"category_name\":\"restaurants\"}"
+            ),
+        },
+        {
+            "role": "system",
+            "content": (
+                "Exemple 3\n"
+                "User: Peux-tu mettre Choëx comme ville stp ?\n"
+                "Tool: finance_profile_update\n"
+                "Arguments JSON: {\"set\":{\"city\":\"Choëx\"}}"
+            ),
+        },
+        {
+            "role": "system",
+            "content": (
+                "Exemple 4\n"
+                "User: Mon code postal est 1871\n"
+                "Tool: finance_profile_update\n"
+                "Arguments JSON: {\"set\":{\"postal_code\":\"1871\"}}"
+            ),
+        },
+    ]
+
+
 class OpenAIChatClient(Protocol):
     """Abstraction over OpenAI chat completion for easy mocking in tests."""
 
@@ -250,18 +309,9 @@ class LLMPlanner:
         return [
             {
                 "role": "system",
-                "content": (
-                    "Tu planifies un appel d'outil financier. "
-                    "Transactions et relevés désignent la même source de vérité (releves_bancaires). "
-                    "Utilise toujours finance_releves_search pour lister/rechercher et finance_releves_sum pour total/somme/dépenses/revenus. "
-                    "Lister les comptes bancaires => finance_bank_accounts_list. "
-                    "Supprimer un compte => finance_bank_accounts_delete (avec confirmation). "
-                    "Dates au format YYYY-MM-DD si présentes. "
-                    "Direction: DEBIT_ONLY pour dépenses, CREDIT_ONLY pour revenus, sinon ALL. "
-                    "Pour le profil, utilise toujours les champs canoniques: first_name, last_name, birth_date, gender, address_line1, address_line2, postal_code, city, canton, country, personal_situation, professional_situation. "
-                    "Ne génère jamais 'ville'/'pays' dans le payload: utilise 'city'/'country'."
-                ),
+                "content": _planner_system_prompt(),
             },
+            *_planner_few_shots(),
             {"role": "user", "content": message},
         ]
 
