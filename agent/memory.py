@@ -22,9 +22,34 @@ _FOLLOWUP_KEYWORDS = {
     "ok",
     "pareil",
     "idem",
-    "dans",
-    "en",
     "?",
+}
+_FOLLOWUP_START_PATTERN = re.compile(r"^(?:ok\s+)?(?:et|pareil|idem)\b")
+_FOLLOWUP_EXPLICIT_INTENT_PATTERN = re.compile(r"^(?:ok\s+)?et\b")
+_INTENT_KEYWORDS = {
+    "depense",
+    "depenses",
+    "dépense",
+    "dépenses",
+    "total",
+    "totaux",
+    "transaction",
+    "transactions",
+    "revenu",
+    "revenus",
+    "solde",
+    "soldes",
+    "liste",
+    "lister",
+    "categorie",
+    "categories",
+    "catégorie",
+    "catégories",
+    "agrege",
+    "agrège",
+    "agregat",
+    "agrégat",
+    "somme",
 }
 _NON_FOCUS_MESSAGES = {
     "ok",
@@ -143,11 +168,20 @@ def is_read_tool(tool_name: str) -> bool:
 def is_followup_message(message: str) -> bool:
     """Heuristic for short follow-up messages."""
 
-    normalized = " ".join(message.strip().lower().split())
+    normalized = _normalize_text(message)
     if not normalized:
         return False
 
+    if any(keyword in normalized.split() for keyword in _INTENT_KEYWORDS):
+        return bool(_FOLLOWUP_EXPLICIT_INTENT_PATTERN.match(normalized))
+
     tokens = normalized.replace("?", " ? ").split()
+    if len(tokens) <= 2:
+        return True
+
+    if _FOLLOWUP_START_PATTERN.match(normalized):
+        return True
+
     has_keyword = any(token in _FOLLOWUP_KEYWORDS for token in tokens)
     return has_keyword and len(tokens) <= 8
 

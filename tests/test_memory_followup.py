@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
-from agent.memory import QueryMemory, followup_plan_from_message
+from agent.memory import (
+    QueryMemory,
+    apply_memory_to_plan,
+    followup_plan_from_message,
+    is_followup_message,
+)
+from agent.planner import ToolCallPlan
 
 
 def _memory_for_sum() -> QueryMemory:
@@ -93,3 +99,31 @@ def test_followup_sum_merchant_focus_uses_merchant_filter() -> None:
         "merchant": "coop",
         "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
     }
+
+
+def test_is_followup_message_is_strict_for_full_intent_queries() -> None:
+    assert is_followup_message("Dépenses totales en janvier 2026") is False
+    assert is_followup_message("Transactions Migros en janvier 2026") is False
+    assert is_followup_message("Et en logement ?") is True
+    assert is_followup_message("Coop") is True
+
+
+def test_apply_memory_to_plan_does_not_inject_merchant_on_non_followup_intent() -> None:
+    memory = QueryMemory(
+        date_range={"start_date": "2026-01-01", "end_date": "2026-01-31"},
+        last_tool_name="finance_releves_sum",
+        last_intent="sum",
+        filters={"merchant": "coop"},
+    )
+    plan = ToolCallPlan(
+        tool_name="finance_releves_sum",
+        payload={
+            "direction": "DEBIT_ONLY",
+            "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
+        },
+        user_reply="OK.",
+    )
+
+    updated_plan, _ = apply_memory_to_plan("Dépenses totales en janvier 2026", plan, memory)
+
+    assert "merchant" not in updated_plan.payload
