@@ -1397,7 +1397,10 @@ def test_memory_persists_last_month_from_sum_then_followup_category_uses_same_mo
             active_task=active_task,
         ),
     )
-    second = loop.handle_user_message("Ok et en logement ?", memory=first.memory_update)
+    second = loop.handle_user_message(
+        "Ok et en logement ?",
+        memory={"last_query": first.memory_update["last_query"]},
+    )
 
     assert router.calls == [
         (
@@ -1543,7 +1546,10 @@ def test_memory_applies_to_aggregate_group_by_month_when_missing_period(monkeypa
             active_task=active_task,
         ),
     )
-    second = loop.handle_user_message("Agrège par catégorie", memory=first.memory_update)
+    second = loop.handle_user_message(
+        "Agrège par catégorie",
+        memory={"last_query": first.memory_update["last_query"]},
+    )
 
     assert second.plan is not None
     assert second.plan["payload"]["year"] == 2025

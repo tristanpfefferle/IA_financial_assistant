@@ -129,23 +129,29 @@ def apply_memory_to_plan(
         return plan, None
 
     reason_parts: list[str] = []
+    period_injected = False
+    filter_injected = False
     has_period = any(key in payload for key in _PERIOD_KEYS)
     if not has_period:
         if memory.date_range is not None:
             payload["date_range"] = dict(memory.date_range)
             reason_parts.append("period_from_memory")
+            period_injected = True
         elif memory.month is not None:
             payload["month"] = memory.month
             reason_parts.append("period_from_memory")
+            period_injected = True
         elif memory.year is not None:
             payload["year"] = memory.year
             reason_parts.append("period_from_memory")
+            period_injected = True
 
     if is_followup_message(message):
-        _merge_missing_filters(payload, memory.filters)
-        reason_parts.append("followup_filters_from_memory")
+        filter_injected = _merge_missing_filters(payload, memory.filters)
+        if filter_injected:
+            reason_parts.append("followup_filters_from_memory")
 
-    if payload == plan.payload:
+    if not period_injected and not filter_injected:
         return plan, None
 
     updated_meta = dict(plan.meta)
@@ -166,7 +172,8 @@ def apply_memory_to_plan(
 def _merge_missing_filters(
     payload: dict[str, Any],
     memory_filters: dict[str, Any],
-) -> None:
+) -> bool:
+    injected = False
     for key, value in memory_filters.items():
         if key in _PERIOD_KEYS:
             continue
@@ -178,11 +185,17 @@ def _merge_missing_filters(
             existing = payload.get("filters")
             if not isinstance(existing, dict):
                 payload["filters"] = dict(value)
+                injected = True
                 continue
             for nested_key, nested_value in value.items():
-                existing.setdefault(nested_key, nested_value)
+                if nested_key not in existing:
+                    existing[nested_key] = nested_value
+                    injected = True
             continue
-        payload.setdefault(key, value)
+        if key not in payload:
+            payload[key] = value
+            injected = True
+    return injected
 
 
 def _normalize_dict(raw: Any) -> dict[str, Any]:
