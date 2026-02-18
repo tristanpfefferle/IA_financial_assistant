@@ -104,7 +104,7 @@ def test_get_excluded_category_names_queries_profile_categories() -> None:
     assert client.calls[0]["table"] == "profile_categories"
 
 
-def test_build_query_normalizes_category_filter() -> None:
+def test_build_query_preserves_category_filter_case() -> None:
     client = _ClientStub()
     repository = SupabaseRelevesRepository(client=client)
 
@@ -118,7 +118,23 @@ def test_build_query_normalizes_category_filter() -> None:
     repository.list_releves(filters)
 
     query = client.calls[0]["query"]
-    assert ("categorie", "eq.alimentation") in query
+    assert ("categorie", "eq.Alimentation") in query
+
+
+def test_build_query_omits_category_filter_when_not_provided() -> None:
+    client = _ClientStub()
+    repository = SupabaseRelevesRepository(client=client)
+
+    filters = RelevesFilters(
+        profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+        limit=10,
+        offset=0,
+    )
+
+    repository.sum_releves(filters)
+
+    query = client.calls[0]["query"]
+    assert not any(key == "categorie" for key, _ in query)
 
 
 def test_in_memory_sum_and_aggregate_exclude_categories_for_debit_only(monkeypatch) -> None:

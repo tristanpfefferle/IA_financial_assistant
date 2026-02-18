@@ -354,7 +354,7 @@ class SupabaseRelevesRepository:
             query.append(("date", f"lte.{filters.date_range.end_date}"))
 
         if filters.categorie:
-            query.append(("categorie", f"eq.{normalize_category_name(filters.categorie)}"))
+            query.append(("categorie", f"eq.{filters.categorie.strip()}"))
 
         if filters.merchant_id:
             query.append(("merchant_id", f"eq.{filters.merchant_id}"))
