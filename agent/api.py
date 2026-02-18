@@ -227,21 +227,41 @@ def agent_chat(payload: ChatRequest, authorization: str | None = Header(default=
 
         chat_state = profiles_repository.get_chat_state(profile_id=profile_id, user_id=auth_user_id)
         active_task = chat_state.get("active_task") if isinstance(chat_state, dict) else None
+        memory = chat_state.get("memory") if isinstance(chat_state, dict) else None
 
         agent_reply = get_agent_loop().handle_user_message(
             payload.message,
             profile_id=profile_id,
             active_task=active_task if isinstance(active_task, dict) else None,
+            memory=memory if isinstance(memory, dict) else None,
         )
 
         response_plan = dict(agent_reply.plan) if isinstance(agent_reply.plan, dict) else agent_reply.plan
 
-        if agent_reply.should_update_active_task:
+        memory_update = getattr(agent_reply, "memory_update", None)
+        should_update_chat_state = (
+            agent_reply.should_update_active_task
+            or isinstance(memory_update, dict)
+        )
+
+        if should_update_chat_state:
             updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
-            if agent_reply.active_task is None:
-                updated_chat_state.pop("active_task", None)
-            else:
-                updated_chat_state["active_task"] = jsonable_encoder(agent_reply.active_task)
+            if agent_reply.should_update_active_task:
+                if agent_reply.active_task is None:
+                    updated_chat_state.pop("active_task", None)
+                else:
+                    updated_chat_state["active_task"] = jsonable_encoder(agent_reply.active_task)
+
+            if isinstance(memory_update, dict):
+                existing_memory = updated_chat_state.get("memory")
+                merged_memory = (
+                    dict(existing_memory)
+                    if isinstance(existing_memory, dict)
+                    else {}
+                )
+                merged_memory.update(jsonable_encoder(memory_update))
+                updated_chat_state["memory"] = merged_memory
+
             try:
                 profiles_repository.update_chat_state(
                     profile_id=profile_id,

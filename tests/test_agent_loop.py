@@ -1327,3 +1327,223 @@ def test_active_task_never_runs_llm_execution_when_gated(monkeypatch) -> None:
             "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
         },
     }
+
+
+class _MemoryRouter:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+        self.calls: list[tuple[str, dict]] = []
+
+    def call(self, tool_name: str, payload: dict, *, profile_id: UUID | None = None):
+        self.calls.append((tool_name, dict(payload)))
+        if self.fail:
+            return ToolError(code=ToolErrorCode.BACKEND_ERROR, message="boom")
+        return {"ok": True}
+
+
+def test_memory_persists_last_month_from_sum_then_followup_category_uses_same_month(monkeypatch) -> None:
+    router = _MemoryRouter()
+    loop = AgentLoop(tool_router=router)
+
+    def _route_first(message: str, *, profile_id: UUID | None, active_task):
+        assert message == "Total dépenses en janvier 2026"
+        return ToolCallPlan(
+            tool_name="finance_releves_sum",
+            payload={
+                "direction": "DEBIT_ONLY",
+                "date_range": {
+                    "start_date": "2026-01-01",
+                    "end_date": "2026-01-31",
+                },
+            },
+            user_reply="OK.",
+        )
+
+    def _route_second(message: str, *, profile_id: UUID | None, active_task):
+        assert message == "Ok et en logement ?"
+        return ToolCallPlan(
+            tool_name="finance_releves_sum",
+            payload={"direction": "DEBIT_ONLY", "category": "logement"},
+            user_reply="OK.",
+        )
+
+    monkeypatch.setattr(
+        AgentLoop,
+        "_route_message",
+        lambda self, message, *, profile_id, active_task: _route_first(
+            message,
+            profile_id=profile_id,
+            active_task=active_task,
+        ),
+    )
+    first = loop.handle_user_message("Total dépenses en janvier 2026")
+
+    assert first.memory_update == {
+        "last_query": {
+            "filters": {"direction": "DEBIT_ONLY"},
+            "date_range": {
+                "start_date": "2026-01-01",
+                "end_date": "2026-01-31",
+            },
+        }
+    }
+
+    monkeypatch.setattr(
+        AgentLoop,
+        "_route_message",
+        lambda self, message, *, profile_id, active_task: _route_second(
+            message,
+            profile_id=profile_id,
+            active_task=active_task,
+        ),
+    )
+    second = loop.handle_user_message("Ok et en logement ?", memory=first.memory_update)
+
+    assert router.calls == [
+        (
+            "finance_releves_sum",
+            {
+                "direction": "DEBIT_ONLY",
+                "date_range": {
+                    "start_date": "2026-01-01",
+                    "end_date": "2026-01-31",
+                },
+            },
+        ),
+        (
+            "finance_releves_sum",
+            {
+                "direction": "DEBIT_ONLY",
+                "category": "logement",
+                "date_range": {
+                    "start_date": "2026-01-01",
+                    "end_date": "2026-01-31",
+                },
+            },
+        ),
+    ]
+    assert second.plan is not None
+    assert second.plan["payload"]["date_range"] == {
+        "start_date": "2026-01-01",
+        "end_date": "2026-01-31",
+    }
+
+
+def test_memory_does_not_override_explicit_period(monkeypatch) -> None:
+    router = _MemoryRouter()
+    loop = AgentLoop(tool_router=router)
+
+    def _route(message: str, *, profile_id: UUID | None, active_task):
+        assert message == "en février 2026"
+        return ToolCallPlan(
+            tool_name="finance_releves_sum",
+            payload={
+                "category": "logement",
+                "date_range": {
+                    "start_date": "2026-02-01",
+                    "end_date": "2026-02-28",
+                },
+            },
+            user_reply="OK.",
+        )
+
+    monkeypatch.setattr(
+        AgentLoop,
+        "_route_message",
+        lambda self, message, *, profile_id, active_task: _route(
+            message,
+            profile_id=profile_id,
+            active_task=active_task,
+        ),
+    )
+    reply = loop.handle_user_message(
+        "en février 2026",
+        memory={
+            "last_query": {
+                "date_range": {
+                    "start_date": "2026-01-01",
+                    "end_date": "2026-01-31",
+                },
+                "filters": {"category": "alimentation"},
+            }
+        },
+    )
+
+    assert reply.plan is not None
+    assert reply.plan["payload"]["date_range"] == {
+        "start_date": "2026-02-01",
+        "end_date": "2026-02-28",
+    }
+
+
+def test_memory_not_updated_on_tool_error(monkeypatch) -> None:
+    router = _MemoryRouter(fail=True)
+    loop = AgentLoop(tool_router=router)
+
+    def _route(message: str, *, profile_id: UUID | None, active_task):
+        assert message == "Total dépenses"
+        return ToolCallPlan(
+            tool_name="finance_releves_sum",
+            payload={"direction": "DEBIT_ONLY"},
+            user_reply="OK.",
+        )
+
+    monkeypatch.setattr(
+        AgentLoop,
+        "_route_message",
+        lambda self, message, *, profile_id, active_task: _route(
+            message,
+            profile_id=profile_id,
+            active_task=active_task,
+        ),
+    )
+    reply = loop.handle_user_message("Total dépenses")
+
+    assert reply.memory_update is None
+
+
+def test_memory_applies_to_aggregate_group_by_month_when_missing_period(monkeypatch) -> None:
+    router = _MemoryRouter()
+    loop = AgentLoop(tool_router=router)
+
+    def _route_first(message: str, *, profile_id: UUID | None, active_task):
+        assert message == "Mes achats Migros en 2025"
+        return ToolCallPlan(
+            tool_name="finance_releves_search",
+            payload={"merchant": "migros", "year": 2025},
+            user_reply="OK.",
+        )
+
+    def _route_second(message: str, *, profile_id: UUID | None, active_task):
+        assert message == "Agrège par catégorie"
+        return ToolCallPlan(
+            tool_name="finance_releves_aggregate",
+            payload={"group_by": "categorie"},
+            user_reply="OK.",
+        )
+
+    monkeypatch.setattr(
+        AgentLoop,
+        "_route_message",
+        lambda self, message, *, profile_id, active_task: _route_first(
+            message,
+            profile_id=profile_id,
+            active_task=active_task,
+        ),
+    )
+    first = loop.handle_user_message("Mes achats Migros en 2025")
+    assert first.memory_update is not None
+
+    monkeypatch.setattr(
+        AgentLoop,
+        "_route_message",
+        lambda self, message, *, profile_id, active_task: _route_second(
+            message,
+            profile_id=profile_id,
+            active_task=active_task,
+        ),
+    )
+    second = loop.handle_user_message("Agrège par catégorie", memory=first.memory_update)
+
+    assert second.plan is not None
+    assert second.plan["payload"]["year"] == 2025
