@@ -511,6 +511,12 @@ class AgentLoop:
             return
         _canonicalize_category(plan.payload, known_categories)
 
+    @staticmethod
+    def _drop_none_payload_values(payload: dict[str, object]) -> dict[str, object]:
+        """Remove null-equivalent fields before tool execution."""
+
+        return {key: value for key, value in payload.items() if value is not None}
+
     def _guard_plan_with_llm_judge(
         self,
         message: str,
@@ -1914,6 +1920,7 @@ class AgentLoop:
                                 )
 
             logger.info("tool_execution_started tool_name=%s", plan.tool_name)
+            plan.payload = self._drop_none_payload_values(plan.payload)
             raw_result = self.tool_router.call(
                 plan.tool_name, plan.payload, profile_id=profile_id
             )

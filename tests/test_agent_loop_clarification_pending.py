@@ -315,3 +315,33 @@ def test_forced_clear_active_task_even_when_routing_returns_reply(monkeypatch) -
     assert reply.reply == "hi"
     assert reply.should_update_active_task is True
     assert reply.active_task is None
+
+
+def test_tool_call_payload_omits_none_filters_before_router_call(monkeypatch) -> None:
+    def _parse_intent(message: str):
+        assert message == "Dépenses pizza"
+        return {
+            "type": "tool_call",
+            "tool_name": "finance_releves_sum",
+            "payload": {
+                "direction": "DEBIT_ONLY",
+                "merchant": "pizza",
+                "categorie": None,
+            },
+        }
+
+    monkeypatch.setattr(loop_module, "parse_intent", _parse_intent)
+
+    router = _Router()
+    loop = AgentLoop(tool_router=router)
+
+    reply = loop.handle_user_message(
+        "Dépenses pizza",
+        profile_id=PROFILE_ID,
+    )
+
+    assert reply.plan is not None
+    assert router.calls
+    _, payload = router.calls[-1]
+    assert payload.get("merchant") == "pizza"
+    assert "categorie" not in payload
