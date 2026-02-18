@@ -1341,7 +1341,7 @@ class _MemoryRouter:
         return {"ok": True}
 
 
-def test_memory_persists_last_month_from_sum_then_followup_category_uses_same_month(monkeypatch) -> None:
+def test_memory_persists_last_month_from_sum_then_followup_category_requires_confirmation(monkeypatch) -> None:
     router = _MemoryRouter()
     loop = AgentLoop(tool_router=router)
 
@@ -1404,34 +1404,9 @@ def test_memory_persists_last_month_from_sum_then_followup_category_uses_same_mo
         memory={"last_query": first.memory_update["last_query"]},
     )
 
-    assert router.calls == [
-        (
-            "finance_releves_sum",
-            {
-                "direction": "DEBIT_ONLY",
-                "date_range": {
-                    "start_date": "2026-01-01",
-                    "end_date": "2026-01-31",
-                },
-            },
-        ),
-            (
-                "finance_releves_sum",
-                {
-                    "direction": "DEBIT_ONLY",
-                    "category": "logement",
-                    "date_range": {
-                        "start_date": "2026-01-01",
-                        "end_date": "2026-01-31",
-                },
-            },
-        ),
-    ]
-    assert second.plan is not None
-    assert second.plan["payload"]["date_range"] == {
-        "start_date": "2026-01-01",
-        "end_date": "2026-01-31",
-    }
+    assert len(router.calls) == 1
+    assert "confirmer la période" in second.reply.lower()
+    assert second.plan is None
 
 
 def test_memory_does_not_override_explicit_period(monkeypatch) -> None:
@@ -1557,7 +1532,7 @@ def test_memory_applies_to_aggregate_group_by_month_when_missing_period(monkeypa
     assert second.plan["payload"]["year"] == 2025
 
 
-def test_followup_search_merchant_reuses_period_from_memory(monkeypatch) -> None:
+def test_followup_search_merchant_requires_period_confirmation(monkeypatch) -> None:
     router = _MemoryRouter()
     loop = AgentLoop(tool_router=router)
 
@@ -1601,31 +1576,12 @@ def test_followup_search_merchant_reuses_period_from_memory(monkeypatch) -> None
         memory={"last_query": first.memory_update["last_query"]},
     )
 
-    assert router.calls == [
-        (
-            "finance_releves_search",
-            {
-                "merchant": "migros",
-                "limit": 50,
-                "offset": 0,
-                "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
-            },
-        ),
-        (
-            "finance_releves_search",
-            {
-                "merchant": "coop",
-                "limit": 50,
-                "offset": 0,
-                "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
-            },
-        ),
-    ]
-    assert second.plan is not None
-    assert second.plan["tool_name"] == "finance_releves_search"
+    assert len(router.calls) == 1
+    assert "confirmer la période" in second.reply.lower()
+    assert second.plan is None
 
 
-def test_followup_sum_category_reuses_period_without_clarification(monkeypatch) -> None:
+def test_followup_sum_category_requires_period_confirmation(monkeypatch) -> None:
     router = _MemoryRouter()
     loop = AgentLoop(tool_router=router)
 
@@ -1648,25 +1604,12 @@ def test_followup_sum_category_reuses_period_without_clarification(monkeypatch) 
     )
 
     assert router.calls[0][0] == "finance_releves_sum"
-    assert router.calls[1] == (
-        "finance_releves_sum",
-        {
-            "direction": "DEBIT_ONLY",
-            "categorie": "logement",
-            "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
-        },
-    )
-    assert second.plan == {
-        "tool_name": "finance_releves_sum",
-        "payload": {
-            "direction": "DEBIT_ONLY",
-            "categorie": "logement",
-            "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
-        },
-    }
+    assert len(router.calls) == 1
+    assert "confirmer la période" in second.reply.lower()
+    assert second.plan is None
 
 
-def test_followup_sum_merchant_focus_reuses_period_without_clarification(monkeypatch) -> None:
+def test_followup_sum_merchant_focus_requires_period_confirmation(monkeypatch) -> None:
     router = _MemoryRouter()
     loop = AgentLoop(tool_router=router)
 
@@ -1701,25 +1644,12 @@ def test_followup_sum_merchant_focus_reuses_period_without_clarification(monkeyp
         memory={"last_query": first.memory_update["last_query"]},
     )
 
-    assert router.calls[-1] == (
-        "finance_releves_sum",
-        {
-            "direction": "DEBIT_ONLY",
-            "merchant": "coop",
-            "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
-        },
-    )
-    assert second.plan == {
-        "tool_name": "finance_releves_sum",
-        "payload": {
-            "direction": "DEBIT_ONLY",
-            "merchant": "coop",
-            "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
-        },
-    }
+    assert len(router.calls) == 1
+    assert "confirmer la période" in second.reply.lower()
+    assert second.plan is None
 
 
-def test_followup_short_message_coop_reuses_search_period_without_clarification(monkeypatch) -> None:
+def test_followup_short_message_coop_requires_period_confirmation(monkeypatch) -> None:
     router = _MemoryRouter()
     loop = AgentLoop(tool_router=router)
 
@@ -1755,27 +1685,12 @@ def test_followup_short_message_coop_reuses_search_period_without_clarification(
         memory={"last_query": first.memory_update["last_query"]},
     )
 
-    assert router.calls[-1] == (
-        "finance_releves_search",
-        {
-            "merchant": "coop",
-            "limit": 50,
-            "offset": 0,
-            "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
-        },
-    )
-    assert second.plan == {
-        "tool_name": "finance_releves_search",
-        "payload": {
-            "merchant": "coop",
-            "limit": 50,
-            "offset": 0,
-            "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
-        },
-    }
+    assert len(router.calls) == 1
+    assert "confirmer la période" in second.reply.lower()
+    assert second.plan is None
 
 
-def test_followup_known_category_prefers_category_over_profile_intent() -> None:
+def test_followup_known_category_requires_period_confirmation_when_implicit() -> None:
     router = _MemoryRouter()
     loop = AgentLoop(tool_router=router)
 
@@ -1791,21 +1706,6 @@ def test_followup_known_category_prefers_category_over_profile_intent() -> None:
         },
     )
 
-    assert router.calls == [
-            (
-                "finance_releves_sum",
-                {
-                    "direction": "DEBIT_ONLY",
-                    "categorie": "logement",
-                    "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
-                },
-            )
-    ]
-    assert reply.plan == {
-        "tool_name": "finance_releves_sum",
-        "payload": {
-            "direction": "DEBIT_ONLY",
-            "categorie": "logement",
-            "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
-        },
-    }
+    assert router.calls == []
+    assert "confirmer la période" in reply.reply.lower()
+    assert reply.plan is None
