@@ -1299,13 +1299,6 @@ class AgentLoop:
                 plan.meta["debug_memory_injected"] = injected_fields
                 plan.meta["debug_query_memory_used"] = query_memory.to_dict() if query_memory is not None else None
                 plan.meta["debug_followup_used"] = followup_plan is not None
-            if debug:
-                source = plan.meta.get("source")
-                if isinstance(source, str) and source:
-                    plan.meta["debug_source"] = source
-                period_detected = plan.meta.get("period_detected")
-                if isinstance(period_detected, dict) and period_detected:
-                    plan.meta["debug_period_detected"] = period_detected
 
             if (
                 plan.tool_name == "finance_releves_search"
@@ -1417,17 +1410,6 @@ class AgentLoop:
             response_payload = (
                 clarification_payload if isinstance(clarification_payload, dict) else None
             )
-            if debug:
-                source = plan_meta.get("source")
-                if isinstance(source, str) and source:
-                    if response_payload is None:
-                        response_payload = {}
-                    response_payload["debug_source"] = source
-                period_detected = plan_meta.get("period_detected")
-                if isinstance(period_detected, dict) and period_detected:
-                    if response_payload is None:
-                        response_payload = {}
-                    response_payload["debug_period_detected"] = period_detected
             if debug and isinstance(updated_active_task, dict):
                 pending_context = updated_active_task.get("context")
                 if isinstance(pending_context, dict):
@@ -1533,7 +1515,6 @@ class AgentLoop:
                                 "keep_active_task": True,
                                 "clarification_type": "awaiting_search_merchant",
                                 "clarification_payload": clarification_payload,
-                                "source": "deterministic_nlu",
                             },
                         )
 
@@ -1545,8 +1526,7 @@ class AgentLoop:
                                 if isinstance(clarification_type, str)
                                 and clarification_type
                                 else "generic"
-                            ),
-                            "source": "deterministic_nlu",
+                            )
                         },
                     )
 
@@ -1574,7 +1554,6 @@ class AgentLoop:
                         meta["merchant_fallback"] = (
                             merchant_fallback.strip().casefold()
                         )
-                    meta["source"] = "deterministic_nlu"
                     return ToolCallPlan(
                         tool_name=tool_name,
                         payload=payload,
@@ -1730,13 +1709,11 @@ class AgentLoop:
                     },
                 )
 
-            llm_meta = dict(llm_plan.meta)
-            llm_meta["source"] = "llm"
             return ToolCallPlan(
                 tool_name=llm_plan.tool_name,
                 payload=normalized_payload,
                 user_reply=llm_plan.user_reply,
-                meta=llm_meta,
+                meta=dict(llm_plan.meta),
             )
 
         return deterministic_plan
