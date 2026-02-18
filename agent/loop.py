@@ -38,13 +38,14 @@ _BANK_ACCOUNT_DISAMBIGUATION_TOOLS = {
     "finance_bank_accounts_set_default",
     "finance_bank_accounts_update",
 }
-_LLM_WRITE_TOOLS = {
+_RISKY_WRITE_TOOLS = {
     "finance_bank_accounts_delete",
+    "finance_categories_delete",
+}
+_SOFT_WRITE_TOOLS = {
+    "finance_profile_update",
     "finance_categories_create",
     "finance_categories_update",
-    "finance_categories_delete",
-    "finance_profile_update",
-    "finance_releves_import_files",
 }
 _CONFIRM_WORDS = {"oui", "o", "ok", "confirme", "confirmé", "confirmée"}
 _REJECT_WORDS = {"non", "n", "annule", "annuler"}
@@ -357,7 +358,7 @@ class AgentLoop:
             if (
                 not isinstance(tool_name, str)
                 or not tool_name.strip()
-                or tool_name not in _LLM_WRITE_TOOLS
+                or tool_name not in _RISKY_WRITE_TOOLS
                 or not isinstance(payload, dict)
             ):
                 return NoopPlan(reply="Action annulée.", meta={"clear_active_task": True})
@@ -941,7 +942,7 @@ class AgentLoop:
 
         if (
             isinstance(plan, ToolCallPlan)
-            and plan.tool_name in _LLM_WRITE_TOOLS
+            and plan.tool_name in _RISKY_WRITE_TOOLS
             and active_task is None
         ):
             confirmation_plan = _wrap_write_plan_with_confirmation(plan)
@@ -1132,21 +1133,31 @@ class AgentLoop:
                 confirmation_type = nlu_intent.get("confirmation_type")
                 context = nlu_intent.get("context")
                 reply_message = nlu_intent.get("message")
-                if (
-                    isinstance(confirmation_type, str)
-                    and isinstance(context, dict)
-                    and isinstance(reply_message, str)
-                    and reply_message.strip()
-                ):
-                    return SetActiveTaskPlan(
-                        reply=reply_message,
-                        active_task={
-                            "type": "needs_confirmation",
-                            "confirmation_type": confirmation_type,
-                            "context": context,
-                            "created_at": datetime.now(timezone.utc).isoformat(),
-                        },
-                    )
+                if isinstance(confirmation_type, str) and isinstance(context, dict):
+                    if confirmation_type == "confirm_llm_write":
+                        tool_name = context.get("tool_name")
+                        payload = context.get("payload")
+                        if (
+                            isinstance(tool_name, str)
+                            and tool_name in _SOFT_WRITE_TOOLS
+                            and isinstance(payload, dict)
+                        ):
+                            return ToolCallPlan(
+                                tool_name=tool_name,
+                                payload=payload,
+                                user_reply="OK.",
+                            )
+
+                    if isinstance(reply_message, str) and reply_message.strip():
+                        return SetActiveTaskPlan(
+                            reply=reply_message,
+                            active_task={
+                                "type": "needs_confirmation",
+                                "confirmation_type": confirmation_type,
+                                "context": context,
+                                "created_at": datetime.now(timezone.utc).isoformat(),
+                            },
+                        )
 
         deterministic_plan = deterministic_plan_from_message(message)
         if isinstance(
@@ -1240,7 +1251,7 @@ class AgentLoop:
                 },
             )
 
-            if llm_plan.tool_name in _LLM_WRITE_TOOLS:
+            if llm_plan.tool_name in _RISKY_WRITE_TOOLS:
                 logger.info(
                     "llm_tool_requires_confirmation",
                     extra={
