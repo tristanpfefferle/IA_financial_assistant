@@ -641,7 +641,7 @@ class AgentLoop:
                     plan=list_plan, tool_result=normalized_list_result
                 ),
                 tool_result=AgentLoop._serialize_tool_result(normalized_list_result),
-                plan={"tool_name": list_plan.tool_name, "payload": list_plan.payload},
+                plan=AgentLoop._serialize_plan(list_plan),
             )
 
         items = getattr(normalized_list_result, "items", None)
@@ -789,7 +789,7 @@ class AgentLoop:
             return AgentReply(
                 reply=build_final_reply(plan=list_plan, tool_result=normalized_list_result),
                 tool_result=AgentLoop._serialize_tool_result(normalized_list_result),
-                plan={"tool_name": list_plan.tool_name, "payload": list_plan.payload},
+                plan=AgentLoop._serialize_plan(list_plan),
             )
 
         items = getattr(normalized_list_result, "items", None)
@@ -847,7 +847,7 @@ class AgentLoop:
                     f"Voulez-vous dire « {suggested_name} » ? (oui/non)"
                 ),
                 tool_result=AgentLoop._serialize_tool_result(error),
-                plan={"tool_name": plan.tool_name, "payload": plan.payload},
+                plan=AgentLoop._serialize_plan(plan),
                 active_task={
                     "type": "needs_confirmation",
                     "confirmation_type": "confirm_delete_category_suggestion",
@@ -866,7 +866,7 @@ class AgentLoop:
         return AgentReply(
             reply=reply,
             tool_result=AgentLoop._serialize_tool_result(error),
-            plan={"tool_name": plan.tool_name, "payload": plan.payload},
+            plan=AgentLoop._serialize_plan(plan),
             active_task=None,
             should_update_active_task=True,
         )
@@ -895,6 +895,22 @@ class AgentLoop:
         if isinstance(result, dict):
             return result
         return {"value": str(result)}
+
+    @staticmethod
+    def _serialize_plan(plan: ToolCallPlan) -> dict[str, object]:
+        serialized_plan: dict[str, object] = {
+            "tool_name": plan.tool_name,
+            "payload": plan.payload,
+        }
+        if isinstance(plan.meta, dict) and plan.meta:
+            visible_meta = {
+                key: value
+                for key, value in plan.meta.items()
+                if key.startswith("debug_")
+            }
+            if visible_meta:
+                serialized_plan["meta"] = visible_meta
+        return serialized_plan
 
     @staticmethod
     def _validate_llm_tool_payload(
@@ -1031,6 +1047,7 @@ class AgentLoop:
         profile_id: UUID | None = None,
         active_task: dict[str, object] | None = None,
         memory: dict[str, object] | None = None,
+        debug: bool = False,
     ) -> AgentReply:
         query_memory = (
             QueryMemory.from_dict(memory.get("last_query"))
@@ -1179,7 +1196,20 @@ class AgentLoop:
             )
 
         if isinstance(plan, ToolCallPlan):
+            payload_before_memory = dict(plan.payload)
             plan, _memory_reason = apply_memory_to_plan(message, plan, query_memory)
+
+            payload_after_memory = dict(plan.payload)
+            injected_fields = {
+                key: value
+                for key, value in payload_after_memory.items()
+                if key not in payload_before_memory or payload_before_memory[key] != value
+            }
+
+            if debug and (query_memory is not None or followup_plan is not None or injected_fields):
+                plan.meta["debug_memory_injected"] = injected_fields
+                plan.meta["debug_query_memory_used"] = query_memory.to_dict() if query_memory is not None else None
+                plan.meta["debug_followup_used"] = followup_plan is not None
 
             if (
                 plan.tool_name == "finance_releves_search"
@@ -1232,7 +1262,7 @@ class AgentLoop:
                     return AgentReply(
                         reply=active_task_plan.reply,
                         tool_result=self._serialize_tool_result(result),
-                        plan={"tool_name": plan.tool_name, "payload": plan.payload},
+                        plan=self._serialize_plan(plan),
                         active_task=active_task_plan.active_task,
                         should_update_active_task=True,
                     )
@@ -1261,7 +1291,7 @@ class AgentLoop:
             return AgentReply(
                 reply=final_reply,
                 tool_result=self._serialize_tool_result(result),
-                plan={"tool_name": plan.tool_name, "payload": plan.payload},
+                plan=self._serialize_plan(plan),
                 active_task=updated_active_task,
                 should_update_active_task=should_update_active_task,
                 memory_update=merged_memory_update,

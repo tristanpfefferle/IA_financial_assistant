@@ -57,6 +57,8 @@ class _Router:
     def call(self, tool_name: str, payload: dict[str, object], *, profile_id: UUID | None = None):
         assert profile_id == PROFILE_ID
         self.calls.append((tool_name, dict(payload)))
+        if tool_name == "finance_releves_search":
+            return {"ok": True, "items": []}
         if tool_name == "finance_releves_sum":
             return {"ok": True, "total": 123.45}
         if tool_name == "finance_categories_list":
@@ -142,3 +144,48 @@ def test_agent_chat_list_categories_is_not_hijacked_by_followup_memory(monkeypat
     assert second.status_code == 200
     assert second.json()["plan"]["tool_name"] == "finance_categories_list"
     assert router.calls[1] == ("finance_categories_list", {})
+
+
+def test_agent_chat_exposes_debug_memory_injected_when_memory_adds_period(monkeypatch) -> None:
+    monkeypatch.setattr(
+        agent_api,
+        "get_user_from_bearer_token",
+        lambda _token: {"id": str(AUTH_USER_ID), "email": "user@example.com"},
+    )
+
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "last_query": {
+                    "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
+                    "last_tool_name": "finance_releves_sum",
+                    "last_intent": "sum",
+                    "filters": {"direction": "DEBIT_ONLY"},
+                }
+            }
+        }
+    )
+    router = _Router()
+    loop = AgentLoop(tool_router=router)
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: loop)
+
+    response = client.post(
+        "/agent/chat",
+        json={"message": "search: coop"},
+        headers={**_auth_headers(), "X-Debug": "1"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["plan"]["tool_name"] == "finance_releves_search"
+    assert body["plan"]["meta"]["debug_memory_injected"] == {
+        "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
+        "direction": "DEBIT_ONLY",
+    }
+    assert body["plan"]["meta"]["debug_followup_used"] is False
+    assert body["plan"]["meta"]["debug_query_memory_used"]["date_range"] == {
+        "start_date": "2026-01-01",
+        "end_date": "2026-01-31",
+    }
