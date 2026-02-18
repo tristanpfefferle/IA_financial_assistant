@@ -59,6 +59,8 @@ class _Router:
         self.calls.append((tool_name, dict(payload)))
         if tool_name == "finance_releves_sum":
             return {"ok": True, "total": 123.45}
+        if tool_name == "finance_categories_list":
+            return {"categories": [{"id": "1", "name": "Alimentation"}]}
         raise AssertionError(f"unexpected tool call: {tool_name}")
 
 
@@ -108,7 +110,7 @@ def test_agent_chat_reuses_last_period_for_logement_followup(monkeypatch) -> Non
         "tool_name": "finance_releves_sum",
         "payload": {
             "direction": "DEBIT_ONLY",
-            "category": "logement",
+            "categorie": "logement",
             "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
         },
     }
@@ -117,7 +119,40 @@ def test_agent_chat_reuses_last_period_for_logement_followup(monkeypatch) -> Non
         "finance_releves_sum",
         {
             "direction": "DEBIT_ONLY",
-            "category": "logement",
+            "categorie": "logement",
             "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
         },
     )
+
+
+def test_agent_chat_list_categories_is_not_hijacked_by_followup_memory(monkeypatch) -> None:
+    monkeypatch.setattr(
+        agent_api,
+        "get_user_from_bearer_token",
+        lambda _token: {"id": str(AUTH_USER_ID), "email": "user@example.com"},
+    )
+
+    repo = _Repo(initial_chat_state={})
+    router = _Router()
+    loop = AgentLoop(tool_router=router)
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: loop)
+
+    first = client.post(
+        "/agent/chat",
+        json={"message": "Total dépenses en janvier 2026"},
+        headers=_auth_headers(),
+    )
+    assert first.status_code == 200
+    assert router.calls[0][0] == "finance_releves_sum"
+
+    second = client.post(
+        "/agent/chat",
+        json={"message": "Liste mes catégories"},
+        headers=_auth_headers(),
+    )
+
+    assert second.status_code == 200
+    assert second.json()["plan"]["tool_name"] == "finance_categories_list"
+    assert router.calls[1] == ("finance_categories_list", {})

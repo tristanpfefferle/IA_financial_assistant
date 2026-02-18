@@ -1415,14 +1415,14 @@ def test_memory_persists_last_month_from_sum_then_followup_category_uses_same_mo
                 },
             },
         ),
-        (
-            "finance_releves_sum",
-            {
-                "direction": "DEBIT_ONLY",
-                "category": "logement",
-                "date_range": {
-                    "start_date": "2026-01-01",
-                    "end_date": "2026-01-31",
+            (
+                "finance_releves_sum",
+                {
+                    "direction": "DEBIT_ONLY",
+                    "categorie": "logement",
+                    "date_range": {
+                        "start_date": "2026-01-01",
+                        "end_date": "2026-01-31",
                 },
             },
         ),
@@ -1652,7 +1652,7 @@ def test_followup_sum_category_reuses_period_without_clarification(monkeypatch) 
         "finance_releves_sum",
         {
             "direction": "DEBIT_ONLY",
-            "category": "logement",
+            "categorie": "logement",
             "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
         },
     )
@@ -1660,7 +1660,7 @@ def test_followup_sum_category_reuses_period_without_clarification(monkeypatch) 
         "tool_name": "finance_releves_sum",
         "payload": {
             "direction": "DEBIT_ONLY",
-            "category": "logement",
+            "categorie": "logement",
             "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
         },
     }
@@ -1739,20 +1739,20 @@ def test_followup_known_category_prefers_category_over_profile_intent() -> None:
     )
 
     assert router.calls == [
-        (
-            "finance_releves_sum",
-            {
-                "direction": "DEBIT_ONLY",
-                "category": "logement",
-                "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
-            },
-        )
+            (
+                "finance_releves_sum",
+                {
+                    "direction": "DEBIT_ONLY",
+                    "categorie": "logement",
+                    "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
+                },
+            )
     ]
     assert reply.plan == {
         "tool_name": "finance_releves_sum",
         "payload": {
             "direction": "DEBIT_ONLY",
-            "category": "logement",
+            "categorie": "logement",
             "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
         },
     }

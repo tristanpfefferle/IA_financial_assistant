@@ -34,6 +34,20 @@ _NON_FOCUS_MESSAGES = {
     "daccord",
     "d'accord",
 }
+_FOLLOWUP_STOP_TOKENS = {
+    "liste",
+    "lister",
+    "supprime",
+    "supprimer",
+    "cree",
+    "creer",
+    "renomme",
+    "modifier",
+    "modifie",
+    "categorie",
+    "categories",
+    "profil",
+}
 _MONTH_LOOKUP = {
     "janvier": 1,
     "janv": 1,
@@ -198,7 +212,7 @@ def followup_plan_from_message(
 
     if memory.last_tool_name == "finance_releves_sum":
         payload: dict[str, object] = {"direction": "DEBIT_ONLY", **period_payload}
-        payload["category"] = category or normalized_focus
+        payload["categorie"] = category or normalized_focus
         return ToolCallPlan(
             tool_name="finance_releves_sum",
             payload=payload,
@@ -221,7 +235,7 @@ def followup_plan_from_message(
         )
 
     if category is not None:
-        payload = {"direction": "DEBIT_ONLY", "category": category, **period_payload}
+        payload = {"direction": "DEBIT_ONLY", "categorie": category, **period_payload}
         return ToolCallPlan(
             tool_name="finance_releves_sum",
             payload=payload,
@@ -250,6 +264,9 @@ def _extract_followup_focus(message: str) -> str | None:
     collapsed = re.sub(r"\s+", " ", message.strip())
     if not collapsed:
         return None
+    normalized_message = _normalize_text(collapsed)
+    if any(token in normalized_message.split() for token in _FOLLOWUP_STOP_TOKENS):
+        return None
 
     matched = re.match(
         r"^(?:ok[\s,.!]+)?(?:et\s+)?(?:en|dans)\s+(.+?)\??$",
@@ -261,14 +278,15 @@ def _extract_followup_focus(message: str) -> str | None:
     if matched is not None:
         focus = matched.group(1)
     else:
+        raw_tokens = [token for token in re.split(r"\s+", collapsed) if token]
+        if len(raw_tokens) > 2:
+            return None
         focus = collapsed
 
     focus = focus.strip(" .,!?:;\"'“”«»")
     focus = re.sub(r"^(?:en|dans|de)\s+", "", focus, flags=re.IGNORECASE)
     normalized_focus = _normalize_text(focus)
     if not normalized_focus or normalized_focus in _NON_FOCUS_MESSAGES:
-        return None
-    if matched is None and len(normalized_focus.split()) > 3:
         return None
     if normalized_focus in _MONTH_LOOKUP or re.fullmatch(r"(?:19\d{2}|20\d{2}|21\d{2})", normalized_focus):
         return None
@@ -409,6 +427,7 @@ def _merge_missing_filters(
     for key, value in memory_filters.items():
         if key in _PERIOD_KEYS:
             continue
+        target_key = "categorie" if key in {"category", "categorie"} else key
         if key in {"merchant", "search"} and (
             "merchant" in payload or "search" in payload
         ):
@@ -424,8 +443,8 @@ def _merge_missing_filters(
                     existing[nested_key] = nested_value
                     injected = True
             continue
-        if key not in payload:
-            payload[key] = value
+        if target_key not in payload:
+            payload[target_key] = value
             injected = True
     return injected
 
