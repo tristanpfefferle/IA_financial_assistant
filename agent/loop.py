@@ -14,7 +14,7 @@ from uuid import UUID
 from pydantic import BaseModel
 
 from agent.answer_builder import build_final_reply
-from agent.deterministic_nlu import is_categories_list_message, parse_intent
+from agent.deterministic_nlu import parse_intent
 from agent.llm_planner import LLMPlanner
 from agent.memory import (
     QueryMemory,
@@ -1516,14 +1516,6 @@ class AgentLoop:
             return self.plan_from_active_task(message, active_task)
 
         nlu_intent = parse_intent(message)
-        if is_categories_list_message(message):
-            return ToolCallPlan(
-                tool_name="finance_categories_list",
-                payload={},
-                user_reply="OK.",
-                meta={"source": "deterministic_nlu"},
-            )
-
         if isinstance(nlu_intent, dict):
             intent_type = nlu_intent.get("type")
             if intent_type == "clarification":
