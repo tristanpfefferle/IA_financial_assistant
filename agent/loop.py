@@ -258,6 +258,28 @@ class AgentLoop:
             has_category_value_in_message or has_merchant_value_in_message
         )
 
+        merchant_match = re.search(r"\b(?:chez|merchant|marchand)\s+([\w\-']+)", normalized_message_no_accents)
+        explicit_merchant_in_message = (
+            merchant_match.group(1).strip() if merchant_match is not None else ""
+        )
+        merchant_conflict = (
+            bool(merchant_value)
+            and bool(explicit_merchant_in_message)
+            and _normalize_for_match(merchant_value)
+            != _normalize_for_match(explicit_merchant_in_message)
+        )
+
+        category_match = re.search(r"\bcat[eé]gorie\s+([\w\-']+)", normalized_message_no_accents)
+        explicit_category_in_message = (
+            category_match.group(1).strip() if category_match is not None else ""
+        )
+        category_conflict = (
+            bool(category_value)
+            and bool(explicit_category_in_message)
+            and _normalize_for_match(category_value)
+            != _normalize_for_match(explicit_category_in_message)
+        )
+
         followup_short_detected = (
             is_releves_query_tool
             and is_followup_message(message)
@@ -301,7 +323,24 @@ class AgentLoop:
             (bool(category_value) and not has_category_value_in_message)
             or (bool(merchant_value) and not has_merchant_value_in_message)
         )
-        if followup_short_detected and has_inferred_filter_conflict and not has_explicit_filter:
+        has_explicit_payload_conflict = merchant_conflict or category_conflict
+        if merchant_conflict:
+            confidence = "low"
+            reasons.append("merchant_conflict")
+        if category_conflict:
+            confidence = "low"
+            reasons.append("category_conflict")
+
+        if (
+            followup_short_detected
+            and has_inferred_filter_conflict
+            and not has_explicit_filter
+            and (
+                query_memory is None
+                or has_ambiguous_time_reference
+                or has_explicit_payload_conflict
+            )
+        ):
             confidence = "low"
 
         if plan.tool_name in {"finance_releves_sum", "finance_releves_search"}:
