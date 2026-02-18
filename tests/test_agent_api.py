@@ -50,9 +50,15 @@ def _mock_authenticated(monkeypatch) -> None:
 
 class _DeleteRouter:
     def call(self, tool_name: str, payload: dict, *, profile_id: UUID | None = None):
+        assert profile_id == UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+        if tool_name == "finance_categories_list":
+            return type(
+                "_CategoriesListResult",
+                (),
+                {"items": [type("_Category", (), {"name": "Transport"})]},
+            )()
         assert tool_name == "finance_categories_delete"
         assert payload["category_name"] == "Transport"
-        assert profile_id == UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
         return None
 
 
