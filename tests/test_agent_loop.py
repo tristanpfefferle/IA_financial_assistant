@@ -320,10 +320,7 @@ def test_categories_delete_not_found_suggestion_yes_then_confirm_then_delete() -
         "tool_name": "finance_categories_delete",
         "payload": {"category_name": "Transfert interne"},
     }
-    assert router.calls == [
-        ("finance_categories_list", {}),
-        ("finance_categories_delete", {"category_name": "Transfert interne"}),
-    ]
+    assert router.calls == [("finance_categories_list", {}), ("finance_categories_delete", {"category_name": "Transfert interne"})]
 
 
 def test_categories_delete_not_found_suggestion_no_cancels_without_tool_call() -> None:
