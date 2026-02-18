@@ -355,10 +355,11 @@ class AgentLoop:
         if confirmation_type == "confirm_llm_write":
             tool_name = context.get("tool_name")
             payload = context.get("payload")
+            write_tools = _RISKY_WRITE_TOOLS | _SOFT_WRITE_TOOLS
             if (
                 not isinstance(tool_name, str)
                 or not tool_name.strip()
-                or tool_name not in _RISKY_WRITE_TOOLS
+                or tool_name not in write_tools
                 or not isinstance(payload, dict)
             ):
                 return NoopPlan(reply="Action annulée.", meta={"clear_active_task": True})
