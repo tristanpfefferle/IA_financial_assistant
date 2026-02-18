@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 import agent.loop as loop_module
@@ -103,6 +104,7 @@ def test_direction_clarification_does_not_overwrite_category() -> None:
                 },
                 "base_payload": {"categorie": "Loisir"},
             },
+            "created_at": datetime.now(timezone.utc).isoformat(),
         },
     )
 
@@ -133,6 +135,7 @@ def test_direction_clarification_legacy_type_missing_direction_keeps_category() 
                 },
                 "base_payload": {"categorie": "Loisir"},
             },
+            "created_at": datetime.now(timezone.utc).isoformat(),
         },
     )
 
@@ -142,3 +145,133 @@ def test_direction_clarification_legacy_type_missing_direction_keeps_category() 
     assert payload["direction"] == "DEBIT_ONLY"
     assert payload.get("categorie") == "Loisir"
     assert payload.get("categorie") != "Dépenses"
+
+
+def test_stale_clarification_pending_is_cleared_on_new_request(monkeypatch) -> None:
+    def _parse_intent(message: str):
+        assert message == "Total dépenses Loisir en mars 2026"
+        return {
+            "type": "tool_call",
+            "tool_name": "finance_releves_sum",
+            "payload": {
+                "direction": "DEBIT_ONLY",
+                "categorie": "Loisir",
+                "date_range": {
+                    "start_date": "2026-03-01",
+                    "end_date": "2026-03-31",
+                },
+            },
+        }
+
+    monkeypatch.setattr(loop_module, "parse_intent", _parse_intent)
+
+    router = _Router()
+    loop = AgentLoop(tool_router=router)
+    stale_created_at = datetime.now(timezone.utc) - timedelta(
+        seconds=loop_module._ACTIVE_TASK_TTL_SECONDS + 1
+    )
+
+    reply = loop.handle_user_message(
+        "Total dépenses Loisir en mars 2026",
+        profile_id=PROFILE_ID,
+        active_task={
+            "type": "clarification_pending",
+            "context": {
+                "clarification_type": "direction_choice",
+                "period_payload": {
+                    "date_range": {
+                        "start_date": "2025-01-01",
+                        "end_date": "2025-01-31",
+                    }
+                },
+            },
+            "created_at": stale_created_at.isoformat(),
+        },
+        memory={"known_categories": ["Loisir"]},
+    )
+
+    assert reply.should_update_active_task is True
+    assert reply.active_task is None
+    assert reply.plan is not None
+    assert reply.plan["tool_name"] == "finance_releves_sum"
+    assert "year" not in reply.plan["payload"]
+    assert "date_range" in reply.plan["payload"]
+
+
+def test_non_stale_clarification_pending_is_ignored_for_full_new_request(monkeypatch) -> None:
+    def _parse_intent(message: str):
+        assert message == "Total dépenses Loisir en mars 2026"
+        return {
+            "type": "tool_call",
+            "tool_name": "finance_releves_sum",
+            "payload": {
+                "direction": "DEBIT_ONLY",
+                "categorie": "Loisir",
+                "date_range": {
+                    "start_date": "2026-03-01",
+                    "end_date": "2026-03-31",
+                },
+            },
+        }
+
+    monkeypatch.setattr(loop_module, "parse_intent", _parse_intent)
+
+    router = _Router()
+    loop = AgentLoop(tool_router=router)
+
+    reply = loop.handle_user_message(
+        "Total dépenses Loisir en mars 2026",
+        profile_id=PROFILE_ID,
+        active_task={
+            "type": "clarification_pending",
+            "context": {
+                "clarification_type": "direction_choice",
+                "period_payload": {
+                    "date_range": {
+                        "start_date": "2025-01-01",
+                        "end_date": "2025-01-31",
+                    }
+                },
+            },
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        },
+        memory={"known_categories": ["Loisir"]},
+    )
+
+    assert reply.should_update_active_task is True
+    assert reply.active_task is None
+    assert reply.plan is not None
+    assert reply.plan["tool_name"] == "finance_releves_sum"
+    assert "year" not in reply.plan["payload"]
+    assert "date_range" in reply.plan["payload"]
+
+
+def test_clarification_pending_still_handles_short_direction_answer() -> None:
+    router = _Router()
+    loop = AgentLoop(tool_router=router)
+
+    reply = loop.handle_user_message(
+        "Dépenses",
+        profile_id=PROFILE_ID,
+        active_task={
+            "type": "clarification_pending",
+            "context": {
+                "clarification_type": "direction_choice",
+                "period_payload": {
+                    "date_range": {
+                        "start_date": "2026-01-01",
+                        "end_date": "2026-01-31",
+                    }
+                },
+                "base_payload": {"categorie": "Loisir"},
+            },
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+
+    assert reply.plan is not None
+    assert reply.plan["tool_name"] == "finance_releves_sum"
+    assert reply.plan["payload"]["direction"] == "DEBIT_ONLY"
+    assert reply.plan["payload"]["categorie"] == "Loisir"
+    assert reply.active_task is None
+    assert reply.should_update_active_task is True

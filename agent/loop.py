@@ -62,6 +62,22 @@ _REJECT_WORDS = {"non", "n", "annule", "annuler"}
 _DIRECTION_DEBIT_WORDS = {"depenses", "dépenses", "depense", "dépense", "debit"}
 _DIRECTION_CREDIT_WORDS = {"revenus", "revenu", "credit"}
 _DIRECTION_BOTH_WORDS = {"les deux", "both", "deux"}
+_ACTIVE_TASK_TTL_SECONDS = 600
+_NEW_REQUEST_INTENT_WORDS = {
+    "total",
+    "totaux",
+    "transaction",
+    "transactions",
+    "depense",
+    "depenses",
+    "dépense",
+    "dépenses",
+    "revenu",
+    "revenus",
+    "solde",
+    "recherche",
+    "chercher",
+}
 _CONFIDENCE_SHORT_FOLLOWUP_PATTERN = re.compile(r"^(et\s+en|et|ok|pareil|idem)\b", re.IGNORECASE)
 _CONFIDENCE_EXPLICIT_DATE_PATTERN = re.compile(
     r"\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}/\d{1,2}/\d{2,4}\b",
@@ -809,6 +825,67 @@ class AgentLoop:
         if normalized in _DIRECTION_CREDIT_WORDS:
             return "CREDIT_ONLY"
         return None
+
+    @staticmethod
+    def _is_active_task_stale(active_task: dict[str, object]) -> bool:
+        created_at_raw = active_task.get("created_at")
+        if not isinstance(created_at_raw, str) or not created_at_raw.strip():
+            return True
+
+        created_at_value = created_at_raw.strip()
+        if created_at_value.endswith("Z"):
+            created_at_value = f"{created_at_value[:-1]}+00:00"
+
+        try:
+            created_at = datetime.fromisoformat(created_at_value)
+        except ValueError:
+            return True
+
+        if created_at.tzinfo is None:
+            return True
+
+        age_seconds = (datetime.now(timezone.utc) - created_at).total_seconds()
+        return age_seconds > _ACTIVE_TASK_TTL_SECONDS
+
+    @staticmethod
+    def _should_ignore_clarification_pending(
+        message: str,
+        active_task: dict[str, object],
+        *,
+        known_categories: list[str] | None = None,
+    ) -> bool:
+        del active_task
+
+        stripped_message = message.strip()
+        if not stripped_message:
+            return False
+
+        if AgentLoop._direction_from_clarification_message(stripped_message) is not None:
+            return False
+
+        if _normalize_for_match(stripped_message) in _CONFIRM_WORDS | _REJECT_WORDS:
+            return False
+
+        if AgentLoop._category_from_clarification_message(
+            stripped_message,
+            known_categories or [],
+        ) is not None and len(_normalize_for_match(stripped_message).split()) <= 3:
+            return False
+
+        normalized_message = _normalize_for_match(stripped_message)
+        tokens = normalized_message.split()
+        if len(tokens) >= 4:
+            return True
+
+        if _CONFIDENCE_EXPLICIT_DATE_PATTERN.search(stripped_message):
+            return True
+        if _CONFIDENCE_YEAR_PATTERN.search(normalized_message):
+            return True
+        if any(month in normalized_message for month in _CONFIDENCE_MONTH_TO_NUMBER):
+            return True
+        if any(intent_word in tokens for intent_word in _NEW_REQUEST_INTENT_WORDS):
+            return True
+        return False
 
     @staticmethod
     def _plan_from_needs_confirmation(
@@ -1569,8 +1646,25 @@ class AgentLoop:
             query_memory.last_tool_name if query_memory is not None else None,
         )
         known_categories = self._known_categories_from_memory(memory)
+        active_task_effective = active_task
+        should_force_clear_active_task = False
+        if (
+            isinstance(active_task, dict)
+            and active_task.get("type") == "clarification_pending"
+            and (
+                self._is_active_task_stale(active_task)
+                or self._should_ignore_clarification_pending(
+                    message,
+                    active_task,
+                    known_categories=known_categories,
+                )
+            )
+        ):
+            active_task_effective = None
+            should_force_clear_active_task = True
+
         followup_plan = None
-        if active_task is None and query_memory is not None:
+        if active_task_effective is None and query_memory is not None:
             followup_plan = followup_plan_from_message(
                 message,
                 query_memory,
@@ -1585,17 +1679,20 @@ class AgentLoop:
 
         if followup_plan is not None:
             plan = followup_plan
-        elif isinstance(active_task, dict) and active_task.get("type") == "clarification_pending":
+        elif (
+            isinstance(active_task_effective, dict)
+            and active_task_effective.get("type") == "clarification_pending"
+        ):
             plan = self.plan_from_active_task(
                 message,
-                active_task,
+                active_task_effective,
                 known_categories=known_categories,
             )
         else:
             routed = self._route_message(
                 message,
                 profile_id=profile_id,
-                active_task=active_task,
+                active_task=active_task_effective,
             )
             if isinstance(routed, AgentReply):
                 return routed
@@ -1604,7 +1701,7 @@ class AgentLoop:
         self._run_llm_shadow(
             message,
             profile_id=profile_id,
-            active_task=active_task,
+            active_task=active_task_effective,
             deterministic_plan=plan,
         )
 
@@ -1627,16 +1724,19 @@ class AgentLoop:
             else {}
         )
         should_update_active_task = False
-        updated_active_task = active_task
+        updated_active_task = active_task_effective
+        if should_force_clear_active_task:
+            should_update_active_task = True
+            updated_active_task = None
         if plan_meta.get("clear_active_task"):
             should_update_active_task = True
             updated_active_task = None
         elif plan_meta.get("keep_active_task"):
             should_update_active_task = True
-            updated_active_task = active_task
+            updated_active_task = active_task_effective
             clarification_type = plan_meta.get("clarification_type")
             clarification_payload = plan_meta.get("clarification_payload")
-            if active_task is None and clarification_type == "awaiting_search_merchant":
+            if active_task_effective is None and clarification_type == "awaiting_search_merchant":
                 updated_active_task = {"type": "awaiting_search_merchant"}
                 if isinstance(clarification_payload, dict):
                     date_range = clarification_payload.get("date_range")
@@ -1713,7 +1813,7 @@ class AgentLoop:
         if (
             isinstance(plan, ToolCallPlan)
             and plan.tool_name in _RISKY_WRITE_TOOLS
-            and active_task is None
+            and active_task_effective is None
         ):
             confirmation_plan = _wrap_write_plan_with_confirmation(plan)
             return AgentReply(
