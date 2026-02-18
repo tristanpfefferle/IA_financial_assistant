@@ -59,6 +59,9 @@ _SOFT_WRITE_TOOLS = {
 }
 _CONFIRM_WORDS = {"oui", "o", "ok", "confirme", "confirmé", "confirmée"}
 _REJECT_WORDS = {"non", "n", "annule", "annuler"}
+_DIRECTION_DEBIT_WORDS = {"depenses", "dépenses", "depense", "dépense", "debit"}
+_DIRECTION_CREDIT_WORDS = {"revenus", "revenu", "credit"}
+_DIRECTION_BOTH_WORDS = {"les deux", "both", "deux"}
 _CONFIDENCE_SHORT_FOLLOWUP_PATTERN = re.compile(r"^(et\s+en|et|ok|pareil|idem)\b", re.IGNORECASE)
 _CONFIDENCE_EXPLICIT_DATE_PATTERN = re.compile(
     r"\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}/\d{1,2}/\d{2,4}\b",
@@ -669,6 +672,28 @@ class AgentLoop:
                     meta={"clear_active_task": True},
                 )
 
+            clarification_type = context.get("clarification_type")
+            if clarification_type == "direction_choice":
+                direction = AgentLoop._direction_from_clarification_message(message)
+                if direction is None:
+                    return ClarificationPlan(
+                        question="Tu veux les dépenses, revenus ou les deux ?",
+                        meta={"keep_active_task": True},
+                    )
+
+                base_payload = context.get("base_payload")
+                payload: dict[str, object] = {}
+                if isinstance(base_payload, dict):
+                    payload.update(base_payload)
+                payload.update(period_payload)
+                payload["direction"] = direction
+                return ToolCallPlan(
+                    tool_name="finance_releves_sum",
+                    payload=payload,
+                    user_reply="OK.",
+                    meta={"clear_active_task": True},
+                )
+
             category = AgentLoop._category_from_clarification_message(
                 message,
                 known_categories or [],
@@ -770,6 +795,20 @@ class AgentLoop:
                 return category_name
 
         return candidate
+
+    @staticmethod
+    def _direction_from_clarification_message(message: str) -> str | None:
+        normalized = _normalize_for_match(message)
+        if not normalized:
+            return None
+
+        if normalized in _DIRECTION_BOTH_WORDS:
+            return "ALL"
+        if normalized in _DIRECTION_DEBIT_WORDS:
+            return "DEBIT_ONLY"
+        if normalized in _DIRECTION_CREDIT_WORDS:
+            return "CREDIT_ONLY"
+        return None
 
     @staticmethod
     def _plan_from_needs_confirmation(
@@ -1761,6 +1800,7 @@ class AgentLoop:
                     plan.tool_name,
                     plan.payload,
                     plan.meta,
+                    known_categories=known_categories,
                 )
                 if not isinstance(result, ToolError)
                 else None
@@ -1797,8 +1837,14 @@ class AgentLoop:
                 pending_context: dict[str, object] = {
                     "period_payload": pending_period_payload,
                 }
+                if isinstance(clarification_type, str) and clarification_type:
+                    pending_context["clarification_type"] = clarification_type
+                if isinstance(plan, ClarificationPlan):
+                    pending_context["clarification_question"] = plan.question
                 if query_memory is not None:
                     pending_context["base_last_query"] = query_memory.to_dict()
+                if isinstance(query_memory, QueryMemory) and isinstance(query_memory.filters, dict):
+                    pending_context["base_payload"] = dict(query_memory.filters)
                 updated_active_task = {
                     "type": "clarification_pending",
                     "context": pending_context,

@@ -5,6 +5,7 @@ from __future__ import annotations
 from agent.memory import (
     QueryMemory,
     apply_memory_to_plan,
+    extract_memory_from_plan,
     followup_plan_from_message,
     is_followup_message,
 )
@@ -127,3 +128,40 @@ def test_apply_memory_to_plan_does_not_inject_merchant_on_non_followup_intent() 
     updated_plan, _ = apply_memory_to_plan("Dépenses totales en janvier 2026", plan, memory)
 
     assert "merchant" not in updated_plan.payload
+
+
+def test_followup_explicit_period_reuses_last_query_filters() -> None:
+    plan = followup_plan_from_message(
+        "et en janvier 2026",
+        QueryMemory(
+            date_range={"start_date": "2025-12-01", "end_date": "2025-12-31"},
+            last_tool_name="finance_releves_sum",
+            last_intent="sum",
+            filters={"direction": "DEBIT_ONLY", "categorie": "Loisir"},
+        ),
+        known_categories=["Loisir"],
+    )
+
+    assert plan is not None
+    assert plan.tool_name == "finance_releves_sum"
+    assert plan.payload == {
+        "direction": "DEBIT_ONLY",
+        "categorie": "Loisir",
+        "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
+    }
+
+
+def test_extract_memory_from_plan_drops_invalid_category_from_filters() -> None:
+    memory = extract_memory_from_plan(
+        "finance_releves_sum",
+        {
+            "direction": "DEBIT_ONLY",
+            "categorie": "Salut",
+            "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
+        },
+        known_categories=["Loisir", "Transport"],
+    )
+
+    assert memory is not None
+    assert memory.filters.get("direction") == "DEBIT_ONLY"
+    assert "categorie" not in memory.filters
