@@ -1039,7 +1039,7 @@ class AgentLoop:
         )
         known_categories = self._known_categories_from_memory(memory)
         followup_plan = None
-        if active_task is None:
+        if active_task is None and query_memory is not None:
             followup_plan = followup_plan_from_message(
                 message,
                 query_memory,
