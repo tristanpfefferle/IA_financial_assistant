@@ -1863,18 +1863,18 @@ def test_followup_message_cannot_trigger_write_tool(monkeypatch) -> None:
         "_route_message",
         lambda self, message, *, profile_id, active_task: ToolCallPlan(
             tool_name="finance_categories_delete",
-            payload={"category_name": "pizza"},
+            payload={"category_name": "X"},
             user_reply="OK.",
         ),
     )
 
-    reply = loop.handle_user_message("Et pizza ?")
+    reply = loop.handle_user_message("Et Migros ?")
 
     assert router.calls == []
     assert reply.tool_result is not None
     assert reply.tool_result["type"] == "clarification"
     assert reply.tool_result["clarification_type"] == "prevent_write_on_followup"
-    assert reply.reply == "Tu veux parler du marchand « pizza » ou de la catégorie ?"
+    assert reply.reply == "Tu parles de « Migros » comme marchand ou comme catégorie ?"
     assert reply.should_update_active_task is False
 
 def test_followup_known_category_reuses_period_when_implicit() -> None:
