@@ -14,7 +14,7 @@ def _plan(*, payload: dict[str, object], meta: dict[str, object] | None = None) 
     )
 
 
-def test_confidence_followup_short_is_low() -> None:
+def test_confidence_followup_short_without_context_is_low() -> None:
     plan = _plan(
         payload={
             "direction": "DEBIT_ONLY",
@@ -25,7 +25,7 @@ def test_confidence_followup_short_is_low() -> None:
     updated = AgentLoop._with_confidence_meta("ok", plan, query_memory=None)
 
     assert updated.meta["confidence"] == "low"
-    assert "followup_short" in updated.meta["confidence_reasons"]
+    assert "period_missing_in_message" in updated.meta["confidence_reasons"]
 
 
 def test_confidence_period_injected_from_memory_is_low() -> None:
@@ -85,3 +85,23 @@ def test_confidence_explicit_message_is_high() -> None:
     assert "explicit_intent" in updated.meta["confidence_reasons"]
     assert "explicit_period" in updated.meta["confidence_reasons"]
     assert "explicit_filter" in updated.meta["confidence_reasons"]
+
+
+def test_confidence_followup_with_memory_stays_medium() -> None:
+    memory = QueryMemory(
+        date_range={"start_date": "2026-01-01", "end_date": "2026-01-31"},
+        last_tool_name="finance_releves_sum",
+    )
+    plan = _plan(
+        payload={
+            "direction": "DEBIT_ONLY",
+            "categorie": "logement",
+            "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
+        },
+        meta={"followup_from_memory": True},
+    )
+
+    updated = AgentLoop._with_confidence_meta("Ok et en logement ?", plan, query_memory=memory)
+
+    assert updated.meta["confidence"] == "medium"
+    assert "period_missing_in_message" in updated.meta["confidence_reasons"]
