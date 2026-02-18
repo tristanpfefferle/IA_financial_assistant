@@ -151,6 +151,60 @@ def test_followup_explicit_period_reuses_last_query_filters() -> None:
     }
 
 
+def test_followup_month_only_reuses_year_from_memory_same_year() -> None:
+    plan = followup_plan_from_message(
+        "et en avril",
+        QueryMemory(
+            date_range={"start_date": "2026-03-01", "end_date": "2026-03-31"},
+            last_tool_name="finance_releves_sum",
+            last_intent="sum",
+            filters={"direction": "DEBIT_ONLY", "categorie": "Loisir"},
+        ),
+        known_categories=["Loisir"],
+    )
+
+    assert plan is not None
+    assert plan.payload == {
+        "direction": "DEBIT_ONLY",
+        "categorie": "Loisir",
+        "date_range": {"start_date": "2026-04-01", "end_date": "2026-04-30"},
+    }
+
+
+def test_followup_month_only_rollover_dec_to_jan() -> None:
+    plan = followup_plan_from_message(
+        "et en janvier",
+        QueryMemory(
+            date_range={"start_date": "2025-12-01", "end_date": "2025-12-31"},
+            last_tool_name="finance_releves_sum",
+            last_intent="sum",
+            filters={"direction": "DEBIT_ONLY", "categorie": "Loisir"},
+        ),
+        known_categories=["Loisir"],
+    )
+
+    assert plan is not None
+    assert plan.payload == {
+        "direction": "DEBIT_ONLY",
+        "categorie": "Loisir",
+        "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31"},
+    }
+
+
+def test_followup_month_only_requires_context_returns_none() -> None:
+    plan = followup_plan_from_message(
+        "et en janvier",
+        QueryMemory(
+            last_tool_name="finance_releves_sum",
+            last_intent="sum",
+            filters={"direction": "DEBIT_ONLY", "categorie": "Loisir"},
+        ),
+        known_categories=["Loisir"],
+    )
+
+    assert plan is None
+
+
 def test_extract_memory_from_plan_drops_invalid_category_from_filters() -> None:
     memory = extract_memory_from_plan(
         "finance_releves_sum",

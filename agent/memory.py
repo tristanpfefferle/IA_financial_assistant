@@ -258,16 +258,48 @@ def followup_plan_from_message(
     if memory.last_tool_name not in _RELEVES_TOOLS:
         return None
 
+    explicit_period_payload = _period_payload_from_message(message)
+    month_only = _month_only_from_message(message)
+
     merchant_focus = _extract_merchant_focus(message)
     focus = _extract_followup_focus(message)
     category_focus = _known_category_in_message(message, known_categories or [])
-    if focus is None and category_focus is None:
-        if merchant_focus is None:
+    if focus is None and category_focus is None and merchant_focus is None:
+        if not explicit_period_payload and month_only is None:
             return None
     if focus is None and category_focus is not None:
         focus = category_focus
 
-    explicit_period_payload = _period_payload_from_message(message)
+    if month_only is not None and not explicit_period_payload:
+        last_year: int | None = None
+        last_month: int | None = None
+
+        if memory.date_range is not None:
+            start_date_raw = memory.date_range.get("start_date")
+            if isinstance(start_date_raw, str):
+                try:
+                    last_start_date = date.fromisoformat(start_date_raw)
+                except ValueError:
+                    last_start_date = None
+                if last_start_date is not None:
+                    last_year = last_start_date.year
+                    last_month = last_start_date.month
+
+        if last_year is None and memory.year is not None:
+            last_year = memory.year
+
+        if last_year is None:
+            return None
+
+        requested_year = (
+            last_year + 1
+            if last_month == 12 and month_only == 1
+            else last_year
+        )
+        explicit_period_payload = {
+            "date_range": _month_date_range_payload(requested_year, month_only)
+        }
+
     if explicit_period_payload and _is_memory_period_followup_candidate(message):
         payload = {
             **_period_payload_from_memory(memory),
@@ -445,22 +477,37 @@ def _period_payload_from_message(message: str) -> dict[str, object]:
         if year_match is None:
             continue
         year = int(year_match.group(1))
-        start_date = date(year, month_number, 1)
-        if month_number == 12:
-            next_month_start = date(year + 1, 1, 1)
-        else:
-            next_month_start = date(year, month_number + 1, 1)
         return {
-            "date_range": {
-                "start_date": start_date.isoformat(),
-                "end_date": (next_month_start - timedelta(days=1)).isoformat(),
-            }
+            "date_range": _month_date_range_payload(year, month_number)
         }
 
     year_match = re.search(r"\b(19\d{2}|20\d{2}|21\d{2})\b", lowered)
     if year_match is not None:
         return {"year": int(year_match.group(1))}
     return {}
+
+
+def _month_only_from_message(message: str) -> int | None:
+    lowered = message.lower()
+    has_year = re.search(r"\b(19\d{2}|20\d{2}|21\d{2})\b", lowered) is not None
+    if has_year:
+        return None
+    for month_name, month_number in _MONTH_LOOKUP.items():
+        if re.search(rf"\b{re.escape(month_name)}\b", lowered):
+            return month_number
+    return None
+
+
+def _month_date_range_payload(year: int, month: int) -> dict[str, str]:
+    start_date = date(year, month, 1)
+    if month == 12:
+        next_month_start = date(year + 1, 1, 1)
+    else:
+        next_month_start = date(year, month + 1, 1)
+    return {
+        "start_date": start_date.isoformat(),
+        "end_date": (next_month_start - timedelta(days=1)).isoformat(),
+    }
 
 
 def period_payload_from_message(message: str) -> dict[str, object]:
