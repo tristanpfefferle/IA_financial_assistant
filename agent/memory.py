@@ -8,7 +8,7 @@ import re
 import unicodedata
 from typing import Any
 
-from agent.planner import ToolCallPlan
+from agent.planner import ClarificationPlan, ToolCallPlan
 
 _READ_TOOLS = {
     "finance_releves_search",
@@ -87,6 +87,19 @@ _NON_FOCUS_MESSAGES = {
     "daccord",
     "d'accord",
 }
+
+_SEARCH_BEFORE_CHEZ_STOPWORDS = {
+    "le",
+    "la",
+    "les",
+    "un",
+    "une",
+    "du",
+    "des",
+    "de",
+    "d",
+}
+_SEARCH_BEFORE_CHEZ_PREFIXES = {"et", "ok", "pareil", "idem"}
 _FOLLOWUP_STOP_TOKENS = {
     "liste",
     "lister",
@@ -253,7 +266,7 @@ def followup_plan_from_message(
     memory: QueryMemory | None,
     *,
     known_categories: list[str] | None = None,
-) -> ToolCallPlan | None:
+) -> ToolCallPlan | ClarificationPlan | None:
     """Build deterministic follow-up plan from short messages and memory."""
 
     normalized_message = _normalize_text(message)
@@ -378,6 +391,20 @@ def followup_plan_from_message(
         normalized_merchant = _normalize_text(merchant_focus)
         if not normalized_merchant:
             return None
+
+        search_term = _extract_search_term_before_chez(message)
+        if search_term is not None:
+            return ClarificationPlan(
+                question=(
+                    f"Tu veux chercher le marchand ‘{merchant_focus}’ "
+                    f"ou le mot-clé ‘{search_term}’ ?"
+                ),
+                meta={
+                    "keep_active_task": True,
+                    "clarification_type": "prevent_write_on_followup",
+                },
+            )
+
         if memory.last_tool_name == "finance_releves_search":
             payload = {
                 "merchant": normalized_merchant,
@@ -515,6 +542,35 @@ def _extract_merchant_focus(message: str) -> str | None:
     if not focus:
         return None
     return focus
+
+
+def _extract_search_term_before_chez(message: str) -> str | None:
+    collapsed = re.sub(r"\s+", " ", message.strip())
+    if not collapsed:
+        return None
+
+    match = re.search(r"^(.+?)\bchez\s+.+?$", collapsed, flags=re.IGNORECASE)
+    if match is None:
+        return None
+
+    before_chez = _normalize_text(match.group(1).strip(" .,!?:;\"'“”«»"))
+    if not before_chez:
+        return None
+
+    tokens = before_chez.split()
+    while tokens and tokens[0] in _SEARCH_BEFORE_CHEZ_PREFIXES:
+        tokens.pop(0)
+    while tokens and tokens[0] in _SEARCH_BEFORE_CHEZ_STOPWORDS:
+        tokens.pop(0)
+
+    if not tokens:
+        return None
+
+    candidate_tokens = [token for token in tokens if token not in _SEARCH_BEFORE_CHEZ_STOPWORDS]
+    if not candidate_tokens:
+        return None
+
+    return " ".join(candidate_tokens[:3])
 
 
 def _period_payload_from_message(message: str) -> dict[str, object]:
