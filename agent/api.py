@@ -263,8 +263,8 @@ def agent_chat(
             "active_task": active_task if isinstance(active_task, dict) else None,
             "memory": memory if isinstance(memory, dict) else None,
         }
-        if debug_enabled and _handler_accepts_debug_kwarg(handler):
-            handler_kwargs["debug"] = True
+        if _handler_accepts_debug_kwarg(handler):
+            handler_kwargs["debug"] = debug_enabled
 
         agent_reply = handler(payload.message, **handler_kwargs)
 
