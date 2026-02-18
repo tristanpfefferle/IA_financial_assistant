@@ -85,6 +85,24 @@ _PROFILE_FIELD_ALIASES = {
 }
 
 
+def _wrap_write_plan_with_confirmation(plan: ToolCallPlan) -> SetActiveTaskPlan:
+    return SetActiveTaskPlan(
+        reply=(
+            f"Je peux exécuter l'action « {plan.tool_name} ». "
+            "Confirmez-vous ? (oui/non)"
+        ),
+        active_task={
+            "type": "needs_confirmation",
+            "confirmation_type": "confirm_llm_write",
+            "context": {
+                "tool_name": plan.tool_name,
+                "payload": dict(plan.payload),
+            },
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+
+
 def _build_clarification_tool_result(
     *,
     message: str,
@@ -918,6 +936,18 @@ class AgentLoop:
             return AgentReply(
                 reply=plan.reply,
                 active_task=plan.active_task,
+                should_update_active_task=True,
+            )
+
+        if (
+            isinstance(plan, ToolCallPlan)
+            and plan.tool_name in _LLM_WRITE_TOOLS
+            and active_task is None
+        ):
+            confirmation_plan = _wrap_write_plan_with_confirmation(plan)
+            return AgentReply(
+                reply=confirmation_plan.reply,
+                active_task=confirmation_plan.active_task,
                 should_update_active_task=True,
             )
 

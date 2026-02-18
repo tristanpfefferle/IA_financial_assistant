@@ -519,6 +519,50 @@ def test_nlu_profile_update_requires_confirmation_before_execution(
     assert cancel_reply.reply == "Action annulée."
 
 
+@pytest.mark.parametrize(
+    ("message", "expected_payload"),
+    [
+        ("Ma ville est Choëx", {"set": {"city": "Choëx"}}),
+        ("Mon code postal est 1871", {"set": {"postal_code": "1871"}}),
+    ],
+)
+def test_deterministic_profile_write_requires_confirmation_before_execution(
+    message: str,
+    expected_payload: dict[str, dict[str, str]],
+) -> None:
+    router = _ProfileUpdateRouter()
+    loop = AgentLoop(tool_router=router)
+
+    first_reply = loop.handle_user_message(message)
+
+    assert router.calls == []
+    assert first_reply.active_task is not None
+    assert first_reply.active_task["type"] == "needs_confirmation"
+    assert first_reply.active_task["confirmation_type"] == "confirm_llm_write"
+    assert first_reply.active_task["context"] == {
+        "tool_name": "finance_profile_update",
+        "payload": expected_payload,
+    }
+
+    second_reply = loop.handle_user_message("oui", active_task=first_reply.active_task)
+
+    assert router.calls == [("finance_profile_update", expected_payload)]
+    assert second_reply.plan == {
+        "tool_name": "finance_profile_update",
+        "payload": expected_payload,
+    }
+
+
+def test_deterministic_delete_category_keeps_dedicated_confirmation() -> None:
+    loop = AgentLoop(tool_router=_FailIfCalledRouter())
+
+    reply = loop.handle_user_message("supprime la catégorie autres")
+
+    assert reply.active_task is not None
+    assert reply.active_task["type"] == "needs_confirmation"
+    assert reply.active_task["confirmation_type"] == "confirm_delete_category"
+
+
 def test_nlu_search_without_merchant_sets_active_task_with_date_range() -> None:
     loop = AgentLoop(tool_router=_FailIfCalledRouter())
 
