@@ -275,6 +275,16 @@ class AgentLoop:
             known_categories=known_categories,
         )
 
+        if verdict.meta.get("reason") == "judge_client_unavailable":
+            if confidence == "low":
+                return ClarificationPlan(
+                    question=(
+                        "Je veux éviter une erreur: pouvez-vous confirmer la période ou le filtre attendu ?"
+                    ),
+                    meta={"clarification_type": "low_confidence_plan"},
+                )
+            return plan
+
         if verdict.verdict == "clarify":
             question = verdict.question or "Pouvez-vous préciser votre demande ?"
             return ClarificationPlan(
