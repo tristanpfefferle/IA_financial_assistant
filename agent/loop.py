@@ -132,6 +132,10 @@ _FILTER_PREFIXES_TO_STRIP = (
     "de ",
     "d'",
 )
+_FOLLOWUP_WRITE_PREVENTION_PREFIX_PATTERN = re.compile(
+    r"^(?:ok|et|pareil|idem)\b[\s,:;\-]*",
+    re.IGNORECASE,
+)
 _PROFILE_FIELD_ALIASES = {
     "ville": "city",
     "city": "city",
@@ -254,6 +258,16 @@ def _cleanup_explicit_filter_value(value: str) -> str:
         cleaned,
     ).strip()
     return cleaned
+
+
+def _extract_followup_focus_for_write_prevention(message: str) -> str | None:
+    focus = message.strip().rstrip(" ?.!…")
+    focus = _FOLLOWUP_WRITE_PREVENTION_PREFIX_PATTERN.sub("", focus, count=1).strip()
+    if not focus:
+        return None
+    if len(focus) > 40:
+        return f"{focus[:40]}…"
+    return focus
 
 
 @dataclass(slots=True)
@@ -1767,8 +1781,14 @@ class AgentLoop:
             and plan.tool_name in _WRITE_TOOLS
             and is_followup_message(message)
         ):
+            followup_focus = _extract_followup_focus_for_write_prevention(message)
+            clarification_question = (
+                f"Tu parles de « {followup_focus} » comme marchand ou comme catégorie ?"
+                if followup_focus
+                else "Tu parles d’un marchand ou d’une catégorie ?"
+            )
             plan = ClarificationPlan(
-                question="Tu veux parler du marchand « pizza » ou de la catégorie ?",
+                question=clarification_question,
                 meta={"clarification_type": "prevent_write_on_followup"},
             )
 
