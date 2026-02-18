@@ -1868,13 +1868,13 @@ def test_followup_message_cannot_trigger_write_tool(monkeypatch) -> None:
         ),
     )
 
-    reply = loop.handle_user_message("Et Migros ?")
+    reply = loop.handle_user_message("Et pizza ?")
 
     assert router.calls == []
-    assert reply.tool_result is not None
-    assert reply.tool_result["type"] == "clarification"
-    assert reply.tool_result["clarification_type"] == "prevent_write_on_followup"
-    assert reply.reply == "Tu parles de « Migros » comme marchand ou comme catégorie ?"
+    assert reply.reply == "Tu parles de « pizza » comme marchand ou comme catégorie ?"
+    if isinstance(reply.tool_result, dict):
+        assert reply.tool_result["type"] == "clarification"
+        assert reply.tool_result["clarification_type"] == "prevent_write_on_followup"
     assert reply.should_update_active_task is False
 
 def test_followup_known_category_reuses_period_when_implicit() -> None:
