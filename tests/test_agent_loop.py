@@ -1852,6 +1852,31 @@ def test_followup_short_message_coop_reuses_period(monkeypatch) -> None:
     }
 
 
+
+
+def test_followup_message_cannot_trigger_write_tool(monkeypatch) -> None:
+    router = _MemoryRouter()
+    loop = AgentLoop(tool_router=router)
+
+    monkeypatch.setattr(
+        AgentLoop,
+        "_route_message",
+        lambda self, message, *, profile_id, active_task: ToolCallPlan(
+            tool_name="finance_categories_delete",
+            payload={"category_name": "pizza"},
+            user_reply="OK.",
+        ),
+    )
+
+    reply = loop.handle_user_message("Et pizza ?")
+
+    assert router.calls == []
+    assert reply.tool_result is not None
+    assert reply.tool_result["type"] == "clarification"
+    assert reply.tool_result["clarification_type"] == "prevent_write_on_followup"
+    assert reply.reply == "Tu veux parler du marchand « pizza » ou de la catégorie ?"
+    assert reply.should_update_active_task is False
+
 def test_followup_known_category_reuses_period_when_implicit() -> None:
     router = _MemoryRouter()
     loop = AgentLoop(tool_router=router)

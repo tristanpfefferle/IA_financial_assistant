@@ -57,6 +57,7 @@ _SOFT_WRITE_TOOLS = {
     "finance_categories_create",
     "finance_categories_update",
 }
+_WRITE_TOOLS = _RISKY_WRITE_TOOLS | _SOFT_WRITE_TOOLS
 _CONFIRM_WORDS = {"oui", "o", "ok", "confirme", "confirmé", "confirmée"}
 _REJECT_WORDS = {"non", "n", "annule", "annuler"}
 _DIRECTION_DEBIT_WORDS = {"depenses", "dépenses", "depense", "dépense", "debit"}
@@ -1758,6 +1759,17 @@ class AgentLoop:
                 plan,
                 query_memory=query_memory,
                 known_categories=known_categories,
+            )
+
+        if (
+            isinstance(plan, ToolCallPlan)
+            and active_task_effective is None
+            and plan.tool_name in _WRITE_TOOLS
+            and is_followup_message(message)
+        ):
+            plan = ClarificationPlan(
+                question="Tu veux parler du marchand « pizza » ou de la catégorie ?",
+                meta={"clarification_type": "prevent_write_on_followup"},
             )
 
         plan_meta = (
