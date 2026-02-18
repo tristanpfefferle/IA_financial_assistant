@@ -485,38 +485,21 @@ def test_nlu_tool_call_executes_before_deterministic_planner() -> None:
         ),
     ],
 )
-def test_nlu_profile_update_requires_confirmation_before_execution(
+def test_nlu_profile_update_executes_immediately_without_confirmation(
     message: str,
     expected_payload: dict[str, dict[str, str]],
 ) -> None:
     router = _ProfileUpdateRouter()
     loop = AgentLoop(tool_router=router)
 
-    confirm_reply = loop.handle_user_message(message)
+    reply = loop.handle_user_message(message)
 
-    assert confirm_reply.reply.startswith("Je peux mettre à jour votre profil")
-    assert confirm_reply.should_update_active_task is True
-    assert confirm_reply.active_task is not None
-    assert confirm_reply.active_task["type"] == "needs_confirmation"
-    assert confirm_reply.active_task["confirmation_type"] == "confirm_llm_write"
-    assert confirm_reply.active_task["context"] == {
-        "tool_name": "finance_profile_update",
-        "payload": expected_payload,
-    }
-
-    accepted_reply = loop.handle_user_message(
-        "oui", active_task=confirm_reply.active_task
-    )
     assert router.calls == [("finance_profile_update", expected_payload)]
-    assert accepted_reply.plan == {
+    assert reply.plan == {
         "tool_name": "finance_profile_update",
         "payload": expected_payload,
     }
-
-    cancel_reply = loop.handle_user_message(
-        "non", active_task=confirm_reply.active_task
-    )
-    assert cancel_reply.reply == "Action annulée."
+    assert reply.active_task is None
 
 
 @pytest.mark.parametrize(
@@ -526,31 +509,21 @@ def test_nlu_profile_update_requires_confirmation_before_execution(
         ("Mon code postal est 1871", {"set": {"postal_code": "1871"}}),
     ],
 )
-def test_deterministic_profile_write_requires_confirmation_before_execution(
+def test_deterministic_profile_write_executes_without_confirmation(
     message: str,
     expected_payload: dict[str, dict[str, str]],
 ) -> None:
     router = _ProfileUpdateRouter()
     loop = AgentLoop(tool_router=router)
 
-    first_reply = loop.handle_user_message(message)
-
-    assert router.calls == []
-    assert first_reply.active_task is not None
-    assert first_reply.active_task["type"] == "needs_confirmation"
-    assert first_reply.active_task["confirmation_type"] == "confirm_llm_write"
-    assert first_reply.active_task["context"] == {
-        "tool_name": "finance_profile_update",
-        "payload": expected_payload,
-    }
-
-    second_reply = loop.handle_user_message("oui", active_task=first_reply.active_task)
+    reply = loop.handle_user_message(message)
 
     assert router.calls == [("finance_profile_update", expected_payload)]
-    assert second_reply.plan == {
+    assert reply.plan == {
         "tool_name": "finance_profile_update",
         "payload": expected_payload,
     }
+    assert reply.active_task is None
 
 
 def test_deterministic_delete_category_keeps_dedicated_confirmation() -> None:

@@ -317,7 +317,7 @@ def test_confirm_llm_write_yes_executes_tool(monkeypatch) -> None:
     assert second_reply.active_task is None
 
 
-def test_confirm_llm_write_yes_executes_profile_update(monkeypatch) -> None:
+def test_gated_llm_profile_update_executes_without_confirmation(monkeypatch) -> None:
     router = _RouterSpy()
     _configure_gated(
         monkeypatch,
@@ -331,24 +331,22 @@ def test_confirm_llm_write_yes_executes_profile_update(monkeypatch) -> None:
     )
 
     loop = AgentLoop(tool_router=router, llm_planner=object())
-    first_reply = loop.handle_user_message("mets à jour mon profil")
-    second_reply = loop.handle_user_message("oui", active_task=first_reply.active_task)
+    reply = loop.handle_user_message("mets à jour mon profil")
 
-    assert first_reply.active_task is not None
-    assert first_reply.active_task["type"] == "needs_confirmation"
+    assert reply.active_task is None
     assert router.calls == [
         (
             "finance_profile_update",
             {"set": {"city": "Lausanne", "country": "CH"}},
         )
     ]
-    assert second_reply.plan == {
+    assert reply.plan == {
         "tool_name": "finance_profile_update",
         "payload": {"set": {"city": "Lausanne", "country": "CH"}},
     }
 
 
-def test_gated_llm_write_profile_update_normalizes_french_alias_before_confirmation(
+def test_gated_llm_write_profile_update_normalizes_french_alias_before_execution(
     monkeypatch,
 ) -> None:
     router = _RouterSpy()
@@ -364,24 +362,18 @@ def test_gated_llm_write_profile_update_normalizes_french_alias_before_confirmat
     )
 
     loop = AgentLoop(tool_router=router, llm_planner=object())
-    first_reply = loop.handle_user_message("Mets à jour mon profil : ville Choëx")
+    reply = loop.handle_user_message("Mets à jour mon profil : ville Choëx")
 
-    assert first_reply.active_task is not None
-    assert first_reply.active_task["type"] == "needs_confirmation"
-    assert first_reply.active_task["confirmation_type"] == "confirm_llm_write"
-    assert first_reply.active_task["context"]["payload"] == {"set": {"city": "Choëx"}}
-
-    second_reply = loop.handle_user_message("oui", active_task=first_reply.active_task)
-
+    assert reply.active_task is None
     assert router.calls == [("finance_profile_update", {"set": {"city": "Choëx"}})]
-    assert second_reply.plan == {
+    assert reply.plan == {
         "tool_name": "finance_profile_update",
         "payload": {"set": {"city": "Choëx"}},
     }
 
 
 
-def test_gated_llm_write_profile_update_normalizes_english_aliases(monkeypatch) -> None:
+def test_gated_llm_write_profile_update_normalizes_english_aliases_without_confirmation(monkeypatch) -> None:
     router = _RouterSpy()
     _configure_gated(
         monkeypatch,
@@ -395,23 +387,19 @@ def test_gated_llm_write_profile_update_normalizes_english_aliases(monkeypatch) 
     )
 
     loop = AgentLoop(tool_router=router, llm_planner=object())
-    first_reply = loop.handle_user_message("mets à jour mon profil")
-    second_reply = loop.handle_user_message("oui", active_task=first_reply.active_task)
+    reply = loop.handle_user_message("mets à jour mon profil")
 
-    assert first_reply.active_task is not None
-    assert first_reply.active_task["context"]["payload"] == {
-        "set": {"postal_code": "1000", "country": "ch"}
-    }
+    assert reply.active_task is None
     assert router.calls == [
         ("finance_profile_update", {"set": {"postal_code": "1000", "country": "ch"}})
     ]
-    assert second_reply.plan == {
+    assert reply.plan == {
         "tool_name": "finance_profile_update",
         "payload": {"set": {"postal_code": "1000", "country": "ch"}},
     }
 
 
-def test_confirm_llm_write_yes_executes_profile_update_with_canonical_postal_code(
+def test_gated_llm_profile_update_executes_with_canonical_postal_code_without_confirmation(
     monkeypatch,
 ) -> None:
     router = _RouterSpy()
@@ -427,17 +415,11 @@ def test_confirm_llm_write_yes_executes_profile_update_with_canonical_postal_cod
     )
 
     loop = AgentLoop(tool_router=router, llm_planner=object())
-    first_reply = loop.handle_user_message("mets à jour mon code postal")
+    reply = loop.handle_user_message("mets à jour mon code postal")
 
-    assert first_reply.active_task is not None
-    assert first_reply.active_task["type"] == "needs_confirmation"
-    assert first_reply.active_task["confirmation_type"] == "confirm_llm_write"
-    assert first_reply.active_task["context"]["payload"] == {"set": {"postal_code": "1000"}}
-
-    second_reply = loop.handle_user_message("oui", active_task=first_reply.active_task)
-
+    assert reply.active_task is None
     assert router.calls == [("finance_profile_update", {"set": {"postal_code": "1000"}})]
-    assert second_reply.plan == {
+    assert reply.plan == {
         "tool_name": "finance_profile_update",
         "payload": {"set": {"postal_code": "1000"}},
     }
