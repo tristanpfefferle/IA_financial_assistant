@@ -468,6 +468,55 @@ def test_agent_reset_session_clears_active_task(monkeypatch) -> None:
         def __init__(self) -> None:
             self.chat_state: dict[str, object] = {
                 "active_task": {"type": "awaiting_search_merchant"},
+                "state": {
+                    "pending_clarification": {"field": "merchant"},
+                    "last_query": {"last_tool_name": "finance_releves_search"},
+                },
+            }
+            self.update_calls: list[dict[str, object]] = []
+
+        def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None):
+            assert auth_user_id == AUTH_USER_ID
+            assert email == "user@example.com"
+            return UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+
+        def get_chat_state(self, *, profile_id: UUID, user_id: UUID):
+            assert profile_id == UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+            assert user_id == AUTH_USER_ID
+            return self.chat_state
+
+        def update_chat_state(self, *, profile_id: UUID, user_id: UUID, chat_state: dict[str, object]) -> None:
+            assert profile_id == UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+            assert user_id == AUTH_USER_ID
+            self.update_calls.append({"chat_state": chat_state})
+            self.chat_state = chat_state
+
+    repo = _Repo()
+    agent_api.get_profiles_repository.cache_clear()
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+
+    response = client.post("/agent/reset-session", headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+    assert repo.update_calls[-1]["chat_state"]["active_task"] is None
+    assert repo.update_calls[-1]["chat_state"]["state"] == {
+        "last_query": {"last_tool_name": "finance_releves_search"}
+    }
+    assert "pending_clarification" not in repo.update_calls[-1]["chat_state"]["state"]
+
+
+def test_agent_reset_session_removes_empty_state_after_clearing_pending_clarification(monkeypatch) -> None:
+    monkeypatch.setattr(
+        agent_api,
+        "get_user_from_bearer_token",
+        lambda _token: {"id": str(AUTH_USER_ID), "email": "user@example.com"},
+    )
+
+    class _Repo:
+        def __init__(self) -> None:
+            self.chat_state: dict[str, object] = {
+                "active_task": {"type": "awaiting_search_merchant"},
                 "state": {"pending_clarification": {"field": "merchant"}},
             }
             self.update_calls: list[dict[str, object]] = []
@@ -497,4 +546,4 @@ def test_agent_reset_session_clears_active_task(monkeypatch) -> None:
     assert response.status_code == 200
     assert response.json() == {"ok": True}
     assert repo.update_calls[-1]["chat_state"]["active_task"] is None
-    assert repo.update_calls[-1]["chat_state"].get("state") == {}
+    assert "state" not in repo.update_calls[-1]["chat_state"]
