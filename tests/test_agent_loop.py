@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 from uuid import UUID
 
 import pytest
@@ -2104,6 +2104,90 @@ def test_followup_pizza_chez_migros_clarification_resolves_to_search(
     else:
         assert payload["search"] == "pizza"
         assert "merchant" not in payload
+    assert reply.should_update_active_task is True
+    assert reply.active_task is None
+
+
+def test_stale_prevent_write_clarification_drops_active_task_for_new_request() -> None:
+    router = _MemoryRouter()
+    loop = AgentLoop(tool_router=router)
+
+    reply = loop.handle_user_message(
+        "Et la pizza chez Migros ?",
+        active_task={
+            "type": "clarification_pending",
+            "context": {
+                "clarification_type": "prevent_write_on_followup",
+                "focus": "pizza",
+                "period_payload": {
+                    "date_range": {
+                        "start_date": "2026-02-01",
+                        "end_date": "2026-02-28",
+                    }
+                },
+            },
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        },
+        memory={
+            "last_query": {
+                "last_tool_name": "finance_releves_search",
+                "date_range": {
+                    "start_date": "2026-02-01",
+                    "end_date": "2026-02-28",
+                },
+                "filters": {"direction": "DEBIT_ONLY", "merchant": "pizza"},
+            }
+        },
+    )
+
+    assert reply.reply != "Tu veux parler d’un marchand ou d’une catégorie ?"
+    assert reply.reply == "Tu veux chercher le marchand ‘Migros’ ou le mot-clé ‘pizza’ ?"
+    assert reply.should_update_active_task is True
+    assert reply.active_task is None
+
+
+def test_stale_merchant_vs_keyword_clarification_drops_active_task_for_new_request() -> None:
+    router = _MemoryRouter()
+    loop = AgentLoop(tool_router=router)
+
+    reply = loop.handle_user_message(
+        "Dépenses janvier 2026",
+        active_task={
+            "type": "clarification_pending",
+            "context": {
+                "clarification_type": "merchant_vs_keyword",
+                "merchant": "Migros",
+                "keyword": "pizza",
+                "period_payload": {
+                    "date_range": {
+                        "start_date": "2026-02-01",
+                        "end_date": "2026-02-28",
+                    }
+                },
+            },
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        },
+        memory={
+            "last_query": {
+                "last_tool_name": "finance_releves_search",
+                "date_range": {
+                    "start_date": "2026-02-01",
+                    "end_date": "2026-02-28",
+                },
+                "filters": {"direction": "DEBIT_ONLY", "merchant": "pizza"},
+            }
+        },
+    )
+
+    assert isinstance(reply.plan, dict)
+    assert reply.plan.get("tool_name") == "finance_releves_sum"
+    payload = reply.plan.get("payload")
+    assert isinstance(payload, dict)
+    assert payload.get("direction") == "DEBIT_ONLY"
+    assert payload.get("date_range") == {
+        "start_date": date(2026, 1, 1),
+        "end_date": date(2026, 1, 31),
+    }
     assert reply.should_update_active_task is True
     assert reply.active_task is None
 
