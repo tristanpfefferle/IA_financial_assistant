@@ -365,6 +365,10 @@ def test_upsert_merchant_by_name_norm_returns_existing_id_without_post() -> None
 
     assert returned_id == merchant_id
     assert len(client.post_calls) == 0
+    assert len(client.patch_calls) == 1
+    patch_payload = client.patch_calls[0]["payload"]
+    assert patch_payload["last_seen"] != "now()"
+    assert "T" in patch_payload["last_seen"]
 
 
 def test_upsert_merchant_by_name_norm_creates_when_missing() -> None:
@@ -382,6 +386,9 @@ def test_upsert_merchant_by_name_norm_creates_when_missing() -> None:
     assert returned_id == merchant_id
     assert len(client.post_calls) == 1
     assert client.post_calls[0]["table"] == "merchants"
+    post_payload = client.post_calls[0]["payload"]
+    assert post_payload["last_seen"] != "now()"
+    assert "T" in post_payload["last_seen"]
 
 
 def test_upsert_merchant_by_name_norm_handles_duplicate_key_with_fallback_get() -> None:

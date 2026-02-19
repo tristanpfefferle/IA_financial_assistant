@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Any, Protocol
 import unicodedata
 from uuid import UUID
@@ -371,6 +371,9 @@ class SupabaseProfilesRepository:
         )
 
     def list_releves_without_merchant(self, *, profile_id: UUID, limit: int = 500) -> list[dict[str, Any]]:
+        # PostgREST filtering can reliably exclude NULL but not all empty-string variants.
+        # We keep this broad query and let the merchant bootstrap flow apply final Python-side
+        # filtering on stripped `payee`/`libelle` values before creating/linking merchants.
         rows, _ = self._client.get_rows(
             table="releves_bancaires",
             query={
@@ -395,6 +398,7 @@ class SupabaseProfilesRepository:
     ) -> UUID:
         cleaned_name = " ".join(name.strip().split())
         cleaned_name_norm = self._normalize_name_norm(name_norm)
+        now_iso = datetime.now(timezone.utc).isoformat()
         if not cleaned_name or not cleaned_name_norm:
             raise ValueError("merchant name and name_norm must be non-empty")
 
@@ -418,7 +422,7 @@ class SupabaseProfilesRepository:
                 self._client.patch_rows(
                     table="merchants",
                     query={"id": f"eq.{merchant_id}"},
-                    payload={"last_seen": "now()"},
+                    payload={"last_seen": now_iso},
                     use_anon_key=False,
                 )
             except Exception:
@@ -431,7 +435,7 @@ class SupabaseProfilesRepository:
             "name": cleaned_name,
             "name_norm": cleaned_name_norm,
             "aliases": [],
-            "last_seen": "now()",
+            "last_seen": now_iso,
         }
         try:
             created_rows = self._client.post_rows(table="merchants", payload=payload, use_anon_key=False)
