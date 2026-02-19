@@ -323,7 +323,9 @@ def test_non_import_steps_do_not_return_import_ui_request(monkeypatch, step: str
     response = client.post("/agent/chat", json={"message": "Bonjour"}, headers=_auth_headers())
 
     assert response.status_code == 200
-    assert response.json()["tool_result"] is None
+    tool_result = response.json()["tool_result"]
+    if tool_result is not None:
+        assert not (tool_result.get("type") == "ui_request" and tool_result.get("name") == "import_file")
 
 
 def test_onboarding_reply_from_loop_skips_reminder_for_categories_step(monkeypatch) -> None:

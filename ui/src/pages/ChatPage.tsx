@@ -153,6 +153,19 @@ export function ChatPage({ email }: ChatPageProps) {
   const isConnected = useMemo(() => Boolean(email), [email])
   const canSubmit = message.trim().length > 0 && !isLoading
   const hasUnauthorizedError = useMemo(() => error?.includes('(401)') ?? false, [error])
+  const fileAccept = useMemo(() => {
+    const acceptedTypes = pendingUiRequest?.accepted_types
+    if (!acceptedTypes || acceptedTypes.length === 0) {
+      return '.csv,.pdf'
+    }
+
+    const extensions = acceptedTypes
+      .map((type) => type.trim().replace(/^\./, '').toLowerCase())
+      .filter((type) => type.length > 0)
+      .map((type) => `.${type}`)
+
+    return extensions.length > 0 ? extensions.join(',') : '.csv,.pdf'
+  }, [pendingUiRequest])
 
   useEffect(() => {
     if (!assistantMessagesCount) {
@@ -319,7 +332,7 @@ export function ChatPage({ email }: ChatPageProps) {
             <input
               ref={fileInputRef}
               type="file"
-              accept=".csv,.pdf"
+              accept={fileAccept}
               onChange={handleImportFileSelection}
               style={{ display: 'none' }}
               disabled={isImporting}
@@ -327,6 +340,7 @@ export function ChatPage({ email }: ChatPageProps) {
             <button type="button" onClick={() => fileInputRef.current?.click()} disabled={isImporting}>
               Parcourir...
             </button>
+            {isImporting ? <progress aria-label="Import en cours" /> : null}
             {isImporting ? <p className="placeholder-text">⏳ Import en cours...</p> : null}
             {importError ? <p className="error-text">{importError}</p> : null}
           </section>

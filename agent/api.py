@@ -1364,7 +1364,7 @@ def import_releves(payload: ImportRequestPayload, authorization: str | None = He
                         for account in account_items:
                             if not isinstance(account, dict):
                                 continue
-                            if account.get("id") == payload.bank_account_id:
+                            if str(account.get("id")) == str(payload.bank_account_id):
                                 candidate_name = account.get("name")
                                 if isinstance(candidate_name, str) and candidate_name.strip():
                                     bank_account_name = candidate_name
