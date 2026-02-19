@@ -42,6 +42,7 @@ _GLOBAL_STATE_ONBOARDING_SUBSTEPS = {
     "bank_accounts_collect",
     "bank_accounts_confirm",
     "import_select_account",
+    "categories_intro",
     None,
 }
 _PROFILE_COMPLETION_FIELDS = ("first_name", "last_name", "birth_date")
@@ -256,11 +257,13 @@ def _normalize_onboarding_step_substep(global_state: dict[str, Any]) -> dict[str
         "profile": {"profile_collect", "profile_confirm"},
         "bank_accounts": {"bank_accounts_collect", "bank_accounts_confirm"},
         "import": {"import_select_account"},
+        "categories": {"categories_intro"},
     }
     default_substep_by_step = {
         "profile": "profile_collect",
         "bank_accounts": "bank_accounts_collect",
         "import": "import_select_account",
+        "categories": "categories_intro",
     }
 
     if step in valid_substeps_by_step:
@@ -321,6 +324,8 @@ def _build_onboarding_reminder(global_state: dict[str, Any] | None) -> str | Non
         return "(Pour continuer l’onboarding : réponds OUI/NON à la question sur les comptes.)"
     if substep == "import_select_account":
         return "(Pour continuer : indique le compte à importer.)"
+    if substep == "categories_intro":
+        return "(Pour continuer l’onboarding : on va configurer les catégories.)"
     return None
 
 
@@ -1176,6 +1181,31 @@ def agent_chat(
                     plan=None,
                 )
 
+            if (
+                mode == "onboarding"
+                and onboarding_step == "categories"
+                and global_state.get("onboarding_substep") == "categories_intro"
+            ):
+                updated_global_state = _build_onboarding_global_state(
+                    global_state,
+                    onboarding_step="budget",
+                    onboarding_substep=None,
+                )
+                updated_global_state = _normalize_onboarding_step_substep(updated_global_state)
+                state_dict["global_state"] = updated_global_state
+                updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                updated_chat_state["state"] = state_dict
+                profiles_repository.update_chat_state(
+                    profile_id=profile_id,
+                    user_id=auth_user_id,
+                    chat_state=updated_chat_state,
+                )
+                return ChatResponse(
+                    reply="Parfait ✅ Import terminé. Prochaine étape: catégories puis budget. (On configurera ça juste après.)",
+                    tool_result=None,
+                    plan=None,
+                )
+
         memory_for_loop = state_dict if isinstance(state_dict, dict) else None
 
         logger.info(
@@ -1413,7 +1443,7 @@ def import_releves(payload: ImportRequestPayload, authorization: str | None = He
             updated_global_state = _build_onboarding_global_state(
                 global_state,
                 onboarding_step="categories",
-                onboarding_substep=None,
+                onboarding_substep="categories_intro",
             )
             updated_global_state["has_imported_transactions"] = True
             updated_global_state = _normalize_onboarding_step_substep(updated_global_state)
@@ -1421,7 +1451,7 @@ def import_releves(payload: ImportRequestPayload, authorization: str | None = He
             updated_global_state = _build_onboarding_global_state(
                 None,
                 onboarding_step="categories",
-                onboarding_substep=None,
+                onboarding_substep="categories_intro",
             )
             updated_global_state["has_imported_transactions"] = True
 

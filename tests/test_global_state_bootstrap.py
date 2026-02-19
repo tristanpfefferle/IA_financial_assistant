@@ -287,6 +287,41 @@ def test_import_select_account_ubs_selects_account_and_skips_loop(monkeypatch) -
     assert loop.called is False
 
 
+def test_categories_intro_transitions_to_budget_without_loop(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "onboarding",
+                    "onboarding_step": "categories",
+                    "onboarding_substep": "categories_intro",
+                    "profile_confirmed": True,
+                    "bank_accounts_confirmed": True,
+                    "has_bank_accounts": True,
+                    "has_imported_transactions": True,
+                    "budget_created": False,
+                }
+            }
+        },
+        profile_fields={"first_name": "Ada", "last_name": "Lovelace", "birth_date": "1815-12-10"},
+    )
+    loop = _LoopSpy()
+    repo.bank_accounts = [{"id": "bank-1", "name": "UBS"}]
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: loop)
+
+    response = client.post("/agent/chat", json={"message": "Parfait"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert "Import terminé" in response.json()["reply"]
+    assert "Prochaine étape" in response.json()["reply"]
+    persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
+    assert persisted["onboarding_step"] == "budget"
+    assert persisted["onboarding_substep"] is None
+    assert loop.called is False
+
+
 @pytest.mark.parametrize(
     ("step", "substep"),
     [
@@ -598,9 +633,9 @@ def test_onboarding_reminder_uses_memory_update_global_state(monkeypatch) -> Non
         initial_chat_state={
             "state": {
                 "global_state": {
-                    "mode": "onboarding",
-                    "onboarding_step": "categories",
-                    "onboarding_substep": "profile_collect",
+                    "mode": "free_chat",
+                    "onboarding_step": None,
+                    "onboarding_substep": None,
                     "has_bank_accounts": True,
                     "has_imported_transactions": True,
                     "budget_created": True,
