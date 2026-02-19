@@ -23,6 +23,7 @@ from agent.backend_client import BackendClient
 from agent.llm_planner import LLMPlanner
 from agent.loop import AgentLoop
 from agent.tool_router import ToolRouter
+from agent.bank_catalog import extract_canonical_banks
 from backend.factory import build_backend_tool_service
 from backend.auth.supabase_auth import UnauthorizedError, get_user_from_bearer_token
 from backend.db.supabase_client import SupabaseClient, SupabaseSettings
@@ -66,31 +67,7 @@ _FRENCH_MONTH_TO_NUMBER = {
     "decembre": 12,
     "dec": 12,
 }
-_ONBOARDING_BANK_ACCOUNT_SINGLE_MESSAGE_STOPWORDS = {
-    "salut",
-    "bonjour",
-    "hello",
-    "merci",
-    "ok",
-    "okay",
-    "yo",
-    "liste",
-    "mes",
-    "mes_categories",
-    "catégories",
-    "categories",
-    "depenses",
-    "dépenses",
-    "recettes",
-    "montre",
-    "affiche",
-    "cherche",
-    "recherche",
-    "oui",
-    "non",
-    "daccord",
-    "d'accord",
-}
+
 
 
 def _handler_accepts_debug_kwarg(handler: Any) -> bool:
@@ -279,38 +256,16 @@ def _build_bank_accounts_onboarding_global_state(existing_global_state: dict[str
     }
 
 
-def _extract_bank_account_names_from_message(message: str) -> list[str]:
-    stripped_message = message.strip()
-    if not stripped_message:
-        return []
 
-    has_separator = bool(re.search(r"\s+et\s+|&|,", stripped_message, flags=re.IGNORECASE))
-    if has_separator:
-        normalized = re.sub(r"\s+(et|&)\s+", ",", stripped_message, flags=re.IGNORECASE)
-        raw_parts = normalized.split(",")
-    else:
-        if not re.search(r"[A-Za-zÀ-ÖØ-öø-ÿ]", stripped_message) or len(stripped_message) > 40:
-            return []
-        cleaned_single = re.sub(r"\s+", " ", stripped_message).strip()
-        words = cleaned_single.split(" ")
-        if len(words) > 3:
-            return []
-        if any(word.lower() in _ONBOARDING_BANK_ACCOUNT_SINGLE_MESSAGE_STOPWORDS for word in words):
-            return []
-        raw_parts = [cleaned_single]
 
-    cleaned_names: list[str] = []
-    seen_lower: set[str] = set()
-    for part in raw_parts:
-        cleaned = re.sub(r"\s+", " ", part).strip()
-        if not cleaned:
-            continue
-        lowered = cleaned.lower()
-        if lowered in seen_lower:
-            continue
-        seen_lower.add(lowered)
-        cleaned_names.append(cleaned)
-    return cleaned_names
+def _has_any_bank_accounts(profiles_repository: Any, profile_id: UUID) -> bool:
+    """Return True when at least one bank account exists for the profile."""
+
+    if not hasattr(profiles_repository, "list_bank_accounts"):
+        return False
+    bank_accounts = profiles_repository.list_bank_accounts(profile_id=profile_id)
+    return bool(bank_accounts)
+
 
 
 class ChatRequest(BaseModel):
@@ -655,11 +610,59 @@ def agent_chat(
                     plan=None,
                 )
 
+        if _is_valid_global_state(global_state):
+            state_dict = dict(state_dict) if isinstance(state_dict, dict) else {}
+            updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+            mode = global_state.get("mode")
+            onboarding_step = global_state.get("onboarding_step")
+            has_bank_accounts = _has_any_bank_accounts(profiles_repository, profile_id)
+
+            if mode == "free_chat" and not has_bank_accounts:
+                updated_global_state = {
+                    "mode": "onboarding",
+                    "onboarding_step": "bank_accounts",
+                    "has_bank_accounts": False,
+                    "has_imported_transactions": bool(global_state.get("has_imported_transactions", False)),
+                    "budget_created": bool(global_state.get("budget_created", False)),
+                }
+                state_dict["global_state"] = updated_global_state
+                updated_chat_state["state"] = state_dict
+                profiles_repository.update_chat_state(
+                    profile_id=profile_id,
+                    user_id=auth_user_id,
+                    chat_state=updated_chat_state,
+                )
+                return ChatResponse(
+                    reply="Avant de continuer, indique-moi ta/tes banques (ex: ‘UBS, Revolut’).",
+                    tool_result=None,
+                    plan=None,
+                )
+
+            if mode == "onboarding" and onboarding_step in {"import", "categories", "budget"} and not has_bank_accounts:
+                updated_global_state = {
+                    "mode": "onboarding",
+                    "onboarding_step": "bank_accounts",
+                    "has_bank_accounts": False,
+                    "has_imported_transactions": bool(global_state.get("has_imported_transactions", False)),
+                    "budget_created": bool(global_state.get("budget_created", False)),
+                }
+                state_dict["global_state"] = updated_global_state
+                updated_chat_state["state"] = state_dict
+                profiles_repository.update_chat_state(
+                    profile_id=profile_id,
+                    user_id=auth_user_id,
+                    chat_state=updated_chat_state,
+                )
+                return ChatResponse(
+                    reply="Avant de continuer, indique-moi ta/tes banques (ex: ‘UBS, Revolut’).",
+                    tool_result=None,
+                    plan=None,
+                )
+
         if (
             _is_valid_global_state(global_state)
             and global_state.get("mode") == "onboarding"
             and global_state.get("onboarding_step") == "bank_accounts"
-            and hasattr(profiles_repository, "list_bank_accounts")
             and hasattr(profiles_repository, "ensure_bank_accounts")
         ):
             state_dict = dict(state_dict) if isinstance(state_dict, dict) else {}
@@ -688,14 +691,29 @@ def agent_chat(
                     plan=None,
                 )
 
-            extracted_account_names = _extract_bank_account_names_from_message(payload.message)
-            if not extracted_account_names:
-                if should_persist_global_state:
-                    updated_chat_state["state"] = state_dict
-                    profiles_repository.update_chat_state(
-                        profile_id=profile_id,
-                        user_id=auth_user_id,
-                        chat_state=updated_chat_state,
+            if should_persist_global_state:
+                updated_chat_state["state"] = state_dict
+                profiles_repository.update_chat_state(
+                    profile_id=profile_id,
+                    user_id=auth_user_id,
+                    chat_state=updated_chat_state,
+                )
+                return ChatResponse(
+                    reply="Indique-moi tes banques/comptes (ex: 'UBS, Revolut').",
+                    tool_result=None,
+                    plan=None,
+                )
+
+            matched_banks, unknown_segments = extract_canonical_banks(payload.message)
+            if not matched_banks:
+                if unknown_segments:
+                    return ChatResponse(
+                        reply=(
+                            f"Je n’ai pas reconnu: {', '.join(unknown_segments)}. "
+                            "Peux-tu donner le nom exact de ta banque ?"
+                        ),
+                        tool_result=None,
+                        plan=None,
                     )
                 return ChatResponse(
                     reply="Indique-moi tes banques/comptes (ex: 'UBS, Revolut').",
@@ -705,10 +723,10 @@ def agent_chat(
 
             ensure_result = profiles_repository.ensure_bank_accounts(
                 profile_id=profile_id,
-                names=extracted_account_names,
+                names=matched_banks,
             )
             created_names = ensure_result.get("created") if isinstance(ensure_result, dict) else []
-            created_display = ", ".join(created_names or extracted_account_names)
+            created_display = ", ".join(created_names or matched_banks)
 
             updated_global_state = {
                 **_build_bank_accounts_onboarding_global_state(global_state),
@@ -724,7 +742,7 @@ def agent_chat(
             )
             return ChatResponse(
                 reply=(
-                    f"C’est noté ✅ Comptes créés: {created_display}. "
+                    f"C’est noté ✅ Comptes enregistrés: {created_display}. "
                     "On passe à l’import: quel compte veux-tu importer ?"
                 ),
                 tool_result=None,

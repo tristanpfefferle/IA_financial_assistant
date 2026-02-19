@@ -384,7 +384,7 @@ def test_onboarding_profile_complete_routes_to_bank_accounts_step(monkeypatch) -
     assert loop.called is False
 
 
-def test_onboarding_bank_accounts_help_when_none_exist_and_no_names_provided(monkeypatch) -> None:
+def test_onboarding_bank_accounts_returns_unrecognized_for_unknown_input(monkeypatch) -> None:
     _mock_auth(monkeypatch)
     repo = _Repo(
         initial_chat_state={
@@ -400,7 +400,7 @@ def test_onboarding_bank_accounts_help_when_none_exist_and_no_names_provided(mon
     response = client.post("/agent/chat", json={"message": "Salut"}, headers=_auth_headers())
 
     assert response.status_code == 200
-    assert "UBS, Revolut" in response.json()["reply"]
+    assert "Je n’ai pas reconnu" in response.json()["reply"]
     assert repo.ensure_bank_accounts_calls == []
     assert loop.called is False
 
@@ -408,8 +408,9 @@ def test_onboarding_bank_accounts_help_when_none_exist_and_no_names_provided(mon
 @pytest.mark.parametrize(
     ("message", "expected_names", "expected_reply_fragment"),
     [
-        ("UBS et Revolut", ["UBS", "Revolut"], "Comptes créés: UBS, Revolut"),
-        ("UBS", ["UBS"], "Comptes créés: UBS"),
+        ("UBS et Revolut", ["UBS", "Revolut"], "Comptes enregistrés: UBS, Revolut"),
+        ("UBS", ["UBS"], "Comptes enregistrés: UBS"),
+        ("Raifeisen", ["Raiffeisen"], "Comptes enregistrés: Raiffeisen"),
     ],
 )
 def test_onboarding_bank_accounts_creates_accounts_and_moves_to_import(
@@ -437,6 +438,59 @@ def test_onboarding_bank_accounts_creates_accounts_and_moves_to_import(
     assert expected_reply_fragment in response.json()["reply"]
     assert loop.called is False
 
+
+
+def test_free_chat_is_re_gated_to_bank_accounts_when_none_exist(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "free_chat",
+                    "onboarding_step": None,
+                    "has_bank_accounts": True,
+                    "has_imported_transactions": False,
+                    "budget_created": False,
+                }
+            }
+        },
+        profile_fields={"first_name": "Tristan", "last_name": "Pfefferlé", "birth_date": "1992-01-15"},
+    )
+    loop = _LoopSpy()
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: loop)
+
+    response = client.post("/agent/chat", json={"message": "Salut"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert "Avant de continuer" in response.json()["reply"]
+    assert "UBS, Revolut" in response.json()["reply"]
+    assert loop.called is False
+    persisted_global_state = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
+    assert persisted_global_state["mode"] == "onboarding"
+    assert persisted_global_state["onboarding_step"] == "bank_accounts"
+
+
+def test_onboarding_bank_accounts_non_bank_message_does_not_create_accounts(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {"global_state": {"mode": "onboarding", "onboarding_step": "bank_accounts"}}
+        },
+        profile_fields={"first_name": "Tristan", "last_name": "Pfefferlé", "birth_date": "1992-01-15"},
+    )
+    loop = _LoopSpy()
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: loop)
+
+    response = client.post("/agent/chat", json={"message": "Liste mes catégories"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert "Je n’ai pas reconnu" in response.json()["reply"]
+    assert repo.ensure_bank_accounts_calls == []
+    assert loop.called is False
 
 def test_onboarding_bank_accounts_skips_creation_if_already_exists(monkeypatch) -> None:
     _mock_auth(monkeypatch)
