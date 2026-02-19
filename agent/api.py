@@ -263,7 +263,7 @@ def _build_onboarding_reminder(global_state: dict[str, Any] | None) -> str | Non
 
     substep = global_state.get("onboarding_substep")
     if substep == "profile_collect":
-        return "(Pour continuer l’onboarding : indique ton prénom, nom et date de naissance.)"
+        return "(Pour continuer l’onboarding : indique ton prénom et ton nom, puis réponds aux étapes suivantes.)"
     if substep == "profile_confirm":
         return "(Pour continuer l’onboarding : réponds OUI/NON pour confirmer le profil.)"
     if substep == "bank_accounts_collect":
@@ -712,8 +712,8 @@ def agent_chat(
             )
             return ChatResponse(
                 reply=(
-                    "Avant de continuer, j’ai besoin de ton prénom, nom et date de naissance. "
-                    "Écris 'Prénom Nom' puis ta date (YYYY-MM-DD)."
+                    "Avant de continuer, quel est ton prénom et ton nom ? "
+                    "(ex: Paul Murt)"
                 ),
                 tool_result=None,
                 plan=None,
