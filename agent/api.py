@@ -263,7 +263,7 @@ def _build_onboarding_reminder(global_state: dict[str, Any] | None) -> str | Non
 
     substep = global_state.get("onboarding_substep")
     if substep == "profile_collect":
-        return "(Pour continuer l’onboarding : indique ton prénom et ton nom, puis réponds aux étapes suivantes.)"
+        return "(Pour continuer l’onboarding : réponds aux informations demandées.)"
     if substep == "profile_confirm":
         return "(Pour continuer l’onboarding : réponds OUI/NON pour confirmer le profil.)"
     if substep == "bank_accounts_collect":
