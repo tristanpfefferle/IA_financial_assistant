@@ -166,6 +166,37 @@ def test_existing_global_state_is_not_overwritten(monkeypatch) -> None:
     assert loop.calls[-1]["global_state"] == existing_global
 
 
+def test_promotes_to_free_chat_when_profile_becomes_complete(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "onboarding",
+                    "onboarding_step": "profile",
+                    "has_imported_transactions": False,
+                    "budget_created": False,
+                }
+            }
+        },
+        profile_fields={"first_name": "Ada", "last_name": "Lovelace", "birth_date": "1815-12-10"},
+    )
+    loop = _LoopWithGlobal()
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: loop)
+
+    response = client.post("/agent/chat", json={"message": "Bonjour"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert repo.update_calls
+    persisted_global_state = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
+    assert persisted_global_state["mode"] == "free_chat"
+    assert persisted_global_state["onboarding_step"] is None
+    assert persisted_global_state["has_imported_transactions"] is False
+    assert persisted_global_state["budget_created"] is False
+
+
 def test_does_not_pass_global_state_when_loop_handler_does_not_accept_it(monkeypatch) -> None:
     _mock_auth(monkeypatch)
     repo = _Repo(initial_chat_state={"state": {}}, profile_fields={"first_name": None, "last_name": "X", "birth_date": None})

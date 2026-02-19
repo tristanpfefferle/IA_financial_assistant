@@ -107,6 +107,15 @@ def _is_valid_global_state(value: Any) -> bool:
     return True
 
 
+def _is_profile_complete(profile_fields: dict[str, Any]) -> bool:
+    """Return True when onboarding profile completion fields are all present."""
+
+    return all(
+        _is_profile_field_completed(profile_fields.get(field_name))
+        for field_name in _PROFILE_COMPLETION_FIELDS
+    )
+
+
 class ChatRequest(BaseModel):
     """Incoming chat request payload."""
 
@@ -328,6 +337,33 @@ def agent_chat(
             state_dict = dict(state_dict) if isinstance(state_dict, dict) else {}
             state_dict["global_state"] = global_state
             should_persist_global_state = True
+
+        if (
+            _is_valid_global_state(global_state)
+            and global_state.get("mode") == "onboarding"
+            and global_state.get("onboarding_step") == "profile"
+            and hasattr(profiles_repository, "get_profile_fields")
+        ):
+            try:
+                profile_fields = profiles_repository.get_profile_fields(
+                    profile_id=profile_id,
+                    fields=list(_PROFILE_COMPLETION_FIELDS),
+                )
+            except Exception:
+                logger.exception("global_state_promotion_profile_lookup_failed profile_id=%s", profile_id)
+                profile_fields = {}
+
+            if _is_profile_complete(profile_fields):
+                promoted_global_state = {
+                    "mode": "free_chat",
+                    "onboarding_step": None,
+                    "has_imported_transactions": bool(global_state.get("has_imported_transactions", False)),
+                    "budget_created": bool(global_state.get("budget_created", False)),
+                }
+                global_state = promoted_global_state
+                state_dict = dict(state_dict) if isinstance(state_dict, dict) else {}
+                state_dict["global_state"] = promoted_global_state
+                should_persist_global_state = True
 
         memory_for_loop = state_dict if isinstance(state_dict, dict) else None
 
