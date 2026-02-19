@@ -24,12 +24,6 @@ type ImportUiRequest = {
   accepted_types?: string[]
 }
 
-type ImportSuccessState = {
-  transactionsImported: number
-  dateRange: { start: string; end: string } | null
-  bankAccountName?: string | null
-}
-
 function toImportUiRequest(value: unknown): ImportUiRequest | null {
   if (!value || typeof value !== 'object') {
     return null
@@ -65,6 +59,50 @@ function formatDateRange(dateRange: { start: string; end: string } | null): stri
   return `Période détectée: ${dateRange.start} → ${dateRange.end}`
 }
 
+function buildImportSuccessText(result: RelevesImportResult, uiRequest: ImportUiRequest): string {
+  const typedResult = result as RelevesImportResult & {
+    transactions_imported_count?: number
+    transactions_imported?: number
+    date_range?: { start: string; end: string } | null
+    bank_account_name?: string | null
+  }
+  const importedCount = typedResult.transactions_imported_count ?? typedResult.transactions_imported ?? result.imported_count ?? 0
+  const accountName = typedResult.bank_account_name ?? uiRequest.bank_account_name ?? uiRequest.bank_account_id
+  const periodText = formatDateRange(typedResult.date_range ?? null)
+
+  return `✅ Import OK (${accountName}). Transactions importées: ${importedCount}. ${periodText}`
+}
+
+function consumeImportRequestAndAppendSuccessMessage(
+  previousMessages: ChatMessage[],
+  messageId: string,
+  successText: string,
+): ChatMessage[] {
+  const messageIndex = previousMessages.findIndex((chatMessage) => chatMessage.id === messageId)
+  if (messageIndex < 0) {
+    return previousMessages
+  }
+
+  const updatedMessage: ChatMessage = {
+    ...previousMessages[messageIndex],
+    toolResult: null,
+  }
+
+  const successMessage: ChatMessage = {
+    id: crypto.randomUUID(),
+    role: 'assistant',
+    content: successText,
+    toolResult: null,
+  }
+
+  return [
+    ...previousMessages.slice(0, messageIndex),
+    updatedMessage,
+    successMessage,
+    ...previousMessages.slice(messageIndex + 1),
+  ]
+}
+
 function readFileAsBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -93,10 +131,6 @@ export function ChatPage({ email }: ChatPageProps) {
   const [isLoading, setIsLoading] = useState(false)
   const [hasToken, setHasToken] = useState(false)
   const [isRefreshingSession, setIsRefreshingSession] = useState(false)
-  const [pendingUiRequest, setPendingUiRequest] = useState<ImportUiRequest | null>(null)
-  const [importError, setImportError] = useState<string | null>(null)
-  const [isImporting, setIsImporting] = useState(false)
-  const [importSuccess, setImportSuccess] = useState<ImportSuccessState | null>(null)
   const envDebugEnabled = import.meta.env.VITE_UI_DEBUG === 'true'
   const [debugMode, setDebugMode] = useState(false)
   const apiBaseUrl = useMemo(() => {
@@ -104,7 +138,6 @@ export function ChatPage({ email }: ChatPageProps) {
     return rawBaseUrl.replace(/\/+$/, '')
   }, [])
   const messagesRef = useRef<HTMLDivElement | null>(null)
-  const fileInputRef = useRef<HTMLInputElement | null>(null)
   const assistantMessagesCount = useMemo(
     () => messages.filter((chatMessage) => chatMessage.role === 'assistant').length,
     [messages],
@@ -151,21 +184,26 @@ export function ChatPage({ email }: ChatPageProps) {
   }, [hasToken])
 
   const isConnected = useMemo(() => Boolean(email), [email])
-  const canSubmit = message.trim().length > 0 && !isLoading
-  const hasUnauthorizedError = useMemo(() => error?.includes('(401)') ?? false, [error])
-  const fileAccept = useMemo(() => {
-    const acceptedTypes = pendingUiRequest?.accepted_types
-    if (!acceptedTypes || acceptedTypes.length === 0) {
-      return '.csv,.pdf'
+  const pendingImportRequest = useMemo(() => {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const chatMessage = messages[index]
+      if (chatMessage.role !== 'assistant') {
+        continue
+      }
+
+      const uiRequest = toImportUiRequest(chatMessage.toolResult)
+      if (uiRequest) {
+        return { messageId: chatMessage.id, uiRequest }
+      }
+
+      return null
     }
 
-    const extensions = acceptedTypes
-      .map((type) => type.trim().replace(/^\./, '').toLowerCase())
-      .filter((type) => type.length > 0)
-      .map((type) => `.${type}`)
-
-    return extensions.length > 0 ? extensions.join(',') : '.csv,.pdf'
-  }, [pendingUiRequest])
+    return null
+  }, [messages])
+  const isImportRequired = pendingImportRequest !== null
+  const canSubmit = message.trim().length > 0 && !isLoading && !isImportRequired
+  const hasUnauthorizedError = useMemo(() => error?.includes('(401)') ?? false, [error])
 
   useEffect(() => {
     if (!assistantMessagesCount) {
@@ -176,57 +214,6 @@ export function ChatPage({ email }: ChatPageProps) {
       messagesRef.current.scrollTop = messagesRef.current.scrollHeight
     }
   }, [assistantMessagesCount])
-
-  async function handleImportFileSelection(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0]
-    if (!file || !pendingUiRequest || isImporting) {
-      return
-    }
-
-    const allowedExtensions = (pendingUiRequest.accepted_types ?? ['csv', 'pdf']).map((item) => item.toLowerCase())
-    const extension = file.name.split('.').pop()?.toLowerCase()
-    if (!extension || !allowedExtensions.includes(extension)) {
-      setImportError('Format invalide. Sélectionne un fichier CSV ou PDF.')
-      event.target.value = ''
-      return
-    }
-
-    setImportError(null)
-    setImportSuccess(null)
-    setIsImporting(true)
-
-    try {
-      const contentBase64 = await readFileAsBase64(file)
-      const result: RelevesImportResult = await importReleves({
-        files: [{ filename: file.name, content_base64: contentBase64 }],
-        bank_account_id: pendingUiRequest.bank_account_id,
-        import_mode: 'commit',
-        modified_action: 'replace',
-      })
-
-      const typedResult = result as RelevesImportResult & {
-        transactions_imported_count?: number
-        transactions_imported?: number
-        date_range?: { start: string; end: string } | null
-        bank_account_name?: string | null
-      }
-      const importedCount = typedResult.transactions_imported_count ?? typedResult.transactions_imported ?? result.imported_count
-      setImportSuccess({
-        transactionsImported: importedCount,
-        dateRange: typedResult.date_range ?? null,
-        bankAccountName: typedResult.bank_account_name ?? pendingUiRequest.bank_account_name,
-      })
-      setPendingUiRequest(null)
-    } catch (caughtError) {
-      const errorMessage = caughtError instanceof Error ? caughtError.message : 'Erreur inconnue'
-      setImportError(errorMessage)
-    } finally {
-      if (fileInputRef.current) {
-        fileInputRef.current.value = ''
-      }
-      setIsImporting(false)
-    }
-  }
 
   async function handleLogout() {
     setError(null)
@@ -286,11 +273,6 @@ export function ChatPage({ email }: ChatPageProps) {
         plan: response.plan,
       }
       setMessages((previousMessages) => [...previousMessages, assistantMessage])
-      const parsedUiRequest = toImportUiRequest(response.tool_result)
-      if (parsedUiRequest) {
-        setPendingUiRequest(parsedUiRequest)
-        setImportError(null)
-      }
     } catch (caughtError) {
       const errorMessage = caughtError instanceof Error ? caughtError.message : 'Erreur inconnue'
       setError(errorMessage)
@@ -323,45 +305,25 @@ export function ChatPage({ email }: ChatPageProps) {
           </label>
         </section>
 
-        {pendingUiRequest ? (
-          <section className="import-panel" aria-live="polite">
-            <h2>Import du relevé</h2>
-            <p className="placeholder-text">
-              Compte: {pendingUiRequest.bank_account_name || pendingUiRequest.bank_account_id}
-            </p>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept={fileAccept}
-              onChange={handleImportFileSelection}
-              style={{ display: 'none' }}
-              disabled={isImporting}
-            />
-            <button type="button" onClick={() => fileInputRef.current?.click()} disabled={isImporting}>
-              Parcourir...
-            </button>
-            {isImporting ? <progress aria-label="Import en cours" /> : null}
-            {isImporting ? <p className="placeholder-text">⏳ Import en cours...</p> : null}
-            {importError ? <p className="error-text">{importError}</p> : null}
-          </section>
-        ) : null}
-
-        {importSuccess ? (
-          <section className="import-panel" aria-live="polite">
-            <p>
-              ✅ Import OK {importSuccess.bankAccountName ? `(${importSuccess.bankAccountName})` : ''}
-            </p>
-            <p>Transactions importées: {importSuccess.transactionsImported}</p>
-            <p>{formatDateRange(importSuccess.dateRange)}</p>
-          </section>
-        ) : null}
-
         <div className="messages" aria-live="polite" ref={messagesRef}>
           {messages.length === 0 ? <p className="placeholder-text">Commencez la conversation avec l’IA.</p> : null}
-          {messages.map((chatMessage) => (
-            <article key={chatMessage.id} className={`message message-${chatMessage.role}`}>
-              <p className="message-role">{chatMessage.role === 'user' ? 'Vous' : 'Assistant'}</p>
-              <p>{chatMessage.content}</p>
+          {messages.map((chatMessage) => {
+            const inlineImportRequest = chatMessage.role === 'assistant' ? toImportUiRequest(chatMessage.toolResult) : null
+
+            return (
+              <article key={chatMessage.id} className={`message message-${chatMessage.role}`}>
+                <p className="message-role">{chatMessage.role === 'user' ? 'Vous' : 'Assistant'}</p>
+                <p>{chatMessage.content}</p>
+                {inlineImportRequest ? (
+                  <ImportInline
+                    uiRequest={inlineImportRequest}
+                    onImported={(successText) => {
+                      setMessages((previousMessages) =>
+                        consumeImportRequestAndAppendSuccessMessage(previousMessages, chatMessage.id, successText),
+                      )
+                    }}
+                  />
+                ) : null}
               {debugMode && chatMessage.role === 'assistant' && chatMessage.plan ? (
                 (() => {
                   const plan = chatMessage.plan as Record<string, unknown>
@@ -400,7 +362,8 @@ export function ChatPage({ email }: ChatPageProps) {
                 })()
               ) : null}
             </article>
-          ))}
+            )
+          })}
           {isLoading ? <p className="placeholder-text">Envoi...</p> : null}
         </div>
 
@@ -411,11 +374,13 @@ export function ChatPage({ email }: ChatPageProps) {
             onChange={(event) => setMessage(event.target.value)}
             placeholder="Posez une question sur vos finances..."
             aria-label="Message"
+            disabled={isImportRequired}
           />
           <button type="submit" disabled={!canSubmit}>
             {isLoading ? 'Envoi...' : 'Envoyer'}
           </button>
         </form>
+        {isImportRequired ? <p className="placeholder-text">Import requis avant de continuer.</p> : null}
 
         {error ? <p className="error-text">{error}</p> : null}
         {hasUnauthorizedError && isConnected ? (
@@ -428,5 +393,88 @@ export function ChatPage({ email }: ChatPageProps) {
         ) : null}
       </section>
     </main>
+  )
+}
+
+type ImportInlineProps = {
+  uiRequest: ImportUiRequest
+  onImported: (successText: string) => void
+}
+
+function ImportInline({ uiRequest, onImported }: ImportInlineProps) {
+  const [isImporting, setIsImporting] = useState(false)
+  const [importError, setImportError] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+
+  const fileAccept = useMemo(() => {
+    const acceptedTypes = uiRequest.accepted_types
+    if (!acceptedTypes || acceptedTypes.length === 0) {
+      return '.csv,.pdf'
+    }
+
+    const extensions = acceptedTypes
+      .map((type) => type.trim().replace(/^\./, '').toLowerCase())
+      .filter((type) => type.length > 0)
+      .map((type) => `.${type}`)
+
+    return extensions.length > 0 ? extensions.join(',') : '.csv,.pdf'
+  }, [uiRequest.accepted_types])
+
+  async function handleImportFileSelection(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    if (!file || isImporting) {
+      return
+    }
+
+    const allowedExtensions = (uiRequest.accepted_types ?? ['csv', 'pdf']).map((item) => item.toLowerCase())
+    const extension = file.name.split('.').pop()?.toLowerCase()
+    if (!extension || !allowedExtensions.includes(extension)) {
+      setImportError('Format invalide. Sélectionne un fichier CSV ou PDF.')
+      event.target.value = ''
+      return
+    }
+
+    setImportError(null)
+    setIsImporting(true)
+
+    try {
+      const contentBase64 = await readFileAsBase64(file)
+      const result = await importReleves({
+        files: [{ filename: file.name, content_base64: contentBase64 }],
+        bank_account_id: uiRequest.bank_account_id,
+        import_mode: 'commit',
+        modified_action: 'replace',
+      })
+
+      onImported(buildImportSuccessText(result, uiRequest))
+    } catch (caughtError) {
+      const errorMessage = caughtError instanceof Error ? caughtError.message : 'Erreur inconnue'
+      setImportError(errorMessage)
+    } finally {
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ''
+      }
+      setIsImporting(false)
+    }
+  }
+
+  return (
+    <section className="import-panel" aria-live="polite">
+      <p className="placeholder-text">Compte: {uiRequest.bank_account_name || uiRequest.bank_account_id}</p>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept={fileAccept}
+        onChange={handleImportFileSelection}
+        style={{ display: 'none' }}
+        disabled={isImporting}
+      />
+      <button type="button" onClick={() => fileInputRef.current?.click()} disabled={isImporting}>
+        Parcourir...
+      </button>
+      {isImporting ? <progress aria-label="Import en cours" /> : null}
+      {isImporting ? <p className="placeholder-text">Import en cours...</p> : null}
+      {importError ? <p className="error-text">{importError}</p> : null}
+    </section>
   )
 }
