@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import logging
 import inspect
+import re
 from functools import lru_cache
 from typing import Any
+from datetime import date
 from uuid import UUID
 
 from fastapi.encoders import jsonable_encoder
@@ -33,6 +35,10 @@ logger = logging.getLogger(__name__)
 _GLOBAL_STATE_MODES = {"onboarding", "guided_budget", "free_chat"}
 _GLOBAL_STATE_ONBOARDING_STEPS = {"profile", "import", "categories", "budget", None}
 _PROFILE_COMPLETION_FIELDS = ("first_name", "last_name", "birth_date")
+_ONBOARDING_NAME_PATTERN = re.compile(
+    r"^\s*([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'\-]+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'\-]+)\s*$"
+)
+_ONBOARDING_BIRTH_DATE_PATTERN = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
 
 
 def _handler_accepts_debug_kwarg(handler: Any) -> bool:
@@ -114,6 +120,57 @@ def _is_profile_complete(profile_fields: dict[str, Any]) -> bool:
         _is_profile_field_completed(profile_fields.get(field_name))
         for field_name in _PROFILE_COMPLETION_FIELDS
     )
+
+
+def _extract_name_from_message(message: str) -> tuple[str, str] | None:
+    match = _ONBOARDING_NAME_PATTERN.match(message)
+    if not match:
+        return None
+    first_name, last_name = match.groups()
+    return first_name, last_name
+
+
+def _extract_birth_date_from_message(message: str) -> str | None:
+    normalized = message.strip()
+    match = _ONBOARDING_BIRTH_DATE_PATTERN.match(normalized)
+    if not match:
+        return None
+
+    year, month, day = (int(chunk) for chunk in match.groups())
+    try:
+        date(year=year, month=month, day=day)
+    except ValueError:
+        return None
+
+    return normalized
+
+
+def _build_onboarding_global_state(existing_global_state: dict[str, Any] | None) -> dict[str, Any]:
+    return {
+        "mode": "onboarding",
+        "onboarding_step": "profile",
+        "has_imported_transactions": bool(
+            isinstance(existing_global_state, dict)
+            and existing_global_state.get("has_imported_transactions", False)
+        ),
+        "budget_created": bool(
+            isinstance(existing_global_state, dict) and existing_global_state.get("budget_created", False)
+        ),
+    }
+
+
+def _build_free_chat_global_state(existing_global_state: dict[str, Any] | None) -> dict[str, Any]:
+    return {
+        "mode": "free_chat",
+        "onboarding_step": None,
+        "has_imported_transactions": bool(
+            isinstance(existing_global_state, dict)
+            and existing_global_state.get("has_imported_transactions", False)
+        ),
+        "budget_created": bool(
+            isinstance(existing_global_state, dict) and existing_global_state.get("budget_created", False)
+        ),
+    }
 
 
 class ChatRequest(BaseModel):
@@ -354,16 +411,109 @@ def agent_chat(
                 profile_fields = {}
 
             if _is_profile_complete(profile_fields):
-                promoted_global_state = {
-                    "mode": "free_chat",
-                    "onboarding_step": None,
-                    "has_imported_transactions": bool(global_state.get("has_imported_transactions", False)),
-                    "budget_created": bool(global_state.get("budget_created", False)),
-                }
+                promoted_global_state = _build_free_chat_global_state(global_state)
                 global_state = promoted_global_state
                 state_dict = dict(state_dict) if isinstance(state_dict, dict) else {}
                 state_dict["global_state"] = promoted_global_state
                 should_persist_global_state = True
+            else:
+                message = payload.message.strip()
+                state_dict = dict(state_dict) if isinstance(state_dict, dict) else {}
+
+                extracted_name = _extract_name_from_message(message)
+                if extracted_name is not None and hasattr(profiles_repository, "update_profile_fields"):
+                    first_name, last_name = extracted_name
+                    profiles_repository.update_profile_fields(
+                        profile_id=profile_id,
+                        set_dict={"first_name": first_name, "last_name": last_name},
+                    )
+                    updated_global_state = _build_onboarding_global_state(global_state)
+                    state_dict["global_state"] = updated_global_state
+                    updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                    updated_chat_state["state"] = state_dict
+                    profiles_repository.update_chat_state(
+                        profile_id=profile_id,
+                        user_id=auth_user_id,
+                        chat_state=updated_chat_state,
+                    )
+                    return ChatResponse(
+                        reply=(
+                            f"Merci {first_name} ! Il me manque ta date de naissance (YYYY-MM-DD) "
+                            "— tu peux aussi la renseigner dans l’onglet Profil."
+                        ),
+                        tool_result=None,
+                        plan=None,
+                    )
+
+                extracted_birth_date = _extract_birth_date_from_message(message)
+                if extracted_birth_date is not None and hasattr(profiles_repository, "update_profile_fields"):
+                    profiles_repository.update_profile_fields(
+                        profile_id=profile_id,
+                        set_dict={"birth_date": extracted_birth_date},
+                    )
+                    refreshed_profile_fields = profiles_repository.get_profile_fields(
+                        profile_id=profile_id,
+                        fields=list(_PROFILE_COMPLETION_FIELDS),
+                    )
+                    updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                    if _is_profile_complete(refreshed_profile_fields):
+                        promoted_global_state = _build_free_chat_global_state(global_state)
+                        state_dict["global_state"] = promoted_global_state
+                        updated_chat_state["state"] = state_dict
+                        profiles_repository.update_chat_state(
+                            profile_id=profile_id,
+                            user_id=auth_user_id,
+                            chat_state=updated_chat_state,
+                        )
+                        return ChatResponse(
+                            reply=(
+                                "Parfait, ton profil minimal est complet ✅ "
+                                "On passe en mode discussion libre."
+                            ),
+                            tool_result=None,
+                            plan=None,
+                        )
+
+                    missing_fields = [
+                        field_name
+                        for field_name in _PROFILE_COMPLETION_FIELDS
+                        if not _is_profile_field_completed(refreshed_profile_fields.get(field_name))
+                    ]
+                    updated_global_state = _build_onboarding_global_state(global_state)
+                    state_dict["global_state"] = updated_global_state
+                    updated_chat_state["state"] = state_dict
+                    profiles_repository.update_chat_state(
+                        profile_id=profile_id,
+                        user_id=auth_user_id,
+                        chat_state=updated_chat_state,
+                    )
+                    if missing_fields:
+                        return ChatResponse(
+                            reply=(
+                                "Merci ! Il manque encore: "
+                                f"{', '.join(missing_fields)}."
+                            ),
+                            tool_result=None,
+                            plan=None,
+                        )
+
+                updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                updated_chat_state["state"] = state_dict
+                state_dict["global_state"] = _build_onboarding_global_state(global_state)
+                profiles_repository.update_chat_state(
+                    profile_id=profile_id,
+                    user_id=auth_user_id,
+                    chat_state=updated_chat_state,
+                )
+                return ChatResponse(
+                    reply=(
+                        "Pour démarrer, j’ai besoin de ton prénom, nom et date de naissance. "
+                        "Tu peux écrire 'Prénom Nom' ici, puis ta date 'YYYY-MM-DD'. "
+                        "Le reste du profil pourra être complété plus tard."
+                    ),
+                    tool_result=None,
+                    plan=None,
+                )
 
         memory_for_loop = state_dict if isinstance(state_dict, dict) else None
 

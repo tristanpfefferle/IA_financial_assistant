@@ -30,6 +30,7 @@ class _Repo:
         self.chat_state = initial_chat_state or {}
         self.profile_fields = profile_fields or {}
         self.update_calls: list[dict[str, object]] = []
+        self.profile_update_calls: list[dict[str, object]] = []
 
     def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None):
         assert auth_user_id == AUTH_USER_ID
@@ -50,6 +51,12 @@ class _Repo:
     def get_profile_fields(self, *, profile_id: UUID, fields: list[str] | None = None) -> dict[str, object]:
         assert profile_id == PROFILE_ID
         assert fields == ["first_name", "last_name", "birth_date"]
+        return dict(self.profile_fields)
+
+    def update_profile_fields(self, *, profile_id: UUID, set_dict: dict[str, object]) -> dict[str, object]:
+        assert profile_id == PROFILE_ID
+        self.profile_update_calls.append(dict(set_dict))
+        self.profile_fields.update(set_dict)
         return dict(self.profile_fields)
 
 
@@ -75,6 +82,15 @@ class _LoopWithGlobal:
             }
         )
         return AgentReply(reply="ok")
+
+
+class _LoopSpy:
+    def __init__(self) -> None:
+        self.called = False
+
+    def handle_user_message(self, *_args, **_kwargs) -> AgentReply:
+        self.called = True
+        return AgentReply(reply="loop")
 
 
 class _LoopWithoutGlobal:
@@ -199,7 +215,7 @@ def test_promotes_to_free_chat_when_profile_becomes_complete(monkeypatch) -> Non
 
 def test_does_not_pass_global_state_when_loop_handler_does_not_accept_it(monkeypatch) -> None:
     _mock_auth(monkeypatch)
-    repo = _Repo(initial_chat_state={"state": {}}, profile_fields={"first_name": None, "last_name": "X", "birth_date": None})
+    repo = _Repo(initial_chat_state={"state": {}}, profile_fields={"first_name": "Ada", "last_name": "X", "birth_date": "1815-12-10"})
     loop = _LoopWithoutGlobal()
 
     monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
@@ -234,3 +250,86 @@ def test_reset_session_keeps_global_state(monkeypatch) -> None:
     assert "pending_clarification" not in saved_chat_state["state"]
     assert saved_chat_state["state"]["last_query"] == {"last_tool_name": "finance_releves_search"}
     assert saved_chat_state["state"]["global_state"] == {"mode": "onboarding", "onboarding_step": "profile"}
+
+
+def test_onboarding_profile_name_message_updates_first_and_last_name(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {"global_state": {"mode": "onboarding", "onboarding_step": "profile"}}
+        },
+        profile_fields={"first_name": None, "last_name": None, "birth_date": None},
+    )
+    loop = _LoopSpy()
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: loop)
+
+    response = client.post("/agent/chat", json={"message": "Tristan Pfefferlé"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert repo.profile_update_calls == [{"first_name": "Tristan", "last_name": "Pfefferlé"}]
+    assert "Il me manque ta date de naissance" in response.json()["reply"]
+    assert loop.called is False
+
+
+def test_onboarding_profile_birth_date_message_promotes_to_free_chat(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {"global_state": {"mode": "onboarding", "onboarding_step": "profile"}}
+        },
+        profile_fields={"first_name": "Tristan", "last_name": "Pfefferlé", "birth_date": None},
+    )
+    loop = _LoopSpy()
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: loop)
+
+    response = client.post("/agent/chat", json={"message": "1992-01-15"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert repo.profile_update_calls == [{"birth_date": "1992-01-15"}]
+    assert repo.update_calls[-1]["chat_state"]["state"]["global_state"]["mode"] == "free_chat"
+    assert "discussion libre" in response.json()["reply"]
+    assert loop.called is False
+
+
+def test_onboarding_profile_non_profile_message_returns_help_and_skips_loop(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {"global_state": {"mode": "onboarding", "onboarding_step": "profile"}}
+        },
+        profile_fields={"first_name": None, "last_name": None, "birth_date": None},
+    )
+    loop = _LoopSpy()
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: loop)
+
+    response = client.post("/agent/chat", json={"message": "Liste mes catégories"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert repo.profile_update_calls == []
+    assert "Pour démarrer" in response.json()["reply"]
+    assert loop.called is False
+
+
+def test_onboarding_profile_complete_calls_loop_normally(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {"global_state": {"mode": "onboarding", "onboarding_step": "profile"}}
+        },
+        profile_fields={"first_name": "Tristan", "last_name": "Pfefferlé", "birth_date": "1992-01-15"},
+    )
+    loop = _LoopSpy()
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: loop)
+
+    response = client.post("/agent/chat", json={"message": "Liste mes catégories"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert loop.called is True
