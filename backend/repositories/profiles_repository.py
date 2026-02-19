@@ -26,6 +26,13 @@ class ProfilesRepository(Protocol):
     def update_profile_fields(self, *, profile_id: UUID, set_dict: dict[str, Any]) -> dict[str, Any]:
         """Update selected profile columns for one profile id and return updated values."""
 
+    def list_bank_accounts(self, *, profile_id: UUID) -> list[dict[str, Any]]:
+        """Return bank accounts linked to a profile."""
+
+    def ensure_bank_accounts(self, *, profile_id: UUID, names: list[str]) -> dict[str, Any]:
+        """Create missing bank accounts while preserving uniqueness by lowercase name."""
+
+
 
 class SupabaseProfilesRepository:
     """Supabase repository for profils table lookups."""
@@ -160,3 +167,67 @@ class SupabaseProfilesRepository:
 
         row = rows[0]
         return {field: row.get(field) for field in filtered_set_dict}
+
+
+    @staticmethod
+    def _normalize_bank_account_names(names: list[str]) -> list[str]:
+        normalized_names: list[str] = []
+        seen_lower: set[str] = set()
+        for raw_name in names:
+            cleaned_name = " ".join(str(raw_name).strip().split())
+            if not cleaned_name:
+                continue
+            lowered_name = cleaned_name.lower()
+            if lowered_name in seen_lower:
+                continue
+            seen_lower.add(lowered_name)
+            normalized_names.append(cleaned_name)
+        return normalized_names
+
+    def list_bank_accounts(self, *, profile_id: UUID) -> list[dict[str, Any]]:
+        rows, _ = self._client.get_rows(
+            table="bank_accounts",
+            query={
+                "select": "id,name,account_kind,kind",
+                "profile_id": f"eq.{profile_id}",
+                "limit": 200,
+            },
+            with_count=False,
+            use_anon_key=False,
+        )
+        return rows
+
+    def ensure_bank_accounts(self, *, profile_id: UUID, names: list[str]) -> dict[str, Any]:
+        normalized_names = self._normalize_bank_account_names(names)
+        existing_rows = self.list_bank_accounts(profile_id=profile_id)
+        existing_by_lower = {str(row.get("name", "")).strip().lower(): row for row in existing_rows if row.get("name")}
+
+        created: list[str] = []
+        existing: list[str] = []
+
+        for name in normalized_names:
+            lowered_name = name.lower()
+            if lowered_name in existing_by_lower:
+                existing.append(name)
+                continue
+
+            payload = {
+                "profile_id": str(profile_id),
+                "name": name,
+                "kind": "individual",
+                "account_kind": "personal_current",
+                "is_system": False,
+            }
+            try:
+                self._client.post_rows(table="bank_accounts", payload=payload, use_anon_key=False)
+            except RuntimeError as exc:
+                error_message = str(exc).lower()
+                if "duplicate key" in error_message or "unique" in error_message:
+                    existing.append(name)
+                    continue
+                raise
+
+            created.append(name)
+            existing_by_lower[lowered_name] = {"name": name}
+
+        return {"created": created, "existing": existing, "all": normalized_names}

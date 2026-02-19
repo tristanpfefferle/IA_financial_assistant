@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 
 _GLOBAL_STATE_MODES = {"onboarding", "guided_budget", "free_chat"}
-_GLOBAL_STATE_ONBOARDING_STEPS = {"profile", "import", "categories", "budget", None}
+_GLOBAL_STATE_ONBOARDING_STEPS = {"profile", "bank_accounts", "import", "categories", "budget", None}
 _PROFILE_COMPLETION_FIELDS = ("first_name", "last_name", "birth_date")
 _ONBOARDING_NAME_PATTERN = re.compile(
     r"^\s*([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'\-]+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'\-]+)\s*$"
@@ -115,14 +115,16 @@ def _compute_bootstrap_global_state(profile_fields: dict[str, Any]) -> dict[str,
     )
     if is_profile_complete:
         return {
-            "mode": "free_chat",
-            "onboarding_step": None,
+            "mode": "onboarding",
+            "onboarding_step": "bank_accounts",
+            "has_bank_accounts": False,
             "has_imported_transactions": False,
             "budget_created": False,
         }
     return {
         "mode": "onboarding",
         "onboarding_step": "profile",
+        "has_bank_accounts": False,
         "has_imported_transactions": False,
         "budget_created": False,
     }
@@ -136,6 +138,9 @@ def _is_valid_global_state(value: Any) -> bool:
     if mode not in _GLOBAL_STATE_MODES:
         return False
     if onboarding_step not in _GLOBAL_STATE_ONBOARDING_STEPS:
+        return False
+    has_bank_accounts = value.get("has_bank_accounts")
+    if has_bank_accounts is not None and not isinstance(has_bank_accounts, bool):
         return False
     return True
 
@@ -202,6 +207,9 @@ def _build_onboarding_global_state(existing_global_state: dict[str, Any] | None)
     return {
         "mode": "onboarding",
         "onboarding_step": "profile",
+        "has_bank_accounts": bool(
+            isinstance(existing_global_state, dict) and existing_global_state.get("has_bank_accounts", False)
+        ),
         "has_imported_transactions": bool(
             isinstance(existing_global_state, dict)
             and existing_global_state.get("has_imported_transactions", False)
@@ -216,6 +224,9 @@ def _build_free_chat_global_state(existing_global_state: dict[str, Any] | None) 
     return {
         "mode": "free_chat",
         "onboarding_step": None,
+        "has_bank_accounts": bool(
+            isinstance(existing_global_state, dict) and existing_global_state.get("has_bank_accounts", False)
+        ),
         "has_imported_transactions": bool(
             isinstance(existing_global_state, dict)
             and existing_global_state.get("has_imported_transactions", False)
@@ -224,6 +235,45 @@ def _build_free_chat_global_state(existing_global_state: dict[str, Any] | None) 
             isinstance(existing_global_state, dict) and existing_global_state.get("budget_created", False)
         ),
     }
+
+
+def _build_bank_accounts_onboarding_global_state(existing_global_state: dict[str, Any] | None) -> dict[str, Any]:
+    return {
+        "mode": "onboarding",
+        "onboarding_step": "bank_accounts",
+        "has_bank_accounts": bool(
+            isinstance(existing_global_state, dict) and existing_global_state.get("has_bank_accounts", False)
+        ),
+        "has_imported_transactions": bool(
+            isinstance(existing_global_state, dict)
+            and existing_global_state.get("has_imported_transactions", False)
+        ),
+        "budget_created": bool(
+            isinstance(existing_global_state, dict) and existing_global_state.get("budget_created", False)
+        ),
+    }
+
+
+def _extract_bank_account_names_from_message(message: str) -> list[str]:
+    stripped_message = message.strip()
+    has_separator = bool(re.search(r"\s+et\s+|&|,", stripped_message, flags=re.IGNORECASE))
+    if not has_separator:
+        return []
+
+    normalized = re.sub(r"\s+(et|&)\s+", ",", stripped_message, flags=re.IGNORECASE)
+    raw_parts = normalized.split(",")
+    cleaned_names: list[str] = []
+    seen_lower: set[str] = set()
+    for part in raw_parts:
+        cleaned = re.sub(r"\s+", " ", part).strip()
+        if not cleaned:
+            continue
+        lowered = cleaned.lower()
+        if lowered in seen_lower:
+            continue
+        seen_lower.add(lowered)
+        cleaned_names.append(cleaned)
+    return cleaned_names
 
 
 class ChatRequest(BaseModel):
@@ -464,7 +514,7 @@ def agent_chat(
                 profile_fields = {}
 
             if _is_profile_complete(profile_fields):
-                promoted_global_state = _build_free_chat_global_state(global_state)
+                promoted_global_state = _build_bank_accounts_onboarding_global_state(global_state)
                 global_state = promoted_global_state
                 state_dict = dict(state_dict) if isinstance(state_dict, dict) else {}
                 state_dict["global_state"] = promoted_global_state
@@ -510,7 +560,7 @@ def agent_chat(
                     )
                     updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
                     if _is_profile_complete(refreshed_profile_fields):
-                        promoted_global_state = _build_free_chat_global_state(global_state)
+                        promoted_global_state = _build_bank_accounts_onboarding_global_state(global_state)
                         state_dict["global_state"] = promoted_global_state
                         updated_chat_state["state"] = state_dict
                         profiles_repository.update_chat_state(
@@ -521,7 +571,7 @@ def agent_chat(
                         return ChatResponse(
                             reply=(
                                 "Parfait, ton profil minimal est complet ✅ "
-                                "On passe en mode discussion libre."
+                                "Maintenant, indique-moi tes banques / comptes (ex: 'UBS, Revolut')."
                             ),
                             tool_result=None,
                             plan=None,
@@ -567,6 +617,82 @@ def agent_chat(
                     tool_result=None,
                     plan=None,
                 )
+
+        if (
+            _is_valid_global_state(global_state)
+            and global_state.get("mode") == "onboarding"
+            and global_state.get("onboarding_step") == "bank_accounts"
+            and hasattr(profiles_repository, "list_bank_accounts")
+            and hasattr(profiles_repository, "ensure_bank_accounts")
+        ):
+            state_dict = dict(state_dict) if isinstance(state_dict, dict) else {}
+            existing_accounts = profiles_repository.list_bank_accounts(profile_id=profile_id)
+            updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+
+            if existing_accounts:
+                updated_global_state = {
+                    **_build_bank_accounts_onboarding_global_state(global_state),
+                    "has_bank_accounts": True,
+                    "onboarding_step": "import",
+                }
+                state_dict["global_state"] = updated_global_state
+                updated_chat_state["state"] = state_dict
+                profiles_repository.update_chat_state(
+                    profile_id=profile_id,
+                    user_id=auth_user_id,
+                    chat_state=updated_chat_state,
+                )
+                return ChatResponse(
+                    reply=(
+                        "Parfait — j’ai déjà tes comptes. On passe à l’import du relevé. "
+                        "De quel compte veux-tu importer ?"
+                    ),
+                    tool_result=None,
+                    plan=None,
+                )
+
+            extracted_account_names = _extract_bank_account_names_from_message(payload.message)
+            if not extracted_account_names:
+                if should_persist_global_state:
+                    updated_chat_state["state"] = state_dict
+                    profiles_repository.update_chat_state(
+                        profile_id=profile_id,
+                        user_id=auth_user_id,
+                        chat_state=updated_chat_state,
+                    )
+                return ChatResponse(
+                    reply="Indique-moi tes banques/comptes (ex: 'UBS, Revolut').",
+                    tool_result=None,
+                    plan=None,
+                )
+
+            ensure_result = profiles_repository.ensure_bank_accounts(
+                profile_id=profile_id,
+                names=extracted_account_names,
+            )
+            created_names = ensure_result.get("created") if isinstance(ensure_result, dict) else []
+            created_display = ", ".join(created_names or extracted_account_names)
+
+            updated_global_state = {
+                **_build_bank_accounts_onboarding_global_state(global_state),
+                "has_bank_accounts": True,
+                "onboarding_step": "import",
+            }
+            state_dict["global_state"] = updated_global_state
+            updated_chat_state["state"] = state_dict
+            profiles_repository.update_chat_state(
+                profile_id=profile_id,
+                user_id=auth_user_id,
+                chat_state=updated_chat_state,
+            )
+            return ChatResponse(
+                reply=(
+                    f"C’est noté ✅ Comptes créés: {created_display}. "
+                    "On passe à l’import: quel compte veux-tu importer ?"
+                ),
+                tool_result=None,
+                plan=None,
+            )
 
         memory_for_loop = state_dict if isinstance(state_dict, dict) else None
 
