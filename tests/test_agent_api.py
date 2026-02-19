@@ -330,7 +330,7 @@ def test_agent_chat_delete_confirmation_workflow(monkeypatch) -> None:
     )
     assert second.status_code == 200
     assert second.json()["plan"]["tool_name"] == "finance_categories_delete"
-    assert "active_task" not in repo.chat_state
+    assert repo.chat_state.get("active_task") is None
 
 
 

@@ -280,7 +280,7 @@ def agent_chat(
             updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
             if agent_reply.should_update_active_task:
                 if agent_reply.active_task is None:
-                    updated_chat_state.pop("active_task", None)
+                    updated_chat_state["active_task"] = None
                 else:
                     updated_chat_state["active_task"] = jsonable_encoder(agent_reply.active_task)
 
