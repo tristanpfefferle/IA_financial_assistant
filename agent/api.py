@@ -610,10 +610,17 @@ def agent_chat(
                                 profile_id=profile_id,
                                 set_dict={"first_name": first_name, "last_name": last_name},
                             )
-                            profile_fields = profiles_repository.get_profile_fields(
-                                profile_id=profile_id,
-                                fields=list(_PROFILE_COMPLETION_FIELDS),
-                            )
+                            try:
+                                profile_fields = profiles_repository.get_profile_fields(
+                                    profile_id=profile_id,
+                                    fields=list(_PROFILE_COMPLETION_FIELDS),
+                                )
+                            except Exception:
+                                logger.exception(
+                                    "onboarding_profile_refetch_after_name_update_failed profile_id=%s",
+                                    profile_id,
+                                )
+                                profile_fields = {}
 
                         extracted_birth_date = _extract_birth_date_from_message(message)
                         if extracted_birth_date is not None:
@@ -621,10 +628,17 @@ def agent_chat(
                                 profile_id=profile_id,
                                 set_dict={"birth_date": extracted_birth_date},
                             )
-                            profile_fields = profiles_repository.get_profile_fields(
-                                profile_id=profile_id,
-                                fields=list(_PROFILE_COMPLETION_FIELDS),
-                            )
+                            try:
+                                profile_fields = profiles_repository.get_profile_fields(
+                                    profile_id=profile_id,
+                                    fields=list(_PROFILE_COMPLETION_FIELDS),
+                                )
+                            except Exception:
+                                logger.exception(
+                                    "onboarding_profile_refetch_after_birth_date_update_failed profile_id=%s",
+                                    profile_id,
+                                )
+                                profile_fields = {}
 
                     if _is_profile_complete(profile_fields):
                         updated_global_state = _build_onboarding_global_state(
@@ -1020,7 +1034,10 @@ def agent_chat(
         reminder_state = global_state if _is_valid_global_state(global_state) else None
         has_valid_memory_update_global_state = False
         if isinstance(memory_update, dict):
-            memory_update_global_state = memory_update.get("state", {}).get("global_state")
+            memory_update_global_state = None
+            state_part = memory_update.get("state")
+            if isinstance(state_part, dict):
+                memory_update_global_state = state_part.get("global_state")
             if _is_valid_global_state(memory_update_global_state):
                 reminder_state = memory_update_global_state
                 has_valid_memory_update_global_state = True
