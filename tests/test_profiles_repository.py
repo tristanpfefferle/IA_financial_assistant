@@ -427,3 +427,30 @@ def test_attach_merchant_to_releve_patches_releve_merchant_id() -> None:
             "use_anon_key": False,
         }
     ]
+
+
+def test_append_merchant_alias_patches_when_aliases_is_none() -> None:
+    merchant_id = UUID("dddddddd-dddd-dddd-dddd-dddddddddddd")
+    client = _ClientStub(responses=[[{"aliases": None}]], patch_responses=[[]])
+    repository = SupabaseProfilesRepository(client=client)
+
+    repository.append_merchant_alias(merchant_id=merchant_id, alias="  COOP-4815 MONTHEY  ")
+
+    assert client.patch_calls == [
+        {
+            "table": "merchants",
+            "query": {"id": f"eq.{merchant_id}"},
+            "payload": {"aliases": ["COOP-4815 MONTHEY"]},
+            "use_anon_key": False,
+        }
+    ]
+
+
+def test_append_merchant_alias_skips_patch_when_alias_already_exists() -> None:
+    merchant_id = UUID("dddddddd-dddd-dddd-dddd-dddddddddddd")
+    client = _ClientStub(responses=[[{"aliases": ["COOP-4815 MONTHEY"]}]])
+    repository = SupabaseProfilesRepository(client=client)
+
+    repository.append_merchant_alias(merchant_id=merchant_id, alias="COOP-4815 MONTHEY")
+
+    assert client.patch_calls == []

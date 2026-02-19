@@ -61,6 +61,9 @@ class ProfilesRepository(Protocol):
     def attach_merchant_to_releve(self, *, releve_id: UUID, merchant_id: UUID) -> None:
         """Attach one merchant id to one bank statement row."""
 
+    def append_merchant_alias(self, *, merchant_id: UUID, alias: str) -> None:
+        """Append one observed raw alias to a merchant when missing."""
+
     def hard_reset_profile(self, *, profile_id: UUID, user_id: UUID) -> None:
         """Purge profile-scoped data and reset onboarding/profile fields."""
 
@@ -460,5 +463,28 @@ class SupabaseProfilesRepository:
             table="releves_bancaires",
             query={"id": f"eq.{releve_id}"},
             payload={"merchant_id": str(merchant_id)},
+            use_anon_key=False,
+        )
+
+    def append_merchant_alias(self, *, merchant_id: UUID, alias: str) -> None:
+        cleaned_alias = " ".join(alias.split())
+        if not cleaned_alias:
+            return
+
+        rows, _ = self._client.get_rows(
+            table="merchants",
+            query={"select": "aliases", "id": f"eq.{merchant_id}", "limit": 1},
+            with_count=False,
+            use_anon_key=False,
+        )
+        existing_aliases_raw = rows[0].get("aliases") if rows else []
+        existing_aliases = existing_aliases_raw if isinstance(existing_aliases_raw, list) else []
+        if cleaned_alias in existing_aliases:
+            return
+
+        self._client.patch_rows(
+            table="merchants",
+            query={"id": f"eq.{merchant_id}"},
+            payload={"aliases": [*existing_aliases, cleaned_alias]},
             use_anon_key=False,
         )
