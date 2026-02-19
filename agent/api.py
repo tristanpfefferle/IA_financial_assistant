@@ -1129,6 +1129,36 @@ def agent_chat(
                 existing_accounts = profiles_repository.list_bank_accounts(profile_id=profile_id)
 
                 if substep == "bank_accounts_collect":
+                    if _is_no(payload.message):
+                        if existing_accounts:
+                            accounts_display = _format_accounts_for_reply(existing_accounts)
+                            updated_global_state = _build_bank_accounts_onboarding_global_state(
+                                global_state,
+                                onboarding_substep="bank_accounts_confirm",
+                            )
+                            updated_global_state["has_bank_accounts"] = True
+                            state_dict["global_state"] = updated_global_state
+                            updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                            updated_chat_state["state"] = state_dict
+                            profiles_repository.update_chat_state(
+                                profile_id=profile_id,
+                                user_id=auth_user_id,
+                                chat_state=updated_chat_state,
+                            )
+                            return ChatResponse(
+                                reply=(
+                                    f"Comptes actuels: {accounts_display}. "
+                                    "Voulez-vous créer encore d'autres comptes bancaires ? (OUI/NON)"
+                                ),
+                                tool_result=None,
+                                plan=None,
+                            )
+                        return ChatResponse(
+                            reply="Il faut au moins une banque pour continuer l’onboarding.",
+                            tool_result=None,
+                            plan=None,
+                        )
+
                     if existing_accounts and not bool(global_state.get("bank_accounts_confirmed", False)):
                         accounts_display = _format_accounts_for_reply(existing_accounts)
                         updated_global_state = _build_bank_accounts_onboarding_global_state(

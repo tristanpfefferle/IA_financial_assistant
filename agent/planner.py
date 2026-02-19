@@ -101,6 +101,7 @@ _FRENCH_MONTH_ALIASES = {
     "déc.": 12,
 }
 _EXPENSE_KEYWORDS = {"depense", "dépense", "depenses", "dépenses"}
+_EXPENSE_CATEGORY_ALIASES = {"alimentation": "Alimentation"}
 _MONTH_YEAR_LINK_TOKENS = {"en", "et", "puis", "ainsi", "que"}
 
 _AGGREGATE_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
@@ -308,6 +309,44 @@ def _extract_merchant_name(message: str) -> str | None:
     merchant_without_temporal = re.sub(temporal_pattern, "", merchant_value, flags=re.IGNORECASE)
     merchant_name = merchant_without_temporal.strip(" .,!?:;\"'")
     return merchant_name or None
+
+
+def _extract_expense_category(message: str) -> str | None:
+    """Extract expense category from patterns like `dépenses en alimentation ...`."""
+
+    match = re.search(r"\bd[ée]penses?\s+en\s+(?P<category>.+)$", message, flags=re.IGNORECASE)
+    if match is None:
+        return None
+
+    raw_category = match.group("category").strip(" .,!?:;\"'")
+    if not raw_category:
+        return None
+
+    if re.match(r"^(?:chez|au|aux|a|à)\b", raw_category, flags=re.IGNORECASE):
+        return None
+
+    first_token_match = re.match(r"([\wéèêëàâäùûüôöîïç\.]+)", raw_category.casefold())
+    first_token = first_token_match.group(1).strip(".") if first_token_match is not None else ""
+    if first_token in _FRENCH_MONTHS or first_token in {alias.strip(".") for alias in _FRENCH_MONTH_ALIASES}:
+        return None
+
+    month_tokens = sorted(
+        {**_FRENCH_MONTHS, **{alias.strip('.'): value for alias, value in _FRENCH_MONTH_ALIASES.items()}},
+        key=len,
+        reverse=True,
+    )
+    month_pattern = "|".join(re.escape(token) for token in month_tokens)
+    raw_category = re.sub(
+        rf"\s+(?:en\s+)?(?:{month_pattern})(?:\s+(?:19\d{{2}}|20\d{{2}}|21\d{{2}}))?.*$",
+        "",
+        raw_category,
+        flags=re.IGNORECASE,
+    ).strip(" .,!?:;\"'")
+    if not raw_category:
+        return None
+
+    normalized = raw_category.casefold()
+    return _EXPENSE_CATEGORY_ALIASES.get(normalized, raw_category)
 
 
 def _resolve_two_month_period(
@@ -880,6 +919,7 @@ def deterministic_plan_from_message(message: str) -> Plan:
 
     if any(keyword in lower_message for keyword in _EXPENSE_KEYWORDS):
         merchant_name = _extract_merchant_name(normalized_message)
+        category_name = _extract_expense_category(normalized_message)
         today = _today()
 
         month_year_pairs = _extract_month_year_pairs(normalized_message)
@@ -895,6 +935,8 @@ def deterministic_plan_from_message(message: str) -> Plan:
             }
             if merchant_name is not None:
                 payload["merchant"] = merchant_name
+            if category_name is not None:
+                payload["categorie"] = category_name
             return ToolCallPlan(
                 tool_name="finance_releves_sum",
                 payload=payload,
@@ -913,6 +955,8 @@ def deterministic_plan_from_message(message: str) -> Plan:
             }
             if merchant_name is not None:
                 payload["merchant"] = merchant_name
+            if category_name is not None:
+                payload["categorie"] = category_name
             return ToolCallPlan(
                 tool_name="finance_releves_sum",
                 payload=payload,
@@ -935,19 +979,23 @@ def deterministic_plan_from_message(message: str) -> Plan:
             }
             if merchant_name is not None:
                 payload["merchant"] = merchant_name
+            if category_name is not None:
+                payload["categorie"] = category_name
             return ToolCallPlan(
                 tool_name="finance_releves_sum",
                 payload=payload,
                 user_reply="OK, je calcule le total de vos dépenses.",
             )
 
-        if merchant_name is not None:
+        if merchant_name is not None or category_name is not None:
+            payload: dict[str, object] = {"direction": "DEBIT_ONLY"}
+            if merchant_name is not None:
+                payload["merchant"] = merchant_name
+            if category_name is not None:
+                payload["categorie"] = category_name
             return ToolCallPlan(
                 tool_name="finance_releves_sum",
-                payload={
-                    "direction": "DEBIT_ONLY",
-                    "merchant": merchant_name,
-                },
+                payload=payload,
                 user_reply="OK, je calcule le total de vos dépenses.",
             )
 
