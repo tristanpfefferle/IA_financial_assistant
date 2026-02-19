@@ -308,6 +308,79 @@ def _normalize_text(value: str) -> str:
     return " ".join(normalized.split())
 
 
+_MERCHANT_NOISE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"paiement.*", flags=re.IGNORECASE),
+    re.compile(r"debit.*", flags=re.IGNORECASE),
+    re.compile(r"cr[eé]dit.*", flags=re.IGNORECASE),
+    re.compile(r"no de transaction.*", flags=re.IGNORECASE),
+    re.compile(r"transaction.*", flags=re.IGNORECASE),
+    re.compile(r"motif.*", flags=re.IGNORECASE),
+    re.compile(r"twint.*", flags=re.IGNORECASE),
+    re.compile(r"ubs.*", flags=re.IGNORECASE),
+)
+_MERCHANT_LONG_NUMBER_TOKEN = re.compile(r"\b\S*\d{6,}\S*\b")
+_MERCHANT_GENERIC_TOKENS = {
+    "paiement",
+    "debit",
+    "credit",
+    "carte",
+    "twint",
+    "motif",
+    "transaction",
+    "ubst",
+    "ubs",
+    "mobile",
+    "sa",
+    "ag",
+    "sarl",
+    "gmbh",
+    "ltd",
+    "inc",
+    "co",
+}
+
+
+def _canonicalize_merchant(candidate: str) -> tuple[str, str, str] | None:
+    candidate_raw = candidate.strip()
+    if not candidate_raw:
+        return None
+
+    alias_raw = " ".join(candidate_raw.split())
+    candidate_work = alias_raw.split(";", maxsplit=1)[0]
+    candidate_work = candidate_work.split(",", maxsplit=1)[0]
+    candidate_work = _MERCHANT_LONG_NUMBER_TOKEN.sub(" ", candidate_work)
+    for pattern in _MERCHANT_NOISE_PATTERNS:
+        candidate_work = pattern.sub("", candidate_work)
+    candidate_work = candidate_work.strip(" .,:;-_/\\")
+    candidate_work = " ".join(candidate_work.split())
+
+    base_norm = _normalize_text(candidate_work)
+    if len(base_norm) < 2:
+        return None
+
+    if "coop" in base_norm or base_norm.startswith("coop-"):
+        return ("Coop", "coop", alias_raw)
+    if "migros" in base_norm:
+        return ("Migros", "migros", alias_raw)
+    if "sbb" in base_norm:
+        return ("SBB", "sbb", alias_raw)
+    if "tamoil" in base_norm:
+        return ("Tamoil", "tamoil", alias_raw)
+    if "decathlon" in base_norm:
+        return ("Decathlon", "decathlon", alias_raw)
+    if "sumup" in base_norm:
+        return ("SumUp", "sumup", alias_raw)
+    if "swisscaution" in base_norm:
+        return ("SwissCaution", "swisscaution", alias_raw)
+
+    for token in base_norm.split():
+        if token in _MERCHANT_GENERIC_TOKENS or len(token) < 2:
+            continue
+        return (token[:1].upper() + token[1:], token, alias_raw)
+
+    return (alias_raw[:64], base_norm[:64], alias_raw)
+
+
 def _is_yes(message: str) -> bool:
     return _normalize_text(message) in _YES_VALUES
 
@@ -342,20 +415,30 @@ def _bootstrap_merchants_from_imported_releves(
         payee = str(row.get("payee") or "").strip()
         libelle = str(row.get("libelle") or "").strip()
         candidate = payee or libelle
-        name_norm = _normalize_text(candidate)
+        canonical = _canonicalize_merchant(candidate)
         releve_id_raw = row.get("id")
 
-        if not candidate or len(name_norm) < 2 or not releve_id_raw:
+        if canonical is None or not releve_id_raw:
             skipped_count += 1
             continue
+
+        display_name, name_norm, alias_raw = canonical
 
         try:
             releve_id = UUID(str(releve_id_raw))
             merchant_id = profiles_repository.upsert_merchant_by_name_norm(
                 profile_id=profile_id,
-                name=candidate,
+                name=display_name,
                 name_norm=name_norm,
             )
+            try:
+                profiles_repository.append_merchant_alias(merchant_id=merchant_id, alias=alias_raw)
+            except Exception:
+                logger.exception(
+                    "import_releves_merchant_alias_append_failed profile_id=%s merchant_id=%s",
+                    profile_id,
+                    merchant_id,
+                )
             profiles_repository.attach_merchant_to_releve(releve_id=releve_id, merchant_id=merchant_id)
             linked_count += 1
         except Exception:

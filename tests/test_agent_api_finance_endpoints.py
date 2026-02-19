@@ -292,6 +292,7 @@ def test_import_releves_links_merchants_from_imported_transactions(monkeypatch) 
         def __init__(self) -> None:
             self.upsert_calls: list[tuple[str, str]] = []
             self.attach_calls: list[tuple[UUID, UUID]] = []
+            self.alias_calls: list[tuple[UUID, str]] = []
 
         def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None):
             assert auth_user_id == AUTH_USER_ID
@@ -311,8 +312,20 @@ def test_import_releves_links_merchants_from_imported_transactions(monkeypatch) 
             assert profile_id == PROFILE_ID
             assert limit == 500
             return [
-                {"id": str(UUID("11111111-1111-1111-1111-111111111111")), "payee": "Migros", "libelle": "", "created_at": None, "date": "2025-01-01"},
-                {"id": str(UUID("22222222-2222-2222-2222-222222222222")), "payee": "", "libelle": "SBB", "created_at": None, "date": "2025-01-02"},
+                {
+                    "id": str(UUID("11111111-1111-1111-1111-111111111111")),
+                    "payee": "COOP-4815 MONTHEY; Paiement UBS TWINT Motif du paiement: ...",
+                    "libelle": "",
+                    "created_at": None,
+                    "date": "2025-01-01",
+                },
+                {
+                    "id": str(UUID("22222222-2222-2222-2222-222222222222")),
+                    "payee": "",
+                    "libelle": "SBB MOBILE; Paiement UBS TWINT ...",
+                    "created_at": None,
+                    "date": "2025-01-02",
+                },
             ]
 
         def upsert_merchant_by_name_norm(self, *, profile_id: UUID, name: str, name_norm: str, scope: str = "personal"):
@@ -322,6 +335,9 @@ def test_import_releves_links_merchants_from_imported_transactions(monkeypatch) 
 
         def attach_merchant_to_releve(self, *, releve_id: UUID, merchant_id: UUID) -> None:
             self.attach_calls.append((releve_id, merchant_id))
+
+        def append_merchant_alias(self, *, merchant_id: UUID, alias: str) -> None:
+            self.alias_calls.append((merchant_id, alias))
 
     repo = _Repo()
     monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
@@ -343,5 +359,12 @@ def test_import_releves_links_merchants_from_imported_transactions(monkeypatch) 
 
     assert response.status_code == 200
     assert len(repo.upsert_calls) == 2
-    assert repo.upsert_calls == [("Migros", "migros"), ("SBB", "sbb")]
+    assert repo.upsert_calls == [("Coop", "coop"), ("SBB", "sbb")]
+    assert repo.alias_calls == [
+        (
+            UUID("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+            "COOP-4815 MONTHEY; Paiement UBS TWINT Motif du paiement: ...",
+        ),
+        (UUID("cccccccc-cccc-cccc-cccc-cccccccccccc"), "SBB MOBILE; Paiement UBS TWINT ..."),
+    ]
     assert len(repo.attach_calls) == 2
