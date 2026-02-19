@@ -110,7 +110,7 @@ class _Repo:
             existing_keys.add(system_key)
             existing_name_norms.add(name_norm)
             created_count += 1
-        return {"created_count": created_count, "total_count": len(existing_keys)}
+        return {"created_count": created_count, "system_total_count": len(existing_keys)}
 
     def list_merchants_without_category(self, *, profile_id: UUID) -> list[dict[str, object]]:
         assert profile_id == PROFILE_ID
@@ -353,6 +353,7 @@ def test_categories_bootstrap_creates_categories_classifies_merchants_and_skips_
     repo.merchants = [
         {"id": UUID("11111111-1111-1111-1111-111111111111"), "name_norm": "migros geneve", "name": "Migros Genève", "category": None},
         {"id": UUID("22222222-2222-2222-2222-222222222222"), "name_norm": "inconnu sa", "name": "Inconnu SA", "category": ""},
+        {"id": "not-a-uuid", "name_norm": "should skip", "name": "Should Skip", "category": ""},
     ]
     loop = _LoopSpy()
     monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
@@ -363,10 +364,13 @@ def test_categories_bootstrap_creates_categories_classifies_merchants_and_skips_
     assert response.status_code == 200
     payload = response.json()
     assert "Catégories créées" in payload["reply"]
+    assert "système total" in payload["reply"]
     assert "Marchands classés" in payload["reply"]
     assert len(repo.profile_categories) == 10
     assert repo.merchants[0]["category"] == "Alimentation"
     assert repo.merchants[1]["category"] == "Autres"
+    assert repo.merchants[2]["category"] == ""
+    assert "Marchands classés: 2" in payload["reply"]
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
     assert persisted["onboarding_step"] == "categories"
     assert persisted["onboarding_substep"] == "categories_review"

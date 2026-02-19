@@ -1221,17 +1221,15 @@ def agent_chat(
             if mode == "onboarding" and onboarding_step == "categories":
                 substep = global_state.get("onboarding_substep")
                 if substep in {"categories_intro", "categories_bootstrap"}:
-                    created_count = 0
-                    existing_categories = profiles_repository.list_profile_categories(profile_id=profile_id)
-                    if not existing_categories:
-                        ensure_result = profiles_repository.ensure_system_categories(
-                            profile_id=profile_id,
-                            categories=[
-                                {"system_key": system_key, "name": category_name}
-                                for system_key, category_name in _SYSTEM_CATEGORIES
-                            ],
-                        )
-                        created_count = int(ensure_result.get("created_count", 0))
+                    ensure_result = profiles_repository.ensure_system_categories(
+                        profile_id=profile_id,
+                        categories=[
+                            {"system_key": system_key, "name": category_name}
+                            for system_key, category_name in _SYSTEM_CATEGORIES
+                        ],
+                    )
+                    created_count = int(ensure_result.get("created_count", 0))
+                    system_total = int(ensure_result.get("system_total_count", 0))
 
                     merchants_without_category = profiles_repository.list_merchants_without_category(profile_id=profile_id)
                     classified_count = 0
@@ -1239,10 +1237,14 @@ def agent_chat(
                         merchant_id = merchant.get("id")
                         if merchant_id is None:
                             continue
+                        try:
+                            merchant_uuid = merchant_id if isinstance(merchant_id, UUID) else UUID(str(merchant_id))
+                        except ValueError:
+                            continue
                         merchant_name = str(merchant.get("name_norm") or merchant.get("name") or "")
                         category_name = _pick_category_for_merchant_name(merchant_name)
                         profiles_repository.update_merchant_category(
-                            merchant_id=UUID(str(merchant_id)),
+                            merchant_id=merchant_uuid,
                             category_name=category_name,
                         )
                         classified_count += 1
@@ -1263,7 +1265,8 @@ def agent_chat(
                     )
                     return ChatResponse(
                         reply=(
-                            f"✅ Catégories créées: {created_count}. Marchands classés: {classified_count}. "
+                            f"✅ Catégories créées: {created_count} (système total: {system_total}). "
+                            f"Marchands classés: {classified_count}. "
                             "Veux-tu continuer vers la création de budget ? (OUI/NON)"
                         ),
                         tool_result=None,
