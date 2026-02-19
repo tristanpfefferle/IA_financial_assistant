@@ -30,6 +30,11 @@ from shared.models import ToolError
 logger = logging.getLogger(__name__)
 
 
+_GLOBAL_STATE_MODES = {"onboarding", "guided_budget", "free_chat"}
+_GLOBAL_STATE_ONBOARDING_STEPS = {"profile", "import", "categories", "budget", None}
+_PROFILE_COMPLETION_FIELDS = ("first_name", "last_name", "birth_date")
+
+
 def _handler_accepts_debug_kwarg(handler: Any) -> bool:
     """Return True when handler supports a `debug` keyword argument."""
 
@@ -43,6 +48,63 @@ def _handler_accepts_debug_kwarg(handler: Any) -> bool:
         return True
 
     return any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values())
+
+
+def _handler_accepts_global_state_kwarg(handler: Any) -> bool:
+    """Return True when handler supports a `global_state` keyword argument."""
+
+    try:
+        signature = inspect.signature(handler)
+    except (TypeError, ValueError):
+        return False
+
+    parameters = signature.parameters
+    if "global_state" in parameters:
+        return True
+
+    return any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values())
+
+
+def _is_profile_field_completed(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    return True
+
+
+def _compute_bootstrap_global_state(profile_fields: dict[str, Any]) -> dict[str, Any]:
+    """Compute initial global state from profile completeness."""
+
+    is_profile_complete = all(
+        _is_profile_field_completed(profile_fields.get(field_name))
+        for field_name in _PROFILE_COMPLETION_FIELDS
+    )
+    if is_profile_complete:
+        return {
+            "mode": "free_chat",
+            "onboarding_step": None,
+            "has_imported_transactions": False,
+            "budget_created": False,
+        }
+    return {
+        "mode": "onboarding",
+        "onboarding_step": "profile",
+        "has_imported_transactions": False,
+        "budget_created": False,
+    }
+
+
+def _is_valid_global_state(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    mode = value.get("mode")
+    onboarding_step = value.get("onboarding_step")
+    if mode not in _GLOBAL_STATE_MODES:
+        return False
+    if onboarding_step not in _GLOBAL_STATE_ONBOARDING_STEPS:
+        return False
+    return True
 
 
 class ChatRequest(BaseModel):
@@ -247,12 +309,33 @@ def agent_chat(
 
         chat_state = profiles_repository.get_chat_state(profile_id=profile_id, user_id=auth_user_id)
         active_task = chat_state.get("active_task") if isinstance(chat_state, dict) else None
-        memory = chat_state.get("state") if isinstance(chat_state, dict) else None
+        state = chat_state.get("state") if isinstance(chat_state, dict) else None
+        state_dict = dict(state) if isinstance(state, dict) else None
+        existing_global_state = state_dict.get("global_state") if isinstance(state_dict, dict) else None
+        global_state = existing_global_state if _is_valid_global_state(existing_global_state) else None
+        should_persist_global_state = False
+
+        if global_state is None and hasattr(profiles_repository, "get_profile_fields"):
+            try:
+                profile_fields = profiles_repository.get_profile_fields(
+                    profile_id=profile_id,
+                    fields=list(_PROFILE_COMPLETION_FIELDS),
+                )
+            except Exception:
+                logger.exception("global_state_bootstrap_profile_lookup_failed profile_id=%s", profile_id)
+                profile_fields = {}
+            global_state = _compute_bootstrap_global_state(profile_fields)
+            state_dict = dict(state_dict) if isinstance(state_dict, dict) else {}
+            state_dict["global_state"] = global_state
+            should_persist_global_state = True
+
+        memory_for_loop = state_dict if isinstance(state_dict, dict) else None
+
         logger.info(
             "agent_chat_state_loaded active_task_present=%s memory_present=%s memory_keys=%s",
             isinstance(active_task, dict),
-            isinstance(memory, dict),
-            sorted(memory.keys()) if isinstance(memory, dict) else [],
+            isinstance(memory_for_loop, dict),
+            sorted(memory_for_loop.keys()) if isinstance(memory_for_loop, dict) else [],
         )
 
         debug_enabled = isinstance(x_debug, str) and x_debug.strip() == "1"
@@ -261,10 +344,12 @@ def agent_chat(
         handler_kwargs: dict[str, Any] = {
             "profile_id": profile_id,
             "active_task": active_task if isinstance(active_task, dict) else None,
-            "memory": memory if isinstance(memory, dict) else None,
+            "memory": memory_for_loop,
         }
         if _handler_accepts_debug_kwarg(handler):
             handler_kwargs["debug"] = debug_enabled
+        if _handler_accepts_global_state_kwarg(handler):
+            handler_kwargs["global_state"] = global_state
 
         agent_reply = handler(payload.message, **handler_kwargs)
 
@@ -274,6 +359,7 @@ def agent_chat(
         should_update_chat_state = (
             agent_reply.should_update_active_task
             or isinstance(memory_update, dict)
+            or should_persist_global_state
         )
 
         if should_update_chat_state:
@@ -284,22 +370,17 @@ def agent_chat(
                 else:
                     updated_chat_state["active_task"] = jsonable_encoder(agent_reply.active_task)
 
+            merged_state = dict(state_dict) if isinstance(state_dict, dict) else {}
             if isinstance(memory_update, dict):
-                existing_state = updated_chat_state.get("state")
-                merged_state = (
-                    dict(existing_state)
-                    if isinstance(existing_state, dict)
-                    else {}
-                )
                 for key, value in jsonable_encoder(memory_update).items():
                     if value is None:
                         merged_state.pop(key, None)
                     else:
                         merged_state[key] = value
-                if merged_state:
-                    updated_chat_state["state"] = merged_state
-                else:
-                    updated_chat_state.pop("state", None)
+            if merged_state:
+                updated_chat_state["state"] = merged_state
+            else:
+                updated_chat_state.pop("state", None)
 
             logger.info(
                 "agent_chat_state_updating has_memory_update=%s memory_update_keys=%s",
