@@ -195,8 +195,6 @@ export function ChatPage({ email }: ChatPageProps) {
       if (uiRequest) {
         return { messageId: chatMessage.id, uiRequest }
       }
-
-      return null
     }
 
     return null
@@ -247,6 +245,10 @@ export function ChatPage({ email }: ChatPageProps) {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    if (isImportRequired) {
+      return
+    }
+
     const trimmedMessage = message.trim()
     if (!trimmedMessage || isLoading) {
       return
