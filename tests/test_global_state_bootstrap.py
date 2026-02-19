@@ -741,8 +741,63 @@ def test_onboarding_profile_name_message_updates_first_and_last_name(monkeypatch
     assert repo.profile_update_calls == [{"first_name": "Tristan", "last_name": "Pfefferlé"}]
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
     assert persisted["onboarding_substep"] == "profile_collect"
+    assert "j’ai enregistré" in response.json()["reply"]
     assert "date de naissance" in response.json()["reply"]
     assert loop.called is False
+
+
+def test_onboarding_profile_name_message_acknowledges_and_asks_birth_date(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "onboarding",
+                    "onboarding_step": "profile",
+                    "onboarding_substep": "profile_collect",
+                }
+            }
+        },
+        profile_fields={"first_name": None, "last_name": None, "birth_date": None},
+    )
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
+
+    response = client.post("/agent/chat", json={"message": "Paul Gorok"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert {"first_name": "Paul", "last_name": "Gorok"} in repo.profile_update_calls
+    assert "j’ai enregistré" in response.json()["reply"]
+    assert "date de naissance" in response.json()["reply"]
+    assert "Pour démarrer, j’ai besoin" not in response.json()["reply"]
+
+
+def test_onboarding_profile_combined_name_and_birth_date_in_one_message_moves_to_confirm(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "onboarding",
+                    "onboarding_step": "profile",
+                    "onboarding_substep": "profile_collect",
+                }
+            }
+        },
+        profile_fields={"first_name": None, "last_name": None, "birth_date": None},
+    )
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
+
+    response = client.post("/agent/chat", json={"message": "Paul Gorok 10.01.1994"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert {"first_name": "Paul", "last_name": "Gorok"} in repo.profile_update_calls
+    assert {"birth_date": "1994-01-10"} in repo.profile_update_calls
+    persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
+    assert persisted["onboarding_substep"] == "profile_confirm"
+    assert "Résumé profil" in response.json()["reply"]
+    assert "Confirmez-vous" in response.json()["reply"]
 
 
 @pytest.mark.parametrize(
