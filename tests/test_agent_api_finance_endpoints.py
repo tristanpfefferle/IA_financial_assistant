@@ -147,6 +147,7 @@ def test_import_releves_updates_chat_state_after_success(monkeypatch) -> None:
     class _Repo:
         def __init__(self) -> None:
             self.last_chat_state = None
+            self.link_calls: list[tuple[UUID, UUID]] = []
 
         def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None):
             assert auth_user_id == AUTH_USER_ID
@@ -179,6 +180,19 @@ def test_import_releves_updates_chat_state_after_success(monkeypatch) -> None:
             assert profile_id == PROFILE_ID
             assert user_id == AUTH_USER_ID
             self.last_chat_state = chat_state
+
+        def list_releves_without_merchant(self, *, profile_id: UUID, limit: int = 500):
+            assert profile_id == PROFILE_ID
+            assert limit == 500
+            return []
+
+        def upsert_merchant_by_name_norm(self, *, profile_id: UUID, name: str, name_norm: str, scope: str = "personal"):
+            assert profile_id == PROFILE_ID
+            assert scope == "personal"
+            return UUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
+
+        def attach_merchant_to_releve(self, *, releve_id: UUID, merchant_id: UUID) -> None:
+            self.link_calls.append((releve_id, merchant_id))
 
     repo = _Repo()
     monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
@@ -232,6 +246,18 @@ def test_import_releves_keeps_success_when_chat_state_update_fails(monkeypatch) 
         def update_chat_state(self, *, profile_id: UUID, user_id: UUID, chat_state: dict):
             raise RuntimeError("boom")
 
+        def list_releves_without_merchant(self, *, profile_id: UUID, limit: int = 500):
+            assert profile_id == PROFILE_ID
+            assert limit == 500
+            return []
+
+        def upsert_merchant_by_name_norm(self, *, profile_id: UUID, name: str, name_norm: str, scope: str = "personal"):
+            assert profile_id == PROFILE_ID
+            return UUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
+
+        def attach_merchant_to_releve(self, *, releve_id: UUID, merchant_id: UUID) -> None:
+            return None
+
     monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: _Repo())
 
     class _Router:
@@ -253,3 +279,69 @@ def test_import_releves_keeps_success_when_chat_state_update_fails(monkeypatch) 
     warnings = response.json().get("warnings")
     assert isinstance(warnings, list)
     assert "chat_state_update_failed" in warnings
+
+
+def test_import_releves_links_merchants_from_imported_transactions(monkeypatch) -> None:
+    monkeypatch.setattr(
+        agent_api,
+        "get_user_from_bearer_token",
+        lambda _token: {"id": str(AUTH_USER_ID), "email": "user@example.com"},
+    )
+
+    class _Repo:
+        def __init__(self) -> None:
+            self.upsert_calls: list[tuple[str, str]] = []
+            self.attach_calls: list[tuple[UUID, UUID]] = []
+
+        def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None):
+            assert auth_user_id == AUTH_USER_ID
+            assert email == "user@example.com"
+            return PROFILE_ID
+
+        def get_chat_state(self, *, profile_id: UUID, user_id: UUID):
+            assert profile_id == PROFILE_ID
+            assert user_id == AUTH_USER_ID
+            return {}
+
+        def update_chat_state(self, *, profile_id: UUID, user_id: UUID, chat_state: dict):
+            assert profile_id == PROFILE_ID
+            assert user_id == AUTH_USER_ID
+
+        def list_releves_without_merchant(self, *, profile_id: UUID, limit: int = 500):
+            assert profile_id == PROFILE_ID
+            assert limit == 500
+            return [
+                {"id": str(UUID("11111111-1111-1111-1111-111111111111")), "payee": "Migros", "libelle": "", "created_at": None, "date": "2025-01-01"},
+                {"id": str(UUID("22222222-2222-2222-2222-222222222222")), "payee": "", "libelle": "SBB", "created_at": None, "date": "2025-01-02"},
+            ]
+
+        def upsert_merchant_by_name_norm(self, *, profile_id: UUID, name: str, name_norm: str, scope: str = "personal"):
+            assert profile_id == PROFILE_ID
+            self.upsert_calls.append((name, name_norm))
+            return UUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
+
+        def attach_merchant_to_releve(self, *, releve_id: UUID, merchant_id: UUID) -> None:
+            self.attach_calls.append((releve_id, merchant_id))
+
+    repo = _Repo()
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+
+    class _Router:
+        def call(self, tool_name: str, _payload: dict, *, profile_id: UUID | None = None):
+            assert profile_id == PROFILE_ID
+            if tool_name == "finance_releves_import_files":
+                return {"imported_count": 2}
+            return {"items": []}
+
+    monkeypatch.setattr(agent_api, "get_tool_router", lambda: _Router())
+
+    response = client.post(
+        "/finance/releves/import",
+        headers=_auth_headers(),
+        json={"files": [{"filename": "ubs.csv", "content_base64": "YQ=="}]},
+    )
+
+    assert response.status_code == 200
+    assert len(repo.upsert_calls) == 2
+    assert repo.upsert_calls == [("Migros", "migros"), ("SBB", "sbb")]
+    assert len(repo.attach_calls) == 2

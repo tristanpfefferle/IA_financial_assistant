@@ -324,6 +324,62 @@ def _pick_category_for_merchant_name(name: str) -> str:
     return _FALLBACK_MERCHANT_CATEGORY
 
 
+def _bootstrap_merchants_from_imported_releves(
+    *,
+    profiles_repository: SupabaseProfilesRepository,
+    profile_id: UUID,
+    limit: int = 500,
+) -> dict[str, int]:
+    """Best-effort merchant creation/linking from imported statements for one profile."""
+
+    rows = profiles_repository.list_releves_without_merchant(profile_id=profile_id, limit=limit)
+    processed_count = 0
+    linked_count = 0
+    skipped_count = 0
+
+    for row in rows:
+        processed_count += 1
+        payee = str(row.get("payee") or "").strip()
+        libelle = str(row.get("libelle") or "").strip()
+        candidate = payee or libelle
+        name_norm = _normalize_text(candidate)
+        releve_id_raw = row.get("id")
+
+        if not candidate or len(name_norm) < 2 or not releve_id_raw:
+            skipped_count += 1
+            continue
+
+        try:
+            releve_id = UUID(str(releve_id_raw))
+            merchant_id = profiles_repository.upsert_merchant_by_name_norm(
+                profile_id=profile_id,
+                name=candidate,
+                name_norm=name_norm,
+            )
+            profiles_repository.attach_merchant_to_releve(releve_id=releve_id, merchant_id=merchant_id)
+            linked_count += 1
+        except Exception:
+            skipped_count += 1
+            logger.exception(
+                "import_releves_merchant_link_failed profile_id=%s releve_id=%s",
+                profile_id,
+                releve_id_raw,
+            )
+
+    logger.info(
+        "import_releves_merchant_link_summary profile_id=%s processed=%s linked=%s skipped=%s",
+        profile_id,
+        processed_count,
+        linked_count,
+        skipped_count,
+    )
+    return {
+        "processed_count": processed_count,
+        "linked_count": linked_count,
+        "skipped_count": skipped_count,
+    }
+
+
 def _format_accounts_for_reply(accounts: list[dict[str, Any]]) -> str:
     names = [str(account.get("name", "")).strip() for account in accounts]
     filtered_names = [name for name in names if name]
@@ -1596,5 +1652,23 @@ def import_releves(payload: ImportRequestPayload, authorization: str | None = He
             warnings.append("chat_state_update_failed")
         else:
             response_payload["warnings"] = ["chat_state_update_failed"]
+
+    try:
+        profiles_repository = get_profiles_repository()
+        merchant_link_summary = _bootstrap_merchants_from_imported_releves(
+            profiles_repository=profiles_repository,
+            profile_id=profile_id,
+            limit=500,
+        )
+        response_payload["merchant_linked_count"] = merchant_link_summary["linked_count"]
+        response_payload["merchant_skipped_count"] = merchant_link_summary["skipped_count"]
+        response_payload["merchant_processed_count"] = merchant_link_summary["processed_count"]
+    except Exception:
+        logger.exception("import_releves_merchant_linking_failed profile_id=%s", profile_id)
+        warnings = response_payload.get("warnings")
+        if isinstance(warnings, list):
+            warnings.append("merchant_linking_failed")
+        else:
+            response_payload["warnings"] = ["merchant_linking_failed"]
 
     return jsonable_encoder(response_payload)
