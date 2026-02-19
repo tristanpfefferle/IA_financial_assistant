@@ -36,6 +36,14 @@ logger = logging.getLogger(__name__)
 
 _GLOBAL_STATE_MODES = {"onboarding", "guided_budget", "free_chat"}
 _GLOBAL_STATE_ONBOARDING_STEPS = {"profile", "bank_accounts", "import", "categories", "budget", None}
+_GLOBAL_STATE_ONBOARDING_SUBSTEPS = {
+    "profile_collect",
+    "profile_confirm",
+    "bank_accounts_collect",
+    "bank_accounts_confirm",
+    "import_select_account",
+    None,
+}
 _PROFILE_COMPLETION_FIELDS = ("first_name", "last_name", "birth_date")
 _ONBOARDING_NAME_PATTERN = re.compile(
     r"^\s*([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'\-]+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'\-]+)\s*$"
@@ -68,6 +76,8 @@ _FRENCH_MONTH_TO_NUMBER = {
     "dec": 12,
 }
 _BANK_ACCOUNTS_REQUEST_HINTS = ("liste", "catégor", "depens", "dépens", "recett", "transaction", "relev")
+_YES_VALUES = {"oui", "ouais", "yep", "yes", "y", "ok", "daccord", "confirm", "je confirme"}
+_NO_VALUES = {"non", "nope", "no", "n"}
 
 
 
@@ -119,7 +129,10 @@ def _compute_bootstrap_global_state(profile_fields: dict[str, Any]) -> dict[str,
     if is_profile_complete:
         return {
             "mode": "onboarding",
-            "onboarding_step": "bank_accounts",
+            "onboarding_step": "profile",
+            "onboarding_substep": "profile_confirm",
+            "profile_confirmed": False,
+            "bank_accounts_confirmed": False,
             "has_bank_accounts": False,
             "has_imported_transactions": False,
             "budget_created": False,
@@ -127,6 +140,9 @@ def _compute_bootstrap_global_state(profile_fields: dict[str, Any]) -> dict[str,
     return {
         "mode": "onboarding",
         "onboarding_step": "profile",
+        "onboarding_substep": "profile_collect",
+        "profile_confirmed": False,
+        "bank_accounts_confirmed": False,
         "has_bank_accounts": False,
         "has_imported_transactions": False,
         "budget_created": False,
@@ -142,9 +158,16 @@ def _is_valid_global_state(value: Any) -> bool:
         return False
     if onboarding_step not in _GLOBAL_STATE_ONBOARDING_STEPS:
         return False
+    onboarding_substep = value.get("onboarding_substep")
+    if onboarding_substep not in _GLOBAL_STATE_ONBOARDING_SUBSTEPS:
+        return False
     has_bank_accounts = value.get("has_bank_accounts")
     if has_bank_accounts is not None and not isinstance(has_bank_accounts, bool):
         return False
+    for flag_name in ("profile_confirmed", "bank_accounts_confirmed"):
+        flag_value = value.get(flag_name)
+        if flag_value is not None and not isinstance(flag_value, bool):
+            return False
     return True
 
 
@@ -155,6 +178,56 @@ def _is_profile_complete(profile_fields: dict[str, Any]) -> bool:
         _is_profile_field_completed(profile_fields.get(field_name))
         for field_name in _PROFILE_COMPLETION_FIELDS
     )
+
+
+def _normalize_text(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", value.strip().lower()).encode("ascii", "ignore").decode("ascii")
+    return " ".join(normalized.split())
+
+
+def _is_yes(message: str) -> bool:
+    return _normalize_text(message) in _YES_VALUES
+
+
+def _is_no(message: str) -> bool:
+    return _normalize_text(message) in _NO_VALUES
+
+
+def _format_accounts_for_reply(accounts: list[dict[str, Any]]) -> str:
+    names = [str(account.get("name", "")).strip() for account in accounts]
+    filtered_names = [name for name in names if name]
+    return ", ".join(filtered_names) if filtered_names else "aucun compte"
+
+
+def _match_bank_account_name(message: str, accounts: list[dict[str, Any]]) -> dict[str, Any] | None:
+    normalized_message = _normalize_text(message)
+    cleaned_message = normalized_message.replace("compte bancaire", "").replace("compte", "")
+    cleaned_message = " ".join(cleaned_message.split())
+
+    for account in accounts:
+        account_name = str(account.get("name", ""))
+        normalized_name = _normalize_text(account_name)
+        if cleaned_message == normalized_name or normalized_message == normalized_name:
+            return account
+    return None
+
+
+def _build_onboarding_reminder(global_state: dict[str, Any] | None) -> str | None:
+    if not isinstance(global_state, dict) or global_state.get("mode") != "onboarding":
+        return None
+
+    substep = global_state.get("onboarding_substep")
+    if substep == "profile_collect":
+        return "(Pour continuer l’onboarding : indique ton prénom, nom et date de naissance.)"
+    if substep == "profile_confirm":
+        return "(Pour continuer l’onboarding : réponds OUI/NON pour confirmer le profil.)"
+    if substep == "bank_accounts_collect":
+        return "(Pour continuer l’onboarding : indique les banques à ajouter.)"
+    if substep == "bank_accounts_confirm":
+        return "(Pour continuer l’onboarding : réponds OUI/NON à la question sur les comptes.)"
+    if substep == "import_select_account":
+        return "(Pour continuer : indique le compte à importer.)"
+    return None
 
 
 def _extract_name_from_message(message: str) -> tuple[str, str] | None:
@@ -206,10 +279,22 @@ def _extract_birth_date_from_message(message: str) -> str | None:
     return parsed.isoformat()
 
 
-def _build_onboarding_global_state(existing_global_state: dict[str, Any] | None) -> dict[str, Any]:
+def _build_onboarding_global_state(
+    existing_global_state: dict[str, Any] | None,
+    *,
+    onboarding_step: str = "profile",
+    onboarding_substep: str | None = "profile_collect",
+) -> dict[str, Any]:
     return {
         "mode": "onboarding",
-        "onboarding_step": "profile",
+        "onboarding_step": onboarding_step,
+        "onboarding_substep": onboarding_substep,
+        "profile_confirmed": bool(
+            isinstance(existing_global_state, dict) and existing_global_state.get("profile_confirmed", False)
+        ),
+        "bank_accounts_confirmed": bool(
+            isinstance(existing_global_state, dict) and existing_global_state.get("bank_accounts_confirmed", False)
+        ),
         "has_bank_accounts": bool(
             isinstance(existing_global_state, dict) and existing_global_state.get("has_bank_accounts", False)
         ),
@@ -227,6 +312,13 @@ def _build_free_chat_global_state(existing_global_state: dict[str, Any] | None) 
     return {
         "mode": "free_chat",
         "onboarding_step": None,
+        "onboarding_substep": None,
+        "profile_confirmed": bool(
+            isinstance(existing_global_state, dict) and existing_global_state.get("profile_confirmed", False)
+        ),
+        "bank_accounts_confirmed": bool(
+            isinstance(existing_global_state, dict) and existing_global_state.get("bank_accounts_confirmed", False)
+        ),
         "has_bank_accounts": bool(
             isinstance(existing_global_state, dict) and existing_global_state.get("has_bank_accounts", False)
         ),
@@ -240,21 +332,16 @@ def _build_free_chat_global_state(existing_global_state: dict[str, Any] | None) 
     }
 
 
-def _build_bank_accounts_onboarding_global_state(existing_global_state: dict[str, Any] | None) -> dict[str, Any]:
-    return {
-        "mode": "onboarding",
-        "onboarding_step": "bank_accounts",
-        "has_bank_accounts": bool(
-            isinstance(existing_global_state, dict) and existing_global_state.get("has_bank_accounts", False)
-        ),
-        "has_imported_transactions": bool(
-            isinstance(existing_global_state, dict)
-            and existing_global_state.get("has_imported_transactions", False)
-        ),
-        "budget_created": bool(
-            isinstance(existing_global_state, dict) and existing_global_state.get("budget_created", False)
-        ),
-    }
+def _build_bank_accounts_onboarding_global_state(
+    existing_global_state: dict[str, Any] | None,
+    *,
+    onboarding_substep: str = "bank_accounts_collect",
+) -> dict[str, Any]:
+    return _build_onboarding_global_state(
+        existing_global_state,
+        onboarding_step="bank_accounts",
+        onboarding_substep=onboarding_substep,
+    )
 
 
 
@@ -495,70 +582,54 @@ def agent_chat(
             state_dict["global_state"] = global_state
             should_persist_global_state = True
 
-        if (
-            _is_valid_global_state(global_state)
-            and global_state.get("mode") == "onboarding"
-            and global_state.get("onboarding_step") == "profile"
-            and hasattr(profiles_repository, "get_profile_fields")
-        ):
-            try:
+        if _is_valid_global_state(global_state):
+            state_dict = dict(state_dict) if isinstance(state_dict, dict) else {}
+
+            if global_state.get("mode") == "onboarding" and global_state.get("onboarding_step") == "profile" and hasattr(
+                profiles_repository, "get_profile_fields"
+            ):
                 profile_fields = profiles_repository.get_profile_fields(
                     profile_id=profile_id,
                     fields=list(_PROFILE_COMPLETION_FIELDS),
                 )
-            except Exception:
-                logger.exception("global_state_promotion_profile_lookup_failed profile_id=%s", profile_id)
-                profile_fields = {}
+                substep = global_state.get("onboarding_substep")
+                if substep is None:
+                    substep = "profile_confirm" if _is_profile_complete(profile_fields) else "profile_collect"
 
-            if _is_profile_complete(profile_fields):
-                promoted_global_state = _build_bank_accounts_onboarding_global_state(global_state)
-                global_state = promoted_global_state
-                state_dict = dict(state_dict) if isinstance(state_dict, dict) else {}
-                state_dict["global_state"] = promoted_global_state
-                should_persist_global_state = True
-            else:
-                message = payload.message.strip()
-                state_dict = dict(state_dict) if isinstance(state_dict, dict) else {}
+                if substep == "profile_collect":
+                    message = payload.message.strip()
+                    if hasattr(profiles_repository, "update_profile_fields"):
+                        extracted_name = _extract_name_from_message(message)
+                        if extracted_name is not None:
+                            first_name, last_name = extracted_name
+                            profiles_repository.update_profile_fields(
+                                profile_id=profile_id,
+                                set_dict={"first_name": first_name, "last_name": last_name},
+                            )
+                            profile_fields = profiles_repository.get_profile_fields(
+                                profile_id=profile_id,
+                                fields=list(_PROFILE_COMPLETION_FIELDS),
+                            )
 
-                extracted_name = _extract_name_from_message(message)
-                if extracted_name is not None and hasattr(profiles_repository, "update_profile_fields"):
-                    first_name, last_name = extracted_name
-                    profiles_repository.update_profile_fields(
-                        profile_id=profile_id,
-                        set_dict={"first_name": first_name, "last_name": last_name},
-                    )
-                    updated_global_state = _build_onboarding_global_state(global_state)
-                    state_dict["global_state"] = updated_global_state
-                    updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
-                    updated_chat_state["state"] = state_dict
-                    profiles_repository.update_chat_state(
-                        profile_id=profile_id,
-                        user_id=auth_user_id,
-                        chat_state=updated_chat_state,
-                    )
-                    return ChatResponse(
-                        reply=(
-                            f"Merci {first_name} ! Il me manque ta date de naissance (YYYY-MM-DD) "
-                            "— tu peux aussi la renseigner dans l’onglet Profil."
-                        ),
-                        tool_result=None,
-                        plan=None,
-                    )
+                        extracted_birth_date = _extract_birth_date_from_message(message)
+                        if extracted_birth_date is not None:
+                            profiles_repository.update_profile_fields(
+                                profile_id=profile_id,
+                                set_dict={"birth_date": extracted_birth_date},
+                            )
+                            profile_fields = profiles_repository.get_profile_fields(
+                                profile_id=profile_id,
+                                fields=list(_PROFILE_COMPLETION_FIELDS),
+                            )
 
-                extracted_birth_date = _extract_birth_date_from_message(message)
-                if extracted_birth_date is not None and hasattr(profiles_repository, "update_profile_fields"):
-                    profiles_repository.update_profile_fields(
-                        profile_id=profile_id,
-                        set_dict={"birth_date": extracted_birth_date},
-                    )
-                    refreshed_profile_fields = profiles_repository.get_profile_fields(
-                        profile_id=profile_id,
-                        fields=list(_PROFILE_COMPLETION_FIELDS),
-                    )
-                    updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
-                    if _is_profile_complete(refreshed_profile_fields):
-                        promoted_global_state = _build_bank_accounts_onboarding_global_state(global_state)
-                        state_dict["global_state"] = promoted_global_state
+                    if _is_profile_complete(profile_fields):
+                        updated_global_state = _build_onboarding_global_state(
+                            global_state,
+                            onboarding_step="profile",
+                            onboarding_substep="profile_confirm",
+                        )
+                        state_dict["global_state"] = updated_global_state
+                        updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
                         updated_chat_state["state"] = state_dict
                         profiles_repository.update_chat_state(
                             profile_id=profile_id,
@@ -567,70 +638,110 @@ def agent_chat(
                         )
                         return ChatResponse(
                             reply=(
-                                "Parfait, ton profil minimal est complet ✅ "
-                                "Maintenant, indique-moi tes banques / comptes (ex: 'UBS, Revolut')."
+                                "Merci. Résumé profil: "
+                                f"{profile_fields.get('first_name')} {profile_fields.get('last_name')}, "
+                                f"date de naissance {profile_fields.get('birth_date')}. "
+                                "Confirmez-vous que ces informations sont correctes ? (OUI/NON)"
                             ),
                             tool_result=None,
                             plan=None,
                         )
 
-                    missing_fields = [
-                        field_name
-                        for field_name in _PROFILE_COMPLETION_FIELDS
-                        if not _is_profile_field_completed(refreshed_profile_fields.get(field_name))
-                    ]
-                    updated_global_state = _build_onboarding_global_state(global_state)
+                    updated_global_state = _build_onboarding_global_state(
+                        global_state,
+                        onboarding_step="profile",
+                        onboarding_substep="profile_collect",
+                    )
                     state_dict["global_state"] = updated_global_state
+                    updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
                     updated_chat_state["state"] = state_dict
                     profiles_repository.update_chat_state(
                         profile_id=profile_id,
                         user_id=auth_user_id,
                         chat_state=updated_chat_state,
                     )
-                    if missing_fields:
+                    return ChatResponse(
+                        reply=(
+                            "Pour démarrer, j’ai besoin de ton prénom, nom et date de naissance. "
+                            "Tu peux écrire 'Prénom Nom' puis ta date de naissance (YYYY-MM-DD)."
+                        ),
+                        tool_result=None,
+                        plan=None,
+                    )
+
+                if substep == "profile_confirm":
+                    if _is_yes(payload.message):
+                        updated_global_state = _build_bank_accounts_onboarding_global_state(
+                            {
+                                **global_state,
+                                "profile_confirmed": True,
+                            },
+                            onboarding_substep="bank_accounts_collect",
+                        )
+                        updated_global_state["profile_confirmed"] = True
+                        state_dict["global_state"] = updated_global_state
+                        updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                        updated_chat_state["state"] = state_dict
+                        profiles_repository.update_chat_state(
+                            profile_id=profile_id,
+                            user_id=auth_user_id,
+                            chat_state=updated_chat_state,
+                        )
                         return ChatResponse(
-                            reply=(
-                                "Merci ! Il manque encore: "
-                                f"{', '.join(missing_fields)}."
-                            ),
+                            reply="Profil confirmé ✅ Indique-moi tes banques à ajouter (ex: UBS, Revolut).",
                             tool_result=None,
                             plan=None,
                         )
+                    if _is_no(payload.message):
+                        updated_global_state = _build_onboarding_global_state(
+                            {
+                                **global_state,
+                                "profile_confirmed": False,
+                            },
+                            onboarding_step="profile",
+                            onboarding_substep="profile_collect",
+                        )
+                        updated_global_state["profile_confirmed"] = False
+                        state_dict["global_state"] = updated_global_state
+                        updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                        updated_chat_state["state"] = state_dict
+                        profiles_repository.update_chat_state(
+                            profile_id=profile_id,
+                            user_id=auth_user_id,
+                            chat_state=updated_chat_state,
+                        )
+                        return ChatResponse(
+                            reply="Ok, qu’est-ce qui est incorrect ? (prénom / nom / date de naissance)",
+                            tool_result=None,
+                            plan=None,
+                        )
+                    updated_global_state = _build_onboarding_global_state(
+                        global_state,
+                        onboarding_step="profile",
+                        onboarding_substep="profile_confirm",
+                    )
+                    state_dict["global_state"] = updated_global_state
+                    updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                    updated_chat_state["state"] = state_dict
+                    profiles_repository.update_chat_state(
+                        profile_id=profile_id,
+                        user_id=auth_user_id,
+                        chat_state=updated_chat_state,
+                    )
+                    return ChatResponse(reply="Réponds OUI ou NON.", tool_result=None, plan=None)
 
-                updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
-                updated_chat_state["state"] = state_dict
-                state_dict["global_state"] = _build_onboarding_global_state(global_state)
-                profiles_repository.update_chat_state(
-                    profile_id=profile_id,
-                    user_id=auth_user_id,
-                    chat_state=updated_chat_state,
-                )
-                return ChatResponse(
-                    reply=(
-                        "Pour démarrer, j’ai besoin de ton prénom, nom et date de naissance. "
-                        "Tu peux écrire 'Prénom Nom' ici, puis ta date 'YYYY-MM-DD'. "
-                        "Le reste du profil pourra être complété plus tard."
-                    ),
-                    tool_result=None,
-                    plan=None,
-                )
-
-        if _is_valid_global_state(global_state):
-            state_dict = dict(state_dict) if isinstance(state_dict, dict) else {}
-            updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
             mode = global_state.get("mode")
             onboarding_step = global_state.get("onboarding_step")
             has_bank_accounts = _has_any_bank_accounts(profiles_repository, profile_id)
 
             if mode == "free_chat" and has_bank_accounts is False:
-                updated_global_state = {
-                    "mode": "onboarding",
-                    "onboarding_step": "bank_accounts",
-                    "has_bank_accounts": False,
-                    "has_imported_transactions": bool(global_state.get("has_imported_transactions", False)),
-                    "budget_created": bool(global_state.get("budget_created", False)),
-                }
+                updated_global_state = _build_bank_accounts_onboarding_global_state(
+                    global_state,
+                    onboarding_substep="bank_accounts_collect",
+                )
+                updated_global_state["has_bank_accounts"] = False
                 state_dict["global_state"] = updated_global_state
+                updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
                 updated_chat_state["state"] = state_dict
                 profiles_repository.update_chat_state(
                     profile_id=profile_id,
@@ -643,19 +754,14 @@ def agent_chat(
                     plan=None,
                 )
 
-            if (
-                mode == "onboarding"
-                and onboarding_step in {"import", "categories", "budget"}
-                and has_bank_accounts is False
-            ):
-                updated_global_state = {
-                    "mode": "onboarding",
-                    "onboarding_step": "bank_accounts",
-                    "has_bank_accounts": False,
-                    "has_imported_transactions": bool(global_state.get("has_imported_transactions", False)),
-                    "budget_created": bool(global_state.get("budget_created", False)),
-                }
+            if mode == "onboarding" and onboarding_step in {"import", "categories", "budget"} and has_bank_accounts is False:
+                updated_global_state = _build_bank_accounts_onboarding_global_state(
+                    global_state,
+                    onboarding_substep="bank_accounts_collect",
+                )
+                updated_global_state["has_bank_accounts"] = False
                 state_dict["global_state"] = updated_global_state
+                updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
                 updated_chat_state["state"] = state_dict
                 profiles_repository.update_chat_state(
                     profile_id=profile_id,
@@ -668,101 +774,161 @@ def agent_chat(
                     plan=None,
                 )
 
-        if (
-            _is_valid_global_state(global_state)
-            and global_state.get("mode") == "onboarding"
-            and global_state.get("onboarding_step") == "bank_accounts"
-            and hasattr(profiles_repository, "list_bank_accounts")
-            and hasattr(profiles_repository, "ensure_bank_accounts")
-        ):
-            state_dict = dict(state_dict) if isinstance(state_dict, dict) else {}
-            existing_accounts = profiles_repository.list_bank_accounts(profile_id=profile_id)
-            updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+            if mode == "onboarding" and onboarding_step == "bank_accounts" and hasattr(profiles_repository, "list_bank_accounts") and hasattr(profiles_repository, "ensure_bank_accounts"):
+                substep = global_state.get("onboarding_substep") or "bank_accounts_collect"
+                existing_accounts = profiles_repository.list_bank_accounts(profile_id=profile_id)
 
-            if existing_accounts:
-                updated_global_state = {
-                    **_build_bank_accounts_onboarding_global_state(global_state),
-                    "has_bank_accounts": True,
-                    "onboarding_step": "import",
-                }
-                state_dict["global_state"] = updated_global_state
-                updated_chat_state["state"] = state_dict
-                profiles_repository.update_chat_state(
-                    profile_id=profile_id,
-                    user_id=auth_user_id,
-                    chat_state=updated_chat_state,
-                )
-                return ChatResponse(
-                    reply=(
-                        "Parfait — j’ai déjà tes comptes. On passe à l’import du relevé. "
-                        "De quel compte veux-tu importer ?"
-                    ),
-                    tool_result=None,
-                    plan=None,
-                )
+                if substep == "bank_accounts_collect":
+                    if existing_accounts and not bool(global_state.get("bank_accounts_confirmed", False)):
+                        accounts_display = _format_accounts_for_reply(existing_accounts)
+                        updated_global_state = _build_bank_accounts_onboarding_global_state(
+                            global_state,
+                            onboarding_substep="bank_accounts_confirm",
+                        )
+                        updated_global_state["has_bank_accounts"] = True
+                        state_dict["global_state"] = updated_global_state
+                        updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                        updated_chat_state["state"] = state_dict
+                        profiles_repository.update_chat_state(
+                            profile_id=profile_id,
+                            user_id=auth_user_id,
+                            chat_state=updated_chat_state,
+                        )
+                        return ChatResponse(
+                            reply=f"J’ai déjà ces comptes: {accounts_display}. Voulez-vous en ajouter d’autres ? (OUI/NON)",
+                            tool_result=None,
+                            plan=None,
+                        )
 
-            if should_persist_global_state:
-                updated_chat_state["state"] = state_dict
-                profiles_repository.update_chat_state(
-                    profile_id=profile_id,
-                    user_id=auth_user_id,
-                    chat_state=updated_chat_state,
-                )
+                    matched_banks, unknown_segments = extract_canonical_banks(payload.message)
+                    if not matched_banks:
+                        normalized_message = payload.message.lower()
+                        message_looks_like_request = any(hint in normalized_message for hint in _BANK_ACCOUNTS_REQUEST_HINTS)
+                        if message_looks_like_request:
+                            return ChatResponse(
+                                reply="Avant de continuer, indique-moi tes banques (ex: UBS, Revolut).",
+                                tool_result=None,
+                                plan=None,
+                            )
+                        if unknown_segments:
+                            return ChatResponse(
+                                reply=(
+                                    f"Je n’ai pas reconnu: {', '.join(unknown_segments)}. "
+                                    "Peux-tu donner le nom exact de ta banque ?"
+                                ),
+                                tool_result=None,
+                                plan=None,
+                            )
+                        return ChatResponse(
+                            reply="Indique-moi tes banques/comptes (ex: 'UBS, Revolut').",
+                            tool_result=None,
+                            plan=None,
+                        )
 
-            matched_banks, unknown_segments = extract_canonical_banks(payload.message)
-            if not matched_banks:
-                normalized_message = payload.message.lower()
-                message_looks_like_request = any(
-                    hint in normalized_message for hint in _BANK_ACCOUNTS_REQUEST_HINTS
-                )
-                if message_looks_like_request:
-                    return ChatResponse(
-                        reply="Avant de continuer, indique-moi tes banques (ex: UBS, Revolut).",
-                        tool_result=None,
-                        plan=None,
+                    profiles_repository.ensure_bank_accounts(profile_id=profile_id, names=matched_banks)
+                    refreshed_accounts = profiles_repository.list_bank_accounts(profile_id=profile_id)
+                    accounts_display = _format_accounts_for_reply(refreshed_accounts)
+                    updated_global_state = _build_bank_accounts_onboarding_global_state(
+                        global_state,
+                        onboarding_substep="bank_accounts_confirm",
                     )
-                if unknown_segments:
+                    updated_global_state["has_bank_accounts"] = True
+                    state_dict["global_state"] = updated_global_state
+                    updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                    updated_chat_state["state"] = state_dict
+                    profiles_repository.update_chat_state(
+                        profile_id=profile_id,
+                        user_id=auth_user_id,
+                        chat_state=updated_chat_state,
+                    )
                     return ChatResponse(
                         reply=(
-                            f"Je n’ai pas reconnu: {', '.join(unknown_segments)}. "
-                            "Peux-tu donner le nom exact de ta banque ?"
+                            f"Comptes actuels: {accounts_display}. "
+                            "Voulez-vous créer encore d'autres comptes bancaires ? (OUI/NON)"
                         ),
                         tool_result=None,
                         plan=None,
                     )
+
+                if substep == "bank_accounts_confirm":
+                    if _is_yes(payload.message):
+                        updated_global_state = _build_bank_accounts_onboarding_global_state(
+                            global_state,
+                            onboarding_substep="bank_accounts_collect",
+                        )
+                        state_dict["global_state"] = updated_global_state
+                        updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                        updated_chat_state["state"] = state_dict
+                        profiles_repository.update_chat_state(
+                            profile_id=profile_id,
+                            user_id=auth_user_id,
+                            chat_state=updated_chat_state,
+                        )
+                        return ChatResponse(
+                            reply="Ok, indique-moi les banques à ajouter (ex: UBS, Revolut).",
+                            tool_result=None,
+                            plan=None,
+                        )
+                    if _is_no(payload.message):
+                        updated_global_state = _build_onboarding_global_state(
+                            {
+                                **global_state,
+                                "bank_accounts_confirmed": True,
+                                "has_bank_accounts": bool(existing_accounts),
+                            },
+                            onboarding_step="import",
+                            onboarding_substep="import_select_account",
+                        )
+                        updated_global_state["bank_accounts_confirmed"] = True
+                        updated_global_state["has_bank_accounts"] = bool(existing_accounts)
+                        state_dict["global_state"] = updated_global_state
+                        updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                        updated_chat_state["state"] = state_dict
+                        profiles_repository.update_chat_state(
+                            profile_id=profile_id,
+                            user_id=auth_user_id,
+                            chat_state=updated_chat_state,
+                        )
+                        return ChatResponse(
+                            reply=(
+                                "Parfait. On passe à l’import des relevés. "
+                                "Quel compte veux-tu importer ?"
+                            ),
+                            tool_result=None,
+                            plan=None,
+                        )
+                    return ChatResponse(reply="Réponds OUI ou NON.", tool_result=None, plan=None)
+
+            if mode == "onboarding" and onboarding_step == "import" and global_state.get("onboarding_substep") == "import_select_account" and hasattr(profiles_repository, "list_bank_accounts"):
+                existing_accounts = profiles_repository.list_bank_accounts(profile_id=profile_id)
+                matched_account = _match_bank_account_name(payload.message, existing_accounts)
+                if matched_account is None:
+                    return ChatResponse(
+                        reply=(
+                            "Je ne trouve pas ce compte. Comptes dispo: "
+                            f"{_format_accounts_for_reply(existing_accounts)}"
+                        ),
+                        tool_result=None,
+                        plan=None,
+                    )
+
+                updated_state = dict(state_dict)
+                updated_state["import_context"] = {
+                    "selected_bank_account_id": str(matched_account.get("id")),
+                    "selected_bank_account_name": str(matched_account.get("name", "")),
+                }
+                updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                updated_chat_state["state"] = updated_state
+                profiles_repository.update_chat_state(
+                    profile_id=profile_id,
+                    user_id=auth_user_id,
+                    chat_state=updated_chat_state,
+                )
                 return ChatResponse(
-                    reply="Indique-moi tes banques/comptes (ex: 'UBS, Revolut').",
+                    reply="Parfait. Envoie le fichier CSV/PDF du compte sélectionné.",
                     tool_result=None,
                     plan=None,
                 )
-
-            ensure_result = profiles_repository.ensure_bank_accounts(
-                profile_id=profile_id,
-                names=matched_banks,
-            )
-            created_names = ensure_result.get("created") if isinstance(ensure_result, dict) else []
-            created_display = ", ".join(created_names or matched_banks)
-
-            updated_global_state = {
-                **_build_bank_accounts_onboarding_global_state(global_state),
-                "has_bank_accounts": True,
-                "onboarding_step": "import",
-            }
-            state_dict["global_state"] = updated_global_state
-            updated_chat_state["state"] = state_dict
-            profiles_repository.update_chat_state(
-                profile_id=profile_id,
-                user_id=auth_user_id,
-                chat_state=updated_chat_state,
-            )
-            return ChatResponse(
-                reply=(
-                    f"C’est noté ✅ Comptes enregistrés: {created_display}. "
-                    "On passe à l’import: quel compte veux-tu importer ?"
-                ),
-                tool_result=None,
-                plan=None,
-            )
 
         memory_for_loop = state_dict if isinstance(state_dict, dict) else None
 
@@ -845,7 +1011,12 @@ def agent_chat(
         safe_tool_result = jsonable_encoder(agent_reply.tool_result)
         safe_plan = jsonable_encoder(response_plan)
 
-        return ChatResponse(reply=agent_reply.reply, tool_result=safe_tool_result, plan=safe_plan)
+        reply_text = agent_reply.reply
+        reminder = _build_onboarding_reminder(global_state if _is_valid_global_state(global_state) else None)
+        if reminder:
+            reply_text = f"{reply_text}\n\n{reminder}"
+
+        return ChatResponse(reply=reply_text, tool_result=safe_tool_result, plan=safe_plan)
     except HTTPException as exc:
         if exc.status_code in {401, 403}:
             raise
