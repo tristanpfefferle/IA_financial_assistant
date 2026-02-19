@@ -28,7 +28,7 @@ from agent.bank_catalog import extract_canonical_banks
 from backend.factory import build_backend_tool_service
 from backend.auth.supabase_auth import UnauthorizedError, get_user_from_bearer_token
 from backend.db.supabase_client import SupabaseClient, SupabaseSettings
-from backend.repositories.profiles_repository import SupabaseProfilesRepository
+from backend.repositories.profiles_repository import ProfilesRepository, SupabaseProfilesRepository
 from shared.models import ToolError
 
 
@@ -326,7 +326,7 @@ def _pick_category_for_merchant_name(name: str) -> str:
 
 def _bootstrap_merchants_from_imported_releves(
     *,
-    profiles_repository: SupabaseProfilesRepository,
+    profiles_repository: ProfilesRepository,
     profile_id: UUID,
     limit: int = 500,
 ) -> dict[str, int]:
