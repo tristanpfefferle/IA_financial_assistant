@@ -550,6 +550,7 @@ def test_agent_reset_session_removes_empty_state_after_clearing_pending_clarific
 
 
 def test_debug_hard_reset_requires_confirm_true(monkeypatch) -> None:
+    monkeypatch.setenv("DEBUG_ENDPOINTS_ENABLED", "true")
     _mock_authenticated(monkeypatch)
 
     response = client.post('/debug/hard-reset', json={}, headers=_auth_headers())
@@ -557,7 +558,18 @@ def test_debug_hard_reset_requires_confirm_true(monkeypatch) -> None:
     assert response.status_code == 400
 
 
-def test_debug_hard_reset_calls_repo_with_authenticated_profile_only(monkeypatch) -> None:
+def test_debug_hard_reset_returns_404_when_debug_disabled(monkeypatch) -> None:
+    monkeypatch.delenv("DEBUG_ENDPOINTS_ENABLED", raising=False)
+    _mock_authenticated(monkeypatch)
+
+    response = client.post('/debug/hard-reset', json={'confirm': True}, headers=_auth_headers())
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Not found"}
+
+
+def test_debug_hard_reset_works_when_debug_enabled(monkeypatch) -> None:
+    monkeypatch.setenv("DEBUG_ENDPOINTS_ENABLED", "true")
     monkeypatch.setattr(
         agent_api,
         'get_user_from_bearer_token',

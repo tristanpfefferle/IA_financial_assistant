@@ -133,3 +133,37 @@ def test_upsert_row_sets_on_conflict_and_prefer_header(monkeypatch: pytest.Monke
     )
 
     assert rows == []
+
+
+def test_delete_rows_uses_delete_method_and_query_params(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _build_client()
+
+    def _fake_urlopen(request):
+        assert request.get_method() == "DELETE"
+        assert request.full_url == (
+            "https://example.supabase.co/rest/v1/releves_bancaires?"
+            "profile_id=eq.00000000-0000-0000-0000-000000000000"
+        )
+
+        class _Response:
+            headers = {}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self) -> bytes:
+                return b"[]"
+
+        return _Response()
+
+    monkeypatch.setattr("backend.db.supabase_client.urlopen", _fake_urlopen)
+
+    rows = client.delete_rows(
+        table="releves_bancaires",
+        query={"profile_id": "eq.00000000-0000-0000-0000-000000000000"},
+    )
+
+    assert rows == []
