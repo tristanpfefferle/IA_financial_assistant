@@ -87,6 +87,55 @@ _FRENCH_MONTH_TO_NUMBER = {
 _BANK_ACCOUNTS_REQUEST_HINTS = ("liste", "catégor", "depens", "dépens", "recett", "transaction", "relev")
 _YES_VALUES = {"oui", "ouais", "yep", "yes", "y", "ok", "daccord", "confirm", "je confirme"}
 _NO_VALUES = {"non", "nope", "no", "n"}
+_IMPORT_FILE_PROMPT = "Parfait. Envoie le fichier CSV/PDF du compte sélectionné."
+
+
+def _build_import_file_ui_request(import_context: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Return a UI upload request payload when import context includes a selected account."""
+
+    if not isinstance(import_context, dict):
+        return None
+
+    bank_account_id = import_context.get("selected_bank_account_id")
+    if not isinstance(bank_account_id, str) or not bank_account_id.strip():
+        return None
+
+    bank_account_name = import_context.get("selected_bank_account_name")
+    return {
+        "type": "ui_request",
+        "name": "import_file",
+        "bank_account_id": bank_account_id,
+        "bank_account_name": str(bank_account_name or ""),
+        "accepted_types": ["csv", "pdf"],
+    }
+
+
+def _extract_import_date_range(result: dict[str, Any]) -> dict[str, str] | None:
+    """Infer import date range from preview rows when available."""
+
+    preview_items = result.get("preview")
+    if not isinstance(preview_items, list):
+        return None
+
+    valid_dates: list[date] = []
+    for item in preview_items:
+        if not isinstance(item, dict):
+            continue
+        raw_date = item.get("date")
+        if not isinstance(raw_date, str):
+            continue
+        try:
+            valid_dates.append(date.fromisoformat(raw_date))
+        except ValueError:
+            continue
+
+    if not valid_dates:
+        return None
+
+    return {
+        "start": min(valid_dates).isoformat(),
+        "end": max(valid_dates).isoformat(),
+    }
 
 
 
@@ -1089,9 +1138,10 @@ def agent_chat(
                     user_id=auth_user_id,
                     chat_state=updated_chat_state,
                 )
+                ui_request = _build_import_file_ui_request(updated_state.get("import_context"))
                 return ChatResponse(
-                    reply="Parfait. Envoie le fichier CSV/PDF du compte sélectionné.",
-                    tool_result=None,
+                    reply=_IMPORT_FILE_PROMPT,
+                    tool_result=ui_request,
                     plan=None,
                 )
 
@@ -1287,4 +1337,38 @@ def import_releves(payload: ImportRequestPayload, authorization: str | None = He
         if result.details:
             detail = f"{result.message} ({result.details})"
         raise HTTPException(status_code=400, detail=detail)
-    return jsonable_encoder(result)
+
+    response_payload: dict[str, Any]
+    if isinstance(result, dict):
+        response_payload = dict(result)
+    else:
+        response_payload = jsonable_encoder(result)
+
+    response_payload["ok"] = True
+    imported_count = int(response_payload.get("imported_count") or 0)
+    response_payload["transactions_imported"] = imported_count
+    response_payload["transactions_imported_count"] = imported_count
+    response_payload["date_range"] = _extract_import_date_range(response_payload)
+    response_payload["bank_account_id"] = payload.bank_account_id
+
+    bank_account_name = response_payload.get("bank_account_name")
+    if not isinstance(bank_account_name, str) or not bank_account_name.strip():
+        bank_account_name = None
+        if payload.bank_account_id:
+            bank_accounts_result = get_tool_router().call("finance_bank_accounts_list", {}, profile_id=profile_id)
+            if not isinstance(bank_accounts_result, ToolError):
+                encoded_accounts_result = jsonable_encoder(bank_accounts_result)
+                if isinstance(encoded_accounts_result, dict):
+                    account_items = encoded_accounts_result.get("items")
+                    if isinstance(account_items, list):
+                        for account in account_items:
+                            if not isinstance(account, dict):
+                                continue
+                            if account.get("id") == payload.bank_account_id:
+                                candidate_name = account.get("name")
+                                if isinstance(candidate_name, str) and candidate_name.strip():
+                                    bank_account_name = candidate_name
+                                break
+    response_payload["bank_account_name"] = bank_account_name
+
+    return jsonable_encoder(response_payload)

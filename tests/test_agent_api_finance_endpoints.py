@@ -73,13 +73,23 @@ def test_import_releves_returns_router_payload(monkeypatch) -> None:
 
     class _Router:
         def call(self, tool_name: str, payload: dict, *, profile_id: UUID | None = None):
-            assert tool_name == "finance_releves_import_files"
             assert profile_id == PROFILE_ID
-            assert payload["import_mode"] == "analyze"
-            assert payload["modified_action"] == "replace"
-            assert payload["bank_account_id"] == str(UUID("dddddddd-dddd-dddd-dddd-dddddddddddd"))
-            assert payload["files"][0]["filename"] == "ubs.csv"
-            return {"imported_count": 0, "requires_confirmation": True}
+            if tool_name == "finance_releves_import_files":
+                assert payload["import_mode"] == "analyze"
+                assert payload["modified_action"] == "replace"
+                assert payload["bank_account_id"] == str(UUID("dddddddd-dddd-dddd-dddd-dddddddddddd"))
+                assert payload["files"][0]["filename"] == "ubs.csv"
+                return {
+                    "imported_count": 2,
+                    "requires_confirmation": True,
+                    "preview": [
+                        {"date": "2025-01-02", "montant": "10", "devise": "CHF"},
+                        {"date": "2025-01-30", "montant": "20", "devise": "CHF"},
+                    ],
+                }
+            assert tool_name == "finance_bank_accounts_list"
+            assert payload == {}
+            return {"items": [{"id": str(UUID("dddddddd-dddd-dddd-dddd-dddddddddddd")), "name": "UBS"}]}
 
     monkeypatch.setattr(agent_api, "get_tool_router", lambda: _Router())
 
@@ -95,7 +105,12 @@ def test_import_releves_returns_router_payload(monkeypatch) -> None:
     )
 
     assert response.status_code == 200
-    assert response.json()["requires_confirmation"] is True
+    payload = response.json()
+    assert payload["requires_confirmation"] is True
+    assert payload["ok"] is True
+    assert payload["transactions_imported_count"] == 2
+    assert payload["date_range"] == {"start": "2025-01-02", "end": "2025-01-30"}
+    assert payload["bank_account_name"] == "UBS"
 
 
 def test_import_releves_maps_tool_error_to_http_400(monkeypatch) -> None:
