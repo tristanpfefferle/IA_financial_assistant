@@ -217,12 +217,57 @@ def test_update_profile_fields_patches_single_profile_id_and_returns_updated_fie
         set_dict={"first_name": "Paul", "city": "Bouveret", "birth_date": "2001-07-14"},
     )
 
-    assert data == {"first_name": "Paul", "city": "Bouveret", "birth_date": "2001-07-14"}
+    assert data == {"first_name": "Paul", "birth_date": "2001-07-14"}
     assert client.patch_calls == [
         {
             "table": "profils",
             "query": {"id": f"eq.{profile_id}"},
-            "payload": {"first_name": "Paul", "city": "Bouveret", "birth_date": "2001-07-14"},
+            "payload": {"first_name": "Paul", "birth_date": "2001-07-14"},
             "use_anon_key": False,
         }
     ]
+
+
+def test_update_profile_fields_uses_table_update_and_filters_unknown_fields() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+
+    class _TableQuery:
+        def __init__(self) -> None:
+            self.update_payload: dict[str, object] | None = None
+            self.eq_filters: list[tuple[str, str]] = []
+
+        def update(self, payload: dict[str, object]):
+            self.update_payload = payload
+            return self
+
+        def eq(self, field: str, value: str):
+            self.eq_filters.append((field, value))
+            return self
+
+        def execute(self):
+            class _Response:
+                data = [{"id": str(profile_id)}]
+
+            return _Response()
+
+    class _TableClientStub:
+        def __init__(self) -> None:
+            self.table_calls: list[str] = []
+            self.query = _TableQuery()
+
+        def table(self, table_name: str):
+            self.table_calls.append(table_name)
+            return self.query
+
+    client = _TableClientStub()
+    repository = SupabaseProfilesRepository(client=client)
+
+    data = repository.update_profile_fields(
+        profile_id=profile_id,
+        set_dict={"first_name": "Paul", "city": "Bouveret", "birth_date": "2001-07-14"},
+    )
+
+    assert data == {"first_name": "Paul", "birth_date": "2001-07-14"}
+    assert client.table_calls == ["profils"]
+    assert client.query.update_payload == {"first_name": "Paul", "birth_date": "2001-07-14"}
+    assert client.query.eq_filters == [("id", str(profile_id))]
