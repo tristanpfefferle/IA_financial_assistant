@@ -1418,6 +1418,47 @@ def test_memory_persists_last_month_from_sum_then_followup_category_reuses_perio
     }
 
 
+
+
+def test_memory_injects_sticky_period_and_bank_account_without_followup(monkeypatch) -> None:
+    router = _MemoryRouter()
+    loop = AgentLoop(tool_router=router)
+
+    monkeypatch.setattr(
+        AgentLoop,
+        "_route_message",
+        lambda self, message, *, profile_id, active_task: ToolCallPlan(
+            tool_name="finance_releves_search",
+            payload={"merchant": "coop", "limit": 50, "offset": 0},
+            user_reply="OK.",
+        ),
+    )
+
+    loop.handle_user_message(
+        "Liste des transactions transport",
+        memory={
+            "last_query": {
+                "last_tool_name": "finance_releves_sum",
+                "last_intent": "sum",
+                "date_range": {
+                    "start_date": "2026-01-01",
+                    "end_date": "2026-01-31",
+                },
+                "filters": {
+                    "direction": "DEBIT_ONLY",
+                    "bank_account_id": "acc-1",
+                },
+            }
+        },
+    )
+
+    payload = router.calls[0][1]
+    assert payload["date_range"] == {
+        "start_date": "2026-01-01",
+        "end_date": "2026-01-31",
+    }
+    assert payload["bank_account_id"] == "acc-1"
+
 def test_memory_does_not_override_explicit_period(monkeypatch) -> None:
     router = _MemoryRouter()
     loop = AgentLoop(tool_router=router)

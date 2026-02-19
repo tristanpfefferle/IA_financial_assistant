@@ -1309,6 +1309,56 @@ def test_onboarding_bank_accounts_skips_creation_if_already_exists(monkeypatch) 
     assert "Voulez-vous en ajouter d’autres" in response.json()["reply"]
 
 
+
+
+def test_onboarding_bank_accounts_collect_non_with_existing_accounts_moves_to_confirm(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "onboarding",
+                    "onboarding_step": "bank_accounts",
+                    "onboarding_substep": "bank_accounts_collect",
+                }
+            }
+        },
+    )
+    repo.bank_accounts = [{"id": "bank-1", "name": "UBS"}]
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
+
+    response = client.post("/agent/chat", json={"message": "non"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert repo.ensure_bank_accounts_calls == []
+    persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
+    assert persisted["onboarding_substep"] == "bank_accounts_confirm"
+    assert "nom exact" not in response.json()["reply"].lower()
+
+
+def test_onboarding_bank_accounts_collect_non_without_accounts_requires_bank(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "onboarding",
+                    "onboarding_step": "bank_accounts",
+                    "onboarding_substep": "bank_accounts_collect",
+                }
+            }
+        },
+    )
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
+
+    response = client.post("/agent/chat", json={"message": "non"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert repo.ensure_bank_accounts_calls == []
+    assert "au moins une banque" in response.json()["reply"].lower()
+
 def test_onboarding_bank_accounts_canonicalizes_raifeisen(monkeypatch) -> None:
     _mock_auth(monkeypatch)
     repo = _Repo(

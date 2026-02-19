@@ -16,6 +16,7 @@ _READ_TOOLS = {
     "finance_releves_aggregate",
 }
 _PERIOD_KEYS = {"date_range", "month", "year"}
+_STICKY_FILTER_KEYS = {"bank_account_id"}
 _SKIP_FILTER_KEYS = _PERIOD_KEYS | {"limit", "offset"}
 _FOLLOWUP_KEYWORDS = {
     "et",
@@ -691,7 +692,10 @@ def apply_memory_to_plan(
     )
     period_injected = False
     filter_injected = False
-    has_period = any(key in payload for key in _PERIOD_KEYS)
+    nested_filters = payload.get("filters") if isinstance(payload.get("filters"), dict) else None
+    has_period = any(key in payload for key in _PERIOD_KEYS) or (
+        isinstance(nested_filters, dict) and "date_range" in nested_filters
+    )
     if not has_period:
         if memory.date_range is not None:
             payload["date_range"] = dict(memory.date_range)
@@ -706,6 +710,10 @@ def apply_memory_to_plan(
             reason_parts.append("period_from_memory")
             period_injected = True
 
+    sticky_filter_injected = _inject_sticky_filters(payload, memory.filters)
+    if sticky_filter_injected:
+        reason_parts.append("sticky_filters_from_memory")
+
     if is_followup_message(message):
         filter_injected = _merge_missing_filters(
             payload,
@@ -718,7 +726,7 @@ def apply_memory_to_plan(
     if sum_has_category and not had_explicit_merchant:
         payload.pop("merchant", None)
 
-    if not period_injected and not filter_injected:
+    if not period_injected and not filter_injected and not sticky_filter_injected:
         return plan, None
 
     updated_meta = dict(plan.meta)
@@ -766,6 +774,22 @@ def _merge_missing_filters(
             continue
         if target_key not in payload:
             payload[target_key] = value
+            injected = True
+    return injected
+
+
+def _inject_sticky_filters(payload: dict[str, Any], memory_filters: dict[str, Any]) -> bool:
+    injected = False
+    nested_filters = payload.get("filters") if isinstance(payload.get("filters"), dict) else None
+    for key in _STICKY_FILTER_KEYS:
+        value = memory_filters.get(key)
+        if value is None:
+            continue
+        if key not in payload:
+            payload[key] = value
+            injected = True
+        if isinstance(nested_filters, dict) and key not in nested_filters:
+            nested_filters[key] = value
             injected = True
     return injected
 
