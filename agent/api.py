@@ -588,10 +588,14 @@ def agent_chat(
             if global_state.get("mode") == "onboarding" and global_state.get("onboarding_step") == "profile" and hasattr(
                 profiles_repository, "get_profile_fields"
             ):
-                profile_fields = profiles_repository.get_profile_fields(
-                    profile_id=profile_id,
-                    fields=list(_PROFILE_COMPLETION_FIELDS),
-                )
+                try:
+                    profile_fields = profiles_repository.get_profile_fields(
+                        profile_id=profile_id,
+                        fields=list(_PROFILE_COMPLETION_FIELDS),
+                    )
+                except Exception:
+                    logger.exception("onboarding_profile_lookup_failed profile_id=%s", profile_id)
+                    profile_fields = {}
                 substep = global_state.get("onboarding_substep")
                 if substep is None:
                     substep = "profile_confirm" if _is_profile_complete(profile_fields) else "profile_collect"
@@ -963,6 +967,7 @@ def agent_chat(
             or should_persist_global_state
         )
 
+        updated_chat_state: dict[str, Any] | None = None
         if should_update_chat_state:
             updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
             if agent_reply.should_update_active_task:
@@ -1012,7 +1017,21 @@ def agent_chat(
         safe_plan = jsonable_encoder(response_plan)
 
         reply_text = agent_reply.reply
-        reminder = _build_onboarding_reminder(global_state if _is_valid_global_state(global_state) else None)
+        reminder_state = global_state if _is_valid_global_state(global_state) else None
+        has_valid_memory_update_global_state = False
+        if isinstance(memory_update, dict):
+            memory_update_global_state = memory_update.get("state", {}).get("global_state")
+            if _is_valid_global_state(memory_update_global_state):
+                reminder_state = memory_update_global_state
+                has_valid_memory_update_global_state = True
+
+        updated_chat_global_state = None
+        if isinstance(updated_chat_state, dict):
+            updated_chat_global_state = updated_chat_state.get("state", {}).get("global_state")
+        if _is_valid_global_state(updated_chat_global_state) and not has_valid_memory_update_global_state:
+            reminder_state = updated_chat_global_state
+
+        reminder = _build_onboarding_reminder(reminder_state)
         if reminder:
             reply_text = f"{reply_text}\n\n{reminder}"
 

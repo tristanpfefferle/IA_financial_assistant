@@ -306,3 +306,205 @@ def test_onboarding_reply_from_loop_adds_short_reminder(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert "(Pour continuer : indique le compte à importer.)" in response.json()["reply"]
+
+
+class _RepoWithoutListBankAccounts(_Repo):
+    def __getattribute__(self, name: str):
+        if name == "list_bank_accounts":
+            raise AttributeError(name)
+        return super().__getattribute__(name)
+
+
+class _RepoListBankAccountsRaises(_Repo):
+    def list_bank_accounts(self, *, profile_id: UUID) -> list[dict[str, object]]:
+        raise RuntimeError("db unavailable")
+
+
+class _LoopWithMemoryUpdate:
+    def __init__(self, memory_update: dict[str, object]) -> None:
+        self.memory_update = memory_update
+
+    def handle_user_message(self, *_args, **_kwargs) -> AgentReply:
+        return AgentReply(reply="ok", memory_update=self.memory_update)
+
+
+def test_bootstrap_profile_incomplete_routes_to_profile_collect(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(initial_chat_state={"state": {}}, profile_fields={"first_name": None, "last_name": "X", "birth_date": None})
+    loop = _LoopSpy()
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: loop)
+
+    response = client.post("/agent/chat", json={"message": "Bonjour"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
+    assert persisted["onboarding_step"] == "profile"
+    assert persisted["onboarding_substep"] == "profile_collect"
+    assert loop.called is False
+
+
+def test_existing_global_state_is_not_overwritten(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    existing_global = {
+        "mode": "guided_budget",
+        "onboarding_step": "budget",
+        "onboarding_substep": None,
+        "has_imported_transactions": True,
+        "budget_created": False,
+    }
+    repo = _Repo(initial_chat_state={"state": {"global_state": dict(existing_global)}})
+    loop = _LoopWithGlobal()
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: loop)
+
+    response = client.post("/agent/chat", json={"message": "Salut"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert repo.update_calls == []
+    assert loop.calls[-1]["global_state"] == existing_global
+
+
+def test_reset_session_keeps_global_state(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "active_task": {"type": "clarification_pending"},
+            "state": {
+                "pending_clarification": {"field": "merchant"},
+                "last_query": {"last_tool_name": "finance_releves_search"},
+                "global_state": {"mode": "onboarding", "onboarding_step": "profile", "onboarding_substep": "profile_collect"},
+            },
+        },
+    )
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+
+    response = client.post("/agent/reset-session", headers=_auth_headers())
+
+    assert response.status_code == 200
+    saved_chat_state = repo.update_calls[-1]["chat_state"]
+    assert saved_chat_state["active_task"] is None
+    assert "pending_clarification" not in saved_chat_state["state"]
+    assert saved_chat_state["state"]["last_query"] == {"last_tool_name": "finance_releves_search"}
+    assert saved_chat_state["state"]["global_state"]["onboarding_step"] == "profile"
+
+
+def test_free_chat_does_not_re_gate_when_list_bank_accounts_is_unavailable(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _RepoWithoutListBankAccounts(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "free_chat",
+                    "onboarding_step": None,
+                    "onboarding_substep": None,
+                    "has_bank_accounts": True,
+                    "has_imported_transactions": False,
+                    "budget_created": False,
+                }
+            }
+        },
+    )
+    loop = _LoopSpy()
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: loop)
+
+    response = client.post("/agent/chat", json={"message": "Salut"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert response.json()["reply"] == "loop"
+    assert repo.update_calls == []
+    assert loop.called is True
+
+
+def test_free_chat_does_not_re_gate_when_list_bank_accounts_raises(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _RepoListBankAccountsRaises(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "free_chat",
+                    "onboarding_step": None,
+                    "onboarding_substep": None,
+                    "has_bank_accounts": True,
+                    "has_imported_transactions": False,
+                    "budget_created": False,
+                }
+            }
+        },
+    )
+    loop = _LoopSpy()
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: loop)
+
+    response = client.post("/agent/chat", json={"message": "Salut"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert response.json()["reply"] == "loop"
+    assert repo.update_calls == []
+    assert loop.called is True
+
+
+def test_onboarding_reminder_uses_memory_update_global_state(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "onboarding",
+                    "onboarding_step": "categories",
+                    "onboarding_substep": "profile_collect",
+                    "has_bank_accounts": True,
+                    "has_imported_transactions": True,
+                    "budget_created": True,
+                    "bank_accounts_confirmed": True,
+                }
+            }
+        },
+    )
+    loop = _LoopWithMemoryUpdate(
+        {
+            "state": {
+                "global_state": {
+                    "mode": "onboarding",
+                    "onboarding_step": "import",
+                    "onboarding_substep": "import_select_account",
+                }
+            }
+        }
+    )
+    repo.bank_accounts = [{"id": "bank-1", "name": "UBS"}]
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: loop)
+
+    response = client.post("/agent/chat", json={"message": "Salut"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert "(Pour continuer : indique le compte à importer.)" in response.json()["reply"]
+
+
+class _RepoProfileFieldsRaises(_Repo):
+    def get_profile_fields(self, *, profile_id: UUID, fields: list[str] | None = None) -> dict[str, object]:
+        raise RuntimeError("profile lookup failed")
+
+
+def test_onboarding_profile_get_profile_fields_failure_does_not_crash(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _RepoProfileFieldsRaises(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "onboarding",
+                    "onboarding_step": "profile",
+                    "onboarding_substep": "profile_collect",
+                }
+            }
+        },
+    )
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
+
+    response = client.post("/agent/chat", json={"message": "Salut"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert "Pour démarrer" in response.json()["reply"]
