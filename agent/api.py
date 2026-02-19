@@ -190,6 +190,10 @@ def _normalize_onboarding_step_substep(global_state: dict[str, Any]) -> dict[str
     step = normalized.get("onboarding_step")
     substep = normalized.get("onboarding_substep")
 
+    if step is None:
+        normalized["onboarding_substep"] = None
+        return normalized
+
     valid_substeps_by_step = {
         "profile": {"profile_collect", "profile_confirm"},
         "bank_accounts": {"bank_accounts_collect", "bank_accounts_confirm"},
@@ -206,7 +210,7 @@ def _normalize_onboarding_step_substep(global_state: dict[str, Any]) -> dict[str
             normalized["onboarding_substep"] = default_substep_by_step[step]
         return normalized
 
-    if step in {"categories", "budget", "guided_budget"}:
+    if step in {"categories", "budget"}:
         normalized["onboarding_substep"] = None
 
     return normalized
@@ -598,9 +602,14 @@ def agent_chat(
         state_dict = dict(state) if isinstance(state, dict) else None
         existing_global_state = state_dict.get("global_state") if isinstance(state_dict, dict) else None
         global_state = existing_global_state if _is_valid_global_state(existing_global_state) else None
-        if _is_valid_global_state(global_state):
-            global_state = _normalize_onboarding_step_substep(global_state)
         should_persist_global_state = False
+        if _is_valid_global_state(global_state):
+            normalized = _normalize_onboarding_step_substep(global_state)
+            if normalized != global_state:
+                global_state = normalized
+                state_dict = dict(state_dict) if isinstance(state_dict, dict) else {}
+                state_dict["global_state"] = normalized
+                should_persist_global_state = True
 
         if global_state is None and hasattr(profiles_repository, "get_profile_fields"):
             try:
