@@ -1988,6 +1988,7 @@ class AgentLoop:
         )
         known_categories = self._known_categories_from_memory(memory)
         active_task_effective = active_task
+        had_pending_clarification_in_memory = False
         should_force_clear_active_task = False
         pending_clarification_memory_update: object | None = None
         has_pending_clarification_memory_update = False
@@ -2000,6 +2001,7 @@ class AgentLoop:
                 and isinstance(pending_clarification.get("context"), dict)
             ):
                 active_task_effective = pending_clarification
+                had_pending_clarification_in_memory = True
         if (
             isinstance(active_task_effective, dict)
             and active_task_effective.get("type") == "clarification_pending"
@@ -2014,8 +2016,9 @@ class AgentLoop:
         ):
             active_task_effective = None
             should_force_clear_active_task = True
-            pending_clarification_memory_update = None
-            has_pending_clarification_memory_update = True
+            if had_pending_clarification_in_memory:
+                pending_clarification_memory_update = None
+                has_pending_clarification_memory_update = True
 
         followup_plan = None
         if active_task_effective is None and query_memory is not None:
@@ -2086,8 +2089,9 @@ class AgentLoop:
             if should_drop_stale_clarification:
                 active_task_effective = None
                 should_force_clear_active_task = True
-                pending_clarification_memory_update = None
-                has_pending_clarification_memory_update = True
+                if had_pending_clarification_in_memory:
+                    pending_clarification_memory_update = None
+                    has_pending_clarification_memory_update = True
                 if query_memory is not None:
                     followup_plan = followup_plan_from_message(
                         message,
@@ -2204,9 +2208,10 @@ class AgentLoop:
                 and isinstance(updated_active_task.get("context"), dict)
             ):
                 pending_clarification_memory_update = updated_active_task
-            else:
+                has_pending_clarification_memory_update = True
+            elif had_pending_clarification_in_memory:
                 pending_clarification_memory_update = None
-            has_pending_clarification_memory_update = True
+                has_pending_clarification_memory_update = True
 
         def _apply_pending_clarification_memory_update(
             base_update: dict[str, object] | None,
