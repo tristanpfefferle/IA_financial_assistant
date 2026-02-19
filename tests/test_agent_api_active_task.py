@@ -139,10 +139,33 @@ def test_agent_chat_reuses_persisted_search_active_task_with_serialized_dates(mo
         def call(self, tool_name: str, payload: dict[str, object], *, profile_id: UUID | None = None):
             self.calls.append((tool_name, payload))
             assert profile_id == PROFILE_ID
-            assert tool_name == "finance_releves_search"
-            return {"ok": True, "items": []}
+            if tool_name == "finance_releves_search":
+                return {"ok": True, "items": []}
+            if tool_name == "finance_releves_sum":
+                return {"ok": True, "total": 200.0}
+            raise AssertionError(f"unexpected tool: {tool_name}")
 
     router = _SearchRouter()
+
+    original_parse_intent = loop_module.parse_intent
+
+    def _parse_intent(message: str):
+        if message == "Dépenses janvier 2026":
+            return {
+                "type": "tool_call",
+                "tool_name": "finance_releves_sum",
+                "payload": {
+                    "direction": "DEBIT_ONLY",
+                    "date_range": {
+                        "start_date": "2026-01-01",
+                        "end_date": "2026-01-31",
+                    },
+                },
+            }
+        return original_parse_intent(message)
+
+    monkeypatch.setattr(loop_module, "parse_intent", _parse_intent)
+
     loop = AgentLoop(tool_router=router)
 
     monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
@@ -187,6 +210,7 @@ def test_agent_chat_reuses_persisted_search_active_task_with_serialized_dates(mo
             },
         )
     ]
+    assert "active_task" not in repo.chat_state
     assert isinstance(repo.chat_state.get("state"), dict)
     assert isinstance(repo.chat_state["state"].get("last_query"), dict)
     assert repo.chat_state["state"]["last_query"]["date_range"] == {
@@ -194,6 +218,34 @@ def test_agent_chat_reuses_persisted_search_active_task_with_serialized_dates(mo
         "end_date": "2026-01-31",
     }
     assert repo.chat_state["state"]["last_query"]["filters"] == {"merchant": "coop"}
+
+    third = client.post(
+        "/agent/chat",
+        json={"message": "Dépenses janvier 2026"},
+        headers=_auth_headers(),
+    )
+
+    assert third.status_code == 200
+    assert third.json()["plan"] == {
+        "tool_name": "finance_releves_sum",
+        "payload": {
+            "direction": "DEBIT_ONLY",
+            "date_range": {
+                "start_date": "2026-01-01",
+                "end_date": "2026-01-31",
+            },
+        },
+    }
+    assert router.calls[1] == (
+        "finance_releves_sum",
+        {
+            "direction": "DEBIT_ONLY",
+            "date_range": {
+                "start_date": "2026-01-01",
+                "end_date": "2026-01-31",
+            },
+        },
+    )
 
 
 def test_agent_chat_persists_memory_update(monkeypatch) -> None:
