@@ -1989,6 +1989,12 @@ class AgentLoop:
         known_categories = self._known_categories_from_memory(memory)
         active_task_effective = active_task
         had_pending_clarification_in_memory = False
+        if (
+            isinstance(active_task, dict)
+            and active_task.get("type") == "clarification_pending"
+            and isinstance(active_task.get("context"), dict)
+        ):
+            had_pending_clarification_in_memory = True
         should_force_clear_active_task = False
         pending_clarification_memory_update: object | None = None
         has_pending_clarification_memory_update = False
