@@ -282,7 +282,7 @@ def _extract_merchant_name(message: str) -> str | None:
     so filters can be composed into a single tool payload.
     """
 
-    match = re.search(r"\bchez\s+(?P<merchant>.+)$", message, flags=re.IGNORECASE)
+    match = re.search(r"\b(?:chez|au|aux|a|à)\s+(?P<merchant>.+)$", message, flags=re.IGNORECASE)
     if match is None:
         return None
 
@@ -301,6 +301,7 @@ def _extract_merchant_name(message: str) -> str | None:
         rf"en\s+(?:{month_pattern})(?:\s+(?:19\d{{2}}|20\d{{2}}|21\d{{2}}))?"
         rf"(?:\s*,\s*(?:{month_pattern})(?:\s+(?:19\d{{2}}|20\d{{2}}|21\d{{2}}))?)*"
         rf"(?:\s+et\s+(?:en\s+)?(?:{month_pattern})(?:\s+(?:19\d{{2}}|20\d{{2}}|21\d{{2}}))?)?|"
+        rf"(?:{month_pattern})(?:\s+(?:19\d{{2}}|20\d{{2}}|21\d{{2}}))?|"
         r"(?:ces|les)\s+\d+\s+derniers?\s+mois|"
         r"ce\s+mois-ci|"
         r"le\s+mois\s+dernier"
@@ -328,6 +329,13 @@ def _extract_expense_category(message: str) -> str | None:
     first_token_match = re.match(r"([\wéèêëàâäùûüôöîïç\.]+)", raw_category.casefold())
     first_token = first_token_match.group(1).strip(".") if first_token_match is not None else ""
     if first_token in _FRENCH_MONTHS or first_token in {alias.strip(".") for alias in _FRENCH_MONTH_ALIASES}:
+        return None
+
+    raw_category = re.split(r"\s*(?:;|,)\s*", raw_category, maxsplit=1)[0].strip(" .,!?:;\"'")
+    raw_category = re.split(r"\s+(?:chez|au|aux|a|à)\s+", raw_category, maxsplit=1, flags=re.IGNORECASE)[0].strip(
+        " .,!?:;\"'"
+    )
+    if not raw_category:
         return None
 
     month_tokens = sorted(

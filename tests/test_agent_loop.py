@@ -1458,6 +1458,7 @@ def test_memory_injects_sticky_period_and_bank_account_without_followup(monkeypa
         "end_date": "2026-01-31",
     }
     assert payload["bank_account_id"] == "acc-1"
+    assert "filters" not in payload or "bank_account_id" not in payload["filters"]
 
 def test_memory_does_not_override_explicit_period(monkeypatch) -> None:
     router = _MemoryRouter()

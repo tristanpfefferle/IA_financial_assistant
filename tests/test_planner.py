@@ -221,6 +221,32 @@ def test_planner_expenses_category_and_month_maps_category(monkeypatch) -> None:
     assert plan.payload["date_range"]["start_date"] == date(2026, 1, 1)
     assert plan.payload["date_range"]["end_date"] == date(2026, 1, 31)
 
+
+def test_planner_expenses_category_chez_merchant_keeps_clean_category(monkeypatch) -> None:
+    monkeypatch.setattr("agent.planner._today", lambda: date(2026, 2, 10))
+
+    plan = plan_from_message("Dépenses en alimentation chez Coop en janvier 2026")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_releves_sum"
+    assert plan.payload["categorie"] == "Alimentation"
+    assert plan.payload["merchant"] == "Coop"
+    assert plan.payload["date_range"]["start_date"] == date(2026, 1, 1)
+    assert plan.payload["date_range"]["end_date"] == date(2026, 1, 31)
+
+
+def test_planner_expenses_category_a_merchant_keeps_clean_category(monkeypatch) -> None:
+    monkeypatch.setattr("agent.planner._today", lambda: date(2026, 2, 10))
+
+    plan = plan_from_message("Dépenses en alimentation à Migros janvier")
+
+    assert isinstance(plan, ToolCallPlan)
+    assert plan.tool_name == "finance_releves_sum"
+    assert plan.payload["categorie"] == "Alimentation"
+    assert plan.payload["merchant"] == "Migros"
+    assert plan.payload["date_range"]["start_date"] == date(2026, 1, 1)
+    assert plan.payload["date_range"]["end_date"] == date(2026, 1, 31)
+
 def test_planner_aggregate_par_categorie() -> None:
     plan = plan_from_message("mes dépenses par catégorie")
 
