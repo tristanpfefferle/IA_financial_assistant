@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
 
-import { importReleves, resetSession, sendChatMessage, type RelevesImportResult } from '../api/agentApi'
+import { hardResetProfile, importReleves, resetSession, sendChatMessage, type RelevesImportResult } from '../api/agentApi'
 import { installSessionResetOnPageExit, logoutWithSessionReset } from '../lib/sessionLifecycle'
 import { supabase } from '../lib/supabaseClient'
 
@@ -243,6 +243,26 @@ export function ChatPage({ email }: ChatPageProps) {
     }
   }
 
+  async function handleHardReset() {
+    if (!window.confirm('Confirmer le reset complet des données de votre profil de test ?')) {
+      return
+    }
+    if (!window.confirm('Dernière confirmation: cette action est irréversible. Continuer ?')) {
+      return
+    }
+
+    setError(null)
+    try {
+      await hardResetProfile()
+      setMessages([])
+      await resetSession({ timeoutMs: 1500 })
+      window.location.reload()
+    } catch (caughtError) {
+      const errorMessage = caughtError instanceof Error ? caughtError.message : 'Erreur inconnue'
+      setError(errorMessage)
+    }
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (isImportRequired) {
@@ -305,6 +325,11 @@ export function ChatPage({ email }: ChatPageProps) {
           <label>
             <input type="checkbox" checked={debugMode} onChange={(event) => setDebugMode(event.target.checked)} /> Debug
           </label>
+          {envDebugEnabled ? (
+            <button type="button" className="secondary-button" onClick={() => void handleHardReset()}>
+              Reset (tests)
+            </button>
+          ) : null}
         </section>
 
         <div className="messages" aria-live="polite" ref={messagesRef}>

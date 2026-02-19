@@ -15,7 +15,7 @@ vi.mock('../lib/supabaseClient', () => ({
   },
 }))
 
-import { __unsafeResetSessionResetStateForTests, resetSession } from './agentApi'
+import { __unsafeResetSessionResetStateForTests, hardResetProfile, resetSession } from './agentApi'
 
 describe('resetSession', () => {
   beforeEach(() => {
@@ -34,6 +34,24 @@ describe('resetSession', () => {
     expect(fetchMock).toHaveBeenCalledWith(
       expect.stringContaining('/agent/reset-session'),
       expect.objectContaining({ method: 'POST' }),
+    )
+  })
+})
+
+
+describe('hardResetProfile', () => {
+  it('posts debug hard reset payload with confirm=true', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await hardResetProfile()
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/debug/hard-reset'),
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ confirm: true }),
+      }),
     )
   })
 })

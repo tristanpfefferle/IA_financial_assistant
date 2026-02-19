@@ -575,6 +575,12 @@ class ImportRequestPayload(BaseModel):
     modified_action: str = "replace"
 
 
+class HardResetPayload(BaseModel):
+    """Payload for debug hard reset endpoint."""
+
+    confirm: bool = False
+
+
 @lru_cache(maxsize=1)
 def get_tool_router() -> ToolRouter:
     """Create and cache the tool router once per process."""
@@ -1243,10 +1249,17 @@ def agent_chat(
                             continue
                         merchant_name = str(merchant.get("name_norm") or merchant.get("name") or "")
                         category_name = _pick_category_for_merchant_name(merchant_name)
-                        profiles_repository.update_merchant_category(
-                            merchant_id=merchant_uuid,
-                            category_name=category_name,
-                        )
+                        try:
+                            profiles_repository.update_merchant_category(
+                                merchant_id=merchant_uuid,
+                                category_name=category_name,
+                            )
+                        except Exception:
+                            logger.exception(
+                                "categories_bootstrap_update_merchant_failed merchant_id=%s",
+                                merchant_uuid,
+                            )
+                            continue
                         classified_count += 1
 
                     updated_global_state = _build_onboarding_global_state(
@@ -1294,13 +1307,8 @@ def agent_chat(
                             tool_result=None,
                             plan=None,
                         )
-                    if _is_no(payload.message):
-                        return ChatResponse(
-                            reply="Ok, dis-moi ce que tu veux modifier…",
-                            tool_result=None,
-                            plan=None,
-                        )
-                    return ChatResponse(reply="Réponds OUI ou NON.", tool_result=None, plan=None)
+                    if not _is_no(payload.message):
+                        return ChatResponse(reply="Réponds OUI ou NON.", tool_result=None, plan=None)
 
         memory_for_loop = state_dict if isinstance(state_dict, dict) else None
 
@@ -1458,6 +1466,22 @@ def reset_session(authorization: str | None = Header(default=None)) -> dict[str,
         user_id=auth_user_id,
         chat_state=updated_chat_state,
     )
+    return {"ok": True}
+
+
+@app.post("/debug/hard-reset")
+def debug_hard_reset(
+    payload: HardResetPayload,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Hard reset current authenticated profile data (debug only)."""
+
+    if payload.confirm is not True:
+        raise HTTPException(status_code=400, detail="confirm=true is required")
+
+    auth_user_id, profile_id = _resolve_authenticated_profile(authorization)
+    repo = get_profiles_repository()
+    repo.hard_reset_profile(profile_id=profile_id, user_id=auth_user_id)
     return {"ok": True}
 
 

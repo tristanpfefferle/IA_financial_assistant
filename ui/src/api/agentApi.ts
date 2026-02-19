@@ -169,6 +169,20 @@ export async function importReleves(payload: ImportRequestPayload): Promise<Rele
   return (await response.json()) as RelevesImportResult
 }
 
+
+export async function hardResetProfile(): Promise<void> {
+  const response = await fetch(`${getBaseUrl()}/debug/hard-reset`, {
+    method: 'POST',
+    headers: await buildAuthHeaders(),
+    body: JSON.stringify({ confirm: true }),
+  })
+
+  if (!response.ok) {
+    const detail = await extractErrorDetail(response)
+    throw new Error(`Erreur API reset (${response.status}): ${detail}`)
+  }
+}
+
 export async function resetSession(options?: { keepalive?: boolean; timeoutMs?: number }): Promise<void> {
   if (sessionResetRequested) {
     return
