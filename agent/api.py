@@ -48,10 +48,19 @@ _PROFILE_COMPLETION_FIELDS = ("first_name", "last_name", "birth_date")
 _ONBOARDING_NAME_PATTERN = re.compile(
     r"^\s*([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'\-]+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'\-]+)\s*$"
 )
+_ONBOARDING_NAME_PREFIX_PATTERN = re.compile(
+    r"^\s*([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'\-]+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'\-]+)\b"
+)
 _ONBOARDING_BIRTH_DATE_PATTERN = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
 _ONBOARDING_BIRTH_DATE_DOT_PATTERN = re.compile(r"^(\d{1,2})\.(\d{1,2})\.(\d{4})$")
 _ONBOARDING_BIRTH_DATE_SLASH_PATTERN = re.compile(r"^(\d{1,2})/(\d{1,2})/(\d{4})$")
 _ONBOARDING_BIRTH_DATE_MONTH_NAME_PATTERN = re.compile(r"^(\d{1,2})\s+([a-z]+)\s+(\d{4})$")
+_ONBOARDING_BIRTH_DATE_IN_TEXT_PATTERNS = (
+    re.compile(r"\b\d{4}-\d{2}-\d{2}\b"),
+    re.compile(r"\b\d{1,2}\.\d{1,2}\.\d{4}\b"),
+    re.compile(r"\b\d{1,2}/\d{1,2}/\d{4}\b"),
+    re.compile(r"\b\d{1,2}\s+[A-Za-zÀ-ÖØ-öø-ÿ]+\s+\d{4}\b", flags=re.IGNORECASE),
+)
 _FRENCH_MONTH_TO_NUMBER = {
     "janvier": 1,
     "janv": 1,
@@ -274,6 +283,19 @@ def _extract_name_from_message(message: str) -> tuple[str, str] | None:
     return first_name, last_name
 
 
+def _extract_name_from_text_prefix(message: str) -> tuple[str, str] | None:
+    match = _ONBOARDING_NAME_PREFIX_PATTERN.match(message)
+    if not match:
+        return None
+
+    remaining_text = message[match.end() :].strip()
+    if remaining_text and _extract_birth_date_from_text(remaining_text) is None:
+        return None
+
+    first_name, last_name = match.groups()
+    return first_name, last_name
+
+
 def _extract_birth_date_from_message(message: str) -> str | None:
     normalized = message.strip().lower()
 
@@ -313,6 +335,17 @@ def _extract_birth_date_from_message(message: str) -> str | None:
         return None
 
     return parsed.isoformat()
+
+
+def _extract_birth_date_from_text(message: str) -> str | None:
+    for pattern in _ONBOARDING_BIRTH_DATE_IN_TEXT_PATTERNS:
+        match = pattern.search(message)
+        if not match:
+            continue
+        parsed_birth_date = _extract_birth_date_from_message(match.group(0))
+        if parsed_birth_date is not None:
+            return parsed_birth_date
+    return None
 
 
 def _build_onboarding_global_state(
@@ -707,7 +740,7 @@ def agent_chat(
                 if substep == "profile_collect":
                     message = payload.message.strip()
                     if hasattr(profiles_repository, "update_profile_fields"):
-                        extracted_name = _extract_name_from_message(message)
+                        extracted_name = _extract_name_from_text_prefix(message) or _extract_name_from_message(message)
                         if extracted_name is not None:
                             first_name, last_name = extracted_name
                             profiles_repository.update_profile_fields(
@@ -726,7 +759,9 @@ def agent_chat(
                                 )
                                 profile_fields = {}
 
-                        extracted_birth_date = _extract_birth_date_from_message(message)
+                        extracted_birth_date = _extract_birth_date_from_text(message) or _extract_birth_date_from_message(
+                            message
+                        )
                         if extracted_birth_date is not None:
                             profiles_repository.update_profile_fields(
                                 profile_id=profile_id,
@@ -744,7 +779,14 @@ def agent_chat(
                                 )
                                 profile_fields = {}
 
-                    if _is_profile_complete(profile_fields):
+                    first_name = str(profile_fields.get("first_name", "")).strip()
+                    last_name = str(profile_fields.get("last_name", "")).strip()
+                    has_name = _is_profile_field_completed(profile_fields.get("first_name")) and _is_profile_field_completed(
+                        profile_fields.get("last_name")
+                    )
+                    has_birth_date = _is_profile_field_completed(profile_fields.get("birth_date"))
+
+                    if has_name and has_birth_date:
                         updated_global_state = _build_onboarding_global_state(
                             global_state,
                             onboarding_step="profile",
@@ -769,6 +811,14 @@ def agent_chat(
                             plan=None,
                         )
 
+                    if not has_name:
+                        reply = "Pour démarrer, quel est ton prénom et ton nom ? (ex: Paul Gorok)"
+                    else:
+                        reply = (
+                            f"Merci, j’ai enregistré {first_name} {last_name} ✅\n"
+                            "Quelle est ta date de naissance ? (ex: 2002-01-10 ou 10.01.2002)"
+                        )
+
                     updated_global_state = _build_onboarding_global_state(
                         global_state,
                         onboarding_step="profile",
@@ -782,14 +832,7 @@ def agent_chat(
                         user_id=auth_user_id,
                         chat_state=updated_chat_state,
                     )
-                    return ChatResponse(
-                        reply=(
-                            "Pour démarrer, j’ai besoin de ton prénom, nom et date de naissance. "
-                            "Tu peux écrire 'Prénom Nom' puis ta date de naissance (YYYY-MM-DD)."
-                        ),
-                        tool_result=None,
-                        plan=None,
-                    )
+                    return ChatResponse(reply=reply, tool_result=None, plan=None)
 
                 if substep == "profile_confirm":
                     if _is_yes(payload.message):
