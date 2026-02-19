@@ -277,10 +277,53 @@ def test_import_select_account_ubs_selects_account_and_skips_loop(monkeypatch) -
     response = client.post("/agent/chat", json={"message": "UBS"}, headers=_auth_headers())
 
     assert response.status_code == 200
+    payload = response.json()
     persisted_state = repo.update_calls[-1]["chat_state"]["state"]
     assert persisted_state["import_context"]["selected_bank_account_id"] == "bank-1"
     assert persisted_state["import_context"]["selected_bank_account_name"] == "UBS"
+    assert payload["tool_result"]["type"] == "ui_request"
+    assert payload["tool_result"]["name"] == "import_file"
+    assert payload["tool_result"]["bank_account_id"] == "bank-1"
     assert loop.called is False
+
+
+@pytest.mark.parametrize(
+    ("step", "substep"),
+    [
+        ("profile", "profile_collect"),
+        ("bank_accounts", "bank_accounts_collect"),
+        ("categories", None),
+        ("budget", None),
+        (None, None),
+    ],
+)
+def test_non_import_steps_do_not_return_import_ui_request(monkeypatch, step: str | None, substep: str | None) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "onboarding" if step is not None else "free_chat",
+                    "onboarding_step": step,
+                    "onboarding_substep": substep,
+                    "has_bank_accounts": True,
+                },
+                "import_context": {
+                    "selected_bank_account_id": "bank-1",
+                    "selected_bank_account_name": "UBS",
+                },
+            }
+        },
+        profile_fields={"first_name": "Ada", "last_name": "Lovelace", "birth_date": "1815-12-10"},
+    )
+    loop = _LoopWithGlobal()
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: loop)
+
+    response = client.post("/agent/chat", json={"message": "Bonjour"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert response.json()["tool_result"] is None
 
 
 def test_onboarding_reply_from_loop_skips_reminder_for_categories_step(monkeypatch) -> None:

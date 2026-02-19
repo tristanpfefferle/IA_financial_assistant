@@ -42,6 +42,12 @@ export type RelevesImportResult = {
   requires_confirmation: boolean
   errors: RelevesImportError[]
   preview: RelevesImportPreviewItem[]
+  ok?: boolean
+  transactions_imported?: number
+  transactions_imported_count?: number
+  date_range?: { start: string; end: string } | null
+  bank_account_id?: string | null
+  bank_account_name?: string | null
 }
 
 export type ImportFilePayload = {

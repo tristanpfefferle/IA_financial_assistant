@@ -1,14 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
 
-import {
-  importReleves,
-  listBankAccounts,
-  resetSession,
-  sendChatMessage,
-  type BankAccount,
-  type ImportFilePayload,
-  type RelevesImportResult,
-} from '../api/agentApi'
+import { importReleves, resetSession, sendChatMessage, type RelevesImportResult } from '../api/agentApi'
 import { installSessionResetOnPageExit, logoutWithSessionReset } from '../lib/sessionLifecycle'
 import { supabase } from '../lib/supabaseClient'
 
@@ -24,15 +16,74 @@ type ChatPageProps = {
   email?: string
 }
 
-function arrayBufferToBase64(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer)
-  let binary = ''
-  const chunkSize = 0x8000
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length))
-    binary += String.fromCharCode(...chunk)
+type ImportUiRequest = {
+  type: 'ui_request'
+  name: 'import_file'
+  bank_account_id: string
+  bank_account_name?: string
+  accepted_types?: string[]
+}
+
+type ImportSuccessState = {
+  transactionsImported: number
+  dateRange: { start: string; end: string } | null
+  bankAccountName?: string | null
+}
+
+function toImportUiRequest(value: unknown): ImportUiRequest | null {
+  if (!value || typeof value !== 'object') {
+    return null
   }
-  return btoa(binary)
+
+  const record = value as Record<string, unknown>
+  if (record.type !== 'ui_request' || record.name !== 'import_file') {
+    return null
+  }
+
+  const bankAccountId = record.bank_account_id
+  if (typeof bankAccountId !== 'string' || !bankAccountId) {
+    return null
+  }
+
+  const acceptedTypes = Array.isArray(record.accepted_types)
+    ? record.accepted_types.filter((type): type is string => typeof type === 'string')
+    : ['csv', 'pdf']
+
+  return {
+    type: 'ui_request',
+    name: 'import_file',
+    bank_account_id: bankAccountId,
+    bank_account_name: typeof record.bank_account_name === 'string' ? record.bank_account_name : undefined,
+    accepted_types: acceptedTypes,
+  }
+}
+
+function formatDateRange(dateRange: { start: string; end: string } | null): string {
+  if (!dateRange) {
+    return 'Période détectée: non disponible'
+  }
+  return `Période détectée: ${dateRange.start} → ${dateRange.end}`
+}
+
+function readFileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = reader.result
+      if (typeof result !== 'string') {
+        reject(new Error('Contenu de fichier invalide'))
+        return
+      }
+      const commaIndex = result.indexOf(',')
+      if (commaIndex < 0) {
+        reject(new Error('Encodage base64 invalide'))
+        return
+      }
+      resolve(result.slice(commaIndex + 1))
+    }
+    reader.onerror = () => reject(new Error('Lecture fichier impossible'))
+    reader.readAsDataURL(file)
+  })
 }
 
 export function ChatPage({ email }: ChatPageProps) {
@@ -42,14 +93,10 @@ export function ChatPage({ email }: ChatPageProps) {
   const [isLoading, setIsLoading] = useState(false)
   const [hasToken, setHasToken] = useState(false)
   const [isRefreshingSession, setIsRefreshingSession] = useState(false)
-  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([])
-  const [selectedBankAccountId, setSelectedBankAccountId] = useState<string>('')
-  const [selectedFile, setSelectedFile] = useState<ImportFilePayload | null>(null)
-  const [importMode, setImportMode] = useState<'analyze' | 'commit'>('analyze')
-  const [modifiedAction, setModifiedAction] = useState<'keep' | 'replace'>('replace')
-  const [importResult, setImportResult] = useState<RelevesImportResult | null>(null)
+  const [pendingUiRequest, setPendingUiRequest] = useState<ImportUiRequest | null>(null)
   const [importError, setImportError] = useState<string | null>(null)
   const [isImporting, setIsImporting] = useState(false)
+  const [importSuccess, setImportSuccess] = useState<ImportSuccessState | null>(null)
   const envDebugEnabled = import.meta.env.VITE_UI_DEBUG === 'true'
   const [debugMode, setDebugMode] = useState(false)
   const apiBaseUrl = useMemo(() => {
@@ -57,6 +104,7 @@ export function ChatPage({ email }: ChatPageProps) {
     return rawBaseUrl.replace(/\/+$/, '')
   }, [])
   const messagesRef = useRef<HTMLDivElement | null>(null)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
   const assistantMessagesCount = useMemo(
     () => messages.filter((chatMessage) => chatMessage.role === 'assistant').length,
     [messages],
@@ -95,21 +143,6 @@ export function ChatPage({ email }: ChatPageProps) {
       return
     }
 
-    listBankAccounts()
-      .then((result) => {
-        setBankAccounts(result.items ?? [])
-      })
-      .catch((caughtError) => {
-        const errorMessage = caughtError instanceof Error ? caughtError.message : 'Erreur inconnue'
-        setImportError(errorMessage)
-      })
-  }, [hasToken])
-
-  useEffect(() => {
-    if (!hasToken) {
-      return
-    }
-
     const cleanup = installSessionResetOnPageExit(() => {
       void resetSession({ keepalive: true, timeoutMs: 1500 })
     })
@@ -120,7 +153,6 @@ export function ChatPage({ email }: ChatPageProps) {
   const isConnected = useMemo(() => Boolean(email), [email])
   const canSubmit = message.trim().length > 0 && !isLoading
   const hasUnauthorizedError = useMemo(() => error?.includes('(401)') ?? false, [error])
-  const canImport = useMemo(() => Boolean(selectedFile) && !isImporting, [selectedFile, isImporting])
 
   useEffect(() => {
     if (!assistantMessagesCount) {
@@ -132,51 +164,53 @@ export function ChatPage({ email }: ChatPageProps) {
     }
   }, [assistantMessagesCount])
 
-  async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
+  async function handleImportFileSelection(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
-    if (!file) {
-      setSelectedFile(null)
+    if (!file || !pendingUiRequest || isImporting) {
+      return
+    }
+
+    const allowedExtensions = (pendingUiRequest.accepted_types ?? ['csv', 'pdf']).map((item) => item.toLowerCase())
+    const extension = file.name.split('.').pop()?.toLowerCase()
+    if (!extension || !allowedExtensions.includes(extension)) {
+      setImportError('Format invalide. Sélectionne un fichier CSV ou PDF.')
+      event.target.value = ''
       return
     }
 
     setImportError(null)
-    setImportResult(null)
-
-    try {
-      const arrayBuffer = await file.arrayBuffer()
-      setSelectedFile({
-        filename: file.name,
-        content_base64: arrayBufferToBase64(arrayBuffer),
-      })
-    } catch {
-      setSelectedFile(null)
-      setImportError('Impossible de lire le fichier sélectionné.')
-    }
-  }
-
-  async function runImport(mode: 'analyze' | 'commit', action: 'keep' | 'replace') {
-    if (!selectedFile || isImporting) {
-      return
-    }
-
+    setImportSuccess(null)
     setIsImporting(true)
-    setImportError(null)
-    setImportResult(null)
 
     try {
-      const result = await importReleves({
-        files: [selectedFile],
-        bank_account_id: selectedBankAccountId || null,
-        import_mode: mode,
-        modified_action: action,
+      const contentBase64 = await readFileAsBase64(file)
+      const result: RelevesImportResult = await importReleves({
+        files: [{ filename: file.name, content_base64: contentBase64 }],
+        bank_account_id: pendingUiRequest.bank_account_id,
+        import_mode: 'commit',
+        modified_action: 'replace',
       })
-      setImportMode(mode)
-      setModifiedAction(action)
-      setImportResult(result)
+
+      const typedResult = result as RelevesImportResult & {
+        transactions_imported_count?: number
+        transactions_imported?: number
+        date_range?: { start: string; end: string } | null
+        bank_account_name?: string | null
+      }
+      const importedCount = typedResult.transactions_imported_count ?? typedResult.transactions_imported ?? result.imported_count
+      setImportSuccess({
+        transactionsImported: importedCount,
+        dateRange: typedResult.date_range ?? null,
+        bankAccountName: typedResult.bank_account_name ?? pendingUiRequest.bank_account_name,
+      })
+      setPendingUiRequest(null)
     } catch (caughtError) {
       const errorMessage = caughtError instanceof Error ? caughtError.message : 'Erreur inconnue'
       setImportError(errorMessage)
     } finally {
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ''
+      }
       setIsImporting(false)
     }
   }
@@ -239,6 +273,11 @@ export function ChatPage({ email }: ChatPageProps) {
         plan: response.plan,
       }
       setMessages((previousMessages) => [...previousMessages, assistantMessage])
+      const parsedUiRequest = toImportUiRequest(response.tool_result)
+      if (parsedUiRequest) {
+        setPendingUiRequest(parsedUiRequest)
+        setImportError(null)
+      }
     } catch (caughtError) {
       const errorMessage = caughtError instanceof Error ? caughtError.message : 'Erreur inconnue'
       setError(errorMessage)
@@ -271,82 +310,37 @@ export function ChatPage({ email }: ChatPageProps) {
           </label>
         </section>
 
-        <section className="import-panel">
-          <h2>Importer un relevé (CSV)</h2>
-          <div className="import-controls">
-            <input type="file" accept=".csv" onChange={handleFileChange} />
-            <select value={selectedBankAccountId} onChange={(event) => setSelectedBankAccountId(event.target.value)}>
-              <option value="">Aucun (non rattaché)</option>
-              {bankAccounts.map((account) => (
-                <option key={account.id} value={account.id}>
-                  {account.name}
-                </option>
-              ))}
-            </select>
-            <select value={importMode} onChange={(event) => setImportMode(event.target.value as 'analyze' | 'commit')}>
-              <option value="analyze">Analyser</option>
-              <option value="commit">Commit</option>
-            </select>
-            <select value={modifiedAction} onChange={(event) => setModifiedAction(event.target.value as 'keep' | 'replace')}>
-              <option value="replace">Remplacer (recommandé)</option>
-              <option value="keep">Conserver l&apos;existant</option>
-            </select>
-          </div>
-          <p className="placeholder-text">Replace recommandé pour les lignes modifiées.</p>
-          <div className="import-actions">
-            <button type="button" disabled={!canImport} onClick={() => runImport('analyze', modifiedAction)}>
-              {isImporting && importMode === 'analyze' ? 'Analyse...' : 'Analyser'}
+        {pendingUiRequest ? (
+          <section className="import-panel" aria-live="polite">
+            <h2>Import du relevé</h2>
+            <p className="placeholder-text">
+              Compte: {pendingUiRequest.bank_account_name || pendingUiRequest.bank_account_id}
+            </p>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".csv,.pdf"
+              onChange={handleImportFileSelection}
+              style={{ display: 'none' }}
+              disabled={isImporting}
+            />
+            <button type="button" onClick={() => fileInputRef.current?.click()} disabled={isImporting}>
+              Parcourir...
             </button>
-            <button type="button" disabled={!canImport} onClick={() => runImport('commit', 'replace')}>
-              {isImporting && importMode === 'commit' ? 'Import...' : 'Importer (replace)'}
-            </button>
-          </div>
-          {importError ? <p className="error-text">{importError}</p> : null}
+            {isImporting ? <p className="placeholder-text">⏳ Import en cours...</p> : null}
+            {importError ? <p className="error-text">{importError}</p> : null}
+          </section>
+        ) : null}
 
-          {importResult ? (
-            <div className="import-result">
-              <p>
-                new: {importResult.new_count} | modified: {importResult.modified_count} | identical: {importResult.identical_count}{' '}
-                | duplicates: {importResult.duplicates_count} | replaced: {importResult.replaced_count} | failed:{' '}
-                {importResult.failed_count}
-              </p>
-              {importResult.requires_confirmation ? <p className="placeholder-text">Confirmation requise avant commit.</p> : null}
-
-              {importResult.errors?.length ? (
-                <ul>
-                  {importResult.errors.slice(0, 5).map((row, index) => (
-                    <li key={`${row.file}-${index}`}>
-                      {row.file} {row.row_index ? `(ligne ${row.row_index})` : ''}: {row.message}
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-
-              {importResult.preview?.length ? (
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Date</th>
-                      <th>Montant</th>
-                      <th>Devise</th>
-                      <th>Libellé / Payee</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {importResult.preview.slice(0, 20).map((item, index) => (
-                      <tr key={`${item.date}-${index}`}>
-                        <td>{item.date}</td>
-                        <td>{String(item.montant)}</td>
-                        <td>{item.devise}</td>
-                        <td>{item.libelle ?? item.payee ?? '-'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              ) : null}
-            </div>
-          ) : null}
-        </section>
+        {importSuccess ? (
+          <section className="import-panel" aria-live="polite">
+            <p>
+              ✅ Import OK {importSuccess.bankAccountName ? `(${importSuccess.bankAccountName})` : ''}
+            </p>
+            <p>Transactions importées: {importSuccess.transactionsImported}</p>
+            <p>{formatDateRange(importSuccess.dateRange)}</p>
+          </section>
+        ) : null}
 
         <div className="messages" aria-live="polite" ref={messagesRef}>
           {messages.length === 0 ? <p className="placeholder-text">Commencez la conversation avec l’IA.</p> : null}
