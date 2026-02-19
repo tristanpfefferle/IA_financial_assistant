@@ -142,6 +142,7 @@ _FOLLOWUP_WRITE_PREVENTION_PREFIX_PATTERN = re.compile(
     r"^(?:ok|et|pareil|idem)\b[\s,:;\-]*",
     re.IGNORECASE,
 )
+_FULL_INTENT_PREFIX_PATTERN = re.compile(r"^(?:depenses|revenus?|total)\b", re.IGNORECASE)
 _PROFILE_FIELD_ALIASES = {
     "ville": "city",
     "city": "city",
@@ -328,6 +329,21 @@ def _merchant_vs_keyword_choice_from_message(
     if keyword_match:
         return "keyword"
     return None
+
+
+def _is_new_request_while_clarification_pending(message: str) -> bool:
+    normalized_message = _normalize_for_match(message)
+    if not normalized_message:
+        return False
+
+    tokens_normalized = normalized_message.split()
+    if "chez" in tokens_normalized:
+        return True
+    if _FULL_INTENT_PREFIX_PATTERN.match(normalized_message):
+        return True
+    if period_payload_from_message(message):
+        return True
+    return len(tokens_normalized) >= 2 and not is_followup_message(message)
 
 
 def _date_range_from_pending_context(
@@ -825,8 +841,14 @@ class AgentLoop:
                 )
 
                 if choice is None:
+                    if isinstance(focus_raw, str) and focus_raw.strip():
+                        question = (
+                            f"Tu parles de « {focus_raw} » comme marchand ou comme catégorie ?"
+                        )
+                    else:
+                        question = "Tu veux parler d’un marchand ou d’une catégorie ?"
                     return ClarificationPlan(
-                        question="Tu veux parler d’un marchand ou d’une catégorie ?",
+                        question=question,
                         meta={
                             "keep_active_task": True,
                             "clarification_type": "prevent_write_on_followup",
@@ -1983,6 +2005,74 @@ class AgentLoop:
                     followup_plan.payload,
                 )
 
+        if (
+            isinstance(active_task_effective, dict)
+            and active_task_effective.get("type") == "clarification_pending"
+        ):
+            should_drop_stale_clarification = False
+            context = active_task_effective.get("context")
+            if isinstance(context, dict):
+                clarification_type = context.get("clarification_type")
+                if clarification_type == "prevent_write_on_followup":
+                    should_drop_stale_clarification = (
+                        _write_prevention_choice_from_message(message) is None
+                        and _is_new_request_while_clarification_pending(message)
+                    )
+                elif clarification_type == "merchant_vs_keyword":
+                    merchant_raw = context.get("merchant")
+                    keyword_raw = context.get("keyword")
+                    if not isinstance(merchant_raw, str) or not merchant_raw.strip():
+                        clarification_payload = context.get("clarification_payload")
+                        if isinstance(clarification_payload, dict):
+                            merchant_from_payload = clarification_payload.get("merchant")
+                            if (
+                                isinstance(merchant_from_payload, str)
+                                and merchant_from_payload.strip()
+                            ):
+                                merchant_raw = merchant_from_payload
+                    if not isinstance(keyword_raw, str) or not keyword_raw.strip():
+                        clarification_payload = context.get("clarification_payload")
+                        if isinstance(clarification_payload, dict):
+                            keyword_from_payload = clarification_payload.get("keyword")
+                            if (
+                                isinstance(keyword_from_payload, str)
+                                and keyword_from_payload.strip()
+                            ):
+                                keyword_raw = keyword_from_payload
+
+                    choice = None
+                    if (
+                        isinstance(merchant_raw, str)
+                        and merchant_raw.strip()
+                        and isinstance(keyword_raw, str)
+                        and keyword_raw.strip()
+                    ):
+                        choice = _merchant_vs_keyword_choice_from_message(
+                            message,
+                            merchant=merchant_raw,
+                            keyword=keyword_raw,
+                        )
+                    should_drop_stale_clarification = (
+                        choice is None
+                        and _is_new_request_while_clarification_pending(message)
+                    )
+
+            if should_drop_stale_clarification:
+                active_task_effective = None
+                should_force_clear_active_task = True
+                if query_memory is not None:
+                    followup_plan = followup_plan_from_message(
+                        message,
+                        query_memory,
+                        known_categories=known_categories,
+                    )
+                    if isinstance(followup_plan, ToolCallPlan):
+                        logger.info(
+                            "handle_user_message_followup_plan_after_clarification_drop tool_name=%s payload=%s",
+                            followup_plan.tool_name,
+                            followup_plan.payload,
+                        )
+
         if followup_plan is not None:
             plan = followup_plan
         elif (
@@ -2271,6 +2361,7 @@ class AgentLoop:
                 active_task_effective is None
                 and plan_meta.get("keep_active_task")
                 and clarification_type != "awaiting_search_merchant"
+                and not should_force_clear_active_task
             ):
                 pending_context: dict[str, object] = {}
                 if pending_period_payload and clarification_type != "awaiting_search_merchant":
