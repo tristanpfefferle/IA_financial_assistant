@@ -135,3 +135,121 @@ def test_import_releves_maps_tool_error_to_http_400(monkeypatch) -> None:
 
     assert response.status_code == 400
     assert "invalid import" in response.json()["detail"]
+
+
+def test_import_releves_updates_chat_state_after_success(monkeypatch) -> None:
+    monkeypatch.setattr(
+        agent_api,
+        "get_user_from_bearer_token",
+        lambda _token: {"id": str(AUTH_USER_ID), "email": "user@example.com"},
+    )
+
+    class _Repo:
+        def __init__(self) -> None:
+            self.last_chat_state = None
+
+        def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None):
+            assert auth_user_id == AUTH_USER_ID
+            assert email == "user@example.com"
+            return PROFILE_ID
+
+        def get_chat_state(self, *, profile_id: UUID, user_id: UUID):
+            assert profile_id == PROFILE_ID
+            assert user_id == AUTH_USER_ID
+            return {
+                "state": {
+                    "global_state": {
+                        "mode": "onboarding",
+                        "onboarding_step": "import",
+                        "onboarding_substep": "import_select_account",
+                        "profile_confirmed": True,
+                        "bank_accounts_confirmed": True,
+                        "has_bank_accounts": True,
+                        "has_imported_transactions": False,
+                        "budget_created": False,
+                    },
+                    "import_context": {
+                        "selected_bank_account_id": str(UUID("dddddddd-dddd-dddd-dddd-dddddddddddd")),
+                        "selected_bank_account_name": "UBS",
+                    },
+                }
+            }
+
+        def update_chat_state(self, *, profile_id: UUID, user_id: UUID, chat_state: dict):
+            assert profile_id == PROFILE_ID
+            assert user_id == AUTH_USER_ID
+            self.last_chat_state = chat_state
+
+    repo = _Repo()
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+
+    class _Router:
+        def call(self, tool_name: str, payload: dict, *, profile_id: UUID | None = None):
+            assert profile_id == PROFILE_ID
+            if tool_name == "finance_releves_import_files":
+                return {"imported_count": 1, "preview": [{"date": "2025-01-05"}]}
+            assert tool_name == "finance_bank_accounts_list"
+            assert payload == {}
+            return {"items": [{"id": str(UUID("dddddddd-dddd-dddd-dddd-dddddddddddd")), "name": "UBS"}]}
+
+    monkeypatch.setattr(agent_api, "get_tool_router", lambda: _Router())
+
+    response = client.post(
+        "/finance/releves/import",
+        headers=_auth_headers(),
+        json={
+            "files": [{"filename": "ubs.csv", "content_base64": "YQ=="}],
+            "bank_account_id": str(UUID("dddddddd-dddd-dddd-dddd-dddddddddddd")),
+        },
+    )
+
+    assert response.status_code == 200
+    assert repo.last_chat_state is not None
+    assert repo.last_chat_state["state"]["global_state"]["onboarding_step"] == "categories"
+    assert repo.last_chat_state["state"]["global_state"]["onboarding_substep"] is None
+    assert repo.last_chat_state["state"]["global_state"]["has_imported_transactions"] is True
+    assert "import_context" not in repo.last_chat_state["state"]
+
+
+def test_import_releves_keeps_success_when_chat_state_update_fails(monkeypatch) -> None:
+    monkeypatch.setattr(
+        agent_api,
+        "get_user_from_bearer_token",
+        lambda _token: {"id": str(AUTH_USER_ID), "email": "user@example.com"},
+    )
+
+    class _Repo:
+        def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None):
+            assert auth_user_id == AUTH_USER_ID
+            assert email == "user@example.com"
+            return PROFILE_ID
+
+        def get_chat_state(self, *, profile_id: UUID, user_id: UUID):
+            assert profile_id == PROFILE_ID
+            assert user_id == AUTH_USER_ID
+            return {}
+
+        def update_chat_state(self, *, profile_id: UUID, user_id: UUID, chat_state: dict):
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: _Repo())
+
+    class _Router:
+        def call(self, tool_name: str, _payload: dict, *, profile_id: UUID | None = None):
+            assert profile_id == PROFILE_ID
+            if tool_name == "finance_releves_import_files":
+                return {"imported_count": 1}
+            return {"items": []}
+
+    monkeypatch.setattr(agent_api, "get_tool_router", lambda: _Router())
+
+    response = client.post(
+        "/finance/releves/import",
+        headers=_auth_headers(),
+        json={"files": [{"filename": "ubs.csv", "content_base64": "YQ=="}]},
+    )
+
+    assert response.status_code == 200
+    warnings = response.json().get("warnings")
+    assert isinstance(warnings, list)
+    assert "chat_state_update_failed" in warnings

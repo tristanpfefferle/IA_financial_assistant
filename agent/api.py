@@ -1319,7 +1319,7 @@ def list_bank_accounts(authorization: str | None = Header(default=None)) -> Any:
 def import_releves(payload: ImportRequestPayload, authorization: str | None = Header(default=None)) -> Any:
     """Import bank statements using backend tool router."""
 
-    _, profile_id = _resolve_authenticated_profile(authorization)
+    auth_user_id, profile_id = _resolve_authenticated_profile(authorization)
     tool_payload: dict[str, Any] = {
         "files": [
             {"filename": import_file.filename, "content_base64": import_file.content_base64}
@@ -1370,5 +1370,46 @@ def import_releves(payload: ImportRequestPayload, authorization: str | None = He
                                     bank_account_name = candidate_name
                                 break
     response_payload["bank_account_name"] = bank_account_name
+
+    try:
+        profiles_repository = get_profiles_repository()
+        chat_state = profiles_repository.get_chat_state(profile_id=profile_id, user_id=auth_user_id)
+        state = chat_state.get("state") if isinstance(chat_state, dict) else None
+        state_dict = dict(state) if isinstance(state, dict) else {}
+        global_state = state_dict.get("global_state") if isinstance(state_dict.get("global_state"), dict) else None
+
+        if _is_valid_global_state(global_state):
+            updated_global_state = _build_onboarding_global_state(
+                global_state,
+                onboarding_step="categories",
+                onboarding_substep=None,
+            )
+            updated_global_state["has_imported_transactions"] = True
+            updated_global_state = _normalize_onboarding_step_substep(updated_global_state)
+        else:
+            updated_global_state = _build_onboarding_global_state(
+                None,
+                onboarding_step="categories",
+                onboarding_substep=None,
+            )
+            updated_global_state["has_imported_transactions"] = True
+
+        state_dict["global_state"] = updated_global_state
+        state_dict.pop("import_context", None)
+
+        updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+        updated_chat_state["state"] = state_dict
+        profiles_repository.update_chat_state(
+            profile_id=profile_id,
+            user_id=auth_user_id,
+            chat_state=updated_chat_state,
+        )
+    except Exception:
+        logger.exception("import_releves_chat_state_update_failed profile_id=%s", profile_id)
+        warnings = response_payload.get("warnings")
+        if isinstance(warnings, list):
+            warnings.append("chat_state_update_failed")
+        else:
+            response_payload["warnings"] = ["chat_state_update_failed"]
 
     return jsonable_encoder(response_payload)
