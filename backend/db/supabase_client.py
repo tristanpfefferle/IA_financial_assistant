@@ -98,12 +98,12 @@ class SupabaseClient:
         self,
         *,
         table: str,
-        query: dict[str, str | int] | list[tuple[str, str | int]],
+        query: dict[str, str],
         use_anon_key: bool = False,
     ) -> list[dict[str, Any]]:
         """Delete rows in PostgREST and return representation."""
 
-        encoded_query = urlencode(query, doseq=True)
+        encoded_query = urlencode(query.items())
         api_key = self.settings.anon_key if use_anon_key else self.settings.service_role_key
         if not api_key:
             raise ValueError("Missing Supabase API key for requested mode")
@@ -119,7 +119,8 @@ class SupabaseClient:
         )
         try:
             with urlopen(request) as response:  # noqa: S310 - URL comes from trusted env config
-                return json.loads(response.read().decode("utf-8"))
+                content = response.read().decode("utf-8")
+                return json.loads(content) if content else []
         except HTTPError as exc:
             body = exc.read().decode("utf-8", errors="replace")[:500]
             raise RuntimeError(
