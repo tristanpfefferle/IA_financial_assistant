@@ -603,6 +603,33 @@ def test_free_chat_re_gates_to_profile_when_profile_missing(monkeypatch) -> None
     assert "prénom" in response.json()["reply"]
 
 
+def test_profile_re_gate_message_asks_only_for_name(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "free_chat",
+                    "onboarding_step": None,
+                    "onboarding_substep": None,
+                    "has_bank_accounts": True,
+                }
+            }
+        },
+        profile_fields={"first_name": None, "last_name": None, "birth_date": None},
+    )
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
+
+    response = client.post("/agent/chat", json={"message": "Salut"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    reply = response.json()["reply"].lower()
+    assert "prénom" in reply
+    assert "nom" in reply
+    assert "date de naissance" not in reply
+
+
 def test_onboarding_import_re_gates_to_profile_when_profile_missing(monkeypatch) -> None:
     _mock_auth(monkeypatch)
     repo = _Repo(
