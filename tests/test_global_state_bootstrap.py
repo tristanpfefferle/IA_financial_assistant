@@ -324,7 +324,7 @@ def test_non_import_steps_do_not_return_import_ui_request(monkeypatch, step: str
 
     assert response.status_code == 200
     tool_result = response.json()["tool_result"]
-    if tool_result is not None:
+    if isinstance(tool_result, dict):
         assert not (tool_result.get("type") == "ui_request" and tool_result.get("name") == "import_file")
 
 
