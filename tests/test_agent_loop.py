@@ -2147,7 +2147,10 @@ def test_stale_prevent_write_clarification_drops_active_task_for_new_request() -
         or isinstance(reply.plan, dict)
     )
     assert reply.should_update_active_task is True
-    assert reply.active_task is None
+    assert isinstance(reply.active_task, dict)
+    assert reply.active_task.get("type") == "clarification_pending"
+    assert isinstance(reply.memory_update, dict)
+    assert reply.memory_update.get("pending_clarification") == reply.active_task
 
 
 def test_stale_merchant_vs_keyword_clarification_drops_active_task_for_new_request(
