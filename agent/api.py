@@ -67,6 +67,7 @@ _FRENCH_MONTH_TO_NUMBER = {
     "decembre": 12,
     "dec": 12,
 }
+_BANK_ACCOUNTS_REQUEST_HINTS = ("liste", "catégor", "depens", "dépens", "recett", "transaction", "relev")
 
 
 
@@ -263,7 +264,11 @@ def _has_any_bank_accounts(profiles_repository: Any, profile_id: UUID) -> bool |
 
     if not hasattr(profiles_repository, "list_bank_accounts"):
         return None
-    bank_accounts = profiles_repository.list_bank_accounts(profile_id=profile_id)
+    try:
+        bank_accounts = profiles_repository.list_bank_accounts(profile_id=profile_id)
+    except Exception:
+        logger.exception("failed_to_list_bank_accounts_for_re_gate profile_id=%s", profile_id)
+        return None
     return bool(bank_accounts)
 
 
@@ -706,6 +711,16 @@ def agent_chat(
 
             matched_banks, unknown_segments = extract_canonical_banks(payload.message)
             if not matched_banks:
+                normalized_message = payload.message.lower()
+                message_looks_like_request = any(
+                    hint in normalized_message for hint in _BANK_ACCOUNTS_REQUEST_HINTS
+                )
+                if message_looks_like_request:
+                    return ChatResponse(
+                        reply="Avant de continuer, indique-moi tes banques (ex: UBS, Revolut).",
+                        tool_result=None,
+                        plan=None,
+                    )
                 if unknown_segments:
                     return ChatResponse(
                         reply=(

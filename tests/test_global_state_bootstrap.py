@@ -438,7 +438,7 @@ def test_onboarding_profile_complete_routes_to_bank_accounts_step(monkeypatch) -
     response = client.post("/agent/chat", json={"message": "Liste mes catégories"}, headers=_auth_headers())
 
     assert response.status_code == 200
-    assert "Je n’ai pas reconnu" in response.json()["reply"]
+    assert "Avant de continuer" in response.json()["reply"]
     assert repo.ensure_bank_accounts_calls == []
     assert loop.called is False
 
@@ -547,9 +547,51 @@ def test_onboarding_bank_accounts_non_bank_message_does_not_create_accounts(monk
     response = client.post("/agent/chat", json={"message": "Liste mes catégories"}, headers=_auth_headers())
 
     assert response.status_code == 200
-    assert "Je n’ai pas reconnu" in response.json()["reply"]
+    assert "Avant de continuer" in response.json()["reply"]
     assert repo.ensure_bank_accounts_calls == []
     assert loop.called is False
+
+
+
+
+class _RepoListBankAccountsRaises(_Repo):
+    def list_bank_accounts(self, *, profile_id: UUID) -> list[dict[str, object]]:
+        raise RuntimeError("db unavailable")
+
+
+def test_has_any_bank_accounts_returns_none_when_list_bank_accounts_raises() -> None:
+    repo = _RepoListBankAccountsRaises()
+
+    assert agent_api._has_any_bank_accounts(repo, PROFILE_ID) is None
+
+
+def test_free_chat_does_not_re_gate_when_list_bank_accounts_raises(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _RepoListBankAccountsRaises(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "free_chat",
+                    "onboarding_step": None,
+                    "has_bank_accounts": True,
+                    "has_imported_transactions": False,
+                    "budget_created": False,
+                }
+            }
+        },
+        profile_fields={"first_name": "Tristan", "last_name": "Pfefferlé", "birth_date": "1992-01-15"},
+    )
+    loop = _LoopSpy()
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: loop)
+
+    response = client.post("/agent/chat", json={"message": "Salut"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert response.json()["reply"] == "loop"
+    assert repo.update_calls == []
+    assert loop.called is True
 
 def test_onboarding_bank_accounts_skips_creation_if_already_exists(monkeypatch) -> None:
     _mock_auth(monkeypatch)
