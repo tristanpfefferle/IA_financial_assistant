@@ -8,9 +8,17 @@ from backend.repositories.profiles_repository import SupabaseProfilesRepository
 
 
 class _ClientStub:
-    def __init__(self, responses: list[list[dict[str, str]]], patch_responses: list[list[dict[str, str]]] | None = None) -> None:
+    def __init__(
+        self,
+        responses: list[list[dict[str, str]]],
+        patch_responses: list[list[dict[str, str]]] | None = None,
+        post_responses: list[list[dict[str, str]]] | None = None,
+        post_exceptions: list[Exception] | None = None,
+    ) -> None:
         self._responses = responses
         self._patch_responses = patch_responses or []
+        self._post_responses = post_responses or []
+        self._post_exceptions = post_exceptions or []
         self.calls: list[dict[str, object]] = []
         self.patch_calls: list[dict[str, object]] = []
         self.post_calls: list[dict[str, object]] = []
@@ -40,6 +48,7 @@ class _ClientStub:
         return self._patch_responses[len(self.patch_calls) - 1] if self._patch_responses else []
 
     def post_rows(self, *, table, payload, use_anon_key=False, prefer="return=representation"):
+        call_index = len(self.post_calls)
         self.post_calls.append(
             {
                 "table": table,
@@ -48,6 +57,10 @@ class _ClientStub:
                 "prefer": prefer,
             }
         )
+        if call_index < len(self._post_exceptions):
+            raise self._post_exceptions[call_index]
+        if call_index < len(self._post_responses):
+            return self._post_responses[call_index]
         return []
 
     def upsert_row(self, *, table, payload, on_conflict, use_anon_key=False):
@@ -317,4 +330,93 @@ def test_hard_reset_profile_deletes_only_filtered_by_profile_id() -> None:
         {"table": "merchants", "query": {"profile_id": f"eq.{profile_id}"}, "use_anon_key": False},
         {"table": "profile_categories", "query": {"profile_id": f"eq.{profile_id}"}, "use_anon_key": False},
         {"table": "bank_accounts", "query": {"profile_id": f"eq.{profile_id}"}, "use_anon_key": False},
+    ]
+
+
+def test_list_releves_without_merchant_filters_profile_and_null_merchant() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    client = _ClientStub(responses=[[{"id": "1"}]])
+    repository = SupabaseProfilesRepository(client=client)
+
+    rows = repository.list_releves_without_merchant(profile_id=profile_id, limit=123)
+
+    assert rows == [{"id": "1"}]
+    assert client.calls[0]["table"] == "releves_bancaires"
+    assert client.calls[0]["query"] == {
+        "select": "id,payee,libelle,created_at,date",
+        "profile_id": f"eq.{profile_id}",
+        "merchant_id": "is.null",
+        "or": "(payee.not.is.null,libelle.not.is.null)",
+        "limit": 123,
+    }
+
+
+def test_upsert_merchant_by_name_norm_returns_existing_id_without_post() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    merchant_id = UUID("dddddddd-dddd-dddd-dddd-dddddddddddd")
+    client = _ClientStub(responses=[[{"id": str(merchant_id)}]], patch_responses=[[]])
+    repository = SupabaseProfilesRepository(client=client)
+
+    returned_id = repository.upsert_merchant_by_name_norm(
+        profile_id=profile_id,
+        name="  Migros  ",
+        name_norm="migros",
+    )
+
+    assert returned_id == merchant_id
+    assert len(client.post_calls) == 0
+
+
+def test_upsert_merchant_by_name_norm_creates_when_missing() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    merchant_id = UUID("dddddddd-dddd-dddd-dddd-dddddddddddd")
+    client = _ClientStub(responses=[[]], post_responses=[[{"id": str(merchant_id)}]])
+    repository = SupabaseProfilesRepository(client=client)
+
+    returned_id = repository.upsert_merchant_by_name_norm(
+        profile_id=profile_id,
+        name="Migros SA",
+        name_norm="migros sa",
+    )
+
+    assert returned_id == merchant_id
+    assert len(client.post_calls) == 1
+    assert client.post_calls[0]["table"] == "merchants"
+
+
+def test_upsert_merchant_by_name_norm_handles_duplicate_key_with_fallback_get() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    merchant_id = UUID("dddddddd-dddd-dddd-dddd-dddddddddddd")
+    client = _ClientStub(
+        responses=[[], [{"id": str(merchant_id)}]],
+        post_exceptions=[RuntimeError("duplicate key value violates unique constraint")],
+    )
+    repository = SupabaseProfilesRepository(client=client)
+
+    returned_id = repository.upsert_merchant_by_name_norm(
+        profile_id=profile_id,
+        name="Migros SA",
+        name_norm="migros sa",
+    )
+
+    assert returned_id == merchant_id
+    assert len(client.calls) == 2
+    assert len(client.post_calls) == 1
+
+
+def test_attach_merchant_to_releve_patches_releve_merchant_id() -> None:
+    releve_id = UUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee")
+    merchant_id = UUID("dddddddd-dddd-dddd-dddd-dddddddddddd")
+    client = _ClientStub(responses=[], patch_responses=[[]])
+    repository = SupabaseProfilesRepository(client=client)
+
+    repository.attach_merchant_to_releve(releve_id=releve_id, merchant_id=merchant_id)
+
+    assert client.patch_calls == [
+        {
+            "table": "releves_bancaires",
+            "query": {"id": f"eq.{releve_id}"},
+            "payload": {"merchant_id": str(merchant_id)},
+            "use_anon_key": False,
+        }
     ]

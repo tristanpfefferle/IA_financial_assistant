@@ -45,6 +45,22 @@ class ProfilesRepository(Protocol):
     def update_merchant_category(self, *, merchant_id: UUID, category_name: str) -> None:
         """Assign a category name on one merchant."""
 
+    def list_releves_without_merchant(self, *, profile_id: UUID, limit: int = 500) -> list[dict[str, Any]]:
+        """Return statement rows missing merchant linkage for one profile."""
+
+    def upsert_merchant_by_name_norm(
+        self,
+        *,
+        profile_id: UUID,
+        name: str,
+        name_norm: str,
+        scope: str = "personal",
+    ) -> UUID:
+        """Find or create merchant id for a profile/name_norm pair."""
+
+    def attach_merchant_to_releve(self, *, releve_id: UUID, merchant_id: UUID) -> None:
+        """Attach one merchant id to one bank statement row."""
+
     def hard_reset_profile(self, *, profile_id: UUID, user_id: UUID) -> None:
         """Purge profile-scoped data and reset onboarding/profile fields."""
 
@@ -351,5 +367,94 @@ class SupabaseProfilesRepository:
             table="merchants",
             query={"id": f"eq.{merchant_id}"},
             payload={"category": cleaned},
+            use_anon_key=False,
+        )
+
+    def list_releves_without_merchant(self, *, profile_id: UUID, limit: int = 500) -> list[dict[str, Any]]:
+        rows, _ = self._client.get_rows(
+            table="releves_bancaires",
+            query={
+                "select": "id,payee,libelle,created_at,date",
+                "profile_id": f"eq.{profile_id}",
+                "merchant_id": "is.null",
+                "or": "(payee.not.is.null,libelle.not.is.null)",
+                "limit": max(1, limit),
+            },
+            with_count=False,
+            use_anon_key=False,
+        )
+        return rows
+
+    def upsert_merchant_by_name_norm(
+        self,
+        *,
+        profile_id: UUID,
+        name: str,
+        name_norm: str,
+        scope: str = "personal",
+    ) -> UUID:
+        cleaned_name = " ".join(name.strip().split())
+        cleaned_name_norm = self._normalize_name_norm(name_norm)
+        if not cleaned_name or not cleaned_name_norm:
+            raise ValueError("merchant name and name_norm must be non-empty")
+
+        query = {
+            "select": "id",
+            "profile_id": f"eq.{profile_id}",
+            "scope": f"eq.{scope}",
+            "name_norm": f"eq.{cleaned_name_norm}",
+            "limit": 1,
+        }
+
+        existing_rows, _ = self._client.get_rows(
+            table="merchants",
+            query=query,
+            with_count=False,
+            use_anon_key=False,
+        )
+        if existing_rows and existing_rows[0].get("id"):
+            merchant_id = UUID(str(existing_rows[0]["id"]))
+            try:
+                self._client.patch_rows(
+                    table="merchants",
+                    query={"id": f"eq.{merchant_id}"},
+                    payload={"last_seen": "now()"},
+                    use_anon_key=False,
+                )
+            except Exception:
+                pass
+            return merchant_id
+
+        payload = {
+            "profile_id": str(profile_id),
+            "scope": scope,
+            "name": cleaned_name,
+            "name_norm": cleaned_name_norm,
+            "aliases": [],
+            "last_seen": "now()",
+        }
+        try:
+            created_rows = self._client.post_rows(table="merchants", payload=payload, use_anon_key=False)
+            if created_rows and created_rows[0].get("id"):
+                return UUID(str(created_rows[0]["id"]))
+        except RuntimeError as exc:
+            if "duplicate key" not in str(exc).lower() and "unique" not in str(exc).lower():
+                raise
+
+        fallback_rows, _ = self._client.get_rows(
+            table="merchants",
+            query=query,
+            with_count=False,
+            use_anon_key=False,
+        )
+        if fallback_rows and fallback_rows[0].get("id"):
+            return UUID(str(fallback_rows[0]["id"]))
+        raise RuntimeError("unable to upsert merchant")
+
+    def attach_merchant_to_releve(self, *, releve_id: UUID, merchant_id: UUID) -> None:
+        self._client.patch_rows(
+            table="releves_bancaires",
+            query={"id": f"eq.{releve_id}"},
+            payload={"merchant_id": str(merchant_id)},
             use_anon_key=False,
         )
