@@ -258,11 +258,11 @@ def _build_bank_accounts_onboarding_global_state(existing_global_state: dict[str
 
 
 
-def _has_any_bank_accounts(profiles_repository: Any, profile_id: UUID) -> bool:
-    """Return True when at least one bank account exists for the profile."""
+def _has_any_bank_accounts(profiles_repository: Any, profile_id: UUID) -> bool | None:
+    """Return bank account presence when check is supported, else None."""
 
     if not hasattr(profiles_repository, "list_bank_accounts"):
-        return False
+        return None
     bank_accounts = profiles_repository.list_bank_accounts(profile_id=profile_id)
     return bool(bank_accounts)
 
@@ -617,7 +617,7 @@ def agent_chat(
             onboarding_step = global_state.get("onboarding_step")
             has_bank_accounts = _has_any_bank_accounts(profiles_repository, profile_id)
 
-            if mode == "free_chat" and not has_bank_accounts:
+            if mode == "free_chat" and has_bank_accounts is False:
                 updated_global_state = {
                     "mode": "onboarding",
                     "onboarding_step": "bank_accounts",
@@ -638,7 +638,11 @@ def agent_chat(
                     plan=None,
                 )
 
-            if mode == "onboarding" and onboarding_step in {"import", "categories", "budget"} and not has_bank_accounts:
+            if (
+                mode == "onboarding"
+                and onboarding_step in {"import", "categories", "budget"}
+                and has_bank_accounts is False
+            ):
                 updated_global_state = {
                     "mode": "onboarding",
                     "onboarding_step": "bank_accounts",
@@ -663,6 +667,7 @@ def agent_chat(
             _is_valid_global_state(global_state)
             and global_state.get("mode") == "onboarding"
             and global_state.get("onboarding_step") == "bank_accounts"
+            and hasattr(profiles_repository, "list_bank_accounts")
             and hasattr(profiles_repository, "ensure_bank_accounts")
         ):
             state_dict = dict(state_dict) if isinstance(state_dict, dict) else {}
@@ -697,11 +702,6 @@ def agent_chat(
                     profile_id=profile_id,
                     user_id=auth_user_id,
                     chat_state=updated_chat_state,
-                )
-                return ChatResponse(
-                    reply="Indique-moi tes banques/comptes (ex: 'UBS, Revolut').",
-                    tool_result=None,
-                    plan=None,
                 )
 
             matched_banks, unknown_segments = extract_canonical_banks(payload.message)
