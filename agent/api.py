@@ -395,6 +395,31 @@ def _has_any_bank_accounts(profiles_repository: Any, profile_id: UUID) -> bool |
     return bool(bank_accounts)
 
 
+def _get_profile_fields_safe(profiles_repository: Any, profile_id: UUID) -> dict[str, Any] | None:
+    """Return onboarding profile fields when repository supports it, else None."""
+
+    if not hasattr(profiles_repository, "get_profile_fields"):
+        return None
+    try:
+        profile_fields = profiles_repository.get_profile_fields(
+            profile_id=profile_id,
+            fields=list(_PROFILE_COMPLETION_FIELDS),
+        )
+    except Exception:
+        logger.exception("failed_to_get_profile_fields_for_re_gate profile_id=%s", profile_id)
+        return None
+    return dict(profile_fields) if isinstance(profile_fields, dict) else {}
+
+
+def _has_complete_profile(profiles_repository: Any, profile_id: UUID) -> bool | None:
+    """Return profile completion status when supported, else None."""
+
+    profile_fields = _get_profile_fields_safe(profiles_repository, profile_id)
+    if profile_fields is None:
+        return None
+    return _is_profile_complete(profile_fields)
+
+
 
 class ChatRequest(BaseModel):
     """Incoming chat request payload."""
@@ -624,6 +649,42 @@ def agent_chat(
             state_dict = dict(state_dict) if isinstance(state_dict, dict) else {}
             state_dict["global_state"] = global_state
             should_persist_global_state = True
+
+        profile_complete = _has_complete_profile(profiles_repository, profile_id)
+        current_mode = global_state.get("mode") if _is_valid_global_state(global_state) else None
+        current_step = global_state.get("onboarding_step") if _is_valid_global_state(global_state) else None
+        current_substep = global_state.get("onboarding_substep") if _is_valid_global_state(global_state) else None
+        should_force_profile_re_gate = not (
+            current_mode == "onboarding"
+            and current_step == "profile"
+            and current_substep == "profile_collect"
+        )
+        if profile_complete is False and should_force_profile_re_gate:
+            updated_global_state = _build_onboarding_global_state(
+                global_state if _is_valid_global_state(global_state) else None,
+                onboarding_step="profile",
+                onboarding_substep="profile_collect",
+            )
+            updated_global_state["profile_confirmed"] = False
+            if _is_valid_global_state(updated_global_state):
+                updated_global_state = _normalize_onboarding_step_substep(updated_global_state)
+            state_dict = dict(state_dict) if isinstance(state_dict, dict) else {}
+            state_dict["global_state"] = updated_global_state
+            updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+            updated_chat_state["state"] = state_dict
+            profiles_repository.update_chat_state(
+                profile_id=profile_id,
+                user_id=auth_user_id,
+                chat_state=updated_chat_state,
+            )
+            return ChatResponse(
+                reply=(
+                    "Avant de continuer, j’ai besoin de ton prénom, nom et date de naissance. "
+                    "Écris 'Prénom Nom' puis ta date (YYYY-MM-DD)."
+                ),
+                tool_result=None,
+                plan=None,
+            )
 
         if _is_valid_global_state(global_state):
             state_dict = dict(state_dict) if isinstance(state_dict, dict) else {}
