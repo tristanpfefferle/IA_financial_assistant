@@ -362,7 +362,15 @@ def reset_session(authorization: str | None = Header(default=None)) -> dict[str,
     chat_state = profiles_repository.get_chat_state(profile_id=profile_id, user_id=auth_user_id)
     updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
     updated_chat_state["active_task"] = None
-    updated_chat_state["state"] = {}
+
+    existing_state = updated_chat_state.get("state")
+    if isinstance(existing_state, dict):
+        preserved_state = dict(existing_state)
+        preserved_state.pop("pending_clarification", None)
+        if preserved_state:
+            updated_chat_state["state"] = preserved_state
+        else:
+            updated_chat_state.pop("state", None)
 
     profiles_repository.update_chat_state(
         profile_id=profile_id,
