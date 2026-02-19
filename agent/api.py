@@ -339,6 +339,7 @@ def agent_chat(
             tool_result={"error": "internal_server_error"},
             plan=None,
         )
+
     except Exception:
         logger.exception(
             "agent_chat_unhandled_error",
@@ -349,6 +350,26 @@ def agent_chat(
             tool_result={"error": "internal_server_error"},
             plan=None,
         )
+
+
+@app.post("/agent/reset-session")
+def reset_session(authorization: str | None = Header(default=None)) -> dict[str, bool]:
+    """Reset persisted chat session state for the authenticated profile."""
+
+    auth_user_id, profile_id = _resolve_authenticated_profile(authorization)
+    profiles_repository = get_profiles_repository()
+
+    chat_state = profiles_repository.get_chat_state(profile_id=profile_id, user_id=auth_user_id)
+    updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+    updated_chat_state["active_task"] = None
+    updated_chat_state["state"] = {}
+
+    profiles_repository.update_chat_state(
+        profile_id=profile_id,
+        user_id=auth_user_id,
+        chat_state=updated_chat_state,
+    )
+    return {"ok": True}
 
 
 @app.get("/finance/bank-accounts")
