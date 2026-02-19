@@ -307,7 +307,7 @@ class SupabaseProfilesRepository:
                     continue
                 raise
 
-        return {"created_count": created_count, "total_count": len(existing_system_keys)}
+        return {"created_count": created_count, "system_total_count": len(existing_system_keys)}
 
     def list_merchants_without_category(self, *, profile_id: UUID) -> list[dict[str, Any]]:
         rows, _ = self._client.get_rows(
