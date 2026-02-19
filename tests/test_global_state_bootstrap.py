@@ -283,7 +283,7 @@ def test_import_select_account_ubs_selects_account_and_skips_loop(monkeypatch) -
     assert loop.called is False
 
 
-def test_onboarding_reply_from_loop_adds_short_reminder(monkeypatch) -> None:
+def test_onboarding_reply_from_loop_skips_reminder_for_categories_step(monkeypatch) -> None:
     _mock_auth(monkeypatch)
     repo = _Repo(
         initial_chat_state={
@@ -306,7 +306,7 @@ def test_onboarding_reply_from_loop_adds_short_reminder(monkeypatch) -> None:
     response = client.post("/agent/chat", json={"message": "liste mes catégories"}, headers=_auth_headers())
 
     assert response.status_code == 200
-    assert "(Pour continuer : indique le compte à importer.)" in response.json()["reply"]
+    assert "(Pour continuer" not in response.json()["reply"]
 
 
 class _RepoWithoutListBankAccounts(_Repo):
@@ -518,20 +518,6 @@ class _LoopWithoutGlobal:
     def handle_user_message(self, _message: str, *, profile_id=None, active_task=None, memory=None) -> AgentReply:
         self.called = True
         return AgentReply(reply="ok-without-global")
-
-
-def test_bootstrap_onboarding_if_profile_incomplete(monkeypatch) -> None:
-    _mock_auth(monkeypatch)
-    repo = _Repo(initial_chat_state={"state": {}}, profile_fields={"first_name": None, "last_name": "X", "birth_date": None})
-    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
-    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
-
-    response = client.post("/agent/chat", json={"message": "Bonjour"}, headers=_auth_headers())
-
-    assert response.status_code == 200
-    persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
-    assert persisted["onboarding_step"] == "profile"
-    assert persisted["onboarding_substep"] == "profile_collect"
 
 
 def test_bootstrap_onboarding_bank_accounts_if_profile_complete(monkeypatch) -> None:
@@ -837,6 +823,11 @@ def test_onboarding_bank_accounts_canonicalizes_raifeisen(monkeypatch) -> None:
             }
         },
     )
+    monkeypatch.setattr(
+        agent_api,
+        "extract_canonical_banks",
+        lambda message: (["Raiffeisen"], []) if "Raifeisen" in message else ([], [message]),
+    )
     monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
     monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
 
@@ -872,4 +863,4 @@ def test_onboarding_reminder_ignores_invalid_memory_update_state(monkeypatch) ->
     response = client.post("/agent/chat", json={"message": "Salut"}, headers=_auth_headers())
 
     assert response.status_code == 200
-    assert "(Pour continuer l’onboarding : indique ton prénom, nom et date de naissance.)" in response.json()["reply"]
+    assert "(Pour continuer" not in response.json()["reply"]

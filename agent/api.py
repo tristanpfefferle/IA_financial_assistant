@@ -180,6 +180,38 @@ def _is_profile_complete(profile_fields: dict[str, Any]) -> bool:
     )
 
 
+def _normalize_onboarding_step_substep(global_state: dict[str, Any]) -> dict[str, Any]:
+    """Normalize inconsistent onboarding step/substep combinations."""
+
+    if global_state.get("mode") != "onboarding":
+        return global_state
+
+    normalized = dict(global_state)
+    step = normalized.get("onboarding_step")
+    substep = normalized.get("onboarding_substep")
+
+    valid_substeps_by_step = {
+        "profile": {"profile_collect", "profile_confirm"},
+        "bank_accounts": {"bank_accounts_collect", "bank_accounts_confirm"},
+        "import": {"import_select_account"},
+    }
+    default_substep_by_step = {
+        "profile": "profile_collect",
+        "bank_accounts": "bank_accounts_collect",
+        "import": "import_select_account",
+    }
+
+    if step in valid_substeps_by_step:
+        if substep not in valid_substeps_by_step[step]:
+            normalized["onboarding_substep"] = default_substep_by_step[step]
+        return normalized
+
+    if step in {"categories", "budget", "guided_budget"}:
+        normalized["onboarding_substep"] = None
+
+    return normalized
+
+
 def _normalize_text(value: str) -> str:
     normalized = unicodedata.normalize("NFKD", value.strip().lower()).encode("ascii", "ignore").decode("ascii")
     return " ".join(normalized.split())
@@ -566,6 +598,8 @@ def agent_chat(
         state_dict = dict(state) if isinstance(state, dict) else None
         existing_global_state = state_dict.get("global_state") if isinstance(state_dict, dict) else None
         global_state = existing_global_state if _is_valid_global_state(existing_global_state) else None
+        if _is_valid_global_state(global_state):
+            global_state = _normalize_onboarding_step_substep(global_state)
         should_persist_global_state = False
 
         if global_state is None and hasattr(profiles_repository, "get_profile_fields"):
@@ -1031,7 +1065,11 @@ def agent_chat(
         safe_plan = jsonable_encoder(response_plan)
 
         reply_text = agent_reply.reply
-        reminder_state = global_state if _is_valid_global_state(global_state) else None
+        reminder_state = (
+            _normalize_onboarding_step_substep(global_state)
+            if _is_valid_global_state(global_state)
+            else None
+        )
         has_valid_memory_update_global_state = False
         if isinstance(memory_update, dict):
             memory_update_global_state = None
@@ -1039,14 +1077,14 @@ def agent_chat(
             if isinstance(state_part, dict):
                 memory_update_global_state = state_part.get("global_state")
             if _is_valid_global_state(memory_update_global_state):
-                reminder_state = memory_update_global_state
+                reminder_state = _normalize_onboarding_step_substep(memory_update_global_state)
                 has_valid_memory_update_global_state = True
 
         updated_chat_global_state = None
         if isinstance(updated_chat_state, dict):
             updated_chat_global_state = updated_chat_state.get("state", {}).get("global_state")
         if _is_valid_global_state(updated_chat_global_state) and not has_valid_memory_update_global_state:
-            reminder_state = updated_chat_global_state
+            reminder_state = _normalize_onboarding_step_substep(updated_chat_global_state)
 
         reminder = _build_onboarding_reminder(reminder_state)
         if reminder:
