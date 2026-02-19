@@ -291,8 +291,15 @@ def agent_chat(
                     if isinstance(existing_state, dict)
                     else {}
                 )
-                merged_state.update(jsonable_encoder(memory_update))
-                updated_chat_state["state"] = merged_state
+                for key, value in jsonable_encoder(memory_update).items():
+                    if value is None:
+                        merged_state.pop(key, None)
+                    else:
+                        merged_state[key] = value
+                if merged_state:
+                    updated_chat_state["state"] = merged_state
+                else:
+                    updated_chat_state.pop("state", None)
 
             logger.info(
                 "agent_chat_state_updating has_memory_update=%s memory_update_keys=%s",
