@@ -1976,7 +1976,12 @@ class AgentLoop:
         global_state: dict[str, object] | None = None,
         debug: bool = False,
     ) -> AgentReply:
-        if isinstance(global_state, dict) and global_state.get("mode") == "onboarding":
+        if (
+            isinstance(global_state, dict)
+            and global_state.get("mode") == "onboarding"
+            and global_state.get("onboarding_step") == "profile"
+            and active_task is None
+        ):
             return AgentReply(
                 reply=(
                     "Bienvenue 👋 Pour commencer, complétez votre profil "
