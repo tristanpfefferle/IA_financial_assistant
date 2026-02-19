@@ -988,6 +988,37 @@ def agent_chat(
                     plan=None,
                 )
 
+            should_re_gate_import = (
+                profile_complete is True
+                and has_bank_accounts is True
+                and global_state.get("has_imported_transactions") is not True
+                and (
+                    mode == "free_chat"
+                    or (mode == "onboarding" and onboarding_step in {"categories", "budget"})
+                )
+            )
+            if should_re_gate_import:
+                updated_global_state = _build_onboarding_global_state(
+                    global_state,
+                    onboarding_step="import",
+                    onboarding_substep="import_select_account",
+                )
+                updated_global_state["has_imported_transactions"] = False
+                state_dict["global_state"] = _normalize_onboarding_step_substep(updated_global_state)
+                state_dict.pop("import_context", None)
+                updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                updated_chat_state["state"] = state_dict
+                profiles_repository.update_chat_state(
+                    profile_id=profile_id,
+                    user_id=auth_user_id,
+                    chat_state=updated_chat_state,
+                )
+                return ChatResponse(
+                    reply="Avant de continuer, tu dois importer un relevé. Quel compte veux-tu importer ?",
+                    tool_result=None,
+                    plan=None,
+                )
+
             if mode == "onboarding" and onboarding_step == "bank_accounts" and hasattr(profiles_repository, "list_bank_accounts") and hasattr(profiles_repository, "ensure_bank_accounts"):
                 substep = global_state.get("onboarding_substep") or "bank_accounts_collect"
                 existing_accounts = profiles_repository.list_bank_accounts(profile_id=profile_id)

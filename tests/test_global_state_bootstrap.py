@@ -498,6 +498,100 @@ def test_free_chat_does_not_re_gate_when_list_bank_accounts_raises(monkeypatch) 
     assert loop.called is True
 
 
+def test_free_chat_re_gates_to_import_when_transactions_not_imported(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "free_chat",
+                    "onboarding_step": None,
+                    "onboarding_substep": None,
+                    "has_bank_accounts": True,
+                    "has_imported_transactions": False,
+                    "budget_created": False,
+                },
+                "import_context": {
+                    "selected_bank_account_id": "bank-1",
+                    "selected_bank_account_name": "UBS",
+                },
+            }
+        },
+    )
+    repo.bank_accounts = [{"id": "bank-1", "name": "UBS"}]
+    loop = _LoopSpy()
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: loop)
+
+    response = client.post("/agent/chat", json={"message": "Salut"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert response.json()["reply"] == "Avant de continuer, tu dois importer un relevé. Quel compte veux-tu importer ?"
+    persisted_state = repo.update_calls[-1]["chat_state"]["state"]
+    assert persisted_state["global_state"]["onboarding_step"] == "import"
+    assert persisted_state["global_state"]["onboarding_substep"] == "import_select_account"
+    assert persisted_state["global_state"]["has_imported_transactions"] is False
+    assert "import_context" not in persisted_state
+    assert loop.called is False
+
+
+def test_free_chat_does_not_re_gate_import_when_transactions_already_imported(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "free_chat",
+                    "onboarding_step": None,
+                    "onboarding_substep": None,
+                    "has_bank_accounts": True,
+                    "has_imported_transactions": True,
+                    "budget_created": False,
+                }
+            }
+        },
+    )
+    repo.bank_accounts = [{"id": "bank-1", "name": "UBS"}]
+    loop = _LoopSpy()
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: loop)
+
+    response = client.post("/agent/chat", json={"message": "Salut"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert response.json()["reply"] == "loop"
+    assert repo.update_calls == []
+    assert loop.called is True
+
+
+def test_free_chat_does_not_re_gate_import_when_bank_account_check_unavailable(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _RepoWithoutListBankAccounts(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "free_chat",
+                    "onboarding_step": None,
+                    "onboarding_substep": None,
+                    "has_bank_accounts": True,
+                    "has_imported_transactions": False,
+                    "budget_created": False,
+                }
+            }
+        },
+    )
+    loop = _LoopSpy()
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: loop)
+
+    response = client.post("/agent/chat", json={"message": "Salut"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert response.json()["reply"] == "loop"
+    assert repo.update_calls == []
+    assert loop.called is True
+
+
 def test_onboarding_reminder_uses_memory_update_global_state(monkeypatch) -> None:
     _mock_auth(monkeypatch)
     repo = _Repo(
