@@ -547,3 +547,44 @@ def test_agent_reset_session_removes_empty_state_after_clearing_pending_clarific
     assert response.json() == {"ok": True}
     assert repo.update_calls[-1]["chat_state"]["active_task"] is None
     assert "state" not in repo.update_calls[-1]["chat_state"]
+
+
+def test_debug_hard_reset_requires_confirm_true(monkeypatch) -> None:
+    _mock_authenticated(monkeypatch)
+
+    response = client.post('/debug/hard-reset', json={}, headers=_auth_headers())
+
+    assert response.status_code == 400
+
+
+def test_debug_hard_reset_calls_repo_with_authenticated_profile_only(monkeypatch) -> None:
+    monkeypatch.setattr(
+        agent_api,
+        'get_user_from_bearer_token',
+        lambda _token: {'id': str(AUTH_USER_ID), 'email': 'user@example.com'},
+    )
+
+    class _Repo:
+        def __init__(self) -> None:
+            self.called_with: dict[str, UUID] | None = None
+
+        def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None):
+            assert auth_user_id == AUTH_USER_ID
+            assert email == 'user@example.com'
+            return UUID('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
+
+        def hard_reset_profile(self, *, profile_id: UUID, user_id: UUID) -> None:
+            self.called_with = {'profile_id': profile_id, 'user_id': user_id}
+
+    repo = _Repo()
+    agent_api.get_profiles_repository.cache_clear()
+    monkeypatch.setattr(agent_api, 'get_profiles_repository', lambda: repo)
+
+    response = client.post('/debug/hard-reset', json={'confirm': True}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert response.json() == {'ok': True}
+    assert repo.called_with == {
+        'profile_id': UUID('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
+        'user_id': AUTH_USER_ID,
+    }

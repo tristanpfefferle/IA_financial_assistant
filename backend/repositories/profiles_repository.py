@@ -45,6 +45,8 @@ class ProfilesRepository(Protocol):
     def update_merchant_category(self, *, merchant_id: UUID, category_name: str) -> None:
         """Assign a category name on one merchant."""
 
+    def hard_reset_profile(self, *, profile_id: UUID, user_id: UUID) -> None:
+        """Purge profile-scoped data and reset onboarding/profile fields."""
 
 
 class SupabaseProfilesRepository:
@@ -323,6 +325,23 @@ class SupabaseProfilesRepository:
             use_anon_key=False,
         )
         return rows
+
+    def hard_reset_profile(self, *, profile_id: UUID, user_id: UUID) -> None:
+        self._client.patch_rows(
+            table="profils",
+            query={"id": f"eq.{profile_id}"},
+            payload={"first_name": None, "last_name": None, "birth_date": None},
+            use_anon_key=False,
+        )
+
+        self.update_chat_state(profile_id=profile_id, user_id=user_id, chat_state={})
+
+        for table_name in ("releves_bancaires", "merchants", "profile_categories", "bank_accounts"):
+            self._client.delete_rows(
+                table=table_name,
+                query={"profile_id": f"eq.{profile_id}"},
+                use_anon_key=False,
+            )
 
     def update_merchant_category(self, *, merchant_id: UUID, category_name: str) -> None:
         cleaned = " ".join(category_name.strip().split())

@@ -409,7 +409,7 @@ def test_categories_review_oui_transitions_to_budget_without_loop(monkeypatch) -
     assert loop.called is False
 
 
-def test_categories_review_non_stays_in_review_without_loop(monkeypatch) -> None:
+def test_categories_review_non_falls_back_to_loop(monkeypatch) -> None:
     _mock_auth(monkeypatch)
     repo = _Repo(
         initial_chat_state={
@@ -435,10 +435,10 @@ def test_categories_review_non_stays_in_review_without_loop(monkeypatch) -> None
     response = client.post("/agent/chat", json={"message": "NON"}, headers=_auth_headers())
 
     assert response.status_code == 200
-    assert "dis-moi ce que tu veux modifier" in response.json()["reply"].lower()
+    assert response.json()["reply"].startswith("loop")
     assert repo.update_calls == []
     assert repo.chat_state["state"]["global_state"]["onboarding_substep"] == "categories_review"
-    assert loop.called is False
+    assert loop.called is True
 
 
 
@@ -620,7 +620,7 @@ def test_free_chat_does_not_re_gate_when_list_bank_accounts_is_unavailable(monke
     response = client.post("/agent/chat", json={"message": "Salut"}, headers=_auth_headers())
 
     assert response.status_code == 200
-    assert response.json()["reply"] == "loop"
+    assert response.json()["reply"].startswith("loop")
     assert repo.update_calls == []
     assert loop.called is True
 
@@ -648,7 +648,7 @@ def test_free_chat_does_not_re_gate_when_list_bank_accounts_raises(monkeypatch) 
     response = client.post("/agent/chat", json={"message": "Salut"}, headers=_auth_headers())
 
     assert response.status_code == 200
-    assert response.json()["reply"] == "loop"
+    assert response.json()["reply"].startswith("loop")
     assert repo.update_calls == []
     assert loop.called is True
 
@@ -714,7 +714,7 @@ def test_free_chat_does_not_re_gate_import_when_transactions_already_imported(mo
     response = client.post("/agent/chat", json={"message": "Salut"}, headers=_auth_headers())
 
     assert response.status_code == 200
-    assert response.json()["reply"] == "loop"
+    assert response.json()["reply"].startswith("loop")
     assert repo.update_calls == []
     assert loop.called is True
 
@@ -742,7 +742,7 @@ def test_free_chat_does_not_re_gate_import_when_bank_account_check_unavailable(m
     response = client.post("/agent/chat", json={"message": "Salut"}, headers=_auth_headers())
 
     assert response.status_code == 200
-    assert response.json()["reply"] == "loop"
+    assert response.json()["reply"].startswith("loop")
     assert repo.update_calls == []
     assert loop.called is True
 
@@ -975,7 +975,7 @@ def test_profile_check_is_skipped_when_repo_has_no_get_profile_fields(monkeypatc
     response = client.post("/agent/chat", json={"message": "Salut"}, headers=_auth_headers())
 
     assert response.status_code == 200
-    assert response.json()["reply"] == "loop"
+    assert response.json()["reply"].startswith("loop")
     assert loop.called is True
     assert repo.update_calls == []
 

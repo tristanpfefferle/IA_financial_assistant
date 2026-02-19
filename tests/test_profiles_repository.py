@@ -15,6 +15,7 @@ class _ClientStub:
         self.patch_calls: list[dict[str, object]] = []
         self.post_calls: list[dict[str, object]] = []
         self.upsert_calls: list[dict[str, object]] = []
+        self.delete_calls: list[dict[str, object]] = []
 
     def get_rows(self, *, table, query, with_count, use_anon_key=False):
         self.calls.append(
@@ -55,6 +56,16 @@ class _ClientStub:
                 "table": table,
                 "payload": payload,
                 "on_conflict": on_conflict,
+                "use_anon_key": use_anon_key,
+            }
+        )
+        return []
+
+    def delete_rows(self, *, table, query, use_anon_key=False):
+        self.delete_calls.append(
+            {
+                "table": table,
+                "query": query,
                 "use_anon_key": use_anon_key,
             }
         )
@@ -271,3 +282,39 @@ def test_update_profile_fields_uses_table_update_and_filters_unknown_fields() ->
     assert client.table_calls == ["profils"]
     assert client.query.update_payload == {"first_name": "Paul", "birth_date": "2001-07-14"}
     assert client.query.eq_filters == [("id", str(profile_id))]
+
+
+def test_hard_reset_profile_deletes_only_filtered_by_profile_id() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    user_id = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+    client = _ClientStub(responses=[], patch_responses=[[{"id": str(profile_id)}]])
+    repository = SupabaseProfilesRepository(client=client)
+
+    repository.hard_reset_profile(profile_id=profile_id, user_id=user_id)
+
+    assert client.patch_calls == [
+        {
+            "table": "profils",
+            "query": {"id": f"eq.{profile_id}"},
+            "payload": {"first_name": None, "last_name": None, "birth_date": None},
+            "use_anon_key": False,
+        }
+    ]
+    assert client.upsert_calls == [
+        {
+            "table": "chat_state",
+            "payload": {
+                "conversation_id": str(profile_id),
+                "user_id": str(user_id),
+                "profile_id": str(profile_id),
+            },
+            "on_conflict": "conversation_id",
+            "use_anon_key": False,
+        }
+    ]
+    assert client.delete_calls == [
+        {"table": "releves_bancaires", "query": {"profile_id": f"eq.{profile_id}"}, "use_anon_key": False},
+        {"table": "merchants", "query": {"profile_id": f"eq.{profile_id}"}, "use_anon_key": False},
+        {"table": "profile_categories", "query": {"profile_id": f"eq.{profile_id}"}, "use_anon_key": False},
+        {"table": "bank_accounts", "query": {"profile_id": f"eq.{profile_id}"}, "use_anon_key": False},
+    ]
