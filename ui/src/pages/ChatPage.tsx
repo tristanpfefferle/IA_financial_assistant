@@ -3,11 +3,13 @@ import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent 
 import {
   importReleves,
   listBankAccounts,
+  resetSession,
   sendChatMessage,
   type BankAccount,
   type ImportFilePayload,
   type RelevesImportResult,
 } from '../api/agentApi'
+import { installSessionResetOnPageExit, logoutWithSessionReset } from '../lib/sessionLifecycle'
 import { supabase } from '../lib/supabaseClient'
 
 type ChatMessage = {
@@ -103,6 +105,18 @@ export function ChatPage({ email }: ChatPageProps) {
       })
   }, [hasToken])
 
+  useEffect(() => {
+    if (!hasToken) {
+      return
+    }
+
+    const cleanup = installSessionResetOnPageExit(() => {
+      void resetSession({ keepalive: true, timeoutMs: 1500 })
+    })
+
+    return cleanup
+  }, [hasToken])
+
   const isConnected = useMemo(() => Boolean(email), [email])
   const canSubmit = message.trim().length > 0 && !isLoading
   const hasUnauthorizedError = useMemo(() => error?.includes('(401)') ?? false, [error])
@@ -170,14 +184,13 @@ export function ChatPage({ email }: ChatPageProps) {
   async function handleLogout() {
     setError(null)
 
-    try {
-      const { error: signOutError } = await supabase.auth.signOut()
-      if (signOutError) {
-        throw signOutError
-      }
-    } catch {
-      setError('Impossible de vous déconnecter pour le moment. Veuillez réessayer.')
-    }
+    await logoutWithSessionReset({
+      resetSession: () => resetSession({ timeoutMs: 1500 }),
+      signOut: () => supabase.auth.signOut(),
+      onLogoutError: () => {
+        setError('Impossible de vous déconnecter pour le moment. Veuillez réessayer.')
+      },
+    })
   }
 
   async function handleRefreshSession() {
