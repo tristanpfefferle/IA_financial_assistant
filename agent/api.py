@@ -43,6 +43,8 @@ _GLOBAL_STATE_ONBOARDING_SUBSTEPS = {
     "bank_accounts_confirm",
     "import_select_account",
     "categories_intro",
+    "categories_bootstrap",
+    "categories_review",
     None,
 }
 _PROFILE_COMPLETION_FIELDS = ("first_name", "last_name", "birth_date")
@@ -89,6 +91,25 @@ _BANK_ACCOUNTS_REQUEST_HINTS = ("liste", "catégor", "depens", "dépens", "recet
 _YES_VALUES = {"oui", "ouais", "yep", "yes", "y", "ok", "daccord", "confirm", "je confirme"}
 _NO_VALUES = {"non", "nope", "no", "n"}
 _IMPORT_FILE_PROMPT = "Parfait. Envoie le fichier CSV/PDF du compte sélectionné."
+_SYSTEM_CATEGORIES: tuple[tuple[str, str], ...] = (
+    ("food", "Alimentation"),
+    ("housing", "Logement"),
+    ("transport", "Transport"),
+    ("health", "Santé"),
+    ("leisure", "Loisirs"),
+    ("shopping", "Shopping"),
+    ("bills", "Factures"),
+    ("taxes", "Impôts"),
+    ("insurance", "Assurance"),
+    ("other", "Autres"),
+)
+_MERCHANT_CATEGORY_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("migros", "coop", "lidl", "aldi", "denner"), "Alimentation"),
+    (("sbb", "cff", "tpg", "tl", "uber", "bolt"), "Transport"),
+    (("swisscom", "salt", "sunrise"), "Factures"),
+    (("axa", "zurich", "helvetia", "mobiliar"), "Assurance"),
+)
+_FALLBACK_MERCHANT_CATEGORY = "Autres"
 
 
 def _build_import_file_ui_request(import_context: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -257,14 +278,18 @@ def _normalize_onboarding_step_substep(global_state: dict[str, Any]) -> dict[str
         "profile": {"profile_collect", "profile_confirm"},
         "bank_accounts": {"bank_accounts_collect", "bank_accounts_confirm"},
         "import": {"import_select_account"},
-        "categories": {"categories_intro"},
+        "categories": {"categories_intro", "categories_bootstrap", "categories_review"},
     }
     default_substep_by_step = {
         "profile": "profile_collect",
         "bank_accounts": "bank_accounts_collect",
         "import": "import_select_account",
-        "categories": "categories_intro",
+        "categories": "categories_bootstrap",
     }
+
+    if step == "categories" and substep == "categories_intro":
+        normalized["onboarding_substep"] = "categories_bootstrap"
+        return normalized
 
     if step in valid_substeps_by_step:
         if substep not in valid_substeps_by_step[step]:
@@ -288,6 +313,14 @@ def _is_yes(message: str) -> bool:
 
 def _is_no(message: str) -> bool:
     return _normalize_text(message) in _NO_VALUES
+
+
+def _pick_category_for_merchant_name(name: str) -> str:
+    normalized_name = _normalize_text(name)
+    for keywords, category_name in _MERCHANT_CATEGORY_RULES:
+        if any(keyword in normalized_name for keyword in keywords):
+            return category_name
+    return _FALLBACK_MERCHANT_CATEGORY
 
 
 def _format_accounts_for_reply(accounts: list[dict[str, Any]]) -> str:
@@ -325,7 +358,11 @@ def _build_onboarding_reminder(global_state: dict[str, Any] | None) -> str | Non
     if substep == "import_select_account":
         return "(Pour continuer : indique le compte à importer.)"
     if substep == "categories_intro":
-        return "(Pour continuer l’onboarding : on va configurer les catégories.)"
+        return "(Pour continuer l’onboarding : démarrons le bootstrap des catégories.)"
+    if substep == "categories_bootstrap":
+        return "(Pour continuer l’onboarding : je prépare automatiquement les catégories et les marchands.)"
+    if substep == "categories_review":
+        return "(Pour continuer l’onboarding : réponds OUI/NON pour passer à l’étape budget.)"
     return None
 
 
@@ -1181,30 +1218,86 @@ def agent_chat(
                     plan=None,
                 )
 
-            if (
-                mode == "onboarding"
-                and onboarding_step == "categories"
-                and global_state.get("onboarding_substep") == "categories_intro"
-            ):
-                updated_global_state = _build_onboarding_global_state(
-                    global_state,
-                    onboarding_step="budget",
-                    onboarding_substep=None,
-                )
-                updated_global_state = _normalize_onboarding_step_substep(updated_global_state)
-                state_dict["global_state"] = updated_global_state
-                updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
-                updated_chat_state["state"] = state_dict
-                profiles_repository.update_chat_state(
-                    profile_id=profile_id,
-                    user_id=auth_user_id,
-                    chat_state=updated_chat_state,
-                )
-                return ChatResponse(
-                    reply="Parfait ✅ Import terminé. Prochaine étape: catégories puis budget. (On configurera ça juste après.)",
-                    tool_result=None,
-                    plan=None,
-                )
+            if mode == "onboarding" and onboarding_step == "categories":
+                substep = global_state.get("onboarding_substep")
+                if substep in {"categories_intro", "categories_bootstrap"}:
+                    created_count = 0
+                    existing_categories = profiles_repository.list_profile_categories(profile_id=profile_id)
+                    if not existing_categories:
+                        ensure_result = profiles_repository.ensure_system_categories(
+                            profile_id=profile_id,
+                            categories=[
+                                {"system_key": system_key, "name": category_name}
+                                for system_key, category_name in _SYSTEM_CATEGORIES
+                            ],
+                        )
+                        created_count = int(ensure_result.get("created_count", 0))
+
+                    merchants_without_category = profiles_repository.list_merchants_without_category(profile_id=profile_id)
+                    classified_count = 0
+                    for merchant in merchants_without_category:
+                        merchant_id = merchant.get("id")
+                        if merchant_id is None:
+                            continue
+                        merchant_name = str(merchant.get("name_norm") or merchant.get("name") or "")
+                        category_name = _pick_category_for_merchant_name(merchant_name)
+                        profiles_repository.update_merchant_category(
+                            merchant_id=UUID(str(merchant_id)),
+                            category_name=category_name,
+                        )
+                        classified_count += 1
+
+                    updated_global_state = _build_onboarding_global_state(
+                        global_state,
+                        onboarding_step="categories",
+                        onboarding_substep="categories_review",
+                    )
+                    updated_global_state = _normalize_onboarding_step_substep(updated_global_state)
+                    state_dict["global_state"] = updated_global_state
+                    updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                    updated_chat_state["state"] = state_dict
+                    profiles_repository.update_chat_state(
+                        profile_id=profile_id,
+                        user_id=auth_user_id,
+                        chat_state=updated_chat_state,
+                    )
+                    return ChatResponse(
+                        reply=(
+                            f"✅ Catégories créées: {created_count}. Marchands classés: {classified_count}. "
+                            "Veux-tu continuer vers la création de budget ? (OUI/NON)"
+                        ),
+                        tool_result=None,
+                        plan=None,
+                    )
+
+                if substep == "categories_review":
+                    if _is_yes(payload.message):
+                        updated_global_state = _build_onboarding_global_state(
+                            global_state,
+                            onboarding_step="budget",
+                            onboarding_substep=None,
+                        )
+                        updated_global_state = _normalize_onboarding_step_substep(updated_global_state)
+                        state_dict["global_state"] = updated_global_state
+                        updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                        updated_chat_state["state"] = state_dict
+                        profiles_repository.update_chat_state(
+                            profile_id=profile_id,
+                            user_id=auth_user_id,
+                            chat_state=updated_chat_state,
+                        )
+                        return ChatResponse(
+                            reply="Parfait. On passe à la création du budget.",
+                            tool_result=None,
+                            plan=None,
+                        )
+                    if _is_no(payload.message):
+                        return ChatResponse(
+                            reply="Ok, dis-moi ce que tu veux modifier…",
+                            tool_result=None,
+                            plan=None,
+                        )
+                    return ChatResponse(reply="Réponds OUI ou NON.", tool_result=None, plan=None)
 
         memory_for_loop = state_dict if isinstance(state_dict, dict) else None
 
@@ -1443,7 +1536,7 @@ def import_releves(payload: ImportRequestPayload, authorization: str | None = He
             updated_global_state = _build_onboarding_global_state(
                 global_state,
                 onboarding_step="categories",
-                onboarding_substep="categories_intro",
+                onboarding_substep="categories_bootstrap",
             )
             updated_global_state["has_imported_transactions"] = True
             updated_global_state = _normalize_onboarding_step_substep(updated_global_state)
@@ -1451,7 +1544,7 @@ def import_releves(payload: ImportRequestPayload, authorization: str | None = He
             updated_global_state = _build_onboarding_global_state(
                 None,
                 onboarding_step="categories",
-                onboarding_substep="categories_intro",
+                onboarding_substep="categories_bootstrap",
             )
             updated_global_state["has_imported_transactions"] = True
 
