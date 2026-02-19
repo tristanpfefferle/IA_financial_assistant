@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import inspect
+import os
 import re
 import unicodedata
 from functools import lru_cache
@@ -1475,6 +1476,9 @@ def debug_hard_reset(
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
     """Hard reset current authenticated profile data (debug only)."""
+
+    if os.getenv("DEBUG_ENDPOINTS_ENABLED") != "true":
+        raise HTTPException(status_code=404, detail="Not found")
 
     if payload.confirm is not True:
         raise HTTPException(status_code=400, detail="confirm=true is required")
