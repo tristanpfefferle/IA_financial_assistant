@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 from typing import Any, Protocol
+import unicodedata
 from uuid import UUID
 
 from backend.db.supabase_client import SupabaseClient
@@ -31,6 +32,18 @@ class ProfilesRepository(Protocol):
 
     def ensure_bank_accounts(self, *, profile_id: UUID, names: list[str]) -> dict[str, Any]:
         """Create missing bank accounts while preserving uniqueness by lowercase name."""
+
+    def list_profile_categories(self, *, profile_id: UUID) -> list[dict[str, Any]]:
+        """Return categories for a profile and personal scope."""
+
+    def ensure_system_categories(self, *, profile_id: UUID, categories: list[dict[str, str]]) -> dict[str, int]:
+        """Create system categories for a profile and return creation counters."""
+
+    def list_merchants_without_category(self, *, profile_id: UUID) -> list[dict[str, Any]]:
+        """Return merchants without category for a profile and personal scope."""
+
+    def update_merchant_category(self, *, merchant_id: UUID, category_name: str) -> None:
+        """Assign a category name on one merchant."""
 
 
 
@@ -231,3 +244,93 @@ class SupabaseProfilesRepository:
             existing_by_lower[lowered_name] = {"name": name}
 
         return {"created": created, "existing": existing, "all": normalized_names}
+
+    @staticmethod
+    def _normalize_name_norm(value: str) -> str:
+        normalized = unicodedata.normalize("NFKD", value.strip().lower()).encode("ascii", "ignore").decode("ascii")
+        return " ".join(normalized.split())
+
+    def list_profile_categories(self, *, profile_id: UUID) -> list[dict[str, Any]]:
+        rows, _ = self._client.get_rows(
+            table="profile_categories",
+            query={
+                "select": "id,name,name_norm,system_key,is_system,scope",
+                "profile_id": f"eq.{profile_id}",
+                "scope": "eq.personal",
+                "limit": 200,
+            },
+            with_count=False,
+            use_anon_key=False,
+        )
+        return rows
+
+    def ensure_system_categories(self, *, profile_id: UUID, categories: list[dict[str, str]]) -> dict[str, int]:
+        existing = self.list_profile_categories(profile_id=profile_id)
+        existing_system_keys = {
+            str(row.get("system_key"))
+            for row in existing
+            if row.get("system_key")
+        }
+        existing_name_norms = {
+            str(row.get("name_norm"))
+            for row in existing
+            if row.get("name_norm")
+        }
+
+        created_count = 0
+        for category in categories:
+            system_key = str(category.get("system_key", "")).strip()
+            name = str(category.get("name", "")).strip()
+            if not system_key or not name:
+                continue
+            name_norm = self._normalize_name_norm(name)
+            if system_key in existing_system_keys or name_norm in existing_name_norms:
+                continue
+
+            payload = {
+                "profile_id": str(profile_id),
+                "scope": "personal",
+                "is_system": True,
+                "system_key": system_key,
+                "name": name,
+                "name_norm": name_norm,
+                "keywords": [],
+            }
+            try:
+                self._client.post_rows(table="profile_categories", payload=payload, use_anon_key=False)
+                created_count += 1
+                existing_system_keys.add(system_key)
+                existing_name_norms.add(name_norm)
+            except RuntimeError as exc:
+                error_message = str(exc).lower()
+                if "duplicate key" in error_message or "unique" in error_message:
+                    continue
+                raise
+
+        return {"created_count": created_count, "total_count": len(existing_system_keys)}
+
+    def list_merchants_without_category(self, *, profile_id: UUID) -> list[dict[str, Any]]:
+        rows, _ = self._client.get_rows(
+            table="merchants",
+            query={
+                "select": "id,name,name_norm,category",
+                "profile_id": f"eq.{profile_id}",
+                "scope": "eq.personal",
+                "or": "(category.is.null,category.eq.)",
+                "limit": 500,
+            },
+            with_count=False,
+            use_anon_key=False,
+        )
+        return rows
+
+    def update_merchant_category(self, *, merchant_id: UUID, category_name: str) -> None:
+        cleaned = " ".join(category_name.strip().split())
+        if not cleaned:
+            return
+        self._client.patch_rows(
+            table="merchants",
+            query={"id": f"eq.{merchant_id}"},
+            payload={"category": cleaned},
+            use_anon_key=False,
+        )

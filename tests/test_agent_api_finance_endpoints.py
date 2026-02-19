@@ -206,7 +206,7 @@ def test_import_releves_updates_chat_state_after_success(monkeypatch) -> None:
     assert response.status_code == 200
     assert repo.last_chat_state is not None
     assert repo.last_chat_state["state"]["global_state"]["onboarding_step"] == "categories"
-    assert repo.last_chat_state["state"]["global_state"]["onboarding_substep"] == "categories_intro"
+    assert repo.last_chat_state["state"]["global_state"]["onboarding_substep"] == "categories_bootstrap"
     assert repo.last_chat_state["state"]["global_state"]["has_imported_transactions"] is True
     assert "import_context" not in repo.last_chat_state["state"]
 

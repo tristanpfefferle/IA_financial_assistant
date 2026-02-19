@@ -31,6 +31,8 @@ class _Repo:
         self.chat_state = initial_chat_state or {}
         self.profile_fields = profile_fields or {"first_name": "Ada", "last_name": "Lovelace", "birth_date": "1815-12-10"}
         self.bank_accounts: list[dict[str, object]] = []
+        self.profile_categories: list[dict[str, object]] = []
+        self.merchants: list[dict[str, object]] = []
         self.update_calls: list[dict[str, object]] = []
         self.profile_update_calls: list[dict[str, object]] = []
         self.ensure_bank_accounts_calls: list[dict[str, object]] = []
@@ -79,6 +81,48 @@ class _Repo:
             existing_lower.add(lowered)
             created.append(name)
         return {"created": created, "all": names}
+
+    def list_profile_categories(self, *, profile_id: UUID) -> list[dict[str, object]]:
+        assert profile_id == PROFILE_ID
+        return [dict(row) for row in self.profile_categories]
+
+    def ensure_system_categories(self, *, profile_id: UUID, categories: list[dict[str, str]]) -> dict[str, int]:
+        assert profile_id == PROFILE_ID
+        existing_keys = {str(row.get("system_key")) for row in self.profile_categories if row.get("system_key")}
+        existing_name_norms = {str(row.get("name_norm")) for row in self.profile_categories if row.get("name_norm")}
+        created_count = 0
+        for category in categories:
+            system_key = category["system_key"]
+            name = category["name"]
+            name_norm = " ".join(name.strip().lower().split())
+            if system_key in existing_keys or name_norm in existing_name_norms:
+                continue
+            self.profile_categories.append(
+                {
+                    "id": f"cat-{len(self.profile_categories)+1}",
+                    "name": name,
+                    "name_norm": name_norm,
+                    "system_key": system_key,
+                    "is_system": True,
+                    "scope": "personal",
+                }
+            )
+            existing_keys.add(system_key)
+            existing_name_norms.add(name_norm)
+            created_count += 1
+        return {"created_count": created_count, "total_count": len(existing_keys)}
+
+    def list_merchants_without_category(self, *, profile_id: UUID) -> list[dict[str, object]]:
+        assert profile_id == PROFILE_ID
+        return [dict(row) for row in self.merchants if not str(row.get("category") or "").strip()]
+
+    def update_merchant_category(self, *, merchant_id: UUID, category_name: str) -> None:
+        merchant_id_str = str(merchant_id)
+        for merchant in self.merchants:
+            if str(merchant.get("id")) == merchant_id_str:
+                merchant["category"] = category_name
+                return
+        raise AssertionError("merchant not found")
 
 
 class _LoopSpy:
@@ -287,7 +331,7 @@ def test_import_select_account_ubs_selects_account_and_skips_loop(monkeypatch) -
     assert loop.called is False
 
 
-def test_categories_intro_transitions_to_budget_without_loop(monkeypatch) -> None:
+def test_categories_bootstrap_creates_categories_classifies_merchants_and_skips_loop(monkeypatch) -> None:
     _mock_auth(monkeypatch)
     repo = _Repo(
         initial_chat_state={
@@ -295,7 +339,7 @@ def test_categories_intro_transitions_to_budget_without_loop(monkeypatch) -> Non
                 "global_state": {
                     "mode": "onboarding",
                     "onboarding_step": "categories",
-                    "onboarding_substep": "categories_intro",
+                    "onboarding_substep": "categories_bootstrap",
                     "profile_confirmed": True,
                     "bank_accounts_confirmed": True,
                     "has_bank_accounts": True,
@@ -304,22 +348,94 @@ def test_categories_intro_transitions_to_budget_without_loop(monkeypatch) -> Non
                 }
             }
         },
-        profile_fields={"first_name": "Ada", "last_name": "Lovelace", "birth_date": "1815-12-10"},
     )
-    loop = _LoopSpy()
     repo.bank_accounts = [{"id": "bank-1", "name": "UBS"}]
+    repo.merchants = [
+        {"id": UUID("11111111-1111-1111-1111-111111111111"), "name_norm": "migros geneve", "name": "Migros Genève", "category": None},
+        {"id": UUID("22222222-2222-2222-2222-222222222222"), "name_norm": "inconnu sa", "name": "Inconnu SA", "category": ""},
+    ]
+    loop = _LoopSpy()
     monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
     monkeypatch.setattr(agent_api, "get_agent_loop", lambda: loop)
 
-    response = client.post("/agent/chat", json={"message": "Parfait"}, headers=_auth_headers())
+    response = client.post("/agent/chat", json={"message": "go"}, headers=_auth_headers())
 
     assert response.status_code == 200
-    assert "Import terminé" in response.json()["reply"]
-    assert "Prochaine étape" in response.json()["reply"]
+    payload = response.json()
+    assert "Catégories créées" in payload["reply"]
+    assert "Marchands classés" in payload["reply"]
+    assert len(repo.profile_categories) == 10
+    assert repo.merchants[0]["category"] == "Alimentation"
+    assert repo.merchants[1]["category"] == "Autres"
+    persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
+    assert persisted["onboarding_step"] == "categories"
+    assert persisted["onboarding_substep"] == "categories_review"
+    assert loop.called is False
+
+
+def test_categories_review_oui_transitions_to_budget_without_loop(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "onboarding",
+                    "onboarding_step": "categories",
+                    "onboarding_substep": "categories_review",
+                    "profile_confirmed": True,
+                    "bank_accounts_confirmed": True,
+                    "has_bank_accounts": True,
+                    "has_imported_transactions": True,
+                    "budget_created": False,
+                }
+            }
+        },
+    )
+    repo.bank_accounts = [{"id": "bank-1", "name": "UBS"}]
+    loop = _LoopSpy()
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: loop)
+
+    response = client.post("/agent/chat", json={"message": "OUI"}, headers=_auth_headers())
+
+    assert response.status_code == 200
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
     assert persisted["onboarding_step"] == "budget"
     assert persisted["onboarding_substep"] is None
     assert loop.called is False
+
+
+def test_categories_review_non_stays_in_review_without_loop(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "onboarding",
+                    "onboarding_step": "categories",
+                    "onboarding_substep": "categories_review",
+                    "profile_confirmed": True,
+                    "bank_accounts_confirmed": True,
+                    "has_bank_accounts": True,
+                    "has_imported_transactions": True,
+                    "budget_created": False,
+                }
+            }
+        },
+    )
+    repo.bank_accounts = [{"id": "bank-1", "name": "UBS"}]
+    loop = _LoopSpy()
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: loop)
+
+    response = client.post("/agent/chat", json={"message": "NON"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert "dis-moi ce que tu veux modifier" in response.json()["reply"].lower()
+    assert repo.update_calls == []
+    assert repo.chat_state["state"]["global_state"]["onboarding_substep"] == "categories_review"
+    assert loop.called is False
+
 
 
 @pytest.mark.parametrize(
