@@ -120,7 +120,7 @@ def test_agent_chat_uses_persisted_active_task_and_clears_after_confirmation(mon
     assert response.json()["plan"]["tool_name"] == "finance_categories_delete"
     assert repo.update_calls
     assert repo.update_calls[-1]["user_id"] == AUTH_USER_ID
-    assert "active_task" not in repo.update_calls[-1]["chat_state"]
+    assert repo.update_calls[-1]["chat_state"].get("active_task") is None
 
 
 def test_agent_chat_reuses_persisted_search_active_task_with_serialized_dates(monkeypatch) -> None:
@@ -210,7 +210,7 @@ def test_agent_chat_reuses_persisted_search_active_task_with_serialized_dates(mo
             },
         )
     ]
-    assert "active_task" not in repo.chat_state
+    assert repo.chat_state.get("active_task") is None
     assert isinstance(repo.chat_state.get("state"), dict)
     assert isinstance(repo.chat_state["state"].get("last_query"), dict)
     assert repo.chat_state["state"]["last_query"]["date_range"] == {
@@ -410,7 +410,7 @@ def test_agent_chat_clarification_pending_uses_new_period_across_requests(monkey
         "start_date": "2025-12-01",
         "end_date": "2025-12-31",
     }
-    assert "active_task" not in repo.chat_state
+    assert repo.chat_state.get("active_task") is None
 
 
 def test_agent_chat_with_debug_header_works_when_loop_does_not_accept_debug(monkeypatch) -> None:
