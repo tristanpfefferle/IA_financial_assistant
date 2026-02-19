@@ -629,6 +629,19 @@ class AgentLoop:
 
         return {key: value for key, value in payload.items() if value is not None}
 
+    @staticmethod
+    def _sanitize_payload_for_tool(
+        tool_name: str,
+        payload: dict[str, object],
+    ) -> dict[str, object]:
+        """Remove unsupported payload fields before tool execution."""
+
+        sanitized_payload = dict(payload)
+        if tool_name == "finance_releves_sum":
+            sanitized_payload.pop("limit", None)
+            sanitized_payload.pop("offset", None)
+        return sanitized_payload
+
     def _guard_plan_with_llm_judge(
         self,
         message: str,
@@ -1976,20 +1989,33 @@ class AgentLoop:
         known_categories = self._known_categories_from_memory(memory)
         active_task_effective = active_task
         should_force_clear_active_task = False
+        pending_clarification_memory_update: object | None = None
+        has_pending_clarification_memory_update = False
+
+        if active_task_effective is None and isinstance(memory, dict):
+            pending_clarification = memory.get("pending_clarification")
+            if (
+                isinstance(pending_clarification, dict)
+                and pending_clarification.get("type") == "clarification_pending"
+                and isinstance(pending_clarification.get("context"), dict)
+            ):
+                active_task_effective = pending_clarification
         if (
-            isinstance(active_task, dict)
-            and active_task.get("type") == "clarification_pending"
+            isinstance(active_task_effective, dict)
+            and active_task_effective.get("type") == "clarification_pending"
             and (
-                self._is_active_task_stale(active_task)
+                self._is_active_task_stale(active_task_effective)
                 or self._should_ignore_clarification_pending(
                     message,
-                    active_task,
+                    active_task_effective,
                     known_categories=known_categories,
                 )
             )
         ):
             active_task_effective = None
             should_force_clear_active_task = True
+            pending_clarification_memory_update = None
+            has_pending_clarification_memory_update = True
 
         followup_plan = None
         if active_task_effective is None and query_memory is not None:
@@ -2060,6 +2086,8 @@ class AgentLoop:
             if should_drop_stale_clarification:
                 active_task_effective = None
                 should_force_clear_active_task = True
+                pending_clarification_memory_update = None
+                has_pending_clarification_memory_update = True
                 if query_memory is not None:
                     followup_plan = followup_plan_from_message(
                         message,
@@ -2169,6 +2197,26 @@ class AgentLoop:
                     if isinstance(date_range, dict):
                         updated_active_task["date_range"] = date_range
 
+        if should_update_active_task:
+            if (
+                isinstance(updated_active_task, dict)
+                and updated_active_task.get("type") == "clarification_pending"
+                and isinstance(updated_active_task.get("context"), dict)
+            ):
+                pending_clarification_memory_update = updated_active_task
+            else:
+                pending_clarification_memory_update = None
+            has_pending_clarification_memory_update = True
+
+        def _apply_pending_clarification_memory_update(
+            base_update: dict[str, object] | None,
+        ) -> dict[str, object] | None:
+            if not has_pending_clarification_memory_update:
+                return base_update
+            merged_update = dict(base_update) if isinstance(base_update, dict) else {}
+            merged_update["pending_clarification"] = pending_clarification_memory_update
+            return merged_update
+
         if isinstance(plan, SetActiveTaskPlan):
             if profile_id is not None:
                 active_task_context = (
@@ -2220,6 +2268,7 @@ class AgentLoop:
                 reply=plan.reply,
                 active_task=plan.active_task,
                 should_update_active_task=True,
+                memory_update=_apply_pending_clarification_memory_update(None),
             )
 
         if isinstance(plan, ToolCallPlan):
@@ -2305,6 +2354,7 @@ class AgentLoop:
 
             logger.info("tool_execution_started tool_name=%s", plan.tool_name)
             plan.payload = self._drop_none_payload_values(plan.payload)
+            plan.payload = self._sanitize_payload_for_tool(plan.tool_name, plan.payload)
             raw_result = self.tool_router.call(
                 plan.tool_name, plan.payload, profile_id=profile_id
             )
@@ -2350,7 +2400,9 @@ class AgentLoop:
                 plan=self._serialize_plan(plan),
                 active_task=updated_active_task,
                 should_update_active_task=should_update_active_task,
-                memory_update=merged_memory_update,
+                memory_update=_apply_pending_clarification_memory_update(
+                    merged_memory_update
+                ),
             )
 
         if isinstance(plan, ClarificationPlan):
@@ -2361,7 +2413,6 @@ class AgentLoop:
                 active_task_effective is None
                 and plan_meta.get("keep_active_task")
                 and clarification_type != "awaiting_search_merchant"
-                and not should_force_clear_active_task
             ):
                 pending_context: dict[str, object] = {}
                 if pending_period_payload and clarification_type != "awaiting_search_merchant":
@@ -2412,6 +2463,8 @@ class AgentLoop:
                     "created_at": datetime.now(timezone.utc).isoformat(),
                 }
                 should_update_active_task = True
+                pending_clarification_memory_update = updated_active_task
+                has_pending_clarification_memory_update = True
 
             response_payload = (
                 clarification_payload if isinstance(clarification_payload, dict) else None
@@ -2440,6 +2493,7 @@ class AgentLoop:
                 ),
                 active_task=updated_active_task,
                 should_update_active_task=should_update_active_task,
+                memory_update=_apply_pending_clarification_memory_update(None),
             )
 
         if isinstance(plan, NoopPlan):
@@ -2447,6 +2501,7 @@ class AgentLoop:
                 reply=plan.reply,
                 active_task=updated_active_task,
                 should_update_active_task=should_update_active_task,
+                memory_update=_apply_pending_clarification_memory_update(None),
             )
 
         if isinstance(plan, ErrorPlan):
