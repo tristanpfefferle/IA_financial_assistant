@@ -98,12 +98,12 @@ class SupabaseClient:
         self,
         *,
         table: str,
-        query: dict[str, str],
+        query: dict[str, str] | list[tuple[str, str]],
         use_anon_key: bool = False,
     ) -> list[dict[str, Any]]:
         """Delete rows in PostgREST and return representation."""
 
-        encoded_query = urlencode(query.items())
+        encoded_query = urlencode(query, doseq=True)
         api_key = self.settings.anon_key if use_anon_key else self.settings.service_role_key
         if not api_key:
             raise ValueError("Missing Supabase API key for requested mode")
