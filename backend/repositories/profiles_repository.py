@@ -108,6 +108,15 @@ class SupabaseProfilesRepository:
             return str(value)
         return value
 
+    @staticmethod
+    def _filter_allowed_profile_updates(set_dict: dict[str, Any]) -> dict[str, Any]:
+        allowed_fields = {"first_name", "last_name", "birth_date"}
+        return {
+            field: SupabaseProfilesRepository._serialize_profile_value(value)
+            for field, value in set_dict.items()
+            if field in allowed_fields
+        }
+
     def get_profile_fields(self, *, profile_id: UUID, fields: list[str] | None = None) -> dict[str, Any]:
         selected_fields = list(fields or PROFILE_DEFAULT_CORE_FIELDS)
         select_clause = ",".join(dict.fromkeys(selected_fields))
@@ -124,17 +133,30 @@ class SupabaseProfilesRepository:
         return {field: row.get(field) for field in selected_fields}
 
     def update_profile_fields(self, *, profile_id: UUID, set_dict: dict[str, Any]) -> dict[str, Any]:
-        serialized_set_dict = {
-            field: self._serialize_profile_value(value) for field, value in set_dict.items()
-        }
+        filtered_set_dict = self._filter_allowed_profile_updates(set_dict)
+        if not filtered_set_dict:
+            return {}
+
+        if hasattr(self._client, "table"):
+            response = (
+                self._client.table("profils")
+                .update(filtered_set_dict)
+                .eq("id", str(profile_id))
+                .execute()
+            )
+            response_data = getattr(response, "data", None)
+            if response_data == []:
+                raise ValueError("Profile not found")
+            return dict(filtered_set_dict)
+
         rows = self._client.patch_rows(
             table="profils",
             query={"id": f"eq.{profile_id}"},
-            payload=serialized_set_dict,
+            payload=filtered_set_dict,
             use_anon_key=False,
         )
         if not rows:
             raise ValueError("Profile not found")
 
         row = rows[0]
-        return {field: row.get(field) for field in set_dict}
+        return {field: row.get(field) for field in filtered_set_dict}
