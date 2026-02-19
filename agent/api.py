@@ -66,6 +66,31 @@ _FRENCH_MONTH_TO_NUMBER = {
     "decembre": 12,
     "dec": 12,
 }
+_ONBOARDING_BANK_ACCOUNT_SINGLE_MESSAGE_STOPWORDS = {
+    "salut",
+    "bonjour",
+    "hello",
+    "merci",
+    "ok",
+    "okay",
+    "yo",
+    "liste",
+    "mes",
+    "mes_categories",
+    "catégories",
+    "categories",
+    "depenses",
+    "dépenses",
+    "recettes",
+    "montre",
+    "affiche",
+    "cherche",
+    "recherche",
+    "oui",
+    "non",
+    "daccord",
+    "d'accord",
+}
 
 
 def _handler_accepts_debug_kwarg(handler: Any) -> bool:
@@ -266,7 +291,13 @@ def _extract_bank_account_names_from_message(message: str) -> list[str]:
     else:
         if not re.search(r"[A-Za-zÀ-ÖØ-öø-ÿ]", stripped_message) or len(stripped_message) > 40:
             return []
-        raw_parts = [stripped_message]
+        cleaned_single = re.sub(r"\s+", " ", stripped_message).strip()
+        words = cleaned_single.split(" ")
+        if len(words) > 3:
+            return []
+        if any(word.lower() in _ONBOARDING_BANK_ACCOUNT_SINGLE_MESSAGE_STOPWORDS for word in words):
+            return []
+        raw_parts = [cleaned_single]
 
     cleaned_names: list[str] = []
     seen_lower: set[str] = set()
