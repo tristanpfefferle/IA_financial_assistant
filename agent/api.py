@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import inspect
 import re
+import unicodedata
 from functools import lru_cache
 from typing import Any
 from datetime import date
@@ -39,6 +40,32 @@ _ONBOARDING_NAME_PATTERN = re.compile(
     r"^\s*([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'\-]+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'\-]+)\s*$"
 )
 _ONBOARDING_BIRTH_DATE_PATTERN = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
+_ONBOARDING_BIRTH_DATE_DOT_PATTERN = re.compile(r"^(\d{1,2})\.(\d{1,2})\.(\d{4})$")
+_ONBOARDING_BIRTH_DATE_SLASH_PATTERN = re.compile(r"^(\d{1,2})/(\d{1,2})/(\d{4})$")
+_ONBOARDING_BIRTH_DATE_MONTH_NAME_PATTERN = re.compile(r"^(\d{1,2})\s+([a-z]+)\s+(\d{4})$")
+_FRENCH_MONTH_TO_NUMBER = {
+    "janvier": 1,
+    "janv": 1,
+    "fevrier": 2,
+    "fevr": 2,
+    "fev": 2,
+    "mars": 3,
+    "avril": 4,
+    "avr": 4,
+    "mai": 5,
+    "juin": 6,
+    "juillet": 7,
+    "juil": 7,
+    "aout": 8,
+    "septembre": 9,
+    "sept": 9,
+    "octobre": 10,
+    "oct": 10,
+    "novembre": 11,
+    "nov": 11,
+    "decembre": 12,
+    "dec": 12,
+}
 
 
 def _handler_accepts_debug_kwarg(handler: Any) -> bool:
@@ -131,18 +158,44 @@ def _extract_name_from_message(message: str) -> tuple[str, str] | None:
 
 
 def _extract_birth_date_from_message(message: str) -> str | None:
-    normalized = message.strip()
-    match = _ONBOARDING_BIRTH_DATE_PATTERN.match(normalized)
-    if not match:
-        return None
+    normalized = message.strip().lower()
 
-    year, month, day = (int(chunk) for chunk in match.groups())
+    year: int
+    month: int
+    day: int
+
+    iso_match = _ONBOARDING_BIRTH_DATE_PATTERN.match(normalized)
+    if iso_match:
+        year, month, day = (int(chunk) for chunk in iso_match.groups())
+    else:
+        dot_match = _ONBOARDING_BIRTH_DATE_DOT_PATTERN.match(normalized)
+        slash_match = _ONBOARDING_BIRTH_DATE_SLASH_PATTERN.match(normalized)
+        month_name_match = _ONBOARDING_BIRTH_DATE_MONTH_NAME_PATTERN.match(
+            unicodedata.normalize("NFKD", normalized).encode("ascii", "ignore").decode("ascii")
+        )
+
+        if dot_match:
+            day, month, year = (int(chunk) for chunk in dot_match.groups())
+        elif slash_match:
+            day, month, year = (int(chunk) for chunk in slash_match.groups())
+        elif month_name_match:
+            day_raw, month_raw, year_raw = month_name_match.groups()
+            mapped_month = _FRENCH_MONTH_TO_NUMBER.get(month_raw)
+            if mapped_month is None:
+                return None
+
+            day = int(day_raw)
+            month = mapped_month
+            year = int(year_raw)
+        else:
+            return None
+
     try:
-        date(year=year, month=month, day=day)
+        parsed = date(year=year, month=month, day=day)
     except ValueError:
         return None
 
-    return normalized
+    return parsed.isoformat()
 
 
 def _build_onboarding_global_state(existing_global_state: dict[str, Any] | None) -> dict[str, Any]:

@@ -5,6 +5,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi.testclient import TestClient
+import pytest
 
 import agent.api as agent_api
 from agent.api import app
@@ -273,7 +274,17 @@ def test_onboarding_profile_name_message_updates_first_and_last_name(monkeypatch
     assert loop.called is False
 
 
-def test_onboarding_profile_birth_date_message_promotes_to_free_chat(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("message", "expected_birth_date"),
+    [
+        ("1992-01-15", "1992-01-15"),
+        ("12.01.2002", "2002-01-12"),
+        ("14 janvier 2002", "2002-01-14"),
+    ],
+)
+def test_onboarding_profile_birth_date_message_promotes_to_free_chat(
+    monkeypatch, message: str, expected_birth_date: str
+) -> None:
     _mock_auth(monkeypatch)
     repo = _Repo(
         initial_chat_state={
@@ -286,10 +297,10 @@ def test_onboarding_profile_birth_date_message_promotes_to_free_chat(monkeypatch
     monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
     monkeypatch.setattr(agent_api, "get_agent_loop", lambda: loop)
 
-    response = client.post("/agent/chat", json={"message": "1992-01-15"}, headers=_auth_headers())
+    response = client.post("/agent/chat", json={"message": message}, headers=_auth_headers())
 
     assert response.status_code == 200
-    assert repo.profile_update_calls == [{"birth_date": "1992-01-15"}]
+    assert repo.profile_update_calls == [{"birth_date": expected_birth_date}]
     assert repo.update_calls[-1]["chat_state"]["state"]["global_state"]["mode"] == "free_chat"
     assert "discussion libre" in response.json()["reply"]
     assert loop.called is False
