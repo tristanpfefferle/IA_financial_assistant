@@ -259,6 +259,10 @@ export function ChatPage({ email }: ChatPageProps) {
       window.location.reload()
     } catch (caughtError) {
       const errorMessage = caughtError instanceof Error ? caughtError.message : 'Erreur inconnue'
+      if (caughtError instanceof Error && (errorMessage.includes('(404)') || errorMessage.includes('Not found'))) {
+        setError('Endpoint de debug désactivé (DEBUG_ENDPOINTS_ENABLED=true requis côté backend).')
+        return
+      }
       setError(errorMessage)
     }
   }
@@ -325,7 +329,7 @@ export function ChatPage({ email }: ChatPageProps) {
           <label>
             <input type="checkbox" checked={debugMode} onChange={(event) => setDebugMode(event.target.checked)} /> Debug
           </label>
-          {envDebugEnabled ? (
+          {debugMode ? (
             <button type="button" className="secondary-button" onClick={() => void handleHardReset()}>
               Reset (tests)
             </button>
