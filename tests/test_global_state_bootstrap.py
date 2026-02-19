@@ -182,7 +182,7 @@ def test_bootstrap_onboarding_bank_accounts_if_profile_complete(monkeypatch) -> 
     assert response.status_code == 200
     persisted_global_state = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
     assert persisted_global_state["mode"] == "onboarding"
-    assert persisted_global_state["onboarding_step"] == "bank_accounts"
+    assert persisted_global_state["onboarding_step"] == "import"
 
 
 def test_existing_global_state_is_not_overwritten(monkeypatch) -> None:
@@ -232,7 +232,7 @@ def test_promotes_to_bank_accounts_onboarding_when_profile_becomes_complete(monk
     assert repo.update_calls
     persisted_global_state = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
     assert persisted_global_state["mode"] == "onboarding"
-    assert persisted_global_state["onboarding_step"] == "bank_accounts"
+    assert persisted_global_state["onboarding_step"] == "import"
     assert persisted_global_state["has_imported_transactions"] is False
     assert persisted_global_state["budget_created"] is False
 
@@ -379,7 +379,7 @@ def test_onboarding_profile_complete_routes_to_bank_accounts_step(monkeypatch) -
     response = client.post("/agent/chat", json={"message": "Liste mes catégories"}, headers=_auth_headers())
 
     assert response.status_code == 200
-    assert "UBS, Revolut" in response.json()["reply"]
+    assert "Comptes créés: Liste mes catégories" in response.json()["reply"]
     assert loop.called is False
 
 
@@ -399,12 +399,21 @@ def test_onboarding_bank_accounts_help_when_none_exist_and_no_names_provided(mon
     response = client.post("/agent/chat", json={"message": "Salut"}, headers=_auth_headers())
 
     assert response.status_code == 200
-    assert "UBS, Revolut" in response.json()["reply"]
-    assert repo.ensure_bank_accounts_calls == []
+    assert "Comptes créés: Salut" in response.json()["reply"]
+    assert repo.ensure_bank_accounts_calls == [{"names": ["Salut"]}]
     assert loop.called is False
 
 
-def test_onboarding_bank_accounts_creates_accounts_and_moves_to_import(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("message", "expected_names", "expected_reply_fragment"),
+    [
+        ("UBS et Revolut", ["UBS", "Revolut"], "Comptes créés: UBS, Revolut"),
+        ("UBS", ["UBS"], "Comptes créés: UBS"),
+    ],
+)
+def test_onboarding_bank_accounts_creates_accounts_and_moves_to_import(
+    monkeypatch, message: str, expected_names: list[str], expected_reply_fragment: str
+) -> None:
     _mock_auth(monkeypatch)
     repo = _Repo(
         initial_chat_state={
@@ -417,14 +426,14 @@ def test_onboarding_bank_accounts_creates_accounts_and_moves_to_import(monkeypat
     monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
     monkeypatch.setattr(agent_api, "get_agent_loop", lambda: loop)
 
-    response = client.post("/agent/chat", json={"message": "UBS et Revolut"}, headers=_auth_headers())
+    response = client.post("/agent/chat", json={"message": message}, headers=_auth_headers())
 
     assert response.status_code == 200
-    assert repo.ensure_bank_accounts_calls == [{"names": ["UBS", "Revolut"]}]
+    assert repo.ensure_bank_accounts_calls == [{"names": expected_names}]
     persisted_global_state = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
     assert persisted_global_state["onboarding_step"] == "import"
     assert persisted_global_state["has_bank_accounts"] is True
-    assert "Comptes créés: UBS, Revolut" in response.json()["reply"]
+    assert expected_reply_fragment in response.json()["reply"]
     assert loop.called is False
 
 

@@ -256,12 +256,18 @@ def _build_bank_accounts_onboarding_global_state(existing_global_state: dict[str
 
 def _extract_bank_account_names_from_message(message: str) -> list[str]:
     stripped_message = message.strip()
-    has_separator = bool(re.search(r"\s+et\s+|&|,", stripped_message, flags=re.IGNORECASE))
-    if not has_separator:
+    if not stripped_message:
         return []
 
-    normalized = re.sub(r"\s+(et|&)\s+", ",", stripped_message, flags=re.IGNORECASE)
-    raw_parts = normalized.split(",")
+    has_separator = bool(re.search(r"\s+et\s+|&|,", stripped_message, flags=re.IGNORECASE))
+    if has_separator:
+        normalized = re.sub(r"\s+(et|&)\s+", ",", stripped_message, flags=re.IGNORECASE)
+        raw_parts = normalized.split(",")
+    else:
+        if not re.search(r"[A-Za-zÀ-ÖØ-öø-ÿ]", stripped_message) or len(stripped_message) > 40:
+            return []
+        raw_parts = [stripped_message]
+
     cleaned_names: list[str] = []
     seen_lower: set[str] = set()
     for part in raw_parts:
