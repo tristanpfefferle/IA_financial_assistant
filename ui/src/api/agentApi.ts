@@ -65,6 +65,12 @@ function getBaseUrl(): string {
   return rawBaseUrl.replace(/\/+$/, '')
 }
 
+let sessionResetRequested = false
+
+export function __unsafeResetSessionResetStateForTests(): void {
+  sessionResetRequested = false
+}
+
 async function getAccessToken(): Promise<string | null> {
   const { data: sessionData } = await supabase.auth.getSession()
   if (sessionData.session?.access_token) {
@@ -155,4 +161,35 @@ export async function importReleves(payload: ImportRequestPayload): Promise<Rele
   }
 
   return (await response.json()) as RelevesImportResult
+}
+
+export async function resetSession(options?: { keepalive?: boolean; timeoutMs?: number }): Promise<void> {
+  if (sessionResetRequested) {
+    return
+  }
+
+  sessionResetRequested = true
+
+  const controller = new AbortController()
+  const timeoutMs = options?.timeoutMs ?? 1500
+  const timeoutId = window.setTimeout(() => {
+    controller.abort()
+  }, timeoutMs)
+
+  try {
+    const response = await fetch(`${getBaseUrl()}/agent/reset-session`, {
+      method: 'POST',
+      headers: await buildAuthHeaders(),
+      signal: controller.signal,
+      keepalive: options?.keepalive ?? false,
+    })
+
+    if (!response.ok) {
+      return
+    }
+  } catch {
+    // Best-effort request: errors are intentionally ignored.
+  } finally {
+    window.clearTimeout(timeoutId)
+  }
 }
