@@ -1973,8 +1973,17 @@ class AgentLoop:
         profile_id: UUID | None = None,
         active_task: dict[str, object] | None = None,
         memory: dict[str, object] | None = None,
+        global_state: dict[str, object] | None = None,
         debug: bool = False,
     ) -> AgentReply:
+        if isinstance(global_state, dict) and global_state.get("mode") == "onboarding":
+            return AgentReply(
+                reply=(
+                    "Bienvenue 👋 Pour commencer, complétez votre profil "
+                    "(prénom, nom, date de naissance) afin de finaliser l'onboarding."
+                )
+            )
+
         query_memory = (
             QueryMemory.from_dict(memory.get("last_query"))
             if isinstance(memory, dict)
