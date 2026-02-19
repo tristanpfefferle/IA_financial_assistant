@@ -780,16 +780,12 @@ def _merge_missing_filters(
 
 def _inject_sticky_filters(payload: dict[str, Any], memory_filters: dict[str, Any]) -> bool:
     injected = False
-    nested_filters = payload.get("filters") if isinstance(payload.get("filters"), dict) else None
     for key in _STICKY_FILTER_KEYS:
         value = memory_filters.get(key)
         if value is None:
             continue
         if key not in payload:
             payload[key] = value
-            injected = True
-        if isinstance(nested_filters, dict) and key not in nested_filters:
-            nested_filters[key] = value
             injected = True
     return injected
 

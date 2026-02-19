@@ -1131,11 +1131,16 @@ def agent_chat(
                 if substep == "bank_accounts_collect":
                     if _is_no(payload.message):
                         if existing_accounts:
-                            accounts_display = _format_accounts_for_reply(existing_accounts)
-                            updated_global_state = _build_bank_accounts_onboarding_global_state(
-                                global_state,
-                                onboarding_substep="bank_accounts_confirm",
+                            updated_global_state = _build_onboarding_global_state(
+                                {
+                                    **global_state,
+                                    "bank_accounts_confirmed": True,
+                                    "has_bank_accounts": True,
+                                },
+                                onboarding_step="import",
+                                onboarding_substep="import_select_account",
                             )
+                            updated_global_state["bank_accounts_confirmed"] = True
                             updated_global_state["has_bank_accounts"] = True
                             state_dict["global_state"] = updated_global_state
                             updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
@@ -1146,10 +1151,7 @@ def agent_chat(
                                 chat_state=updated_chat_state,
                             )
                             return ChatResponse(
-                                reply=(
-                                    f"Comptes actuels: {accounts_display}. "
-                                    "Voulez-vous créer encore d'autres comptes bancaires ? (OUI/NON)"
-                                ),
+                                reply="Parfait. On passe à l’import des relevés. Quel compte veux-tu importer ?",
                                 tool_result=None,
                                 plan=None,
                             )

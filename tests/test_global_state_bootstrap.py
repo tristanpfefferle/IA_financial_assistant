@@ -299,6 +299,37 @@ def test_bank_accounts_confirm_no_moves_to_import_select(monkeypatch) -> None:
     assert persisted["bank_accounts_confirmed"] is True
 
 
+def test_bank_accounts_collect_no_with_existing_account_moves_to_import_select(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "onboarding",
+                    "onboarding_step": "bank_accounts",
+                    "onboarding_substep": "bank_accounts_collect",
+                }
+            }
+        },
+        profile_fields={"first_name": "Ada", "last_name": "Lovelace", "birth_date": "1815-12-10"},
+    )
+    repo.bank_accounts = [{"id": "bank-1", "name": "UBS"}]
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
+
+    response = client.post("/agent/chat", json={"message": "non"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert response.json()["reply"] == "Parfait. On passe à l’import des relevés. Quel compte veux-tu importer ?"
+    assert "nom exact" not in response.json()["reply"].lower()
+    assert "Voulez-vous créer encore d'autres comptes" not in response.json()["reply"]
+    persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
+    assert persisted["onboarding_step"] == "import"
+    assert persisted["onboarding_substep"] == "import_select_account"
+    assert persisted["bank_accounts_confirmed"] is True
+    assert persisted["has_bank_accounts"] is True
+
+
 def test_import_select_account_ubs_selects_account_and_skips_loop(monkeypatch) -> None:
     _mock_auth(monkeypatch)
     repo = _Repo(
@@ -1311,7 +1342,7 @@ def test_onboarding_bank_accounts_skips_creation_if_already_exists(monkeypatch) 
 
 
 
-def test_onboarding_bank_accounts_collect_non_with_existing_accounts_moves_to_confirm(monkeypatch) -> None:
+def test_onboarding_bank_accounts_collect_non_with_existing_accounts_moves_to_import_select(monkeypatch) -> None:
     _mock_auth(monkeypatch)
     repo = _Repo(
         initial_chat_state={
@@ -1333,7 +1364,10 @@ def test_onboarding_bank_accounts_collect_non_with_existing_accounts_moves_to_co
     assert response.status_code == 200
     assert repo.ensure_bank_accounts_calls == []
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
-    assert persisted["onboarding_substep"] == "bank_accounts_confirm"
+    assert persisted["onboarding_step"] == "import"
+    assert persisted["onboarding_substep"] == "import_select_account"
+    assert persisted["bank_accounts_confirmed"] is True
+    assert persisted["has_bank_accounts"] is True
     assert "nom exact" not in response.json()["reply"].lower()
 
 
