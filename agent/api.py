@@ -48,7 +48,7 @@ logger = logging.getLogger(__name__)
 
 
 _GLOBAL_STATE_MODES = {"onboarding", "guided_budget", "free_chat"}
-_GLOBAL_STATE_ONBOARDING_STEPS = {"profile", "bank_accounts", "import", "categories", "budget", None}
+_GLOBAL_STATE_ONBOARDING_STEPS = {"profile", "bank_accounts", "import", "categories", "budget", "report", None}
 _GLOBAL_STATE_ONBOARDING_SUBSTEPS = {
     "profile_collect",
     "profile_confirm",
@@ -58,6 +58,8 @@ _GLOBAL_STATE_ONBOARDING_SUBSTEPS = {
     "categories_intro",
     "categories_bootstrap",
     "categories_review",
+    "report_offer",
+    "report_sent",
     None,
 }
 _PROFILE_COMPLETION_FIELDS = ("first_name", "last_name", "birth_date")
@@ -152,6 +154,28 @@ def _build_import_file_ui_request(import_context: dict[str, Any] | None) -> dict
         "bank_account_name": str(bank_account_name or ""),
         "accepted_types": ["csv", "pdf"],
     }
+
+
+def _build_open_pdf_ui_request(url: str) -> dict[str, str]:
+    """Return an UI request payload instructing the client to open a PDF URL."""
+
+    return {
+        "type": "ui_request",
+        "name": "open_pdf_report",
+        "url": url,
+    }
+
+
+def _build_spending_pdf_url(*, month: str | None = None, start_date: str | None = None, end_date: str | None = None) -> str:
+    """Build relative spending report endpoint URL with optional period filters."""
+
+    if isinstance(month, str) and month.strip():
+        return f"/finance/reports/spending.pdf?month={month.strip()}"
+
+    if isinstance(start_date, str) and isinstance(end_date, str) and start_date.strip() and end_date.strip():
+        return f"/finance/reports/spending.pdf?start_date={start_date.strip()}&end_date={end_date.strip()}"
+
+    return "/finance/reports/spending.pdf"
 
 
 def _extract_import_date_range(result: dict[str, Any]) -> dict[str, str] | None:
@@ -494,12 +518,14 @@ def _normalize_onboarding_step_substep(global_state: dict[str, Any]) -> dict[str
         "bank_accounts": {"bank_accounts_collect", "bank_accounts_confirm"},
         "import": {"import_select_account"},
         "categories": {"categories_intro", "categories_bootstrap", "categories_review"},
+        "report": {"report_offer", "report_sent"},
     }
     default_substep_by_step = {
         "profile": "profile_collect",
         "bank_accounts": "bank_accounts_collect",
         "import": "import_select_account",
         "categories": "categories_bootstrap",
+        "report": "report_offer",
     }
 
     if step == "categories" and substep == "categories_intro":
@@ -511,7 +537,7 @@ def _normalize_onboarding_step_substep(global_state: dict[str, Any]) -> dict[str
             normalized["onboarding_substep"] = default_substep_by_step[step]
         return normalized
 
-    if step in {"categories", "budget"}:
+    if step in {"categories", "budget", "report"}:
         normalized["onboarding_substep"] = None
 
     return normalized
@@ -898,7 +924,9 @@ def _build_onboarding_reminder(global_state: dict[str, Any] | None) -> str | Non
     if substep == "categories_bootstrap":
         return "(Pour continuer l’onboarding : je prépare automatiquement les catégories et les marchands.)"
     if substep == "categories_review":
-        return "(Pour continuer l’onboarding : réponds OUI/NON pour passer à l’étape budget.)"
+        return "(Pour continuer l’onboarding : réponds OUI/NON pour afficher ton rapport de dépenses.)"
+    if substep == "report_offer":
+        return "(Pour continuer l’onboarding : réponds OUI/NON pour ouvrir le rapport PDF.)"
     return None
 
 
@@ -1334,6 +1362,8 @@ def agent_chat(
         existing_global_state = state_dict.get("global_state") if isinstance(state_dict, dict) else None
         global_state = existing_global_state if _is_valid_global_state(existing_global_state) else None
         should_persist_global_state = False
+        mode = global_state.get("mode") if _is_valid_global_state(global_state) else None
+        onboarding_step = global_state.get("onboarding_step") if _is_valid_global_state(global_state) else None
         if _is_valid_global_state(global_state):
             normalized = _normalize_onboarding_step_substep(global_state)
             if normalized != global_state:
@@ -1885,7 +1915,7 @@ def agent_chat(
                         reply=(
                             f"✅ Catégories créées: {created_count} (système total: {system_total}). "
                             f"Marchands classés: {classified_count}. "
-                            "Veux-tu continuer vers la création de budget ? (OUI/NON)"
+                            "Es-tu prêt à voir ton rapport de dépenses ? (OUI/NON)"
                         ),
                         tool_result=None,
                         plan=None,
@@ -1895,8 +1925,8 @@ def agent_chat(
                     if _is_yes(payload.message):
                         updated_global_state = _build_onboarding_global_state(
                             global_state,
-                            onboarding_step="budget",
-                            onboarding_substep=None,
+                            onboarding_step="report",
+                            onboarding_substep="report_offer",
                         )
                         updated_global_state = _normalize_onboarding_step_substep(updated_global_state)
                         state_dict["global_state"] = updated_global_state
@@ -1908,12 +1938,87 @@ def agent_chat(
                             chat_state=updated_chat_state,
                         )
                         return ChatResponse(
-                            reply="Parfait. On passe à la création du budget.",
+                            reply="Parfait — es-tu prêt à voir le rapport de tes dépenses ?",
                             tool_result=None,
                             plan=None,
                         )
                     if not _is_no(payload.message):
                         return ChatResponse(reply="Réponds OUI ou NON.", tool_result=None, plan=None)
+
+            if mode == "onboarding" and onboarding_step == "report" and global_state.get("onboarding_substep") == "report_offer":
+                if _is_yes(payload.message):
+                    month_value: str | None = None
+                    start_date_value: str | None = None
+                    end_date_value: str | None = None
+
+                    last_query = state_dict.get("last_query") if isinstance(state_dict, dict) else None
+                    if isinstance(last_query, dict):
+                        if isinstance(last_query.get("month"), str) and str(last_query.get("month")).strip():
+                            month_value = str(last_query.get("month")).strip()
+                        if month_value is None:
+                            filters = last_query.get("filters") if isinstance(last_query.get("filters"), dict) else None
+                            date_range = filters.get("date_range") if isinstance(filters, dict) else None
+                            if isinstance(date_range, dict):
+                                start_raw = date_range.get("start_date")
+                                end_raw = date_range.get("end_date")
+                                if isinstance(start_raw, str) and isinstance(end_raw, str):
+                                    start_date_value = start_raw
+                                    end_date_value = end_raw
+
+                    if month_value is None and (start_date_value is None or end_date_value is None):
+                        resolved_start, resolved_end = _resolve_report_date_range(
+                            month=None,
+                            start_date=None,
+                            end_date=None,
+                            state_dict=state_dict,
+                            profile_id=profile_id,
+                        )
+                        start_date_value = resolved_start.isoformat()
+                        end_date_value = resolved_end.isoformat()
+
+                    report_url = _build_spending_pdf_url(
+                        month=month_value,
+                        start_date=start_date_value,
+                        end_date=end_date_value,
+                    )
+                    updated_global_state = _build_free_chat_global_state(global_state)
+                    updated_global_state = _normalize_onboarding_step_substep(updated_global_state)
+                    state_dict["global_state"] = updated_global_state
+                    updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                    updated_chat_state["state"] = state_dict
+                    profiles_repository.update_chat_state(
+                        profile_id=profile_id,
+                        user_id=auth_user_id,
+                        chat_state=updated_chat_state,
+                    )
+                    return ChatResponse(
+                        reply=(
+                            f"Voici ton rapport PDF : [Ouvrir le PDF]({report_url}). "
+                            "Dis-moi si tu veux un autre mois/période."
+                        ),
+                        tool_result=_build_open_pdf_ui_request(report_url),
+                        plan=None,
+                    )
+                if _is_no(payload.message):
+                    updated_global_state = _build_free_chat_global_state(global_state)
+                    updated_global_state = _normalize_onboarding_step_substep(updated_global_state)
+                    state_dict["global_state"] = updated_global_state
+                    updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                    updated_chat_state["state"] = state_dict
+                    profiles_repository.update_chat_state(
+                        profile_id=profile_id,
+                        user_id=auth_user_id,
+                        chat_state=updated_chat_state,
+                    )
+                    return ChatResponse(
+                        reply=(
+                            "OK — on reste en chat libre. Tu peux me demander un rapport PDF quand tu veux "
+                            "(ex: 'rapport pdf janvier 2026')."
+                        ),
+                        tool_result=None,
+                        plan=None,
+                    )
+                return ChatResponse(reply="Réponds OUI ou NON.", tool_result=None, plan=None)
 
         pending_clarification = state_dict.get("pending_clarification") if isinstance(state_dict, dict) else None
         if (
@@ -1959,6 +2064,34 @@ def agent_chat(
                         tool_result=serialized_pending_result,
                         plan=jsonable_encoder({"tool_name": tool_name, "payload": tool_payload}),
                     )
+
+        if mode == "free_chat" and _is_pdf_report_request(payload.message):
+            month_value, start_date_value, end_date_value = _resolve_report_period_from_message(
+                message=payload.message,
+                state_dict=state_dict if isinstance(state_dict, dict) else None,
+                profile_id=profile_id,
+            )
+            report_url = _build_spending_pdf_url(
+                month=month_value,
+                start_date=start_date_value,
+                end_date=end_date_value,
+            )
+            period_label = month_value or (
+                f"du {start_date_value} au {end_date_value}"
+                if start_date_value and end_date_value
+                else "la période demandée"
+            )
+            plan_payload: dict[str, Any] = {}
+            if month_value:
+                plan_payload["month"] = month_value
+            elif start_date_value and end_date_value:
+                plan_payload["start_date"] = start_date_value
+                plan_payload["end_date"] = end_date_value
+            return ChatResponse(
+                reply=f"Voici ton rapport PDF pour {period_label} : [Ouvrir le PDF]({report_url})",
+                tool_result=_build_open_pdf_ui_request(report_url),
+                plan={"tool_name": "finance_report_spending_pdf", "payload": plan_payload},
+            )
 
         memory_for_loop = state_dict if isinstance(state_dict, dict) else None
 
@@ -2257,6 +2390,58 @@ def _resolve_report_date_range(
     today = date.today()
     _, last_day = calendar.monthrange(today.year, today.month)
     return today.replace(day=1), today.replace(day=last_day)
+
+
+def _resolve_report_period_from_message(
+    *,
+    message: str,
+    state_dict: dict[str, Any] | None,
+    profile_id: UUID,
+) -> tuple[str | None, str | None, str | None]:
+    """Resolve report period from explicit message period, memory, then backend fallback."""
+
+    normalized_message = _normalize_text(message)
+    month_with_year_match = re.search(r"\b([a-z]+)\s+(\d{4})\b", normalized_message)
+    if month_with_year_match is not None:
+        month_name = month_with_year_match.group(1)
+        year_value = int(month_with_year_match.group(2))
+        month_number = _FRENCH_MONTH_TO_NUMBER.get(month_name)
+        if month_number is not None:
+            return f"{year_value:04d}-{month_number:02d}", None, None
+
+    if "ce mois" in normalized_message:
+        today = date.today()
+        return f"{today.year:04d}-{today.month:02d}", None, None
+
+    period_payload = period_payload_from_message(message)
+    date_range = period_payload.get("date_range") if isinstance(period_payload, dict) else None
+    if isinstance(date_range, dict):
+        start_date = date_range.get("start_date")
+        end_date = date_range.get("end_date")
+        if isinstance(start_date, str) and isinstance(end_date, str):
+            return None, start_date, end_date
+
+    explicit_month = period_payload.get("month") if isinstance(period_payload, dict) else None
+    if isinstance(explicit_month, str) and explicit_month.strip():
+        return explicit_month.strip(), None, None
+
+    resolved_start, resolved_end = _resolve_report_date_range(
+        month=None,
+        start_date=None,
+        end_date=None,
+        state_dict=state_dict,
+        profile_id=profile_id,
+    )
+    return None, resolved_start.isoformat(), resolved_end.isoformat()
+
+
+def _is_pdf_report_request(message: str) -> bool:
+    """Return True when message clearly asks for a spending report PDF."""
+
+    normalized = _normalize_text(message)
+    has_report_word = "rapport" in normalized or "report" in normalized or "bilan" in normalized
+    has_pdf_word = "pdf" in normalized or "report" in normalized
+    return has_report_word and has_pdf_word
 
 
 def _pick_first_non_empty_string(values: list[object]) -> str | None:

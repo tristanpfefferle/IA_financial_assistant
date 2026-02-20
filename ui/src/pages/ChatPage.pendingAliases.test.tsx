@@ -99,4 +99,5 @@ describe('ChatPage pending merchant aliases action', () => {
 
     expect(resolvePendingMerchantAliases).toHaveBeenCalledWith({ limit: 20, max_batches: 10 })
   })
+
 })
