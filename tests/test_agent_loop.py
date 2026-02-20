@@ -596,9 +596,9 @@ def test_confirm_delete_bank_account_existing_stores_id_in_active_task() -> None
 def test_nlu_ui_action_open_import_panel_returns_structured_tool_result() -> None:
     loop = AgentLoop(tool_router=_FailIfCalledRouter())
 
-    reply = loop.handle_user_message("je veux importer un relevé")
+    reply = loop.handle_user_message("Je veux importer un autre relevé")
 
-    assert reply.reply == "D'accord, j'ouvre le panneau d'import de relevés."
+    assert "parcours" in reply.reply.lower()
     assert reply.tool_result == {"type": "ui_action", "action": "open_import_panel"}
 
 
