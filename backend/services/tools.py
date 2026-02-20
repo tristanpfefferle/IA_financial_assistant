@@ -486,3 +486,104 @@ class BackendToolService:
             return ToolError(code=code, message=str(exc))
         except Exception as exc:
             return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))
+
+    def finance_merchants_suggest_fixes(
+        self,
+        *,
+        profile_id: UUID,
+        status: str = "pending",
+        limit: int = 50,
+    ) -> dict[str, object] | ToolError:
+        if self.profiles_repository is None:
+            return ToolError(
+                code=ToolErrorCode.BACKEND_ERROR,
+                message="Profiles repository unavailable",
+            )
+        try:
+            items = self.profiles_repository.list_merchant_suggestions(
+                profile_id=profile_id,
+                status=status,
+                limit=limit,
+            )
+            return {"items": items, "count": len(items)}
+        except Exception as exc:
+            return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))
+
+    def finance_merchants_apply_suggestion(
+        self,
+        *,
+        profile_id: UUID,
+        suggestion_id: UUID,
+    ) -> dict[str, object] | ToolError:
+        if self.profiles_repository is None:
+            return ToolError(
+                code=ToolErrorCode.BACKEND_ERROR,
+                message="Profiles repository unavailable",
+            )
+
+        try:
+            suggestion = self.profiles_repository.get_merchant_suggestion_by_id(
+                profile_id=profile_id,
+                suggestion_id=suggestion_id,
+            )
+            if not suggestion:
+                return ToolError(code=ToolErrorCode.NOT_FOUND, message="Merchant suggestion not found")
+
+            action = str(suggestion.get("action") or "").strip().lower()
+            applied_details: dict[str, object] = {}
+
+            if action == "rename":
+                source_merchant_id = UUID(str(suggestion.get("source_merchant_id")))
+                suggested_name = str(suggestion.get("suggested_name") or "").strip()
+                applied_details = self.profiles_repository.rename_merchant(
+                    profile_id=profile_id,
+                    merchant_id=source_merchant_id,
+                    new_name=suggested_name,
+                )
+            elif action == "merge":
+                source_merchant_id = UUID(str(suggestion.get("source_merchant_id")))
+                target_merchant_id = UUID(str(suggestion.get("target_merchant_id")))
+                applied_details = self.profiles_repository.merge_merchants(
+                    profile_id=profile_id,
+                    source_merchant_id=source_merchant_id,
+                    target_merchant_id=target_merchant_id,
+                )
+            elif action == "categorize":
+                source_merchant_id = UUID(str(suggestion.get("source_merchant_id")))
+                suggested_category = str(suggestion.get("suggested_category") or "").strip()
+                self.profiles_repository.update_merchant_category(
+                    merchant_id=source_merchant_id,
+                    category_name=suggested_category,
+                )
+                applied_details = {
+                    "merchant_id": str(source_merchant_id),
+                    "category": suggested_category,
+                }
+            elif action == "keep":
+                applied_details = {"noop": True}
+            else:
+                raise ValueError(f"unsupported action: {action}")
+
+            self.profiles_repository.update_merchant_suggestion_status(
+                profile_id=profile_id,
+                suggestion_id=suggestion_id,
+                status="applied",
+                error=None,
+            )
+            return {
+                "ok": True,
+                "action": action,
+                "suggestion_id": str(suggestion_id),
+                "applied_details": applied_details,
+            }
+        except Exception as exc:
+            try:
+                self.profiles_repository.update_merchant_suggestion_status(
+                    profile_id=profile_id,
+                    suggestion_id=suggestion_id,
+                    status="failed",
+                    error=str(exc),
+                )
+            except Exception:
+                pass
+            return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))

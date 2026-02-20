@@ -213,3 +213,27 @@ class BackendClient:
             source_merchant_id=source_merchant_id,
             target_merchant_id=target_merchant_id,
         )
+
+    def finance_merchants_suggest_fixes(
+        self,
+        *,
+        profile_id: UUID,
+        status: str = "pending",
+        limit: int = 50,
+    ) -> dict[str, object] | ToolError:
+        return self.tool_service.finance_merchants_suggest_fixes(
+            profile_id=profile_id,
+            status=status,
+            limit=limit,
+        )
+
+    def finance_merchants_apply_suggestion(
+        self,
+        *,
+        profile_id: UUID,
+        suggestion_id: UUID,
+    ) -> dict[str, object] | ToolError:
+        return self.tool_service.finance_merchants_apply_suggestion(
+            profile_id=profile_id,
+            suggestion_id=suggestion_id,
+        )
