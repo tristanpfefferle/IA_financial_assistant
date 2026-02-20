@@ -763,7 +763,7 @@ class SupabaseProfilesRepository:
         if not rows:
             return 0
 
-        inserted_count = 0
+        upserted_count = 0
         seen_in_batch: set[str] = set()
         for row in rows:
             observed_alias_norm = self._normalize_name_norm(str(row.get("observed_alias_norm") or ""))
@@ -771,36 +771,25 @@ class SupabaseProfilesRepository:
                 continue
             seen_in_batch.add(observed_alias_norm)
 
-            existing_rows, _ = self._client.get_rows(
-                table="merchant_suggestions",
-                query={
-                    "select": "id",
-                    "profile_id": f"eq.{profile_id}",
-                    "action": "eq.map_alias",
-                    "observed_alias_norm": f"eq.{observed_alias_norm}",
-                    "status": "in.(pending,failed)",
-                    "limit": 1,
-                },
-                with_count=False,
-                use_anon_key=False,
-            )
-            if existing_rows:
-                continue
-
             payload = {
                 "profile_id": str(profile_id),
                 "action": "map_alias",
-                "status": row.get("status") or "pending",
+                "status": "pending",
                 "observed_alias": row.get("observed_alias"),
                 "observed_alias_norm": observed_alias_norm,
                 "suggested_entity_name": row.get("suggested_entity_name"),
                 "confidence": row.get("confidence"),
                 "rationale": row.get("rationale"),
             }
-            self._client.post_rows(table="merchant_suggestions", payload=payload, use_anon_key=False)
-            inserted_count += 1
+            self._client.upsert_row(
+                table="merchant_suggestions",
+                payload=payload,
+                on_conflict="profile_id,action,observed_alias_norm",
+                use_anon_key=False,
+            )
+            upserted_count += 1
 
-        return inserted_count
+        return upserted_count
 
     def list_map_alias_suggestions(self, *, profile_id: UUID, limit: int = 100) -> list[dict[str, Any]]:
         rows, _ = self._client.get_rows(

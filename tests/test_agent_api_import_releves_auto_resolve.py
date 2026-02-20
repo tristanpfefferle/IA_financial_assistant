@@ -81,6 +81,7 @@ def test_import_releves_auto_resolve_runs_when_pending_within_limit(monkeypatch)
     repo = _Repo()
     _mock_common(monkeypatch, repo)
     monkeypatch.setattr(agent_api._config, "llm_enabled", lambda: True)
+    monkeypatch.setattr(agent_api._config, "merchant_auto_resolve_on_import_enabled", lambda: True)
     monkeypatch.setattr(agent_api._config, "auto_resolve_merchant_aliases_enabled", lambda: True)
     monkeypatch.setattr(agent_api._config, "auto_resolve_merchant_aliases_limit", lambda: 2)
 
@@ -124,6 +125,7 @@ def test_import_releves_auto_resolve_partial_when_too_many_suggestions(monkeypat
     repo = _Repo()
     _mock_common(monkeypatch, repo)
     monkeypatch.setattr(agent_api._config, "llm_enabled", lambda: True)
+    monkeypatch.setattr(agent_api._config, "merchant_auto_resolve_on_import_enabled", lambda: True)
     monkeypatch.setattr(agent_api._config, "auto_resolve_merchant_aliases_enabled", lambda: True)
     monkeypatch.setattr(agent_api._config, "auto_resolve_merchant_aliases_limit", lambda: 2)
 
@@ -162,6 +164,7 @@ def test_import_releves_auto_resolve_skips_when_llm_disabled(monkeypatch) -> Non
     repo = _Repo()
     _mock_common(monkeypatch, repo)
     monkeypatch.setattr(agent_api._config, "llm_enabled", lambda: False)
+    monkeypatch.setattr(agent_api._config, "merchant_auto_resolve_on_import_enabled", lambda: True)
     monkeypatch.setattr(agent_api._config, "auto_resolve_merchant_aliases_enabled", lambda: True)
 
     resolver_call_count = {"count": 0}
@@ -196,6 +199,7 @@ def test_import_releves_auto_resolve_failure_keeps_import_success(monkeypatch) -
     repo = _Repo()
     _mock_common(monkeypatch, repo)
     monkeypatch.setattr(agent_api._config, "llm_enabled", lambda: True)
+    monkeypatch.setattr(agent_api._config, "merchant_auto_resolve_on_import_enabled", lambda: True)
     monkeypatch.setattr(agent_api._config, "auto_resolve_merchant_aliases_enabled", lambda: True)
     monkeypatch.setattr(agent_api._config, "auto_resolve_merchant_aliases_limit", lambda: 2)
 
@@ -219,3 +223,39 @@ def test_import_releves_auto_resolve_failure_keeps_import_success(monkeypatch) -
         "pending_total_count": 1,
     }
     assert "merchant_alias_auto_resolve_failed" in payload["warnings"]
+
+
+def test_import_releves_auto_resolve_disabled_by_import_flag(monkeypatch) -> None:
+    class _Repo(_BaseRepo):
+        def list_map_alias_suggestions(self, *, profile_id: UUID, limit: int = 100):
+            raise AssertionError("should not be called")
+
+    repo = _Repo()
+    _mock_common(monkeypatch, repo)
+    monkeypatch.setattr(agent_api._config, "merchant_auto_resolve_on_import_enabled", lambda: False)
+    monkeypatch.setattr(agent_api._config, "llm_enabled", lambda: True)
+    monkeypatch.setattr(agent_api._config, "auto_resolve_merchant_aliases_enabled", lambda: True)
+
+    resolver_call_count = {"count": 0}
+
+    def _resolve(**_kwargs):
+        resolver_call_count["count"] += 1
+        return {}
+
+    monkeypatch.setattr(agent_api, "resolve_pending_map_alias", _resolve)
+
+    response = client.post(
+        "/finance/releves/import",
+        headers=_headers(),
+        json={"files": [{"filename": "x.csv", "content_base64": "YQ=="}]},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert resolver_call_count["count"] == 0
+    assert payload["merchant_alias_auto_resolve"] == {
+        "attempted": False,
+        "skipped_reason": "merchant_alias_auto_resolve_disabled",
+        "stats": None,
+        "pending_total_count": None,
+    }
