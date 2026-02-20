@@ -62,6 +62,20 @@ export type ImportRequestPayload = {
   modified_action?: 'keep' | 'replace'
 }
 
+export type ResolvePendingMerchantAliasesPayload = {
+  limit?: number
+  max_batches?: number
+}
+
+export type ResolvePendingMerchantAliasesResult = {
+  ok: boolean
+  type: string
+  pending_before: number | null
+  pending_after: number | null
+  batches: number
+  stats: Record<string, unknown>
+}
+
 type ErrorPayload = {
   detail?: string | { message?: string }
 }
@@ -169,6 +183,23 @@ export async function importReleves(payload: ImportRequestPayload): Promise<Rele
   return (await response.json()) as RelevesImportResult
 }
 
+
+export async function resolvePendingMerchantAliases(
+  payload: ResolvePendingMerchantAliasesPayload = {},
+): Promise<ResolvePendingMerchantAliasesResult> {
+  const response = await fetch(`${getBaseUrl()}/finance/merchants/aliases/resolve-pending`, {
+    method: 'POST',
+    headers: await buildAuthHeaders(),
+    body: JSON.stringify(payload),
+  })
+
+  if (!response.ok) {
+    const detail = await extractErrorDetail(response)
+    throw new Error(`Erreur API résolution marchands (${response.status}): ${detail}`)
+  }
+
+  return (await response.json()) as ResolvePendingMerchantAliasesResult
+}
 
 export async function hardResetProfile(): Promise<void> {
   const response = await fetch(`${getBaseUrl()}/debug/hard-reset`, {
