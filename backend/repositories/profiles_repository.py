@@ -42,6 +42,34 @@ class ProfilesRepository(Protocol):
     def list_merchants_without_category(self, *, profile_id: UUID) -> list[dict[str, Any]]:
         """Return merchants without category for a profile and personal scope."""
 
+    def list_merchants(self, *, profile_id: UUID, limit: int = 5000) -> list[dict[str, Any]]:
+        """Return merchants for a profile and personal scope."""
+
+    def create_merchant_suggestions(self, *, profile_id: UUID, suggestions: list[dict[str, Any]]) -> int:
+        """Create merchant suggestions and return inserted count."""
+
+    def list_merchant_suggestions(
+        self,
+        *,
+        profile_id: UUID,
+        status: str = "pending",
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """List merchant suggestions for one profile."""
+
+    def get_merchant_suggestion_by_id(self, *, profile_id: UUID, suggestion_id: UUID) -> dict[str, Any] | None:
+        """Return one merchant suggestion for one profile."""
+
+    def update_merchant_suggestion_status(
+        self,
+        *,
+        profile_id: UUID,
+        suggestion_id: UUID,
+        status: str,
+        error: str | None = None,
+    ) -> None:
+        """Update one suggestion status and optional error."""
+
     def update_merchant_category(self, *, merchant_id: UUID, category_name: str) -> None:
         """Assign a category name on one merchant."""
 
@@ -356,6 +384,85 @@ class SupabaseProfilesRepository:
             use_anon_key=False,
         )
         return rows
+
+    def list_merchants(self, *, profile_id: UUID, limit: int = 5000) -> list[dict[str, Any]]:
+        rows, _ = self._client.get_rows(
+            table="merchants",
+            query={
+                "select": "id,name,name_norm,aliases,category",
+                "profile_id": f"eq.{profile_id}",
+                "scope": "eq.personal",
+                "limit": max(1, limit),
+            },
+            with_count=False,
+            use_anon_key=False,
+        )
+        return rows
+
+    def create_merchant_suggestions(self, *, profile_id: UUID, suggestions: list[dict[str, Any]]) -> int:
+        if not suggestions:
+            return 0
+
+        rows_payload = [{**suggestion, "profile_id": str(profile_id)} for suggestion in suggestions]
+        inserted_rows = self._client.post_rows(
+            table="merchant_suggestions",
+            payload=rows_payload,
+            use_anon_key=False,
+        )
+        return len(inserted_rows)
+
+    def list_merchant_suggestions(
+        self,
+        *,
+        profile_id: UUID,
+        status: str = "pending",
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        rows, _ = self._client.get_rows(
+            table="merchant_suggestions",
+            query={
+                "select": "id,profile_id,created_at,status,action,source_merchant_id,target_merchant_id,suggested_name,suggested_name_norm,suggested_category,confidence,rationale,error,sample_aliases,llm_model,llm_run_id",
+                "profile_id": f"eq.{profile_id}",
+                "status": f"eq.{status}",
+                "order": "created_at.desc",
+                "limit": max(1, limit),
+            },
+            with_count=False,
+            use_anon_key=False,
+        )
+        return rows
+
+    def get_merchant_suggestion_by_id(self, *, profile_id: UUID, suggestion_id: UUID) -> dict[str, Any] | None:
+        rows, _ = self._client.get_rows(
+            table="merchant_suggestions",
+            query={
+                "select": "id,profile_id,created_at,status,action,source_merchant_id,target_merchant_id,suggested_name,suggested_name_norm,suggested_category,confidence,rationale,error,sample_aliases,llm_model,llm_run_id",
+                "profile_id": f"eq.{profile_id}",
+                "id": f"eq.{suggestion_id}",
+                "limit": 1,
+            },
+            with_count=False,
+            use_anon_key=False,
+        )
+        if not rows:
+            return None
+        return rows[0]
+
+    def update_merchant_suggestion_status(
+        self,
+        *,
+        profile_id: UUID,
+        suggestion_id: UUID,
+        status: str,
+        error: str | None = None,
+    ) -> None:
+        payload: dict[str, Any] = {"status": status, "error": error}
+        self._client.patch_rows(
+            table="merchant_suggestions",
+            query={"profile_id": f"eq.{profile_id}", "id": f"eq.{suggestion_id}"},
+            payload=payload,
+            use_anon_key=False,
+        )
 
     def hard_reset_profile(self, *, profile_id: UUID, user_id: UUID) -> None:
         self._client.patch_rows(

@@ -25,6 +25,7 @@ from agent.llm_planner import LLMPlanner
 from agent.loop import AgentLoop
 from agent.tool_router import ToolRouter
 from agent.bank_catalog import extract_canonical_banks
+from agent.merchant_cleanup import MerchantSuggestion, run_merchant_cleanup
 from backend.factory import build_backend_tool_service
 from backend.auth.supabase_auth import UnauthorizedError, get_user_from_bearer_token
 from backend.db.supabase_client import SupabaseClient, SupabaseSettings
@@ -856,6 +857,19 @@ class MergeMerchantsPayload(BaseModel):
 
     source_merchant_id: UUID
     target_merchant_id: UUID
+
+
+class MerchantSuggestionsListPayload(BaseModel):
+    """Payload for merchant suggestions listing endpoint."""
+
+    status: str = "pending"
+    limit: int = 50
+
+
+class MerchantSuggestionApplyPayload(BaseModel):
+    """Payload for merchant suggestion apply endpoint."""
+
+    suggestion_id: UUID
 
 
 @lru_cache(maxsize=1)
@@ -1923,7 +1937,151 @@ def import_releves(payload: ImportRequestPayload, authorization: str | None = He
         else:
             response_payload["warnings"] = ["merchant_linking_failed"]
 
+    response_payload["merchant_suggestions_pending_count"] = 0
+    response_payload["merchant_suggestions_applied_count"] = 0
+    response_payload["merchant_suggestions_failed_count"] = 0
+
+    if _config.llm_enabled():
+        try:
+            profiles_repository = get_profiles_repository()
+            merchants = profiles_repository.list_merchants(profile_id=profile_id, limit=5000)
+            merchants_by_id = {
+                UUID(str(row.get("id"))): row
+                for row in merchants
+                if row.get("id")
+            }
+            suggestions = run_merchant_cleanup(
+                profile_id=profile_id,
+                profiles_repository=profiles_repository,
+            )
+            suggestion_rows: list[dict[str, Any]] = []
+            for suggestion in suggestions:
+                auto_applied, error_message = _maybe_auto_apply_suggestion(
+                    profiles_repository=profiles_repository,
+                    profile_id=profile_id,
+                    suggestion=suggestion,
+                    merchants_by_id=merchants_by_id,
+                )
+                if error_message:
+                    response_payload["merchant_suggestions_failed_count"] += 1
+                    suggestion_rows.append({
+                        **_build_suggestion_row(suggestion, status="failed"),
+                        "error": error_message,
+                    })
+                    continue
+                if auto_applied:
+                    response_payload["merchant_suggestions_applied_count"] += 1
+                    suggestion_rows.append(_build_suggestion_row(suggestion, status="applied"))
+                else:
+                    response_payload["merchant_suggestions_pending_count"] += 1
+                    suggestion_rows.append(_build_suggestion_row(suggestion, status="pending"))
+
+            profiles_repository.create_merchant_suggestions(
+                profile_id=profile_id,
+                suggestions=suggestion_rows,
+            )
+        except Exception:
+            logger.exception("import_releves_merchant_cleanup_failed profile_id=%s", profile_id)
+            response_payload["merchant_suggestions_failed_count"] += 1
+            warnings = response_payload.get("warnings")
+            if isinstance(warnings, list):
+                warnings.append("merchant_cleanup_failed")
+            else:
+                response_payload["warnings"] = ["merchant_cleanup_failed"]
+
     return jsonable_encoder(response_payload)
+
+
+def _build_suggestion_row(
+    suggestion: MerchantSuggestion,
+    *,
+    status: str,
+) -> dict[str, Any]:
+    suggested_name_norm = _normalize_text(suggestion.suggested_name or "") if suggestion.suggested_name else None
+    return {
+        "status": status,
+        "action": suggestion.action,
+        "source_merchant_id": str(suggestion.source_merchant_id) if suggestion.source_merchant_id else None,
+        "target_merchant_id": str(suggestion.target_merchant_id) if suggestion.target_merchant_id else None,
+        "suggested_name": suggestion.suggested_name,
+        "suggested_name_norm": suggested_name_norm,
+        "suggested_category": suggestion.suggested_category,
+        "confidence": suggestion.confidence,
+        "rationale": suggestion.rationale,
+        "sample_aliases": suggestion.sample_aliases,
+        "llm_model": _config.llm_model(),
+    }
+
+
+def _maybe_auto_apply_suggestion(
+    *,
+    profiles_repository: ProfilesRepository,
+    profile_id: UUID,
+    suggestion: MerchantSuggestion,
+    merchants_by_id: dict[UUID, dict[str, Any]],
+) -> tuple[bool, str | None]:
+    try:
+        if suggestion.action == "rename" and suggestion.source_merchant_id and suggestion.suggested_name and suggestion.confidence >= 0.90:
+            profiles_repository.rename_merchant(
+                profile_id=profile_id,
+                merchant_id=suggestion.source_merchant_id,
+                new_name=suggestion.suggested_name,
+            )
+            return True, None
+        if suggestion.action == "merge" and suggestion.source_merchant_id and suggestion.target_merchant_id and suggestion.confidence >= 0.95:
+            profiles_repository.merge_merchants(
+                profile_id=profile_id,
+                source_merchant_id=suggestion.source_merchant_id,
+                target_merchant_id=suggestion.target_merchant_id,
+            )
+            return True, None
+        if suggestion.action == "categorize" and suggestion.source_merchant_id and suggestion.suggested_category and suggestion.confidence >= 0.90:
+            merchant = merchants_by_id.get(suggestion.source_merchant_id) or {}
+            current_category = str(merchant.get("category") or "").strip()
+            if current_category:
+                return False, None
+            profiles_repository.update_merchant_category(
+                merchant_id=suggestion.source_merchant_id,
+                category_name=suggestion.suggested_category,
+            )
+            return True, None
+    except Exception as exc:
+        return False, str(exc)
+
+    return False, None
+
+
+@app.post("/finance/merchants/suggestions/list")
+def list_merchant_suggestions(
+    payload: MerchantSuggestionsListPayload,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    _, profile_id = _resolve_authenticated_profile(authorization)
+    result = get_tool_router().call(
+        "finance_merchants_suggest_fixes",
+        payload.model_dump(),
+        profile_id=profile_id,
+    )
+    if isinstance(result, ToolError):
+        raise HTTPException(status_code=400, detail=result.message)
+    return jsonable_encoder(result)
+
+
+@app.post("/finance/merchants/suggestions/apply")
+def apply_merchant_suggestion(
+    payload: MerchantSuggestionApplyPayload,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    _, profile_id = _resolve_authenticated_profile(authorization)
+    result = get_tool_router().call(
+        "finance_merchants_apply_suggestion",
+        payload.model_dump(mode="json"),
+        profile_id=profile_id,
+    )
+    if isinstance(result, ToolError):
+        status = 404 if result.code.name == "NOT_FOUND" else 400
+        raise HTTPException(status_code=status, detail=result.message)
+    return jsonable_encoder(result)
 
 
 @app.post("/finance/merchants/rename")

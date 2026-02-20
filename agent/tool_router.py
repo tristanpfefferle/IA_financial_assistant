@@ -156,6 +156,19 @@ class _MerchantsMergePayload(BaseModel):
     target_merchant_id: UUID
 
 
+class _MerchantsSuggestFixesPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: str = "pending"
+    limit: int = 50
+
+
+class _MerchantsApplySuggestionPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    suggestion_id: UUID
+
+
 @dataclass(slots=True)
 class ToolRouter:
     backend_client: BackendClient
@@ -349,6 +362,8 @@ class ToolRouter:
             "finance_bank_accounts_set_default",
             "finance_merchants_rename",
             "finance_merchants_merge",
+            "finance_merchants_suggest_fixes",
+            "finance_merchants_apply_suggestion",
         } and profile_id is None:
             return ToolError(
                 code=ToolErrorCode.VALIDATION_ERROR,
@@ -744,6 +759,36 @@ class ToolRouter:
                 profile_id=profile_id,
                 source_merchant_id=request.source_merchant_id,
                 target_merchant_id=request.target_merchant_id,
+            )
+
+
+        if tool_name == "finance_merchants_suggest_fixes":
+            try:
+                request = _MerchantsSuggestFixesPayload.model_validate(payload)
+            except ValidationError as exc:
+                return ToolError(
+                    code=ToolErrorCode.VALIDATION_ERROR,
+                    message=f"Invalid payload for tool {tool_name}",
+                    details={"validation_errors": exc.errors(), "payload": payload},
+                )
+            return self.backend_client.finance_merchants_suggest_fixes(
+                profile_id=profile_id,
+                status=request.status,
+                limit=request.limit,
+            )
+
+        if tool_name == "finance_merchants_apply_suggestion":
+            try:
+                request = _MerchantsApplySuggestionPayload.model_validate(payload)
+            except ValidationError as exc:
+                return ToolError(
+                    code=ToolErrorCode.VALIDATION_ERROR,
+                    message=f"Invalid payload for tool {tool_name}",
+                    details={"validation_errors": exc.errors(), "payload": payload},
+                )
+            return self.backend_client.finance_merchants_apply_suggestion(
+                profile_id=profile_id,
+                suggestion_id=request.suggestion_id,
             )
 
         return ToolError(
