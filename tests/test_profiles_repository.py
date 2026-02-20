@@ -335,6 +335,24 @@ def test_hard_reset_profile_deletes_only_filtered_by_profile_id() -> None:
     ]
 
 
+
+
+def test_list_profile_categories_includes_system_key_in_select() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    client = _ClientStub(responses=[[{"id": "1", "system_key": "food"}]])
+    repository = SupabaseProfilesRepository(client=client)
+
+    rows = repository.list_profile_categories(profile_id=profile_id)
+
+    assert rows == [{"id": "1", "system_key": "food"}]
+    assert client.calls[0]["table"] == "profile_categories"
+    assert client.calls[0]["query"] == {
+        "select": "id,name,name_norm,system_key,is_system,scope",
+        "profile_id": f"eq.{profile_id}",
+        "scope": "eq.personal",
+        "limit": 200,
+    }
+
 def test_list_releves_without_merchant_filters_profile_and_null_merchant() -> None:
     profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
     client = _ClientStub(responses=[[{"id": "1"}]])
