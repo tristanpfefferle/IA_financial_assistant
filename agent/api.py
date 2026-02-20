@@ -785,6 +785,7 @@ def _bootstrap_merchants_from_imported_releves(
     skipped_count = 0
     suggestion_rows: list[dict[str, Any]] = []
     seen_pending_alias_norms: set[str] = set()
+    suggestions_created_count = 0
 
     for row in rows:
         processed_count += 1
@@ -870,21 +871,27 @@ def _bootstrap_merchants_from_imported_releves(
 
     if suggestion_rows:
         try:
-            profiles_repository.create_map_alias_suggestions(profile_id=profile_id, rows=suggestion_rows)
+            if hasattr(profiles_repository, "create_map_alias_suggestions"):
+                suggestions_created_count = int(
+                    profiles_repository.create_map_alias_suggestions(profile_id=profile_id, rows=suggestion_rows)
+                    or 0
+                )
         except Exception:
             logger.exception("import_releves_map_alias_suggestions_failed profile_id=%s", profile_id)
 
     logger.info(
-        "import_releves_entity_link_summary profile_id=%s processed=%s linked=%s skipped=%s",
+        "import_releves_entity_link_summary profile_id=%s processed=%s linked=%s skipped=%s suggestions_created_count=%s",
         profile_id,
         processed_count,
         linked_count,
         skipped_count,
+        suggestions_created_count,
     )
     return {
         "processed_count": processed_count,
         "linked_count": linked_count,
         "skipped_count": skipped_count,
+        "suggestions_created_count": suggestions_created_count,
     }
 
 
@@ -2766,6 +2773,7 @@ def import_releves(payload: ImportRequestPayload, authorization: str | None = He
         response_payload["merchant_linked_count"] = merchant_link_summary["linked_count"]
         response_payload["merchant_skipped_count"] = merchant_link_summary["skipped_count"]
         response_payload["merchant_processed_count"] = merchant_link_summary["processed_count"]
+        response_payload["merchant_suggestions_created_count"] = merchant_link_summary["suggestions_created_count"]
     except Exception:
         logger.exception("import_releves_merchant_linking_failed profile_id=%s", profile_id)
         warnings = response_payload.get("warnings")

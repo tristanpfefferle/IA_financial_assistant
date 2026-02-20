@@ -413,6 +413,8 @@ def test_import_releves_links_merchants_from_imported_transactions(monkeypatch) 
     )
 
     assert response.status_code == 200
+    payload = response.json()
+    assert payload["merchant_suggestions_created_count"] == 0
     assert repo.ensure_system_categories_calls == 1
     assert len(repo.attach_calls) == 2
     assert repo.attach_calls == [

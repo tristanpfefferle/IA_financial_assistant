@@ -763,7 +763,7 @@ class SupabaseProfilesRepository:
         if not rows:
             return 0
 
-        upserted_count = 0
+        inserted_count = 0
         seen_in_batch: set[str] = set()
         for row in rows:
             observed_alias_norm = self._normalize_name_norm(str(row.get("observed_alias_norm") or ""))
@@ -781,15 +781,20 @@ class SupabaseProfilesRepository:
                 "confidence": row.get("confidence"),
                 "rationale": row.get("rationale"),
             }
-            self._client.upsert_row(
-                table="merchant_suggestions",
-                payload=payload,
-                on_conflict="profile_id,action,observed_alias_norm",
-                use_anon_key=False,
-            )
-            upserted_count += 1
+            try:
+                self._client.post_rows(
+                    table="merchant_suggestions",
+                    payload=payload,
+                    use_anon_key=False,
+                )
+                inserted_count += 1
+            except RuntimeError as exc:
+                error_message = str(exc).lower()
+                if "duplicate key" in error_message or "unique" in error_message:
+                    continue
+                raise
 
-        return upserted_count
+        return inserted_count
 
     def list_map_alias_suggestions(self, *, profile_id: UUID, limit: int = 100) -> list[dict[str, Any]]:
         rows, _ = self._client.get_rows(
