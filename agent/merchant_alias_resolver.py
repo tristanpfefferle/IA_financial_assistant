@@ -286,6 +286,9 @@ def resolve_pending_map_alias(*, profile_id: UUID, profiles_repository: Any, lim
 
     for start in range(0, len(llm_items), _MAX_LLM_BATCH_SIZE):
         llm_batch_items = llm_items[start : start + _MAX_LLM_BATCH_SIZE]
+        batch_ids: set[UUID] = {UUID(item["suggestion_id"]) for item in llm_batch_items}
+        seen_ids: set[UUID] = set()
+
         prompt = _build_batch_prompt(items=llm_batch_items)
         llm_payload, llm_run_id, usage, warnings = _unpack_llm_call_result(_call_llm_json(prompt))
         if llm_run_id:
@@ -300,8 +303,6 @@ def resolve_pending_map_alias(*, profile_id: UUID, profiles_repository: Any, lim
             raw_resolutions = []
             stats["warnings"].append("invalid_llm_payload")
 
-        seen_ids: set[UUID] = set()
-        batch_ids = {UUID(str(item["suggestion_id"])) for item in llm_batch_items}
         for raw_resolution in raw_resolutions:
             parsed, reason = _validate_resolution(raw_resolution)
             suggestion_id = None
@@ -312,7 +313,7 @@ def resolve_pending_map_alias(*, profile_id: UUID, profiles_repository: Any, lim
                     suggestion_id = None
 
             if parsed is None:
-                if suggestion_id and suggestion_id in suggestions_by_id:
+                if suggestion_id and suggestion_id in batch_ids:
                     stats["processed"] += 1
                     stats["failed"] += 1
                     seen_ids.add(suggestion_id)
@@ -441,11 +442,13 @@ def resolve_pending_map_alias(*, profile_id: UUID, profiles_repository: Any, lim
                 suggested_category_label=None,
             )
 
+    stats["warnings"] = sorted(set(stats["warnings"]))
+
     logger.info(
         "map_alias_resolve_done profile_id=%s llm_run_id=%s usage=%s stats=%s",
         profile_id,
-        llm_run_id,
-        usage,
+        stats["llm_run_id"],
+        stats["usage"],
         stats,
     )
     return stats
