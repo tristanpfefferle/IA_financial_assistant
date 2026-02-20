@@ -316,7 +316,8 @@ def test_import_releves_links_merchants_from_imported_transactions(monkeypatch) 
             self._categories = [
                 {
                     "id": str(UUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee")),
-                    "name_norm": "food",
+                    "system_key": "food",
+                    "name_norm": "alimentation",
                 }
             ]
             assert any(category.get("system_key") == "food" for category in categories)
