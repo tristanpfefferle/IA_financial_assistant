@@ -592,20 +592,29 @@ class SupabaseProfilesRepository:
             aliases_final.append(source_name)
             seen_aliases.add(source_name)
 
-        moved_releves = self._client.patch_rows(
+        releves_rows, _ = self._client.get_rows(
             table="releves_bancaires",
-            query={"profile_id": f"eq.{profile_id}", "merchant_id": f"eq.{source_merchant_id}"},
-            payload={"merchant_id": str(target_merchant_id)},
+            query={
+                "select": "id",
+                "profile_id": f"eq.{profile_id}",
+                "merchant_id": f"eq.{source_merchant_id}",
+                "limit": 5000,
+            },
+            with_count=False,
             use_anon_key=False,
         )
+        releve_ids = [str(row.get("id")) for row in releves_rows if row.get("id")]
 
-        deleted_rows = self._client.delete_rows(
-            table="merchants",
-            query={"id": f"eq.{source_merchant_id}", "profile_id": f"eq.{profile_id}"},
-            use_anon_key=False,
-        )
-        if not deleted_rows:
-            raise ValueError("source merchant not found for deletion")
+        if releve_ids:
+            joined_ids = ",".join(releve_ids)
+            self._client.patch_rows(
+                table="releves_bancaires",
+                query={"id": f"in.({joined_ids})"},
+                payload={"merchant_id": str(target_merchant_id)},
+                use_anon_key=False,
+            )
+
+        moved_releves_count = len(releve_ids)
 
         updated_target_rows = self._client.patch_rows(
             table="merchants",
@@ -616,10 +625,18 @@ class SupabaseProfilesRepository:
         if not updated_target_rows:
             raise ValueError("target merchant not found for update")
 
+        deleted_rows = self._client.delete_rows(
+            table="merchants",
+            query={"id": f"eq.{source_merchant_id}", "profile_id": f"eq.{profile_id}"},
+            use_anon_key=False,
+        )
+        if not deleted_rows:
+            raise ValueError("source merchant not found for deletion")
+
         return {
             "target_merchant_id": str(target_merchant_id),
             "source_merchant_id": str(source_merchant_id),
-            "moved_releves_count": len(moved_releves),
+            "moved_releves_count": moved_releves_count,
             "aliases_added_count": max(0, len(aliases_final) - len(target_aliases)),
             "target_aliases_count": len(aliases_final),
         }

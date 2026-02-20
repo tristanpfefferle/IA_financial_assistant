@@ -515,9 +515,10 @@ def test_merge_merchants_moves_releves_merges_aliases_and_deletes_source() -> No
                     "category": "Alimentation",
                 }
             ],
+            [{"id": str(moved_releve_id)}],
         ],
         patch_responses=[
-            [{"id": str(moved_releve_id)}],
+            [],
             [{"id": str(target_merchant_id)}],
         ],
         delete_responses=[[{"id": str(source_merchant_id)}]],
@@ -534,10 +535,21 @@ def test_merge_merchants_moves_releves_merges_aliases_and_deletes_source() -> No
     assert client.calls[0]["query"]["id"] == f"eq.{source_merchant_id}"
     assert client.calls[1]["table"] == "merchants"
     assert client.calls[1]["query"]["id"] == f"eq.{target_merchant_id}"
+    assert client.calls[2] == {
+        "table": "releves_bancaires",
+        "query": {
+            "select": "id",
+            "profile_id": f"eq.{profile_id}",
+            "merchant_id": f"eq.{source_merchant_id}",
+            "limit": 5000,
+        },
+        "with_count": False,
+        "use_anon_key": False,
+    }
 
     assert client.patch_calls[0] == {
         "table": "releves_bancaires",
-        "query": {"profile_id": f"eq.{profile_id}", "merchant_id": f"eq.{source_merchant_id}"},
+        "query": {"id": f"in.({moved_releve_id})"},
         "payload": {"merchant_id": str(target_merchant_id)},
         "use_anon_key": False,
     }

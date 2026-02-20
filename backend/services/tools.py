@@ -458,7 +458,8 @@ class BackendToolService:
                 new_name=name,
             )
         except ValueError as exc:
-            return ToolError(code=ToolErrorCode.VALIDATION_ERROR, message=str(exc))
+            code = ToolErrorCode.NOT_FOUND if "not found" in str(exc).lower() else ToolErrorCode.VALIDATION_ERROR
+            return ToolError(code=code, message=str(exc))
         except Exception as exc:
             return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))
 
@@ -481,6 +482,7 @@ class BackendToolService:
                 target_merchant_id=target_merchant_id,
             )
         except ValueError as exc:
-            return ToolError(code=ToolErrorCode.VALIDATION_ERROR, message=str(exc))
+            code = ToolErrorCode.NOT_FOUND if "not found" in str(exc).lower() else ToolErrorCode.VALIDATION_ERROR
+            return ToolError(code=code, message=str(exc))
         except Exception as exc:
             return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))
