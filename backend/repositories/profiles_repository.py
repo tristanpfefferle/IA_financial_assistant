@@ -160,7 +160,7 @@ class ProfilesRepository(Protocol):
         self,
         *,
         profile_id: UUID,
-        observed_alias_norm: str,
+        observed_alias: str,
         merchant_entity_id: UUID,
         category_id: UUID | None,
     ) -> int:
@@ -935,13 +935,17 @@ class SupabaseProfilesRepository:
         self,
         *,
         profile_id: UUID,
-        observed_alias_norm: str,
+        observed_alias: str,
         merchant_entity_id: UUID,
         category_id: UUID | None,
     ) -> int:
-        alias = " ".join(observed_alias_norm.strip().split())
-        if not alias:
+        alias_raw = " ".join(observed_alias.strip().split())
+        if not alias_raw:
             return 0
+
+        def _pg_quote(value: str) -> str:
+            escaped = value.replace('"', '\\"')
+            return f'"{escaped}"'
 
         payload: dict[str, Any] = {"merchant_entity_id": str(merchant_entity_id)}
         if category_id is not None:
@@ -977,13 +981,13 @@ class SupabaseProfilesRepository:
                 return matched_count
             return len(rows)
 
-        exact_filter = f"(payee.eq.{alias},libelle.eq.{alias})"
+        exact_filter = f"(payee.eq.{_pg_quote(alias_raw)},libelle.eq.{_pg_quote(alias_raw)})"
         updated_exact = _count_and_patch(exact_filter)
         if updated_exact > 0:
             return updated_exact
 
-        ilike_alias = f"*{alias}*"
-        ilike_filter = f"(payee.ilike.{ilike_alias},libelle.ilike.{ilike_alias})"
+        ilike_value = f"*{alias_raw}*"
+        ilike_filter = f"(payee.ilike.{_pg_quote(ilike_value)},libelle.ilike.{_pg_quote(ilike_value)})"
         return _count_and_patch(ilike_filter)
 
     def attach_merchant_entity_to_releve(

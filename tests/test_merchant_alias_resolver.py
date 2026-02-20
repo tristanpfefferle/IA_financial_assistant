@@ -62,6 +62,7 @@ class _RepoStub:
     def apply_entity_to_profile_transactions(self, **kwargs):
         self.events.append("apply_entity_to_profile_transactions")
         assert kwargs["category_id"] == CATEGORY_ID
+        assert kwargs["observed_alias"] == "COOP CITY"
         return 2
 
     def update_merchant_suggestion_after_resolve(self, **kwargs):

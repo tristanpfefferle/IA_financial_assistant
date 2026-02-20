@@ -174,7 +174,8 @@ def resolve_pending_map_alias(*, profile_id: UUID, profiles_repository: Any, lim
         {"system_key": key, "name": label}
         for key, label in _CANONICAL_CATEGORY_LABELS.items()
     ]
-    profiles_repository.ensure_system_categories(profile_id=profile_id, categories=categories_payload)
+    if hasattr(profiles_repository, "ensure_system_categories"):
+        profiles_repository.ensure_system_categories(profile_id=profile_id, categories=categories_payload)
     category_rows = profiles_repository.list_profile_categories(profile_id=profile_id)
 
     categories_by_key: dict[str, UUID] = {}
@@ -311,7 +312,7 @@ def resolve_pending_map_alias(*, profile_id: UUID, profiles_repository: Any, lim
 
             updated_transactions = profiles_repository.apply_entity_to_profile_transactions(
                 profile_id=profile_id,
-                observed_alias_norm=suggestion["observed_alias_norm"],
+                observed_alias=suggestion["observed_alias"],
                 merchant_entity_id=merchant_entity_id,
                 category_id=category_id,
             )
