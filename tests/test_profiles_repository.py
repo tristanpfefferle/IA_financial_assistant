@@ -722,3 +722,44 @@ def test_update_merchant_suggestion_after_resolve_falls_back_to_minimal_payload(
 
     assert len(client.patch_calls) == 2
     assert client.patch_calls[1]["payload"] == {"status": "failed", "error": "invalid_item"}
+
+
+def test_create_map_alias_suggestions_uses_upsert_and_deduplicates_batch() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    client = _ClientStub(responses=[])
+    repository = SupabaseProfilesRepository(client=client)
+
+    inserted = repository.create_map_alias_suggestions(
+        profile_id=profile_id,
+        rows=[
+            {
+                "status": "pending",
+                "observed_alias": "Unknown Shop",
+                "observed_alias_norm": "unknown shop",
+            },
+            {
+                "status": "failed",
+                "observed_alias": "UNKNOWN SHOP",
+                "observed_alias_norm": "unknown shop",
+            },
+        ],
+    )
+
+    assert inserted == 1
+    assert client.upsert_calls == [
+        {
+            "table": "merchant_suggestions",
+            "payload": {
+                "profile_id": str(profile_id),
+                "action": "map_alias",
+                "status": "pending",
+                "observed_alias": "Unknown Shop",
+                "observed_alias_norm": "unknown shop",
+                "suggested_entity_name": None,
+                "confidence": None,
+                "rationale": None,
+            },
+            "on_conflict": "profile_id,action,observed_alias_norm",
+            "use_anon_key": False,
+        }
+    ]

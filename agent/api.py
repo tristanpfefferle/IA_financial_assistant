@@ -2779,7 +2779,9 @@ def import_releves(payload: ImportRequestPayload, authorization: str | None = He
     }
     response_payload["merchant_alias_auto_resolve"] = merchant_alias_auto_resolve_payload
 
-    if not _config.auto_resolve_merchant_aliases_enabled():
+    if not _config.merchant_auto_resolve_on_import_enabled():
+        merchant_alias_auto_resolve_payload["skipped_reason"] = "merchant_alias_auto_resolve_disabled"
+    elif not _config.auto_resolve_merchant_aliases_enabled():
         merchant_alias_auto_resolve_payload["skipped_reason"] = "merchant_alias_auto_resolve_disabled"
     elif not _config.llm_enabled():
         merchant_alias_auto_resolve_payload["skipped_reason"] = "merchant_alias_auto_resolve_llm_disabled"

@@ -109,6 +109,13 @@ def auto_resolve_merchant_aliases_enabled() -> bool:
     return raw_value.strip().lower() in _TRUE_VALUES
 
 
+def merchant_auto_resolve_on_import_enabled() -> bool:
+    """Return whether CSV import can auto-trigger LLM map_alias resolution."""
+
+    raw_value = get_env("MERCHANT_AUTO_RESOLVE_ON_IMPORT", "0") or "0"
+    return raw_value.strip().lower() in _TRUE_VALUES
+
+
 def auto_resolve_merchant_aliases_limit() -> int:
     """Return max pending map_alias suggestions auto-resolved after import."""
 
