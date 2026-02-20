@@ -29,9 +29,17 @@ def test_canonicalize_merchant_restaurant_prefers_distinctive_token() -> None:
 
     assert canonical is not None
     name, name_norm, _ = canonical
-    assert name in {"Huit", "Restaurant Huit"}
-    assert name != "Restaurant"
-    assert name_norm != "restaurant"
+    assert name == "Huit"
+    assert name_norm == "huit"
+
+
+def test_canonicalize_merchant_drops_generic_head_without_known_brand_rule() -> None:
+    canonical = _canonicalize_merchant("Restaurant COQUOZ; Paiement carte")
+
+    assert canonical is not None
+    name, name_norm, _ = canonical
+    assert name == "Coquoz"
+    assert name_norm == "coquoz"
 
 
 def test_canonicalize_merchant_station_service_prefers_brand_name() -> None:
