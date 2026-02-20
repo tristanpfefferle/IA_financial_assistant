@@ -11,12 +11,14 @@ class _ClientStub:
     def __init__(
         self,
         responses: list[list[dict[str, str]]],
+        counts: list[int | None] | None = None,
         patch_responses: list[list[dict[str, str]]] | None = None,
         post_responses: list[list[dict[str, str]]] | None = None,
         post_exceptions: list[Exception] | None = None,
         delete_responses: list[list[dict[str, str]]] | None = None,
     ) -> None:
         self._responses = responses
+        self._counts = counts or []
         self._patch_responses = patch_responses or []
         self._post_responses = post_responses or []
         self._post_exceptions = post_exceptions or []
@@ -36,7 +38,9 @@ class _ClientStub:
                 "use_anon_key": use_anon_key,
             }
         )
-        return self._responses[len(self.calls) - 1], None
+        call_index = len(self.calls) - 1
+        count = self._counts[call_index] if call_index < len(self._counts) else None
+        return self._responses[call_index], count
 
     def patch_rows(self, *, table, query, payload, use_anon_key=False):
         self.patch_calls.append(
@@ -640,3 +644,37 @@ def test_upsert_merchant_alias_updates_times_seen_when_alias_exists() -> None:
     assert client.patch_calls[0]["query"] == {"id": f"eq.{alias_id}"}
     assert client.patch_calls[0]["payload"]["times_seen"] == 3
     assert "last_seen" in client.patch_calls[0]["payload"]
+
+
+def test_count_map_alias_suggestions_returns_exact_count() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    client = _ClientStub(responses=[[]], counts=[7])
+    repository = SupabaseProfilesRepository(client=client)
+
+    count = repository.count_map_alias_suggestions(profile_id=profile_id)
+
+    assert count == 7
+    assert client.calls == [
+        {
+            "table": "merchant_suggestions",
+            "query": {
+                "select": "id",
+                "profile_id": f"eq.{profile_id}",
+                "action": "eq.map_alias",
+                "status": "in.(pending,failed)",
+                "limit": 1,
+            },
+            "with_count": True,
+            "use_anon_key": False,
+        }
+    ]
+
+
+def test_count_map_alias_suggestions_returns_none_when_count_missing() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    client = _ClientStub(responses=[[]], counts=[None])
+    repository = SupabaseProfilesRepository(client=client)
+
+    count = repository.count_map_alias_suggestions(profile_id=profile_id)
+
+    assert count is None
