@@ -152,7 +152,9 @@ class InMemoryRelevesRepository:
             end = filters.date_range.end_date
             items = [item for item in items if start <= item.date <= end]
 
-        if filters.categorie:
+        if filters.category_id:
+            items = [item for item in items if item.category_id == filters.category_id]
+        elif filters.categorie:
             normalized_filter = normalize_category_name(filters.categorie)
             items = [
                 item
@@ -212,9 +214,23 @@ class InMemoryRelevesRepository:
                 ]
         groups: dict[str, tuple[Decimal, int]] = {}
 
+        category_names_by_id: dict[UUID, str] = {}
+        if request.group_by == RelevesGroupBy.CATEGORIE:
+            for row in self._profile_categories_seed:
+                if row.get("profile_id") != request.profile_id:
+                    continue
+                category_id = row.get("id")
+                category_name = row.get("name")
+                if isinstance(category_id, UUID) and isinstance(category_name, str) and category_name.strip():
+                    category_names_by_id[category_id] = category_name.strip()
+
         for item in filtered:
             if request.group_by == RelevesGroupBy.CATEGORIE:
-                key = item.categorie or "Autre"
+                key = (
+                    category_names_by_id.get(item.category_id)
+                    if isinstance(item.category_id, UUID)
+                    else None
+                ) or item.categorie or "Autre"
             elif request.group_by == RelevesGroupBy.PAYEE:
                 key = item.payee or "Inconnu"
             else:
@@ -463,7 +479,10 @@ class SupabaseRelevesRepository:
     def aggregate_releves(
         self, request: RelevesAggregateRequest
     ) -> tuple[dict[str, tuple[Decimal, int]], str | None]:
-        query = [*self._build_query(request), ("select", "montant,devise,date,categorie,payee,bank_account_id")]
+        query = [
+            *self._build_query(request),
+            ("select", "montant,devise,date,categorie,category_id,payee,bank_account_id"),
+        ]
         rows, _ = self._client.get_rows(table="releves_bancaires", query=query, with_count=False)
 
         if request.direction == RelevesDirection.DEBIT_ONLY:
@@ -478,10 +497,30 @@ class SupabaseRelevesRepository:
 
         groups: dict[str, tuple[Decimal, int]] = {}
         currency: str | None = rows[0].get("devise") if rows else None
+        category_names_by_id: dict[str, str] = {}
+        if request.group_by == RelevesGroupBy.CATEGORIE:
+            categories_rows, _ = self._client.get_rows(
+                table="profile_categories",
+                query=[
+                    ("profile_id", f"eq.{request.profile_id}"),
+                    ("select", "id,name"),
+                    ("limit", 500),
+                ],
+                with_count=False,
+            )
+            for category_row in categories_rows:
+                raw_id = category_row.get("id")
+                raw_name = category_row.get("name")
+                if raw_id is None or not isinstance(raw_name, str) or not raw_name.strip():
+                    continue
+                category_names_by_id[str(raw_id)] = raw_name.strip()
 
         for row in rows:
             if request.group_by == RelevesGroupBy.CATEGORIE:
-                key = row.get("categorie") or "Autre"
+                category_id = row.get("category_id")
+                key = (
+                    category_names_by_id.get(str(category_id)) if category_id is not None else None
+                ) or row.get("categorie") or "Autre"
             elif request.group_by == RelevesGroupBy.PAYEE:
                 key = row.get("payee") or "Inconnu"
             else:
