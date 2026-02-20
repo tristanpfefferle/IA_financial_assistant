@@ -1,5 +1,6 @@
 """Tests for finance import endpoints exposed by agent.api."""
 
+import re
 from uuid import UUID
 
 from fastapi.testclient import TestClient
@@ -517,7 +518,7 @@ def test_merge_merchants_endpoint_returns_200_and_calls_repo(monkeypatch) -> Non
     assert response.json()["moved_releves_count"] == 3
 
 
-def test_spending_report_pdf_returns_pdf(monkeypatch) -> None:
+def test_spending_report_pdf_returns_pdf_two_pages_and_calls_search(monkeypatch) -> None:
     _mock_authenticated(monkeypatch)
 
     class _Repo:
@@ -553,6 +554,20 @@ def test_spending_report_pdf_returns_pdf(monkeypatch) -> None:
                         },
                     }
                 return {"group_by": "month", "currency": "CHF", "groups": {"2026-01": {"total": "-120.50", "count": 3}}}
+            if tool_name == "finance_releves_search":
+                assert payload["date_range"] == {"start_date": "2026-01-01", "end_date": "2026-01-31"}
+                assert payload["direction"] == "DEBIT_ONLY"
+                assert payload["limit"] == 500
+                assert payload["offset"] == 0
+                return {
+                    "items": [
+                        {"date": "2026-01-05", "montant": "-80", "devise": "CHF", "payee": "Migros", "categorie": "Alimentation"},
+                        {"date": "2026-01-10", "montant": "-40.5", "devise": "CHF", "libelle": "SBB", "categorie": "Transport"},
+                    ],
+                    "limit": 500,
+                    "offset": 0,
+                    "total": 2,
+                }
             raise AssertionError(tool_name)
 
     router = _Router()
@@ -563,11 +578,20 @@ def test_spending_report_pdf_returns_pdf(monkeypatch) -> None:
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/pdf")
     assert response.content.startswith(b"%PDF")
+    assert len(re.findall(rb"/Type /Page\b", response.content)) == 2
 
     sum_calls = [payload for tool_name, payload in router.calls if tool_name == "finance_releves_sum"]
     assert len(sum_calls) == 1
     assert sum_calls[0]["date_range"]["start_date"] == "2026-01-01"
     assert sum_calls[0]["date_range"]["end_date"] == "2026-01-31"
+
+    aggregate_calls = [payload for tool_name, payload in router.calls if tool_name == "finance_releves_aggregate"]
+    assert len(aggregate_calls) == 1
+    assert aggregate_calls[0]["group_by"] == "categorie"
+
+    search_calls = [payload for tool_name, payload in router.calls if tool_name == "finance_releves_search"]
+    assert len(search_calls) == 1
+    assert search_calls[0]["date_range"] == {"start_date": "2026-01-01", "end_date": "2026-01-31"}
 
 
 def test_spending_report_pdf_uses_last_query_filters_date_range(monkeypatch) -> None:
@@ -608,6 +632,8 @@ def test_spending_report_pdf_uses_last_query_filters_date_range(monkeypatch) -> 
                 return {"total": "0", "count": 0, "average": "0", "currency": "CHF"}
             if tool_name == "finance_releves_aggregate" and payload.get("group_by") == "categorie":
                 return {"group_by": "categorie", "currency": "CHF", "groups": {}}
+            if tool_name == "finance_releves_search":
+                return {"items": [], "limit": 500, "offset": 0, "total": 0}
             raise AssertionError(tool_name)
 
     router = _Router()
@@ -650,6 +676,8 @@ def test_spending_report_pdf_no_data_still_returns_pdf(monkeypatch) -> None:
                 return {"group_by": "month", "currency": "CHF", "groups": {}}
             if tool_name == "finance_releves_aggregate" and payload.get("group_by") == "categorie":
                 return {"group_by": "categorie", "currency": "CHF", "groups": {}}
+            if tool_name == "finance_releves_search":
+                return {"items": [], "limit": 500, "offset": 0, "total": 0}
             raise AssertionError(tool_name)
 
     router = _Router()
@@ -664,6 +692,7 @@ def test_spending_report_pdf_no_data_still_returns_pdf(monkeypatch) -> None:
     assert response.headers["content-type"].startswith("application/pdf")
     assert len(response.content) > 100
     assert response.content.startswith(b"%PDF")
+    assert len(re.findall(rb"/Type /Page\b", response.content)) == 2
 
     sum_calls = [payload for tool_name, payload in router.calls if tool_name == "finance_releves_sum"]
     assert len(sum_calls) == 1

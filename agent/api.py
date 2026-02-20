@@ -32,12 +32,16 @@ from agent.merchant_cleanup import MerchantSuggestion, run_merchant_cleanup
 from agent.merchant_alias_resolver import resolve_pending_map_alias
 from agent.import_label_normalizer import extract_observed_alias_from_label
 from backend.factory import build_backend_tool_service
-from backend.reporting import SpendingCategoryRow, SpendingReportData, generate_spending_report_pdf
+from backend.reporting import (
+    SpendingCategoryRow,
+    SpendingReportData,
+    SpendingTransactionRow,
+    generate_spending_report_pdf,
+)
 from backend.auth.supabase_auth import UnauthorizedError, get_user_from_bearer_token
 from backend.db.supabase_client import SupabaseClient, SupabaseSettings
 from backend.repositories.profiles_repository import ProfilesRepository, SupabaseProfilesRepository
-from shared.models import ToolError
-from shared.models import RelevesDirection
+from shared.models import RelevesDirection, ToolError, ToolErrorCode
 
 
 logger = logging.getLogger(__name__)
@@ -2255,6 +2259,90 @@ def _resolve_report_date_range(
     return today.replace(day=1), today.replace(day=last_day)
 
 
+def _pick_first_non_empty_string(values: list[object]) -> str | None:
+    """Return first non-empty string candidate."""
+
+    for value in values:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _fetch_spending_transactions(
+    *,
+    profile_id: UUID,
+    payload: dict[str, Any],
+) -> tuple[list[SpendingTransactionRow], bool]:
+    """Fetch DEBIT_ONLY transactions for spending PDF detail page."""
+
+    router = get_tool_router()
+    query_payload = {**payload, "limit": 500, "offset": 0}
+    result = router.call("finance_releves_search", query_payload, profile_id=profile_id)
+
+    if isinstance(result, ToolError) and result.code == ToolErrorCode.UNKNOWN_TOOL:
+        result = router.call("finance_releves_list", query_payload, profile_id=profile_id)
+
+    if isinstance(result, ToolError):
+        logger.warning(
+            "finance_spending_report_transactions_unavailable",
+            extra={
+                "profile_id": str(profile_id),
+                "error_code": result.code.value,
+                "message": result.message,
+            },
+        )
+        return [], False
+
+    payload_dict = jsonable_encoder(result)
+    items = payload_dict.get("items") if isinstance(payload_dict, dict) else None
+    if not isinstance(items, list):
+        return [], False
+
+    rows: list[SpendingTransactionRow] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+
+        raw_amount = item.get("montant")
+        try:
+            amount = abs(Decimal(str(raw_amount)))
+        except (InvalidOperation, TypeError, ValueError):
+            continue
+
+        date_value = item.get("date")
+        date_label = str(date_value) if date_value is not None else ""
+
+        merchant = _pick_first_non_empty_string(
+            [
+                item.get("merchant"),
+                item.get("merchant_name"),
+                item.get("payee"),
+                item.get("libelle"),
+            ]
+        ) or "Inconnu"
+        category = _pick_first_non_empty_string(
+            [
+                item.get("categorie"),
+                item.get("category_name"),
+            ]
+        ) or "Sans catégorie"
+
+        rows.append(
+            SpendingTransactionRow(
+                date=date_label,
+                merchant=merchant,
+                category=category,
+                amount=amount,
+            )
+        )
+
+    rows.sort(key=lambda row: row.date, reverse=True)
+
+    total = payload_dict.get("total") if isinstance(payload_dict, dict) else None
+    truncated = isinstance(total, int) and total > len(rows)
+    return rows, truncated
+
+
 @app.get("/finance/reports/spending.pdf")
 def get_spending_report_pdf(
     authorization: str | None = Header(default=None),
@@ -2325,6 +2413,11 @@ def get_spending_report_pdf(
             name = category_name if isinstance(category_name, str) and category_name.strip() else "Sans catégorie"
             category_rows.append(SpendingCategoryRow(name=name, amount=amount))
 
+    transactions, transactions_truncated = _fetch_spending_transactions(
+        profile_id=profile_id,
+        payload=payload,
+    )
+
     total = abs(Decimal(str(sum_payload.get("total") or "0")))
     count = int(sum_payload.get("count") or 0)
     average = abs(Decimal(str(sum_payload.get("average") or "0")))
@@ -2341,6 +2434,8 @@ def get_spending_report_pdf(
             average=average,
             currency=currency,
             categories=category_rows,
+            transactions=transactions,
+            transactions_truncated=transactions_truncated,
         )
     )
     return Response(
