@@ -187,3 +187,29 @@ class BackendClient:
             profile_id=profile_id,
             bank_account_id=bank_account_id,
         )
+
+    def finance_merchants_rename(
+        self,
+        *,
+        profile_id: UUID,
+        merchant_id: UUID,
+        name: str,
+    ) -> dict[str, str] | ToolError:
+        return self.tool_service.finance_merchants_rename(
+            profile_id=profile_id,
+            merchant_id=merchant_id,
+            name=name,
+        )
+
+    def finance_merchants_merge(
+        self,
+        *,
+        profile_id: UUID,
+        source_merchant_id: UUID,
+        target_merchant_id: UUID,
+    ) -> dict[str, object] | ToolError:
+        return self.tool_service.finance_merchants_merge(
+            profile_id=profile_id,
+            source_merchant_id=source_merchant_id,
+            target_merchant_id=target_merchant_id,
+        )

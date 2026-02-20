@@ -64,6 +64,18 @@ class ProfilesRepository(Protocol):
     def append_merchant_alias(self, *, merchant_id: UUID, alias: str) -> None:
         """Append one observed raw alias to a merchant when missing."""
 
+    def rename_merchant(self, *, profile_id: UUID, merchant_id: UUID, new_name: str) -> dict[str, str]:
+        """Rename one merchant for a profile while preserving aliases."""
+
+    def merge_merchants(
+        self,
+        *,
+        profile_id: UUID,
+        source_merchant_id: UUID,
+        target_merchant_id: UUID,
+    ) -> dict[str, Any]:
+        """Merge source merchant into target merchant for one profile."""
+
     def hard_reset_profile(self, *, profile_id: UUID, user_id: UUID) -> None:
         """Purge profile-scoped data and reset onboarding/profile fields."""
 
@@ -488,3 +500,126 @@ class SupabaseProfilesRepository:
             payload={"aliases": [*existing_aliases, cleaned_alias]},
             use_anon_key=False,
         )
+
+    def rename_merchant(self, *, profile_id: UUID, merchant_id: UUID, new_name: str) -> dict[str, str]:
+        cleaned_name = " ".join(str(new_name).strip().split())
+        if not cleaned_name:
+            raise ValueError("merchant name must be non-empty")
+
+        cleaned_name_norm = self._normalize_name_norm(cleaned_name)
+        updated_rows = self._client.patch_rows(
+            table="merchants",
+            query={"id": f"eq.{merchant_id}", "profile_id": f"eq.{profile_id}"},
+            payload={"name": cleaned_name, "name_norm": cleaned_name_norm},
+            use_anon_key=False,
+        )
+        if not updated_rows:
+            raise ValueError("merchant not found for this profile")
+
+        return {
+            "merchant_id": str(merchant_id),
+            "name": cleaned_name,
+            "name_norm": cleaned_name_norm,
+        }
+
+    @staticmethod
+    def _normalize_aliases(raw_aliases: Any) -> list[str]:
+        if not isinstance(raw_aliases, list):
+            return []
+        aliases: list[str] = []
+        for alias in raw_aliases:
+            cleaned_alias = " ".join(str(alias).split())
+            if cleaned_alias:
+                aliases.append(cleaned_alias)
+        return aliases
+
+    def merge_merchants(
+        self,
+        *,
+        profile_id: UUID,
+        source_merchant_id: UUID,
+        target_merchant_id: UUID,
+    ) -> dict[str, Any]:
+        if source_merchant_id == target_merchant_id:
+            raise ValueError("source_merchant_id and target_merchant_id must be different")
+
+        source_rows, _ = self._client.get_rows(
+            table="merchants",
+            query={
+                "select": "id,profile_id,scope,name,name_norm,aliases,category",
+                "id": f"eq.{source_merchant_id}",
+                "limit": 1,
+            },
+            with_count=False,
+            use_anon_key=False,
+        )
+        target_rows, _ = self._client.get_rows(
+            table="merchants",
+            query={
+                "select": "id,profile_id,scope,name,name_norm,aliases,category",
+                "id": f"eq.{target_merchant_id}",
+                "limit": 1,
+            },
+            with_count=False,
+            use_anon_key=False,
+        )
+
+        if not source_rows or not target_rows:
+            raise ValueError("source or target merchant not found")
+
+        source = source_rows[0]
+        target = target_rows[0]
+        for merchant in (source, target):
+            merchant_profile_id = str(merchant.get("profile_id") or "")
+            if merchant_profile_id != str(profile_id):
+                raise ValueError("merchant does not belong to provided profile")
+            if str(merchant.get("scope") or "") != "personal":
+                raise ValueError("merchant scope must be personal")
+
+        target_aliases = self._normalize_aliases(target.get("aliases"))
+        source_aliases = self._normalize_aliases(source.get("aliases"))
+        aliases_final = list(target_aliases)
+        seen_aliases = set(target_aliases)
+
+        for alias in source_aliases:
+            if alias in seen_aliases:
+                continue
+            seen_aliases.add(alias)
+            aliases_final.append(alias)
+
+        source_name = " ".join(str(source.get("name") or "").split())
+        if source_name and source_name not in seen_aliases:
+            aliases_final.append(source_name)
+            seen_aliases.add(source_name)
+
+        moved_releves = self._client.patch_rows(
+            table="releves_bancaires",
+            query={"profile_id": f"eq.{profile_id}", "merchant_id": f"eq.{source_merchant_id}"},
+            payload={"merchant_id": str(target_merchant_id)},
+            use_anon_key=False,
+        )
+
+        deleted_rows = self._client.delete_rows(
+            table="merchants",
+            query={"id": f"eq.{source_merchant_id}", "profile_id": f"eq.{profile_id}"},
+            use_anon_key=False,
+        )
+        if not deleted_rows:
+            raise ValueError("source merchant not found for deletion")
+
+        updated_target_rows = self._client.patch_rows(
+            table="merchants",
+            query={"id": f"eq.{target_merchant_id}", "profile_id": f"eq.{profile_id}"},
+            payload={"aliases": aliases_final},
+            use_anon_key=False,
+        )
+        if not updated_target_rows:
+            raise ValueError("target merchant not found for update")
+
+        return {
+            "target_merchant_id": str(target_merchant_id),
+            "source_merchant_id": str(source_merchant_id),
+            "moved_releves_count": len(moved_releves),
+            "aliases_added_count": max(0, len(aliases_final) - len(target_aliases)),
+            "target_aliases_count": len(aliases_final),
+        }

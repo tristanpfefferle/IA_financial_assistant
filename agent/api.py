@@ -844,6 +844,20 @@ class HardResetPayload(BaseModel):
     confirm: bool = False
 
 
+class RenameMerchantPayload(BaseModel):
+    """Payload for merchant rename endpoint."""
+
+    merchant_id: UUID
+    name: str
+
+
+class MergeMerchantsPayload(BaseModel):
+    """Payload for merchant merge endpoint."""
+
+    source_merchant_id: UUID
+    target_merchant_id: UUID
+
+
 @lru_cache(maxsize=1)
 def get_tool_router() -> ToolRouter:
     """Create and cache the tool router once per process."""
@@ -1910,3 +1924,39 @@ def import_releves(payload: ImportRequestPayload, authorization: str | None = He
             response_payload["warnings"] = ["merchant_linking_failed"]
 
     return jsonable_encoder(response_payload)
+
+
+@app.post("/finance/merchants/rename")
+def rename_merchant(payload: RenameMerchantPayload, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    """Rename one merchant for the authenticated profile."""
+
+    _, profile_id = _resolve_authenticated_profile(authorization)
+    profiles_repository = get_profiles_repository()
+    try:
+        return profiles_repository.rename_merchant(
+            profile_id=profile_id,
+            merchant_id=payload.merchant_id,
+            new_name=payload.name,
+        )
+    except ValueError as exc:
+        error_message = str(exc)
+        status_code = 404 if "not found" in error_message.lower() else 400
+        raise HTTPException(status_code=status_code, detail=error_message) from exc
+
+
+@app.post("/finance/merchants/merge")
+def merge_merchants(payload: MergeMerchantsPayload, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    """Merge source merchant into target merchant for the authenticated profile."""
+
+    _, profile_id = _resolve_authenticated_profile(authorization)
+    profiles_repository = get_profiles_repository()
+    try:
+        return profiles_repository.merge_merchants(
+            profile_id=profile_id,
+            source_merchant_id=payload.source_merchant_id,
+            target_merchant_id=payload.target_merchant_id,
+        )
+    except ValueError as exc:
+        error_message = str(exc)
+        status_code = 404 if "not found" in error_message.lower() else 400
+        raise HTTPException(status_code=status_code, detail=error_message) from exc
