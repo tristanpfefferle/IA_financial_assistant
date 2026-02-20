@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import { claimPdfUiRequestExecution, toOpenImportPanelUiAction, toPdfUiRequest } from './chatUiRequests'
+import {
+  claimPdfUiRequestExecution,
+  toLegacyImportUiRequest,
+  toOpenImportPanelUiAction,
+  toPdfUiRequest,
+} from './chatUiRequests'
 
 describe('chatUiRequests', () => {
   it('parses open_pdf_report ui request', () => {
@@ -49,6 +54,22 @@ describe('chatUiRequests', () => {
       bank_account_id: 'acc-1',
       bank_account_name: undefined,
       accepted_types: ['csv'],
+    })
+  })
+
+  it('parses import_file ui_request without bank account id', () => {
+    expect(
+      toLegacyImportUiRequest({
+        type: 'ui_request',
+        name: 'import_file',
+        bank_account_name: 'Compte principal',
+      }),
+    ).toEqual({
+      type: 'ui_request',
+      name: 'import_file',
+      bank_account_id: undefined,
+      bank_account_name: 'Compte principal',
+      accepted_types: ['csv', 'pdf'],
     })
   })
 })
