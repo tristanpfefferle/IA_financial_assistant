@@ -4,7 +4,7 @@ import {
   getPendingMerchantAliasesCount,
   hardResetProfile,
   importReleves,
-  openSpendingReportPdf,
+  openPdfFromUrl,
   resolvePendingMerchantAliases,
   resetSession,
   sendChatMessage,
@@ -13,6 +13,7 @@ import {
 import { DebugPanel } from '../components/DebugPanel'
 import { installSessionResetOnPageExit, logoutWithSessionReset } from '../lib/sessionLifecycle'
 import { supabase } from '../lib/supabaseClient'
+import { claimPdfUiRequestExecution, toPdfUiRequest } from './chatUiRequests'
 
 type ChatMessage = {
   id: string
@@ -62,6 +63,8 @@ function toImportUiRequest(value: unknown): ImportUiRequest | null {
     accepted_types: acceptedTypes,
   }
 }
+
+
 
 function formatDateRange(dateRange: { start: string; end: string } | null): string {
   if (!dateRange) {
@@ -154,6 +157,7 @@ export function ChatPage({ email }: ChatPageProps) {
     return rawBaseUrl.replace(/\/+$/, '')
   }, [])
   const messagesRef = useRef<HTMLDivElement | null>(null)
+  const executedPdfMessageIdsRef = useRef<Set<string>>(new Set())
   const assistantMessagesCount = useMemo(
     () => messages.filter((chatMessage) => chatMessage.role === 'assistant').length,
     [messages],
@@ -256,15 +260,40 @@ export function ChatPage({ email }: ChatPageProps) {
     }
   }, [assistantMessagesCount])
 
-  async function handleOpenSpendingReport() {
-    setError(null)
 
-    try {
-      await openSpendingReportPdf()
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : 'Impossible de générer le rapport PDF')
+
+  useEffect(() => {
+    const pendingPdfMessages = messages.filter((chatMessage) => {
+      if (chatMessage.role !== 'assistant') {
+        return false
+      }
+
+      if (executedPdfMessageIdsRef.current.has(chatMessage.id)) {
+        return false
+      }
+
+      return toPdfUiRequest(chatMessage.toolResult) !== null
+    })
+
+    if (pendingPdfMessages.length === 0) {
+      return
     }
-  }
+
+    for (const chatMessage of pendingPdfMessages) {
+      const pdfUiRequest = claimPdfUiRequestExecution(
+        executedPdfMessageIdsRef.current,
+        chatMessage.id,
+        chatMessage.toolResult,
+      )
+      if (!pdfUiRequest) {
+        continue
+      }
+      openPdfFromUrl(pdfUiRequest.url).catch((caughtError) => {
+        const errorMessage = caughtError instanceof Error ? caughtError.message : 'Impossible d’ouvrir le rapport PDF'
+        setError(errorMessage)
+      })
+    }
+  }, [messages])
 
   async function handleLogout() {
     setError(null)
@@ -409,9 +438,6 @@ export function ChatPage({ email }: ChatPageProps) {
           <label>
             <input type="checkbox" checked={debugMode} onChange={(event) => setDebugMode(event.target.checked)} /> Debug
           </label>
-          <button type="button" className="secondary-button" onClick={() => void handleOpenSpendingReport()}>
-            Télécharger rapport PDF
-          </button>
           {pendingMerchantAliasesCount > 0 ? (
             <button
               type="button"

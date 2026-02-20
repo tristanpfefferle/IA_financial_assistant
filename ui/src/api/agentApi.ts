@@ -221,10 +221,10 @@ export async function resolvePendingMerchantAliases(
 }
 
 
-export async function openSpendingReportPdf(month?: string): Promise<void> {
+export async function openPdfFromUrl(url: string): Promise<void> {
   const accessToken = await getAccessToken()
-  const query = month ? `?month=${encodeURIComponent(month)}` : ''
-  const response = await fetch(`${getBaseUrl()}/finance/reports/spending.pdf${query}`, {
+  const resolvedUrl = url.startsWith('http://') || url.startsWith('https://') ? url : `${getBaseUrl()}${url}`
+  const response = await fetch(resolvedUrl, {
     method: 'GET',
     headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
   })
@@ -238,6 +238,11 @@ export async function openSpendingReportPdf(month?: string): Promise<void> {
   const blobUrl = URL.createObjectURL(blob)
   window.open(blobUrl, '_blank', 'noopener,noreferrer')
   setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000)
+}
+
+export async function openSpendingReportPdf(month?: string): Promise<void> {
+  const query = month ? `?month=${encodeURIComponent(month)}` : ''
+  await openPdfFromUrl(`/finance/reports/spending.pdf${query}`)
 }
 
 export async function hardResetProfile(): Promise<void> {
