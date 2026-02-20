@@ -18,6 +18,19 @@ describe('DebugPanel', () => {
   })
 
 
+  it('shows resolve pending merchants button when import payload has remaining aliases', () => {
+    const payload = {
+      type: 'releves_import_result',
+      merchant_alias_auto_resolve: {
+        pending_total_count: 27,
+      },
+    }
+
+    const html = renderToStaticMarkup(<DebugPanel payload={payload} />)
+
+    expect(html).toContain('Résoudre les marchands restants')
+  })
+
   it('handles unserializable payloads without crashing', () => {
     const payload: Record<string, unknown> = {}
     payload.self = payload

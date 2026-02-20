@@ -429,8 +429,8 @@ def test_import_releves_links_merchants_from_imported_transactions(monkeypatch) 
     assert repo.alias_calls == [
         (
             UUID("cccccccc-cccc-cccc-cccc-cccccccccccc"),
-            "COOP-4815 MONTHEY; Paiement UBS TWINT Motif du paiement: ...",
-            "coop-4815 monthey; paiement ubs twint motif du paiement: ...",
+            "Coop",
+            "coop",
         ),
         (
             UUID("dddddddd-dddd-dddd-dddd-dddddddddddd"),

@@ -561,7 +561,12 @@ def _bootstrap_merchants_from_imported_releves(
         processed_count += 1
         payee = " ".join(str(row.get("payee") or "").split())
         libelle = " ".join(str(row.get("libelle") or "").split())
-        observed_alias = payee or extract_observed_alias_from_label(libelle) or libelle
+        observed_alias = (
+            extract_observed_alias_from_label(payee)
+            or payee
+            or extract_observed_alias_from_label(libelle)
+            or libelle
+        )
         releve_id_raw = row.get("id")
 
         if not observed_alias or not releve_id_raw:
@@ -941,6 +946,13 @@ class MerchantAliasResolvePayload(BaseModel):
     """Payload for map_alias suggestion batch resolver endpoint."""
 
     limit: int = 100
+
+
+class ResolvePendingMerchantAliasesPayload(BaseModel):
+    """Payload for manual pending map_alias suggestions resolution endpoint."""
+
+    limit: int | None = None
+    max_batches: int | None = None
 
 
 @lru_cache(maxsize=1)
@@ -2241,6 +2253,113 @@ def resolve_merchant_alias_suggestions(
         raise HTTPException(status_code=500, detail="Failed to resolve map_alias suggestions") from exc
 
     return jsonable_encoder(stats)
+
+
+@app.post("/finance/merchants/aliases/resolve-pending")
+def resolve_pending_merchant_aliases(
+    payload: ResolvePendingMerchantAliasesPayload | None = None,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Resolve pending/failed map_alias suggestions in multiple batches for authenticated profile."""
+
+    if not _config.llm_enabled():
+        raise HTTPException(status_code=400, detail="LLM is disabled (set AGENT_LLM_ENABLED=1)")
+
+    _, profile_id = _resolve_authenticated_profile(authorization)
+    profiles_repository = get_profiles_repository()
+
+    requested_limit = payload.limit if payload else None
+    requested_max_batches = payload.max_batches if payload else None
+    limit = max(1, min(int(requested_limit or _config.auto_resolve_merchant_aliases_limit()), 500))
+    max_batches = max(1, min(int(requested_max_batches or 10), 100))
+
+    pending_before: int | None = None
+    if hasattr(profiles_repository, "count_map_alias_suggestions"):
+        counted = profiles_repository.count_map_alias_suggestions(profile_id=profile_id)
+        if isinstance(counted, int):
+            pending_before = counted
+
+    aggregated_stats: dict[str, Any] = {
+        "processed": 0,
+        "applied": 0,
+        "failed": 0,
+        "created_entities": 0,
+        "linked_aliases": 0,
+        "updated_transactions": 0,
+        "warnings": [],
+        "usage": {},
+        "llm_run_id": None,
+    }
+    warning_values: set[str] = set()
+    usage_totals: dict[str, int] = {}
+    batches = 0
+    pending_after: int | None = pending_before
+
+    try:
+        while batches < max_batches:
+            if pending_after is not None and pending_after <= 0:
+                break
+
+            stats = resolve_pending_map_alias(
+                profile_id=profile_id,
+                profiles_repository=profiles_repository,
+                limit=limit,
+            )
+            batches += 1
+
+            if isinstance(stats, dict):
+                for key in (
+                    "processed",
+                    "applied",
+                    "failed",
+                    "created_entities",
+                    "linked_aliases",
+                    "updated_transactions",
+                ):
+                    value = stats.get(key)
+                    if isinstance(value, int):
+                        aggregated_stats[key] += value
+
+                usage = stats.get("usage")
+                if isinstance(usage, dict):
+                    for usage_key, usage_value in usage.items():
+                        if isinstance(usage_value, int):
+                            usage_totals[usage_key] = usage_totals.get(usage_key, 0) + usage_value
+
+                warnings = stats.get("warnings")
+                if isinstance(warnings, list):
+                    for warning in warnings:
+                        if isinstance(warning, str):
+                            warning_values.add(warning)
+
+                llm_run_id = stats.get("llm_run_id")
+                if isinstance(llm_run_id, str) and llm_run_id.strip():
+                    aggregated_stats["llm_run_id"] = llm_run_id
+
+            if pending_before is None:
+                pending_after = None
+                break
+
+            recounted_pending = profiles_repository.count_map_alias_suggestions(profile_id=profile_id)
+            pending_after = recounted_pending if isinstance(recounted_pending, int) else None
+            if pending_after is None:
+                break
+
+    except Exception as exc:
+        logger.exception("resolve_pending_map_alias_batches_failed profile_id=%s", profile_id)
+        raise HTTPException(status_code=500, detail="Failed to resolve pending merchant aliases") from exc
+
+    aggregated_stats["usage"] = usage_totals
+    aggregated_stats["warnings"] = sorted(warning_values)
+
+    return {
+        "ok": True,
+        "type": "merchant_alias_resolve_result",
+        "pending_before": pending_before,
+        "pending_after": pending_after,
+        "batches": batches,
+        "stats": aggregated_stats,
+    }
 
 
 @app.post("/finance/merchants/suggestions/list")
