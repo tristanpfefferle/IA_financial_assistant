@@ -789,8 +789,12 @@ class SupabaseProfilesRepository:
                 )
                 inserted_count += 1
             except Exception as exc:
-                error_code = getattr(exc, "code", None)
-                if error_code == "23505":
+                error_code = (
+                    getattr(exc, "code", None)
+                    or getattr(exc, "pgcode", None)
+                    or getattr(exc, "sqlstate", None)
+                )
+                if str(error_code) == "23505":
                     continue
                 error_message = str(exc).lower()
                 if "duplicate key value violates unique constraint" in error_message:
@@ -798,6 +802,7 @@ class SupabaseProfilesRepository:
                 logger.warning(
                     "create_map_alias_suggestions failed for observed_alias_norm=%s",
                     observed_alias_norm,
+                    exc_info=True,
                 )
                 raise
 
