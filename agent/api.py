@@ -7,6 +7,7 @@ import inspect
 import os
 import re
 import unicodedata
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import lru_cache
 from typing import Any
 from datetime import date
@@ -21,10 +22,8 @@ from pydantic import BaseModel
 
 from shared import config as _config
 from agent.backend_client import BackendClient
-from agent.answer_builder import build_final_reply
 from agent.llm_planner import LLMPlanner
 from agent.loop import AgentLoop
-from agent.planner import ToolCallPlan
 from agent.memory import period_payload_from_message
 from agent.tool_router import ToolRouter
 from agent.bank_catalog import extract_canonical_banks
@@ -310,39 +309,51 @@ def _build_pending_resolution_reply(
 ) -> tuple[str, Any]:
     """Build user-facing reply for a pending clarification execution result."""
 
-    loop = get_agent_loop()
-    normalized_result = pending_result
-    normalize_result = getattr(loop, "_normalize_tool_result", None)
-    if callable(normalize_result):
-        try:
-            normalized_result = normalize_result(tool_name, pending_result)
-        except Exception:
-            logger.exception("pending_clarification_normalization_failed tool=%s", tool_name)
-            normalized_result = pending_result
-
-    if isinstance(normalized_result, ToolError):
-        plan = ToolCallPlan(tool_name=tool_name, payload=dict(tool_payload), user_reply="")
-        return build_final_reply(plan=plan, tool_result=normalized_result), jsonable_encoder(normalized_result)
-
+    build_reply = None
+    tool_call_plan_type = None
     try:
-        plan = ToolCallPlan(tool_name=tool_name, payload=dict(tool_payload), user_reply="")
-        reply = build_final_reply(plan=plan, tool_result=normalized_result)
-        if "résultat indisponible" not in reply:
-            return reply, jsonable_encoder(normalized_result)
+        from agent.answer_builder import build_final_reply as _build_final_reply
+        from agent.planner import ToolCallPlan as _ToolCallPlan
+
+        build_reply = _build_final_reply
+        tool_call_plan_type = _ToolCallPlan
     except Exception:
-        logger.exception("pending_clarification_reply_build_failed tool=%s", tool_name)
+        logger.exception("pending_clarification_reply_import_failed tool=%s", tool_name)
+
+    if build_reply is not None and tool_call_plan_type is not None and isinstance(pending_result, ToolError):
+        plan = tool_call_plan_type(tool_name=tool_name, payload=dict(tool_payload), user_reply="")
+        return build_reply(plan=plan, tool_result=pending_result), jsonable_encoder(pending_result)
+
+    if build_reply is not None and tool_call_plan_type is not None:
+        try:
+            plan = tool_call_plan_type(tool_name=tool_name, payload=dict(tool_payload), user_reply="")
+            reply = build_reply(plan=plan, tool_result=pending_result)
+            if "résultat indisponible" not in reply:
+                return reply, jsonable_encoder(pending_result)
+        except Exception:
+            logger.exception("pending_clarification_reply_build_failed tool=%s", tool_name)
 
     if isinstance(pending_result, dict):
         total = pending_result.get("total")
         count = pending_result.get("count")
         currency = pending_result.get("currency")
-        if isinstance(total, (int, float, str)) and isinstance(count, int) and isinstance(currency, str):
-            average = (float(total) / count) if count > 0 else 0.0
-            return (
-                f"Total des dépenses: {float(total):.2f} {currency} sur {count} opération(s). "
-                f"Moyenne: {average:.2f} {currency}.",
-                jsonable_encoder(pending_result),
-            )
+        if isinstance(count, int) and isinstance(currency, str):
+            try:
+                decimal_total = Decimal(str(total))
+            except (InvalidOperation, TypeError, ValueError):
+                decimal_total = None
+            if decimal_total is not None:
+                quantized_total = decimal_total.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                average = (
+                    (decimal_total / Decimal(count)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                    if count > 0
+                    else Decimal("0.00")
+                )
+                return (
+                    f"Total des dépenses: {quantized_total:.2f} {currency} sur {count} opération(s). "
+                    f"Moyenne: {average:.2f} {currency}.",
+                    jsonable_encoder(pending_result),
+                )
         if "groups" in pending_result and isinstance(pending_result.get("groups"), dict):
             groups = pending_result["groups"]
             if not groups:
