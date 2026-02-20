@@ -116,6 +116,9 @@ class ProfilesRepository(Protocol):
     def list_map_alias_suggestions(self, *, profile_id: UUID, limit: int = 100) -> list[dict[str, Any]]:
         """List pending/failed map_alias suggestions for one profile."""
 
+    def count_map_alias_suggestions(self, *, profile_id: UUID) -> int | None:
+        """Count pending/failed map_alias suggestions for one profile when supported."""
+
     def get_merchant_entity_by_canonical_name_norm(
         self,
         *,
@@ -810,6 +813,21 @@ class SupabaseProfilesRepository:
             use_anon_key=False,
         )
         return rows
+
+    def count_map_alias_suggestions(self, *, profile_id: UUID) -> int | None:
+        _, total = self._client.get_rows(
+            table="merchant_suggestions",
+            query={
+                "select": "id",
+                "profile_id": f"eq.{profile_id}",
+                "action": "eq.map_alias",
+                "status": "in.(pending,failed)",
+                "limit": 1,
+            },
+            with_count=True,
+            use_anon_key=False,
+        )
+        return total
 
     def get_merchant_entity_by_canonical_name_norm(
         self,

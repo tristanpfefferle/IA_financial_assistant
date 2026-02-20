@@ -2014,6 +2014,7 @@ def import_releves(payload: ImportRequestPayload, authorization: str | None = He
         "attempted": False,
         "skipped_reason": None,
         "stats": None,
+        "pending_total_count": None,
     }
     response_payload["merchant_alias_auto_resolve"] = merchant_alias_auto_resolve_payload
 
@@ -2033,16 +2034,28 @@ def import_releves(payload: ImportRequestPayload, authorization: str | None = He
                     profile_id=profile_id,
                     limit=auto_resolve_limit + 1,
                 )
+                pending_total_count = len(pending_map_alias_suggestions)
+                if hasattr(profiles_repository, "count_map_alias_suggestions"):
+                    counted_pending_total = profiles_repository.count_map_alias_suggestions(profile_id=profile_id)
+                    if isinstance(counted_pending_total, int):
+                        pending_total_count = counted_pending_total
+                merchant_alias_auto_resolve_payload["pending_total_count"] = pending_total_count
 
                 if not pending_map_alias_suggestions:
                     merchant_alias_auto_resolve_payload["skipped_reason"] = "merchant_alias_auto_resolve_no_suggestions"
                 elif len(pending_map_alias_suggestions) > auto_resolve_limit:
-                    merchant_alias_auto_resolve_payload["skipped_reason"] = "merchant_alias_auto_resolve_skipped_too_many"
+                    merchant_alias_auto_resolve_payload["attempted"] = True
+                    merchant_alias_auto_resolve_payload["skipped_reason"] = "merchant_alias_auto_resolve_partial"
+                    merchant_alias_auto_resolve_payload["stats"] = resolve_pending_map_alias(
+                        profile_id=profile_id,
+                        profiles_repository=profiles_repository,
+                        limit=auto_resolve_limit,
+                    )
                     warnings = response_payload.get("warnings")
                     if isinstance(warnings, list):
-                        warnings.append("merchant_alias_auto_resolve_skipped_too_many")
+                        warnings.append("merchant_alias_auto_resolve_partial")
                     else:
-                        response_payload["warnings"] = ["merchant_alias_auto_resolve_skipped_too_many"]
+                        response_payload["warnings"] = ["merchant_alias_auto_resolve_partial"]
                 else:
                     merchant_alias_auto_resolve_payload["attempted"] = True
                     merchant_alias_auto_resolve_payload["stats"] = resolve_pending_map_alias(

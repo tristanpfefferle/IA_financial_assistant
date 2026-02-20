@@ -74,6 +74,10 @@ def test_import_releves_auto_resolve_runs_when_pending_within_limit(monkeypatch)
             assert limit == 3
             return [{"id": "1"}, {"id": "2"}]
 
+        def count_map_alias_suggestions(self, *, profile_id: UUID):
+            assert profile_id == PROFILE_ID
+            return 2
+
     repo = _Repo()
     _mock_common(monkeypatch, repo)
     monkeypatch.setattr(agent_api._config, "llm_enabled", lambda: True)
@@ -101,16 +105,21 @@ def test_import_releves_auto_resolve_runs_when_pending_within_limit(monkeypatch)
         "attempted": True,
         "skipped_reason": None,
         "stats": {"resolved": 2, "failed": 0},
+        "pending_total_count": 2,
     }
 
 
 
-def test_import_releves_auto_resolve_skips_when_too_many_suggestions(monkeypatch) -> None:
+def test_import_releves_auto_resolve_partial_when_too_many_suggestions(monkeypatch) -> None:
     class _Repo(_BaseRepo):
         def list_map_alias_suggestions(self, *, profile_id: UUID, limit: int = 100):
             assert profile_id == PROFILE_ID
             assert limit == 3
             return [{"id": "1"}, {"id": "2"}, {"id": "3"}]
+
+        def count_map_alias_suggestions(self, *, profile_id: UUID):
+            assert profile_id == PROFILE_ID
+            return 3
 
     repo = _Repo()
     _mock_common(monkeypatch, repo)
@@ -118,11 +127,11 @@ def test_import_releves_auto_resolve_skips_when_too_many_suggestions(monkeypatch
     monkeypatch.setattr(agent_api._config, "auto_resolve_merchant_aliases_enabled", lambda: True)
     monkeypatch.setattr(agent_api._config, "auto_resolve_merchant_aliases_limit", lambda: 2)
 
-    resolver_call_count = {"count": 0}
+    resolver_calls: list[tuple[UUID, int]] = []
 
-    def _resolve(**_kwargs):
-        resolver_call_count["count"] += 1
-        return {}
+    def _resolve(**kwargs):
+        resolver_calls.append((kwargs["profile_id"], kwargs["limit"]))
+        return {"resolved": 2, "failed": 0}
 
     monkeypatch.setattr(agent_api, "resolve_pending_map_alias", _resolve)
 
@@ -134,10 +143,14 @@ def test_import_releves_auto_resolve_skips_when_too_many_suggestions(monkeypatch
 
     assert response.status_code == 200
     payload = response.json()
-    assert resolver_call_count["count"] == 0
-    assert payload["merchant_alias_auto_resolve"]["attempted"] is False
-    assert payload["merchant_alias_auto_resolve"]["skipped_reason"] == "merchant_alias_auto_resolve_skipped_too_many"
-    assert "merchant_alias_auto_resolve_skipped_too_many" in payload["warnings"]
+    assert resolver_calls == [(PROFILE_ID, 2)]
+    assert payload["merchant_alias_auto_resolve"] == {
+        "attempted": True,
+        "skipped_reason": "merchant_alias_auto_resolve_partial",
+        "stats": {"resolved": 2, "failed": 0},
+        "pending_total_count": 3,
+    }
+    assert "merchant_alias_auto_resolve_partial" in payload["warnings"]
 
 
 
@@ -169,6 +182,7 @@ def test_import_releves_auto_resolve_skips_when_llm_disabled(monkeypatch) -> Non
     payload = response.json()
     assert resolver_call_count["count"] == 0
     assert payload["merchant_alias_auto_resolve"]["attempted"] is False
+    assert payload["merchant_alias_auto_resolve"]["pending_total_count"] is None
 
 
 
@@ -202,5 +216,6 @@ def test_import_releves_auto_resolve_failure_keeps_import_success(monkeypatch) -
         "attempted": True,
         "skipped_reason": "merchant_alias_auto_resolve_failed",
         "stats": None,
+        "pending_total_count": 1,
     }
     assert "merchant_alias_auto_resolve_failed" in payload["warnings"]
