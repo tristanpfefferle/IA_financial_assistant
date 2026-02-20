@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from io import BytesIO
 
 import matplotlib
@@ -39,7 +39,7 @@ class SpendingReportData:
 
 
 def _format_amount(value: Decimal, currency: str) -> str:
-    return f"{value.quantize(Decimal('0.01')):,.2f} {currency}".replace(",", "'")
+    return f"{value.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP):,.2f} {currency}".replace(",", "'")
 
 
 def _build_pie_chart(categories: list[SpendingCategoryRow]) -> bytes:
@@ -97,7 +97,7 @@ def generate_spending_report_pdf(data: SpendingReportData) -> bytes:
             table_data.append([
                 row.name,
                 _format_amount(row.amount, data.currency),
-                f"{ratio.quantize(Decimal('0.1'))}%",
+                f"{ratio.quantize(Decimal('0.1'), rounding=ROUND_HALF_UP)}%",
             ])
 
         table = Table(table_data, colWidths=[75 * mm, 45 * mm, 20 * mm])

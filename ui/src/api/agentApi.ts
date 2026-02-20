@@ -237,6 +237,7 @@ export async function openSpendingReportPdf(month?: string): Promise<void> {
   const blob = await response.blob()
   const blobUrl = URL.createObjectURL(blob)
   window.open(blobUrl, '_blank', 'noopener,noreferrer')
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000)
 }
 
 export async function hardResetProfile(): Promise<void> {

@@ -2165,6 +2165,23 @@ def _resolve_report_date_range(
     state_dict: dict[str, Any] | None,
     profile_id: UUID,
 ) -> tuple[date, date]:
+    def _extract_start_end_from_date_range(date_range: Any) -> tuple[str, str] | None:
+        if not isinstance(date_range, dict):
+            return None
+
+        start = date_range.get("start_date")
+        end = date_range.get("end_date")
+        if isinstance(start, str) and isinstance(end, str):
+            return start, end
+
+        # Legacy compatibility.
+        legacy_start = date_range.get("start")
+        legacy_end = date_range.get("end")
+        if isinstance(legacy_start, str) and isinstance(legacy_end, str):
+            return legacy_start, legacy_end
+
+        return None
+
     if month:
         try:
             month_start = datetime.strptime(month, "%Y-%m").date().replace(day=1)
@@ -2194,17 +2211,22 @@ def _resolve_report_date_range(
                 profile_id=profile_id,
             )
         memory_date_range = last_query.get("date_range")
-        if isinstance(memory_date_range, dict):
-            memory_start = memory_date_range.get("start")
-            memory_end = memory_date_range.get("end")
-            if isinstance(memory_start, str) and isinstance(memory_end, str):
-                return _resolve_report_date_range(
-                    month=None,
-                    start_date=memory_start,
-                    end_date=memory_end,
-                    state_dict=None,
-                    profile_id=profile_id,
-                )
+        extracted_memory_range = _extract_start_end_from_date_range(memory_date_range)
+        if extracted_memory_range is None:
+            filters = last_query.get("filters")
+            extracted_memory_range = _extract_start_end_from_date_range(
+                filters.get("date_range") if isinstance(filters, dict) else None
+            )
+
+        if extracted_memory_range is not None:
+            memory_start, memory_end = extracted_memory_range
+            return _resolve_report_date_range(
+                month=None,
+                start_date=memory_start,
+                end_date=memory_end,
+                state_dict=None,
+                profile_id=profile_id,
+            )
 
     aggregate_result = get_tool_router().call(
         "finance_releves_aggregate",
@@ -2263,8 +2285,8 @@ def get_spending_report_pdf(
 
     payload = {
         "date_range": {
-            "start": period_start.isoformat(),
-            "end": period_end.isoformat(),
+            "start_date": period_start.isoformat(),
+            "end_date": period_end.isoformat(),
         },
         "direction": RelevesDirection.DEBIT_ONLY.value,
     }
