@@ -136,8 +136,8 @@ def _build_system_categories_payload() -> list[dict[str, str]]:
     ]
 
 
-def _classify_merchants_without_category(*, profiles_repository: Any, profile_id: UUID) -> tuple[int, int]:
-    """Classify merchants that do not yet have a category and return processed/remaining counts."""
+def _classify_merchants_without_category(*, profiles_repository: Any, profile_id: UUID) -> tuple[int, int, int]:
+    """Classify merchants without category and return classified, remaining valid, and invalid counts."""
 
     merchants_without_category = profiles_repository.list_merchants_without_category(profile_id=profile_id)
     classified_count = 0
@@ -164,8 +164,22 @@ def _classify_merchants_without_category(*, profiles_repository: Any, profile_id
             continue
         classified_count += 1
 
-    remaining_count = max(len(merchants_without_category) - classified_count, 0)
-    return classified_count, remaining_count
+    merchants_without_category_after = profiles_repository.list_merchants_without_category(profile_id=profile_id)
+    remaining_count = 0
+    invalid_count = 0
+    for merchant in merchants_without_category_after:
+        merchant_id = merchant.get("id")
+        if merchant_id is None:
+            invalid_count += 1
+            continue
+        try:
+            _ = merchant_id if isinstance(merchant_id, UUID) else UUID(str(merchant_id))
+        except (TypeError, ValueError):
+            invalid_count += 1
+            continue
+        remaining_count += 1
+
+    return classified_count, remaining_count, invalid_count
 
 
 def _build_import_file_ui_request(import_context: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -1960,7 +1974,7 @@ def agent_chat(
                     system_total = int(ensure_result.get("system_total_count", 0))
 
                     merchants_without_category = profiles_repository.list_merchants_without_category(profile_id=profile_id)
-                    classified_count, remaining_count = _classify_merchants_without_category(
+                    classified_count, remaining_count, invalid_count = _classify_merchants_without_category(
                         profiles_repository=profiles_repository,
                         profile_id=profile_id,
                     )
@@ -1984,9 +1998,20 @@ def agent_chat(
                             f"✅ Import terminé. Catégories créées : {created_count} (système total: {system_total}).\n"
                             "Je reconnais d’abord ce que je peux automatiquement, puis je complète avec l’IA pour le reste.\n"
                             f"C’est fait. Marchands classés : {classified_count}/{len(merchants_without_category)}. "
-                            f"Il reste {remaining_count} marchands.\n"
-                            "Tu préfères : (1) Je continue maintenant "
-                            f"({remaining_count} restants) (2) On s’arrête là et tu regardes le rapport. Réponds 1 ou 2."
+                            + (
+                                "Tout est classé.\n"
+                                if remaining_count == 0
+                                else (
+                                    f"Il reste {remaining_count} marchands.\n"
+                                    "Tu préfères : (1) Je continue maintenant "
+                                    f"({remaining_count} restants) (2) On s’arrête là et tu regardes le rapport. Réponds 1 ou 2."
+                                )
+                            )
+                            + (
+                                f"\n⚠️ {invalid_count} marchand(s) ont un identifiant invalide et ne peuvent pas être classés automatiquement."
+                                if invalid_count > 0
+                                else ""
+                            )
                         ),
                         tool_result=None,
                         plan=None,
@@ -1999,7 +2024,7 @@ def agent_chat(
                             categories=_build_system_categories_payload(),
                         )
                         system_total = int(ensure_result.get("system_total_count", 0))
-                        classified_count, remaining_count = _classify_merchants_without_category(
+                        classified_count, remaining_count, invalid_count = _classify_merchants_without_category(
                             profiles_repository=profiles_repository,
                             profile_id=profile_id,
                         )
@@ -2016,23 +2041,35 @@ def agent_chat(
                                 chat_state=updated_chat_state,
                             )
                             report_url = _build_spending_pdf_url()
+                            done_reply = (
+                                f"OK, j’ai continué : {classified_count} nouveaux marchands classés. "
+                                "Tout est classé. Voici ton rapport : "
+                                f"[Ouvrir le PDF]({report_url})."
+                            )
+                            if invalid_count > 0:
+                                done_reply += (
+                                    f" ⚠️ {invalid_count} marchand(s) ont un identifiant invalide et ne peuvent pas être classés automatiquement."
+                                )
+
                             return ChatResponse(
-                                reply=(
-                                    f"OK, j’ai continué : {classified_count} nouveaux marchands classés. "
-                                    "Tout est classé. Voici ton rapport : "
-                                    f"[Ouvrir le PDF]({report_url})."
-                                ),
+                                reply=done_reply,
                                 tool_result=_build_open_pdf_ui_request(report_url),
                                 plan=None,
                             )
 
+                        review_reply = (
+                            f"OK, j’ai continué : {classified_count} nouveaux marchands classés. "
+                            f"Il reste {remaining_count}. Tu préfères : (1) Je continue maintenant "
+                            f"({remaining_count} restants) (2) On s’arrête là et tu regardes le rapport. "
+                            f"Catégories système disponibles : {system_total}."
+                        )
+                        if invalid_count > 0:
+                            review_reply += (
+                                f" ⚠️ {invalid_count} marchand(s) ont un identifiant invalide et ne peuvent pas être classés automatiquement."
+                            )
+
                         return ChatResponse(
-                            reply=(
-                                f"OK, j’ai continué : {classified_count} nouveaux marchands classés. "
-                                f"Il reste {remaining_count}. Tu préfères : (1) Je continue maintenant "
-                                f"({remaining_count} restants) (2) On s’arrête là et tu regardes le rapport. "
-                                f"Catégories système disponibles : {system_total}."
-                            ),
+                            reply=review_reply,
                             tool_result=None,
                             plan=None,
                         )
