@@ -404,6 +404,7 @@ def test_categories_bootstrap_creates_categories_classifies_merchants_and_skips_
     assert repo.merchants[1]["category"] == "Autres"
     assert repo.merchants[2]["category"] == ""
     assert "Marchands classés : 2/3" in payload["reply"]
+    assert "transactions mises à jour" not in payload["reply"]
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
     assert persisted["onboarding_step"] == "categories"
     assert persisted["onboarding_substep"] == "categories_review"
@@ -440,6 +441,42 @@ def test_categories_review_requires_choice_1_or_2(monkeypatch) -> None:
     assert repo.update_calls == []
     assert loop.called is False
 
+
+
+
+def test_categories_review_choice_1_runs_more_classification(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "onboarding",
+                    "onboarding_step": "categories",
+                    "onboarding_substep": "categories_review",
+                    "profile_confirmed": True,
+                    "bank_accounts_confirmed": True,
+                    "has_bank_accounts": True,
+                    "has_imported_transactions": True,
+                    "budget_created": False,
+                }
+            }
+        },
+    )
+    repo.bank_accounts = [{"id": "bank-1", "name": "UBS"}]
+    repo.merchants = [
+        {"id": UUID("11111111-1111-1111-1111-111111111111"), "name_norm": "migros rive", "name": "Migros Rive", "category": None},
+        {"id": "not-a-uuid", "name_norm": "broken", "name": "Broken", "category": ""},
+    ]
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
+
+    response = client.post("/agent/chat", json={"message": "1"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert repo.merchants[0]["category"] == "Alimentation"
+    assert "classés" in payload["reply"].lower()
+    assert "reste" in payload["reply"].lower() or "restants" in payload["reply"].lower()
 
 def test_categories_review_non_switches_to_free_chat_without_loop(monkeypatch) -> None:
     _mock_auth(monkeypatch)
@@ -1606,4 +1643,5 @@ def test_categories_review_choice_2_returns_report_link(monkeypatch) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert "[Ouvrir le PDF]" in payload["reply"]
+    assert "Super, on peut s’arrêter ici" in payload["reply"]
     assert payload["tool_result"]["name"] == "open_pdf_report"

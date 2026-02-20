@@ -136,6 +136,38 @@ def _build_system_categories_payload() -> list[dict[str, str]]:
     ]
 
 
+def _classify_merchants_without_category(*, profiles_repository: Any, profile_id: UUID) -> tuple[int, int]:
+    """Classify merchants that do not yet have a category and return processed/remaining counts."""
+
+    merchants_without_category = profiles_repository.list_merchants_without_category(profile_id=profile_id)
+    classified_count = 0
+    for merchant in merchants_without_category:
+        merchant_id = merchant.get("id")
+        if merchant_id is None:
+            continue
+        try:
+            merchant_uuid = merchant_id if isinstance(merchant_id, UUID) else UUID(str(merchant_id))
+        except ValueError:
+            continue
+        merchant_name = str(merchant.get("name_norm") or merchant.get("name") or "")
+        category_name = _pick_category_for_merchant_name(merchant_name)
+        try:
+            profiles_repository.update_merchant_category(
+                merchant_id=merchant_uuid,
+                category_name=category_name,
+            )
+        except Exception:
+            logger.exception(
+                "categories_update_merchant_failed merchant_id=%s",
+                merchant_uuid,
+            )
+            continue
+        classified_count += 1
+
+    remaining_count = max(len(merchants_without_category) - classified_count, 0)
+    return classified_count, remaining_count
+
+
 def _build_import_file_ui_request(import_context: dict[str, Any] | None) -> dict[str, Any] | None:
     """Return a UI upload request payload when import context includes a selected account."""
 
@@ -1928,29 +1960,10 @@ def agent_chat(
                     system_total = int(ensure_result.get("system_total_count", 0))
 
                     merchants_without_category = profiles_repository.list_merchants_without_category(profile_id=profile_id)
-                    classified_count = 0
-                    for merchant in merchants_without_category:
-                        merchant_id = merchant.get("id")
-                        if merchant_id is None:
-                            continue
-                        try:
-                            merchant_uuid = merchant_id if isinstance(merchant_id, UUID) else UUID(str(merchant_id))
-                        except ValueError:
-                            continue
-                        merchant_name = str(merchant.get("name_norm") or merchant.get("name") or "")
-                        category_name = _pick_category_for_merchant_name(merchant_name)
-                        try:
-                            profiles_repository.update_merchant_category(
-                                merchant_id=merchant_uuid,
-                                category_name=category_name,
-                            )
-                        except Exception:
-                            logger.exception(
-                                "categories_bootstrap_update_merchant_failed merchant_id=%s",
-                                merchant_uuid,
-                            )
-                            continue
-                        classified_count += 1
+                    classified_count, remaining_count = _classify_merchants_without_category(
+                        profiles_repository=profiles_repository,
+                        profile_id=profile_id,
+                    )
 
                     updated_global_state = _build_onboarding_global_state(
                         global_state,
@@ -1966,13 +1979,12 @@ def agent_chat(
                         user_id=auth_user_id,
                         chat_state=updated_chat_state,
                     )
-                    remaining_count = max(len(merchants_without_category) - classified_count, 0)
                     return ChatResponse(
                         reply=(
                             f"✅ Import terminé. Catégories créées : {created_count} (système total: {system_total}).\n"
                             "Je reconnais d’abord ce que je peux automatiquement, puis je complète avec l’IA pour le reste.\n"
-                            f"C’est fait. Marchands classés : {classified_count}/{len(merchants_without_category)} — "
-                            f"transactions mises à jour : {classified_count}. Il reste {remaining_count} marchands.\n"
+                            f"C’est fait. Marchands classés : {classified_count}/{len(merchants_without_category)}. "
+                            f"Il reste {remaining_count} marchands.\n"
                             "Tu préfères : (1) Je continue maintenant "
                             f"({remaining_count} restants) (2) On s’arrête là et tu regardes le rapport. Réponds 1 ou 2."
                         ),
@@ -1982,8 +1994,45 @@ def agent_chat(
 
                 if substep == "categories_review":
                     if payload.message.strip() == "1":
+                        ensure_result = profiles_repository.ensure_system_categories(
+                            profile_id=profile_id,
+                            categories=_build_system_categories_payload(),
+                        )
+                        system_total = int(ensure_result.get("system_total_count", 0))
+                        classified_count, remaining_count = _classify_merchants_without_category(
+                            profiles_repository=profiles_repository,
+                            profile_id=profile_id,
+                        )
+
+                        if remaining_count == 0:
+                            updated_global_state = _build_free_chat_global_state(global_state)
+                            updated_global_state = _normalize_onboarding_step_substep(updated_global_state)
+                            state_dict["global_state"] = updated_global_state
+                            updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                            updated_chat_state["state"] = state_dict
+                            profiles_repository.update_chat_state(
+                                profile_id=profile_id,
+                                user_id=auth_user_id,
+                                chat_state=updated_chat_state,
+                            )
+                            report_url = _build_spending_pdf_url()
+                            return ChatResponse(
+                                reply=(
+                                    f"OK, j’ai continué : {classified_count} nouveaux marchands classés. "
+                                    "Tout est classé. Voici ton rapport : "
+                                    f"[Ouvrir le PDF]({report_url})."
+                                ),
+                                tool_result=_build_open_pdf_ui_request(report_url),
+                                plan=None,
+                            )
+
                         return ChatResponse(
-                            reply="Parfait. Je continue sur les marchands restants en arrière-plan.",
+                            reply=(
+                                f"OK, j’ai continué : {classified_count} nouveaux marchands classés. "
+                                f"Il reste {remaining_count}. Tu préfères : (1) Je continue maintenant "
+                                f"({remaining_count} restants) (2) On s’arrête là et tu regardes le rapport. "
+                                f"Catégories système disponibles : {system_total}."
+                            ),
                             tool_result=None,
                             plan=None,
                         )
@@ -2001,7 +2050,8 @@ def agent_chat(
                         )
                         return ChatResponse(
                             reply=(
-                                f"OK. Voici ton rapport : [Ouvrir le PDF]({report_url}).\n"
+                                "Super, on peut s’arrêter ici pour l’instant. "
+                                f"Voici ton rapport : [Ouvrir le PDF]({report_url}).\n"
                                 "Si tu veux, je peux aussi te faire un résumé ici (top catégories + top marchands)."
                             ),
                             tool_result=_build_open_pdf_ui_request(report_url),
