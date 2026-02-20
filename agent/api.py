@@ -7,15 +7,16 @@ import inspect
 import os
 import re
 import unicodedata
+import calendar
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import lru_cache
 from typing import Any
-from datetime import date
+from datetime import date, datetime
 from uuid import UUID
 
 from fastapi.encoders import jsonable_encoder
 from fastapi import FastAPI, Header, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.requests import Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -31,10 +32,12 @@ from agent.merchant_cleanup import MerchantSuggestion, run_merchant_cleanup
 from agent.merchant_alias_resolver import resolve_pending_map_alias
 from agent.import_label_normalizer import extract_observed_alias_from_label
 from backend.factory import build_backend_tool_service
+from backend.reporting import SpendingCategoryRow, SpendingReportData, generate_spending_report_pdf
 from backend.auth.supabase_auth import UnauthorizedError, get_user_from_bearer_token
 from backend.db.supabase_client import SupabaseClient, SupabaseSettings
 from backend.repositories.profiles_repository import ProfilesRepository, SupabaseProfilesRepository
 from shared.models import ToolError
+from shared.models import RelevesDirection
 
 
 logger = logging.getLogger(__name__)
@@ -2145,6 +2148,184 @@ def list_bank_accounts(authorization: str | None = Header(default=None)) -> Any:
     if isinstance(result, ToolError):
         raise HTTPException(status_code=400, detail=result.message)
     return jsonable_encoder(result)
+
+
+def _parse_iso_date(value: str, field_name: str) -> date:
+    try:
+        return date.fromisoformat(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid {field_name} format. Expected YYYY-MM-DD") from exc
+
+
+def _resolve_report_date_range(
+    *,
+    month: str | None,
+    start_date: str | None,
+    end_date: str | None,
+    state_dict: dict[str, Any] | None,
+    profile_id: UUID,
+) -> tuple[date, date]:
+    if month:
+        try:
+            month_start = datetime.strptime(month, "%Y-%m").date().replace(day=1)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid month format. Expected YYYY-MM") from exc
+        _, last_day = calendar.monthrange(month_start.year, month_start.month)
+        return month_start, month_start.replace(day=last_day)
+
+    if start_date or end_date:
+        if not start_date or not end_date:
+            raise HTTPException(status_code=400, detail="start_date and end_date must be provided together")
+        parsed_start = _parse_iso_date(start_date, "start_date")
+        parsed_end = _parse_iso_date(end_date, "end_date")
+        if parsed_start > parsed_end:
+            raise HTTPException(status_code=400, detail="start_date must be before or equal to end_date")
+        return parsed_start, parsed_end
+
+    last_query = state_dict.get("last_query") if isinstance(state_dict, dict) else None
+    if isinstance(last_query, dict):
+        memory_month = last_query.get("month")
+        if isinstance(memory_month, str) and memory_month.strip():
+            return _resolve_report_date_range(
+                month=memory_month,
+                start_date=None,
+                end_date=None,
+                state_dict=None,
+                profile_id=profile_id,
+            )
+        memory_date_range = last_query.get("date_range")
+        if isinstance(memory_date_range, dict):
+            memory_start = memory_date_range.get("start")
+            memory_end = memory_date_range.get("end")
+            if isinstance(memory_start, str) and isinstance(memory_end, str):
+                return _resolve_report_date_range(
+                    month=None,
+                    start_date=memory_start,
+                    end_date=memory_end,
+                    state_dict=None,
+                    profile_id=profile_id,
+                )
+
+    aggregate_result = get_tool_router().call(
+        "finance_releves_aggregate",
+        {
+            "group_by": "month",
+            "direction": RelevesDirection.DEBIT_ONLY.value,
+        },
+        profile_id=profile_id,
+    )
+    if not isinstance(aggregate_result, ToolError):
+        aggregate_payload = jsonable_encoder(aggregate_result)
+        groups = aggregate_payload.get("groups") if isinstance(aggregate_payload, dict) else None
+        if isinstance(groups, dict) and groups:
+            latest_month = max((key for key in groups if isinstance(key, str)), default=None)
+            if latest_month:
+                return _resolve_report_date_range(
+                    month=latest_month,
+                    start_date=None,
+                    end_date=None,
+                    state_dict=None,
+                    profile_id=profile_id,
+                )
+
+    today = date.today()
+    _, last_day = calendar.monthrange(today.year, today.month)
+    return today.replace(day=1), today.replace(day=last_day)
+
+
+@app.get("/finance/reports/spending.pdf")
+def get_spending_report_pdf(
+    authorization: str | None = Header(default=None),
+    start_date: str | None = None,
+    end_date: str | None = None,
+    month: str | None = None,
+) -> Response:
+    auth_user_id, profile_id = _resolve_authenticated_profile(authorization)
+    profiles_repository = get_profiles_repository()
+    chat_state = profiles_repository.get_chat_state(profile_id=profile_id, user_id=auth_user_id)
+    state_dict = chat_state.get("state") if isinstance(chat_state, dict) else None
+
+    period_start, period_end = _resolve_report_date_range(
+        month=month,
+        start_date=start_date,
+        end_date=end_date,
+        state_dict=state_dict if isinstance(state_dict, dict) else None,
+        profile_id=profile_id,
+    )
+    logger.info(
+        "finance_spending_report_requested",
+        extra={
+            "profile_id": str(profile_id),
+            "start_date": period_start.isoformat(),
+            "end_date": period_end.isoformat(),
+        },
+    )
+
+    payload = {
+        "date_range": {
+            "start": period_start.isoformat(),
+            "end": period_end.isoformat(),
+        },
+        "direction": RelevesDirection.DEBIT_ONLY.value,
+    }
+    sum_result = get_tool_router().call("finance_releves_sum", payload, profile_id=profile_id)
+    if isinstance(sum_result, ToolError):
+        raise HTTPException(status_code=400, detail=sum_result.message)
+
+    categories_result = get_tool_router().call(
+        "finance_releves_aggregate",
+        {
+            **payload,
+            "group_by": "categorie",
+        },
+        profile_id=profile_id,
+    )
+    if isinstance(categories_result, ToolError):
+        raise HTTPException(status_code=400, detail=categories_result.message)
+
+    sum_payload = jsonable_encoder(sum_result)
+    aggregate_payload = jsonable_encoder(categories_result)
+    raw_groups = aggregate_payload.get("groups") if isinstance(aggregate_payload, dict) else {}
+    currency = str(sum_payload.get("currency") or aggregate_payload.get("currency") or "CHF")
+
+    category_rows: list[SpendingCategoryRow] = []
+    if isinstance(raw_groups, dict):
+        for category_name, group in raw_groups.items():
+            if not isinstance(group, dict):
+                continue
+            total_raw = group.get("total")
+            try:
+                amount = abs(Decimal(str(total_raw)))
+            except Exception:
+                continue
+            if amount == Decimal("0"):
+                continue
+            name = category_name if isinstance(category_name, str) and category_name.strip() else "Sans catégorie"
+            category_rows.append(SpendingCategoryRow(name=name, amount=amount))
+
+    total = abs(Decimal(str(sum_payload.get("total") or "0")))
+    count = int(sum_payload.get("count") or 0)
+    average = abs(Decimal(str(sum_payload.get("average") or "0")))
+    period_label = f"{period_start.isoformat()} → {period_end.isoformat()}"
+    filename_period = period_start.strftime("%Y-%m") if period_start.day == 1 else f"{period_start.isoformat()}_{period_end.isoformat()}"
+
+    pdf_bytes = generate_spending_report_pdf(
+        SpendingReportData(
+            period_label=period_label,
+            start_date=period_start.isoformat(),
+            end_date=period_end.isoformat(),
+            total=total,
+            count=count,
+            average=average,
+            currency=currency,
+            categories=category_rows,
+        )
+    )
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="rapport-depenses-{filename_period}.pdf"'},
+    )
 
 
 @app.post("/finance/releves/import")

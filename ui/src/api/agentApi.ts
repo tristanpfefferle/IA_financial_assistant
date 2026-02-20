@@ -220,6 +220,25 @@ export async function resolvePendingMerchantAliases(
   return (await response.json()) as ResolvePendingMerchantAliasesResult
 }
 
+
+export async function openSpendingReportPdf(month?: string): Promise<void> {
+  const accessToken = await getAccessToken()
+  const query = month ? `?month=${encodeURIComponent(month)}` : ''
+  const response = await fetch(`${getBaseUrl()}/finance/reports/spending.pdf${query}`, {
+    method: 'GET',
+    headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
+  })
+
+  if (!response.ok) {
+    const detail = await extractErrorDetail(response)
+    throw new Error(`Erreur API rapport (${response.status}): ${detail}`)
+  }
+
+  const blob = await response.blob()
+  const blobUrl = URL.createObjectURL(blob)
+  window.open(blobUrl, '_blank', 'noopener,noreferrer')
+}
+
 export async function hardResetProfile(): Promise<void> {
   const response = await fetch(`${getBaseUrl()}/debug/hard-reset`, {
     method: 'POST',

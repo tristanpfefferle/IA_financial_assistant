@@ -4,6 +4,7 @@ import {
   getPendingMerchantAliasesCount,
   hardResetProfile,
   importReleves,
+  openSpendingReportPdf,
   resolvePendingMerchantAliases,
   resetSession,
   sendChatMessage,
@@ -255,6 +256,16 @@ export function ChatPage({ email }: ChatPageProps) {
     }
   }, [assistantMessagesCount])
 
+  async function handleOpenSpendingReport() {
+    setError(null)
+
+    try {
+      await openSpendingReportPdf()
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Impossible de générer le rapport PDF')
+    }
+  }
+
   async function handleLogout() {
     setError(null)
 
@@ -398,6 +409,9 @@ export function ChatPage({ email }: ChatPageProps) {
           <label>
             <input type="checkbox" checked={debugMode} onChange={(event) => setDebugMode(event.target.checked)} /> Debug
           </label>
+          <button type="button" className="secondary-button" onClick={() => void handleOpenSpendingReport()}>
+            Télécharger rapport PDF
+          </button>
           {pendingMerchantAliasesCount > 0 ? (
             <button
               type="button"

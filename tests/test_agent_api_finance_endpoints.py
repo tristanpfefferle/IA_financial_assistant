@@ -515,3 +515,86 @@ def test_merge_merchants_endpoint_returns_200_and_calls_repo(monkeypatch) -> Non
 
     assert response.status_code == 200
     assert response.json()["moved_releves_count"] == 3
+
+
+def test_spending_report_pdf_returns_pdf(monkeypatch) -> None:
+    _mock_authenticated(monkeypatch)
+
+    class _Repo:
+        def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None):
+            assert auth_user_id == AUTH_USER_ID
+            assert email == "user@example.com"
+            return PROFILE_ID
+
+        def get_chat_state(self, *, profile_id: UUID, user_id: UUID):
+            assert profile_id == PROFILE_ID
+            assert user_id == AUTH_USER_ID
+            return {"state": {"last_query": {"month": "2026-01"}}}
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: _Repo())
+
+    class _Router:
+        def call(self, tool_name: str, payload: dict, *, profile_id: UUID | None = None):
+            assert profile_id == PROFILE_ID
+            if tool_name == "finance_releves_sum":
+                return {"total": "-120.50", "count": 3, "average": "-40.166", "currency": "CHF"}
+            if tool_name == "finance_releves_aggregate":
+                if payload.get("group_by") == "categorie":
+                    return {
+                        "group_by": "categorie",
+                        "currency": "CHF",
+                        "groups": {
+                            "Alimentation": {"total": "-80", "count": 2},
+                            "Transport": {"total": "-40.5", "count": 1},
+                        },
+                    }
+                return {"group_by": "month", "currency": "CHF", "groups": {"2026-01": {"total": "-120.50", "count": 3}}}
+            raise AssertionError(tool_name)
+
+    monkeypatch.setattr(agent_api, "get_tool_router", lambda: _Router())
+
+    response = client.get("/finance/reports/spending.pdf", headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/pdf")
+    assert response.content.startswith(b"%PDF")
+
+
+def test_spending_report_pdf_no_data_still_returns_pdf(monkeypatch) -> None:
+    _mock_authenticated(monkeypatch)
+
+    class _Repo:
+        def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None):
+            assert auth_user_id == AUTH_USER_ID
+            assert email == "user@example.com"
+            return PROFILE_ID
+
+        def get_chat_state(self, *, profile_id: UUID, user_id: UUID):
+            assert profile_id == PROFILE_ID
+            assert user_id == AUTH_USER_ID
+            return {}
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: _Repo())
+
+    class _Router:
+        def call(self, tool_name: str, payload: dict, *, profile_id: UUID | None = None):
+            assert profile_id == PROFILE_ID
+            if tool_name == "finance_releves_sum":
+                return {"total": "0", "count": 0, "average": "0", "currency": "CHF"}
+            if tool_name == "finance_releves_aggregate" and payload.get("group_by") == "month":
+                return {"group_by": "month", "currency": "CHF", "groups": {}}
+            if tool_name == "finance_releves_aggregate" and payload.get("group_by") == "categorie":
+                return {"group_by": "categorie", "currency": "CHF", "groups": {}}
+            raise AssertionError(tool_name)
+
+    monkeypatch.setattr(agent_api, "get_tool_router", lambda: _Router())
+
+    response = client.get(
+        "/finance/reports/spending.pdf?start_date=2026-01-01&end_date=2026-01-31",
+        headers=_auth_headers(),
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/pdf")
+    assert len(response.content) > 100
+    assert response.content.startswith(b"%PDF")
