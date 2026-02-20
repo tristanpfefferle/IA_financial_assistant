@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
+import logging
 from typing import Any, Protocol
 import unicodedata
 from uuid import UUID
 
 from backend.db.supabase_client import SupabaseClient
 from shared.models import PROFILE_DEFAULT_CORE_FIELDS
+
+
+logger = logging.getLogger(__name__)
 
 
 class ProfilesRepository(Protocol):
@@ -942,12 +946,35 @@ class SupabaseProfilesRepository:
             else None,
             "suggested_category_label": suggested_category_label,
         }
-        self._client.patch_rows(
-            table="merchant_suggestions",
-            query={"profile_id": f"eq.{profile_id}", "id": f"eq.{suggestion_id}"},
-            payload=payload,
-            use_anon_key=False,
-        )
+        query = {"profile_id": f"eq.{profile_id}", "id": f"eq.{suggestion_id}"}
+        try:
+            self._client.patch_rows(
+                table="merchant_suggestions",
+                query=query,
+                payload=payload,
+                use_anon_key=False,
+            )
+        except Exception as exc:
+            logger.warning(
+                "update_merchant_suggestion_after_resolve full patch failed suggestion_id=%s profile_id=%s error=%s",
+                suggestion_id,
+                profile_id,
+                " ".join(str(exc).split())[:300] or exc.__class__.__name__,
+            )
+            try:
+                self._client.patch_rows(
+                    table="merchant_suggestions",
+                    query=query,
+                    payload={"status": status, "error": error},
+                    use_anon_key=False,
+                )
+            except Exception:
+                logger.exception(
+                    "update_merchant_suggestion_after_resolve minimal patch failed suggestion_id=%s profile_id=%s",
+                    suggestion_id,
+                    profile_id,
+                )
+                raise
 
     def apply_entity_to_profile_transactions(
         self,

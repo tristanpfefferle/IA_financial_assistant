@@ -297,3 +297,41 @@ def test_fallback_response_format(monkeypatch) -> None:
     assert len(client.calls) == 2
     assert "response_format" in client.calls[0]
     assert "response_format" not in client.calls[1]
+
+
+def test_resolver_continues_when_merchant_suggestion_update_fails(monkeypatch) -> None:
+    class _RepoWithUpdateFailure(_RepoStub):
+        def update_merchant_suggestion_after_resolve(self, **kwargs):
+            raise Exception("schema mismatch")
+
+    repo = _RepoWithUpdateFailure()
+
+    monkeypatch.setattr(
+        resolver,
+        "_call_llm_json",
+        lambda _prompt: (
+            {
+                "resolutions": [
+                    {
+                        "suggestion_id": str(SUGGESTION_ID),
+                        "action": "link_existing",
+                        "merchant_entity_id": str(ENTITY_ID),
+                        "canonical_name": None,
+                        "canonical_name_norm": None,
+                        "country": "CH",
+                        "suggested_category_norm": "food",
+                        "suggested_category_label": "Alimentation",
+                        "confidence": 0.9,
+                        "rationale": "already known",
+                    }
+                ]
+            },
+            "run_update_fail",
+            {},
+        ),
+    )
+
+    stats = resolver.resolve_pending_map_alias(profile_id=PROFILE_ID, profiles_repository=repo, limit=10)
+
+    assert stats["processed"] == 1
+    assert "merchant_suggestion_update_failed" in stats["warnings"]
