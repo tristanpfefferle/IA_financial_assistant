@@ -398,7 +398,9 @@ def test_categories_bootstrap_creates_categories_classifies_merchants_and_skips_
     assert "Import terminé" in payload["reply"]
     assert "je reconnais d’abord" in payload["reply"].lower()
     assert "Marchands classés" in payload["reply"]
-    assert "Réponds 1 ou 2" in payload["reply"]
+    assert "Tout est classé" in payload["reply"]
+    assert "Réponds 1 ou 2" not in payload["reply"]
+    assert "identifiant invalide" in payload["reply"].lower()
     assert len(repo.profile_categories) == 10
     assert repo.merchants[0]["category"] == "Alimentation"
     assert repo.merchants[1]["category"] == "Autres"
@@ -476,7 +478,29 @@ def test_categories_review_choice_1_runs_more_classification(monkeypatch) -> Non
     payload = response.json()
     assert repo.merchants[0]["category"] == "Alimentation"
     assert "classés" in payload["reply"].lower()
-    assert "reste" in payload["reply"].lower() or "restants" in payload["reply"].lower()
+    assert "tout est classé" in payload["reply"].lower()
+    assert "il reste" not in payload["reply"].lower()
+    assert "identifiant invalide" in payload["reply"].lower()
+
+
+def test_classify_merchants_without_category_invalid_ids_not_counted_as_remaining() -> None:
+    repo = _Repo()
+    repo.merchants = [
+        {"id": UUID("11111111-1111-1111-1111-111111111111"), "name_norm": "coop city", "name": "Coop City", "category": ""},
+        {"id": "not-a-uuid", "name_norm": "broken", "name": "Broken", "category": ""},
+    ]
+
+    classified_count, remaining_count, invalid_count = agent_api._classify_merchants_without_category(
+        profiles_repository=repo,
+        profile_id=PROFILE_ID,
+    )
+
+    assert classified_count == 1
+    assert remaining_count == 0
+    assert invalid_count == 1
+    assert repo.merchants[0]["category"] == "Alimentation"
+    assert repo.merchants[1]["category"] == ""
+
 
 def test_categories_review_non_switches_to_free_chat_without_loop(monkeypatch) -> None:
     _mock_auth(monkeypatch)
