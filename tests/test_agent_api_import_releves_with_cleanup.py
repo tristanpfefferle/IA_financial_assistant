@@ -310,7 +310,7 @@ def test_bootstrap_merchants_from_imported_releves_known_alias_sets_entity_and_c
             return [{"id": str(releve_id), "payee": "COOP CITY", "libelle": None}]
 
         def list_profile_categories(self, *, profile_id: UUID):
-            return [{"id": str(category_id), "name_norm": "courses"}]
+            return [{"id": str(category_id), "system_key": "courses", "name_norm": "alimentation"}]
 
         def find_merchant_entity_by_alias_norm(self, *, alias_norm: str):
             assert alias_norm == "coop city"
