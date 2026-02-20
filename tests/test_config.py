@@ -121,3 +121,15 @@ def test_llm_fallback_enabled_requires_enabled_and_gated(monkeypatch) -> None:
 
     monkeypatch.setenv("AGENT_LLM_GATED", "false")
     assert config.llm_fallback_enabled() is False
+
+
+def test_auto_resolve_merchant_aliases_enabled_defaults_true(monkeypatch) -> None:
+    monkeypatch.delenv("AGENT_AUTO_RESOLVE_MERCHANT_ALIASES", raising=False)
+
+    assert config.auto_resolve_merchant_aliases_enabled() is True
+
+
+def test_auto_resolve_merchant_aliases_limit_uses_default_on_invalid(monkeypatch) -> None:
+    monkeypatch.setenv("AGENT_AUTO_RESOLVE_MERCHANT_ALIASES_LIMIT", "invalid")
+
+    assert config.auto_resolve_merchant_aliases_limit() == 50
