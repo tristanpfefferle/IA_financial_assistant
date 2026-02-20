@@ -788,10 +788,17 @@ class SupabaseProfilesRepository:
                     use_anon_key=False,
                 )
                 inserted_count += 1
-            except RuntimeError as exc:
-                error_message = str(exc).lower()
-                if "duplicate key" in error_message or "unique" in error_message:
+            except Exception as exc:
+                error_code = getattr(exc, "code", None)
+                if error_code == "23505":
                     continue
+                error_message = str(exc).lower()
+                if "duplicate key value violates unique constraint" in error_message:
+                    continue
+                logger.warning(
+                    "create_map_alias_suggestions failed for observed_alias_norm=%s",
+                    observed_alias_norm,
+                )
                 raise
 
         return inserted_count

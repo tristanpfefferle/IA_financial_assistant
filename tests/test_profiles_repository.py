@@ -789,25 +789,16 @@ def test_create_map_alias_suggestions_ignores_duplicate_key_errors() -> None:
     assert len(client.post_calls) == 1
 
 
-def test_create_map_alias_suggestions_does_not_overwrite_resolved_rows() -> None:
+def test_create_map_alias_suggestions_never_upserts_and_ignores_pending_duplicates() -> None:
     profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 
-    class _ClientResolvedStub(_ClientStub):
-        def __init__(self) -> None:
-            super().__init__(responses=[])
+    class _DuplicatePendingError(Exception):
+        code = "23505"
 
-        def post_rows(self, *, table, payload, use_anon_key=False, prefer="return=representation"):
-            self.post_calls.append(
-                {
-                    "table": table,
-                    "payload": payload,
-                    "use_anon_key": use_anon_key,
-                    "prefer": prefer,
-                }
-            )
-            raise RuntimeError("duplicate key value violates unique constraint merchant_suggestions_map_alias_pending_failed_unique_idx")
-
-    client = _ClientResolvedStub()
+    client = _ClientStub(
+        responses=[],
+        post_exceptions=[_DuplicatePendingError("duplicate key value violates unique constraint")],
+    )
     repository = SupabaseProfilesRepository(client=client)
 
     inserted = repository.create_map_alias_suggestions(
@@ -821,5 +812,6 @@ def test_create_map_alias_suggestions_does_not_overwrite_resolved_rows() -> None
         ],
     )
 
-    assert inserted == 0
+    assert client.upsert_calls == []
     assert len(client.post_calls) == 1
+    assert inserted == 0
