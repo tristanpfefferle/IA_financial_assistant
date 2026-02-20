@@ -363,7 +363,7 @@ def test_bootstrap_merchants_from_imported_releves_known_alias_sets_entity_and_c
         limit=50,
     )
 
-    assert summary == {"processed_count": 1, "linked_count": 1, "skipped_count": 0}
+    assert summary == {"processed_count": 1, "linked_count": 1, "skipped_count": 0, "suggestions_created_count": 0}
     assert repo.attach_calls == [(releve_id, entity_id, category_id)]
     assert repo.alias_upserts == [(entity_id, "COOP CITY", "coop city", "import")]
     assert repo.override_upserts == [(PROFILE_ID, entity_id, category_id, "auto")]
@@ -422,7 +422,7 @@ def test_bootstrap_merchants_from_imported_releves_matches_category_with_normali
         limit=50,
     )
 
-    assert summary == {"processed_count": 1, "linked_count": 1, "skipped_count": 0}
+    assert summary == {"processed_count": 1, "linked_count": 1, "skipped_count": 0, "suggestions_created_count": 0}
     assert repo.attach_calls == [(releve_id, entity_id, category_id)]
 def test_bootstrap_merchants_from_imported_releves_unknown_alias_creates_deduped_map_alias_suggestion() -> None:
     releve_id_1 = UUID("aaaaaaaa-1111-1111-1111-111111111111")
@@ -460,7 +460,7 @@ def test_bootstrap_merchants_from_imported_releves_unknown_alias_creates_deduped
         limit=50,
     )
 
-    assert summary == {"processed_count": 2, "linked_count": 0, "skipped_count": 2}
+    assert summary == {"processed_count": 2, "linked_count": 0, "skipped_count": 2, "suggestions_created_count": 1}
     assert repo.attach_calls == 0
     assert len(repo.suggestion_rows) == 1
     assert {row["observed_alias_norm"] for row in repo.suggestion_rows} == {"unknown shop"}
@@ -500,7 +500,7 @@ def test_bootstrap_merchants_from_imported_releves_uses_short_observed_alias_fro
         limit=50,
     )
 
-    assert summary == {"processed_count": 1, "linked_count": 0, "skipped_count": 1}
+    assert summary == {"processed_count": 1, "linked_count": 0, "skipped_count": 1, "suggestions_created_count": 1}
     assert len(repo.suggestion_rows) == 1
     assert repo.suggestion_rows[0]["observed_alias"] == "Paiement à une carte"
     assert repo.suggestion_rows[0]["observed_alias_norm"] == "paiement a une carte"
@@ -556,7 +556,7 @@ def test_bootstrap_merchants_from_imported_releves_does_not_fallback_to_suggeste
         limit=50,
     )
 
-    assert summary == {"processed_count": 1, "linked_count": 1, "skipped_count": 0}
+    assert summary == {"processed_count": 1, "linked_count": 1, "skipped_count": 0, "suggestions_created_count": 0}
     assert repo.attach_calls == [(releve_id, entity_id, None)]
 
 
@@ -604,7 +604,7 @@ def test_bootstrap_merchants_from_imported_releves_does_not_upsert_override_with
         limit=50,
     )
 
-    assert summary == {"processed_count": 1, "linked_count": 1, "skipped_count": 0}
+    assert summary == {"processed_count": 1, "linked_count": 1, "skipped_count": 0, "suggestions_created_count": 0}
     assert repo.override_upserts == []
 
 
@@ -674,7 +674,7 @@ def test_bootstrap_merchants_reimport_links_existing_alias_and_only_suggests_unk
         limit=50,
     )
 
-    assert summary == {"processed_count": 2, "linked_count": 1, "skipped_count": 1}
+    assert summary == {"processed_count": 2, "linked_count": 1, "skipped_count": 1, "suggestions_created_count": 1}
     assert repo.attach_calls == [(known_releve_id, known_entity_id, None)]
     assert repo.alias_upserts == [(known_entity_id, "COOP CITY", "coop city", "import")]
     assert len(repo.suggestion_rows) == 1
