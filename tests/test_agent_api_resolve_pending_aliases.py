@@ -173,3 +173,20 @@ def test_pending_aliases_count_endpoint_returns_repository_count(monkeypatch) ->
 
     assert response.status_code == 200
     assert response.json() == {"pending_total_count": 12}
+
+
+def test_pending_aliases_count_endpoint_returns_zero_when_repo_has_no_count_or_list(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+
+    class _RepoWithoutCountOrList:
+        def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None):
+            assert auth_user_id == AUTH_USER_ID
+            assert email == "user@example.com"
+            return PROFILE_ID
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: _RepoWithoutCountOrList())
+
+    response = client.get("/finance/merchants/aliases/pending-count", headers=_headers())
+
+    assert response.status_code == 200
+    assert response.json() == {"pending_total_count": 0}
