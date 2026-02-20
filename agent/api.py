@@ -527,54 +527,106 @@ def _bootstrap_merchants_from_imported_releves(
     profile_id: UUID,
     limit: int = 500,
 ) -> dict[str, int]:
-    """Best-effort merchant creation/linking from imported statements for one profile."""
+    """Best-effort deterministic merchant entity matching from imported statements."""
 
     rows = profiles_repository.list_releves_without_merchant(profile_id=profile_id, limit=limit)
+    categories_rows = []
+    if hasattr(profiles_repository, "list_profile_categories"):
+        categories_rows = profiles_repository.list_profile_categories(profile_id=profile_id)
+    categories_by_norm = {
+        str(row.get("name_norm")): row
+        for row in categories_rows
+        if row.get("name_norm")
+    }
     processed_count = 0
     linked_count = 0
     skipped_count = 0
+    suggestion_rows: list[dict[str, Any]] = []
 
     for row in rows:
         processed_count += 1
-        payee = str(row.get("payee") or "").strip()
-        libelle = str(row.get("libelle") or "").strip()
-        candidate = payee or libelle
-        canonical = _canonicalize_merchant(candidate)
+        payee = " ".join(str(row.get("payee") or "").split())
+        libelle = " ".join(str(row.get("libelle") or "").split())
+        observed_alias = payee or libelle
         releve_id_raw = row.get("id")
 
-        if canonical is None or not releve_id_raw:
+        if not observed_alias or not releve_id_raw:
+            skipped_count += 1
+            continue
+        observed_alias_norm = _normalize_text(observed_alias)
+        if not observed_alias_norm:
             skipped_count += 1
             continue
 
-        display_name, name_norm, alias_raw = canonical
-
         try:
             releve_id = UUID(str(releve_id_raw))
-            merchant_id = profiles_repository.upsert_merchant_by_name_norm(
-                profile_id=profile_id,
-                name=display_name,
-                name_norm=name_norm,
-            )
-            try:
-                profiles_repository.append_merchant_alias(merchant_id=merchant_id, alias=alias_raw)
-            except Exception:
-                logger.exception(
-                    "import_releves_merchant_alias_append_failed profile_id=%s merchant_id=%s",
-                    profile_id,
-                    merchant_id,
+            entity = profiles_repository.find_merchant_entity_by_alias_norm(alias_norm=observed_alias_norm)
+            if not entity:
+                suggestion_rows.append(
+                    {
+                        "status": "pending",
+                        "action": "map_alias",
+                        "observed_alias": observed_alias,
+                        "observed_alias_norm": observed_alias_norm,
+                        "suggested_entity_name": None,
+                        "confidence": None,
+                        "rationale": "unknown alias from import",
+                    }
                 )
-            profiles_repository.attach_merchant_to_releve(releve_id=releve_id, merchant_id=merchant_id)
+                skipped_count += 1
+                continue
+
+            entity_id = UUID(str(entity["id"]))
+            category_id: UUID | None = None
+            override = profiles_repository.get_profile_merchant_override(
+                profile_id=profile_id,
+                merchant_entity_id=entity_id,
+            )
+            override_category_id = override.get("category_id") if isinstance(override, dict) else None
+            if override_category_id:
+                category_id = UUID(str(override_category_id))
+            else:
+                suggested_category_norm = str(entity.get("suggested_category_norm") or "").strip()
+                suggested_category_label = str(entity.get("suggested_category_label") or "").strip()
+                category_norm = suggested_category_norm or _normalize_text(suggested_category_label)
+                matched_category = categories_by_norm.get(category_norm)
+                if matched_category and matched_category.get("id"):
+                    category_id = UUID(str(matched_category["id"]))
+
+            profiles_repository.attach_merchant_entity_to_releve(
+                releve_id=releve_id,
+                merchant_entity_id=entity_id,
+                category_id=category_id,
+            )
+            profiles_repository.upsert_merchant_alias(
+                merchant_entity_id=entity_id,
+                alias=observed_alias,
+                alias_norm=observed_alias_norm,
+                source="import",
+            )
+            profiles_repository.upsert_profile_merchant_override(
+                profile_id=profile_id,
+                merchant_entity_id=entity_id,
+                category_id=category_id,
+                status="auto",
+            )
             linked_count += 1
         except Exception:
             skipped_count += 1
             logger.exception(
-                "import_releves_merchant_link_failed profile_id=%s releve_id=%s",
+                "import_releves_entity_link_failed profile_id=%s releve_id=%s",
                 profile_id,
                 releve_id_raw,
             )
 
+    if suggestion_rows:
+        try:
+            profiles_repository.create_map_alias_suggestions(profile_id=profile_id, rows=suggestion_rows)
+        except Exception:
+            logger.exception("import_releves_map_alias_suggestions_failed profile_id=%s", profile_id)
+
     logger.info(
-        "import_releves_merchant_link_summary profile_id=%s processed=%s linked=%s skipped=%s",
+        "import_releves_entity_link_summary profile_id=%s processed=%s linked=%s skipped=%s",
         profile_id,
         processed_count,
         linked_count,

@@ -292,3 +292,119 @@ def test_import_releves_cleanup_no_suggestions_warning(monkeypatch) -> None:
     assert "merchant_cleanup_no_suggestions" in payload["warnings"]
     assert payload["merchant_cleanup_llm_run_id"] == "run123"
     assert payload["merchant_cleanup_stats"]["parsed_count"] == 0
+
+
+def test_bootstrap_merchants_from_imported_releves_known_alias_sets_entity_and_category() -> None:
+    entity_id = UUID("11111111-1111-1111-1111-111111111111")
+    releve_id = UUID("22222222-2222-2222-2222-222222222222")
+    category_id = UUID("33333333-3333-3333-3333-333333333333")
+
+    class _Repo:
+        def __init__(self) -> None:
+            self.attach_calls: list[tuple[UUID, UUID, UUID | None]] = []
+            self.override_upserts: list[tuple[UUID, UUID, UUID | None, str]] = []
+            self.alias_upserts: list[tuple[UUID, str, str, str]] = []
+
+        def list_releves_without_merchant(self, *, profile_id: UUID, limit: int = 500):
+            return [{"id": str(releve_id), "payee": "COOP CITY", "libelle": None}]
+
+        def list_profile_categories(self, *, profile_id: UUID):
+            return [{"id": str(category_id), "name_norm": "courses"}]
+
+        def find_merchant_entity_by_alias_norm(self, *, alias_norm: str):
+            assert alias_norm == "coop city"
+            return {
+                "id": str(entity_id),
+                "suggested_category_norm": "courses",
+                "suggested_category_label": "Courses",
+            }
+
+        def get_profile_merchant_override(self, *, profile_id: UUID, merchant_entity_id: UUID):
+            return None
+
+        def attach_merchant_entity_to_releve(
+            self,
+            *,
+            releve_id: UUID,
+            merchant_entity_id: UUID,
+            category_id: UUID | None,
+        ) -> None:
+            self.attach_calls.append((releve_id, merchant_entity_id, category_id))
+
+        def upsert_merchant_alias(
+            self,
+            *,
+            merchant_entity_id: UUID,
+            alias: str,
+            alias_norm: str,
+            source: str = "import",
+        ) -> None:
+            self.alias_upserts.append((merchant_entity_id, alias, alias_norm, source))
+
+        def upsert_profile_merchant_override(
+            self,
+            *,
+            profile_id: UUID,
+            merchant_entity_id: UUID,
+            category_id: UUID | None,
+            status: str = "auto",
+        ) -> None:
+            self.override_upserts.append((profile_id, merchant_entity_id, category_id, status))
+
+        def create_map_alias_suggestions(self, *, profile_id: UUID, rows: list[dict]):
+            return 0
+
+    repo = _Repo()
+
+    summary = agent_api._bootstrap_merchants_from_imported_releves(
+        profiles_repository=repo,
+        profile_id=PROFILE_ID,
+        limit=50,
+    )
+
+    assert summary == {"processed_count": 1, "linked_count": 1, "skipped_count": 0}
+    assert repo.attach_calls == [(releve_id, entity_id, category_id)]
+    assert repo.alias_upserts == [(entity_id, "COOP CITY", "coop city", "import")]
+    assert repo.override_upserts == [(PROFILE_ID, entity_id, category_id, "auto")]
+
+
+def test_bootstrap_merchants_from_imported_releves_unknown_alias_creates_deduped_map_alias_suggestion() -> None:
+    releve_id_1 = UUID("aaaaaaaa-1111-1111-1111-111111111111")
+    releve_id_2 = UUID("aaaaaaaa-2222-2222-2222-222222222222")
+
+    class _Repo:
+        def __init__(self) -> None:
+            self.suggestion_rows: list[dict] = []
+            self.attach_calls = 0
+
+        def list_releves_without_merchant(self, *, profile_id: UUID, limit: int = 500):
+            return [
+                {"id": str(releve_id_1), "payee": "Unknown Shop", "libelle": None},
+                {"id": str(releve_id_2), "payee": "Unknown Shop", "libelle": None},
+            ]
+
+        def list_profile_categories(self, *, profile_id: UUID):
+            return []
+
+        def find_merchant_entity_by_alias_norm(self, *, alias_norm: str):
+            return None
+
+        def create_map_alias_suggestions(self, *, profile_id: UUID, rows: list[dict]):
+            self.suggestion_rows = rows
+            return 1
+
+        def attach_merchant_entity_to_releve(self, **kwargs) -> None:
+            self.attach_calls += 1
+
+    repo = _Repo()
+
+    summary = agent_api._bootstrap_merchants_from_imported_releves(
+        profiles_repository=repo,
+        profile_id=PROFILE_ID,
+        limit=50,
+    )
+
+    assert summary == {"processed_count": 2, "linked_count": 0, "skipped_count": 2}
+    assert repo.attach_calls == 0
+    assert len(repo.suggestion_rows) == 2
+    assert {row["observed_alias_norm"] for row in repo.suggestion_rows} == {"unknown shop"}
