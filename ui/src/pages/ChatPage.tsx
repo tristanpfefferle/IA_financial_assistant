@@ -1,24 +1,32 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent, type ReactNode, type RefObject, type UIEvent } from 'react'
 
 import {
   getPendingMerchantAliasesCount,
   hardResetProfile,
   importReleves,
+  listBankAccounts,
   openPdfFromUrl,
   resolvePendingMerchantAliases,
   resetSession,
   sendChatMessage,
+  type BankAccount,
   type RelevesImportResult,
 } from '../api/agentApi'
 import { DebugPanel } from '../components/DebugPanel'
 import { installSessionResetOnPageExit, logoutWithSessionReset } from '../lib/sessionLifecycle'
 import { supabase } from '../lib/supabaseClient'
-import { claimPdfUiRequestExecution, toPdfUiRequest } from './chatUiRequests'
+import {
+  claimPdfUiRequestExecution,
+  toLegacyImportUiRequest,
+  toOpenImportPanelUiAction,
+  toPdfUiRequest,
+} from './chatUiRequests'
 
 type ChatMessage = {
   id: string
   role: 'user' | 'assistant'
   content: string
+  createdAt: number
   toolResult?: Record<string, unknown> | null
   plan?: Record<string, unknown> | null
   debugPayload?: unknown
@@ -28,43 +36,21 @@ type ChatPageProps = {
   email?: string
 }
 
-type ImportUiRequest = {
-  type: 'ui_request'
-  name: 'import_file'
-  bank_account_id: string
-  bank_account_name?: string
-  accepted_types?: string[]
+type ImportIntent = {
+  messageId: string
+  bankAccountId?: string
+  bankAccountName?: string
+  acceptedTypes: string[]
+  source: 'ui_action' | 'ui_request'
 }
 
-function toImportUiRequest(value: unknown): ImportUiRequest | null {
-  if (!value || typeof value !== 'object') {
-    return null
-  }
+type ToastState = { type: 'error' | 'success'; message: string } | null
 
-  const record = value as Record<string, unknown>
-  if (record.type !== 'ui_request' || record.name !== 'import_file') {
-    return null
-  }
-
-  const bankAccountId = record.bank_account_id
-  if (typeof bankAccountId !== 'string' || !bankAccountId) {
-    return null
-  }
-
-  const acceptedTypes = Array.isArray(record.accepted_types)
-    ? record.accepted_types.filter((type): type is string => typeof type === 'string')
-    : ['csv', 'pdf']
-
-  return {
-    type: 'ui_request',
-    name: 'import_file',
-    bank_account_id: bankAccountId,
-    bank_account_name: typeof record.bank_account_name === 'string' ? record.bank_account_name : undefined,
-    accepted_types: acceptedTypes,
-  }
-}
-
-
+const EXAMPLE_QUESTIONS = [
+  'Analyse mes dépenses du mois',
+  'Quelles sont mes charges fixes ?',
+  'Prépare un résumé pour mon budget',
+]
 
 function formatDateRange(dateRange: { start: string; end: string } | null): string {
   if (!dateRange) {
@@ -73,7 +59,17 @@ function formatDateRange(dateRange: { start: string; end: string } | null): stri
   return `Période détectée: ${dateRange.start} → ${dateRange.end}`
 }
 
-function buildImportSuccessText(result: RelevesImportResult, uiRequest: ImportUiRequest): string {
+function formatFileSize(fileSize: number): string {
+  if (fileSize < 1024) {
+    return `${fileSize} o`
+  }
+  if (fileSize < 1024 * 1024) {
+    return `${(fileSize / 1024).toFixed(1)} Ko`
+  }
+  return `${(fileSize / (1024 * 1024)).toFixed(2)} Mo`
+}
+
+function buildImportSuccessText(result: RelevesImportResult, intent: ImportIntent): string {
   const typedResult = result as RelevesImportResult & {
     transactions_imported_count?: number
     transactions_imported?: number
@@ -81,42 +77,10 @@ function buildImportSuccessText(result: RelevesImportResult, uiRequest: ImportUi
     bank_account_name?: string | null
   }
   const importedCount = typedResult.transactions_imported_count ?? typedResult.transactions_imported ?? result.imported_count ?? 0
-  const accountName = typedResult.bank_account_name ?? uiRequest.bank_account_name ?? uiRequest.bank_account_id
+  const accountName = typedResult.bank_account_name ?? intent.bankAccountName ?? intent.bankAccountId ?? 'Compte sélectionné'
   const periodText = formatDateRange(typedResult.date_range ?? null)
 
   return `✅ Import OK (${accountName}). Transactions importées: ${importedCount}. ${periodText}`
-}
-
-function consumeImportRequestAndAppendSuccessMessage(
-  previousMessages: ChatMessage[],
-  messageId: string,
-  successText: string,
-  debugPayload: unknown,
-): ChatMessage[] {
-  const messageIndex = previousMessages.findIndex((chatMessage) => chatMessage.id === messageId)
-  if (messageIndex < 0) {
-    return previousMessages
-  }
-
-  const updatedMessage: ChatMessage = {
-    ...previousMessages[messageIndex],
-    toolResult: null,
-  }
-
-  const successMessage: ChatMessage = {
-    id: crypto.randomUUID(),
-    role: 'assistant',
-    content: successText,
-    toolResult: null,
-    debugPayload,
-  }
-
-  return [
-    ...previousMessages.slice(0, messageIndex),
-    updatedMessage,
-    successMessage,
-    ...previousMessages.slice(messageIndex + 1),
-  ]
 }
 
 function readFileAsBase64(file: File): Promise<string> {
@@ -140,28 +104,94 @@ function readFileAsBase64(file: File): Promise<string> {
   })
 }
 
+function roleLabel(role: ChatMessage['role']): string {
+  return role === 'user' ? 'Vous' : 'Assistant'
+}
+
+function renderContentWithLinks(content: string): ReactNode[] {
+  const linksRegex = /(https?:\/\/[^\s]+)/g
+  const parts = content.split(linksRegex)
+  return parts.map((part, index) => {
+    if (linksRegex.test(part)) {
+      return (
+        <a key={`link-${part}-${index}`} href={part} target="_blank" rel="noreferrer" className="inline-link">
+          {part}
+        </a>
+      )
+    }
+    return part
+  })
+}
+
+function findPendingImportIntent(messages: ChatMessage[]): ImportIntent | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (message.role !== 'assistant') {
+      continue
+    }
+
+    const action = toOpenImportPanelUiAction(message.toolResult)
+    if (action) {
+      return {
+        messageId: message.id,
+        bankAccountId: action.bank_account_id,
+        bankAccountName: action.bank_account_name,
+        acceptedTypes: action.accepted_types ?? ['csv', 'pdf'],
+        source: 'ui_action',
+      }
+    }
+
+    const legacyRequest = toLegacyImportUiRequest(message.toolResult)
+    if (legacyRequest) {
+      return {
+        messageId: message.id,
+        bankAccountId: legacyRequest.bank_account_id,
+        bankAccountName: legacyRequest.bank_account_name,
+        acceptedTypes: legacyRequest.accepted_types ?? ['csv', 'pdf'],
+        source: 'ui_request',
+      }
+    }
+  }
+
+  return null
+}
+
 export function ChatPage({ email }: ChatPageProps) {
   const [message, setMessage] = useState('')
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [toast, setToast] = useState<ToastState>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [hasToken, setHasToken] = useState(false)
   const [isRefreshingSession, setIsRefreshingSession] = useState(false)
   const [pendingMerchantAliasesCount, setPendingMerchantAliasesCount] = useState(0)
   const [isResolvingPendingAliases, setIsResolvingPendingAliases] = useState(false)
   const [resolvePendingAliasesFeedback, setResolvePendingAliasesFeedback] = useState<string | null>(null)
-  const envDebugEnabled = import.meta.env.VITE_UI_DEBUG === 'true'
   const [debugMode, setDebugMode] = useState(false)
-  const apiBaseUrl = useMemo(() => {
-    const rawBaseUrl = import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:8000'
-    return rawBaseUrl.replace(/\/+$/, '')
-  }, [])
+  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([])
+  const [selectedBankAccountId, setSelectedBankAccountId] = useState('')
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false)
+  const [isImportDialogOpen, setIsImportDialogOpen] = useState(false)
+  const [autoOpenImportPicker, setAutoOpenImportPicker] = useState(false)
+  const envDebugEnabled = import.meta.env.VITE_UI_DEBUG === 'true'
+  const apiBaseUrl = useMemo(() => (import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:8000').replace(/\/+$/, ''), [])
   const messagesRef = useRef<HTMLDivElement | null>(null)
   const executedPdfMessageIdsRef = useRef<Set<string>>(new Set())
-  const assistantMessagesCount = useMemo(
-    () => messages.filter((chatMessage) => chatMessage.role === 'assistant').length,
-    [messages],
-  )
+  const shouldAutoScrollRef = useRef(true)
+  const previousIntentMessageIdRef = useRef<string | null>(null)
+
+  const pendingImportIntent = useMemo(() => findPendingImportIntent(messages), [messages])
+  const isImportRequired = pendingImportIntent !== null
+  const hasUnauthorizedError = useMemo(() => error?.includes('(401)') ?? false, [error])
+  const statusBadge = debugMode ? 'Debug' : isImportRequired ? 'Onboarding' : 'Prêt'
+
+  useEffect(() => {
+    if (!toast) {
+      return
+    }
+    const timeoutId = window.setTimeout(() => setToast(null), 3500)
+    return () => window.clearTimeout(timeoutId)
+  }, [toast])
 
   useEffect(() => {
     const storedDebugMode = localStorage.getItem('debugMode')
@@ -195,17 +225,16 @@ export function ChatPage({ email }: ChatPageProps) {
     if (!hasToken) {
       return
     }
-
-    const cleanup = installSessionResetOnPageExit(() => {
+    return installSessionResetOnPageExit(() => {
       void resetSession({ keepalive: true, timeoutMs: 1500 })
     })
-
-    return cleanup
   }, [hasToken])
 
   useEffect(() => {
     if (!hasToken) {
       setPendingMerchantAliasesCount(0)
+      setBankAccounts([])
+      setSelectedBankAccountId('')
       return
     }
 
@@ -213,16 +242,31 @@ export function ChatPage({ email }: ChatPageProps) {
 
     getPendingMerchantAliasesCount()
       .then((result) => {
-        if (!active) {
-          return
+        if (active) {
+          setPendingMerchantAliasesCount(Math.max(0, result.pending_total_count || 0))
         }
-        setPendingMerchantAliasesCount(Math.max(0, result.pending_total_count || 0))
       })
       .catch(() => {
+        if (active) {
+          setPendingMerchantAliasesCount(0)
+        }
+      })
+
+    listBankAccounts()
+      .then((result) => {
         if (!active) {
           return
         }
-        setPendingMerchantAliasesCount(0)
+        setBankAccounts(result.items)
+        if (result.items.length > 0) {
+          setSelectedBankAccountId((current) => current || result.items[0].id)
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setBankAccounts([])
+          setSelectedBankAccountId('')
+        }
       })
 
     return () => {
@@ -230,54 +274,16 @@ export function ChatPage({ email }: ChatPageProps) {
     }
   }, [hasToken])
 
-  const isConnected = useMemo(() => Boolean(email), [email])
-  const pendingImportRequest = useMemo(() => {
-    for (let index = messages.length - 1; index >= 0; index -= 1) {
-      const chatMessage = messages[index]
-      if (chatMessage.role !== 'assistant') {
-        continue
-      }
-
-      const uiRequest = toImportUiRequest(chatMessage.toolResult)
-      if (uiRequest) {
-        return { messageId: chatMessage.id, uiRequest }
-      }
-    }
-
-    return null
-  }, [messages])
-  const isImportRequired = pendingImportRequest !== null
-  const canSubmit = message.trim().length > 0 && !isLoading && !isImportRequired
-  const hasUnauthorizedError = useMemo(() => error?.includes('(401)') ?? false, [error])
-
-  useEffect(() => {
-    if (!assistantMessagesCount) {
-      return
-    }
-
-    if (messagesRef.current) {
-      messagesRef.current.scrollTop = messagesRef.current.scrollHeight
-    }
-  }, [assistantMessagesCount])
-
-
-
   useEffect(() => {
     const pendingPdfMessages = messages.filter((chatMessage) => {
       if (chatMessage.role !== 'assistant') {
         return false
       }
-
       if (executedPdfMessageIdsRef.current.has(chatMessage.id)) {
         return false
       }
-
       return toPdfUiRequest(chatMessage.toolResult) !== null
     })
-
-    if (pendingPdfMessages.length === 0) {
-      return
-    }
 
     for (const chatMessage of pendingPdfMessages) {
       const pdfUiRequest = claimPdfUiRequestExecution(
@@ -289,21 +295,41 @@ export function ChatPage({ email }: ChatPageProps) {
         continue
       }
       openPdfFromUrl(pdfUiRequest.url).catch((caughtError) => {
-        const errorMessage = caughtError instanceof Error ? caughtError.message : 'Impossible d’ouvrir le rapport PDF'
-        setError(errorMessage)
+        setError(caughtError instanceof Error ? caughtError.message : 'Impossible d’ouvrir le rapport PDF')
       })
     }
   }, [messages])
 
+  useEffect(() => {
+    const messageContainer = messagesRef.current
+    if (!messageContainer || !shouldAutoScrollRef.current) {
+      return
+    }
+    messageContainer.scrollTop = messageContainer.scrollHeight
+  }, [messages, isLoading])
+
+  useEffect(() => {
+    if (!pendingImportIntent) {
+      previousIntentMessageIdRef.current = null
+      return
+    }
+
+    const isNewIntent = previousIntentMessageIdRef.current !== pendingImportIntent.messageId
+    if (!isNewIntent) {
+      return
+    }
+
+    previousIntentMessageIdRef.current = pendingImportIntent.messageId
+    setIsImportDialogOpen(true)
+    setAutoOpenImportPicker(true)
+  }, [pendingImportIntent])
+
   async function handleLogout() {
     setError(null)
-
     await logoutWithSessionReset({
       resetSession: () => resetSession({ timeoutMs: 1500 }),
       signOut: () => supabase.auth.signOut(),
-      onLogoutError: () => {
-        setError('Impossible de vous déconnecter pour le moment. Veuillez réessayer.')
-      },
+      onLogoutError: () => setError('Impossible de vous déconnecter pour le moment. Veuillez réessayer.'),
     })
   }
 
@@ -314,7 +340,6 @@ export function ChatPage({ email }: ChatPageProps) {
 
     setIsRefreshingSession(true)
     setError(null)
-
     try {
       const { data, error: refreshError } = await supabase.auth.refreshSession()
       if (refreshError || !data.session?.access_token) {
@@ -333,31 +358,23 @@ export function ChatPage({ email }: ChatPageProps) {
     setResolvePendingAliasesFeedback(null)
     setIsResolvingPendingAliases(true)
     setError(null)
-
     try {
       const result = await resolvePendingMerchantAliases({ limit: 20, max_batches: 10 })
       const applied = Number(result.stats.applied ?? 0)
       const failed = Number(result.stats.failed ?? 0)
       const pendingAfter = result.pending_after ?? 0
       setPendingMerchantAliasesCount(Math.max(0, pendingAfter))
-      setResolvePendingAliasesFeedback(
-        `Résolution terminée: ${applied} appliqués, ${failed} failed, pending_after=${pendingAfter}.`,
-      )
+      setResolvePendingAliasesFeedback(`Résolution terminée: ${applied} appliqués, ${failed} failed, pending_after=${pendingAfter}.`)
     } catch (caughtError) {
-      const errorMessage = caughtError instanceof Error ? caughtError.message : 'Erreur inconnue'
-      setResolvePendingAliasesFeedback(errorMessage)
+      setResolvePendingAliasesFeedback(caughtError instanceof Error ? caughtError.message : 'Erreur inconnue')
     } finally {
       setIsResolvingPendingAliases(false)
     }
   }
 
   async function handleHardReset() {
-    if (!window.confirm('Confirmer le reset complet des données de votre profil de test ?')) {
-      return
-    }
-    if (!window.confirm('Dernière confirmation: cette action est irréversible. Continuer ?')) {
-      return
-    }
+    if (!window.confirm('Confirmer le reset complet des données de votre profil de test ?')) return
+    if (!window.confirm('Dernière confirmation: cette action est irréversible. Continuer ?')) return
 
     setError(null)
     try {
@@ -377,219 +394,520 @@ export function ChatPage({ email }: ChatPageProps) {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (isImportRequired) {
-      return
-    }
-
     const trimmedMessage = message.trim()
-    if (!trimmedMessage || isLoading) {
+    if (!trimmedMessage || isLoading || isImportRequired) {
       return
     }
 
-    const userMessage: ChatMessage = {
-      id: crypto.randomUUID(),
-      role: 'user',
-      content: trimmedMessage,
-    }
-
-    setMessages((previousMessages) => [...previousMessages, userMessage])
+    setMessages((previous) => [...previous, { id: crypto.randomUUID(), role: 'user', content: trimmedMessage, createdAt: Date.now() }])
     setMessage('')
     setError(null)
     setIsLoading(true)
 
     try {
       const response = await sendChatMessage(trimmedMessage, { debug: debugMode })
-      const assistantMessage: ChatMessage = {
-        id: crypto.randomUUID(),
-        role: 'assistant',
-        content: response.reply,
-        toolResult: response.tool_result,
-        plan: response.plan,
-        debugPayload: response,
-      }
-      setMessages((previousMessages) => [...previousMessages, assistantMessage])
+      setMessages((previous) => [
+        ...previous,
+        {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          content: response.reply,
+          createdAt: Date.now(),
+          toolResult: response.tool_result,
+          plan: response.plan,
+          debugPayload: response,
+        },
+      ])
     } catch (caughtError) {
-      const errorMessage = caughtError instanceof Error ? caughtError.message : 'Erreur inconnue'
-      setError(errorMessage)
+      setError(caughtError instanceof Error ? caughtError.message : 'Erreur inconnue')
     } finally {
       setIsLoading(false)
     }
   }
 
   return (
-    <main className="chat-shell">
-      <section className="chat-card">
-        <header className="chat-header">
-          <h1>Assistant financier IA</h1>
-          <button type="button" className="secondary-button" onClick={handleLogout}>
-            Se déconnecter
-          </button>
-        </header>
+    <main className="chat-layout">
+      <button type="button" className="mobile-menu-button secondary-button" onClick={() => setIsSidebarOpen((open) => !open)}>
+        Menu
+      </button>
 
-        {envDebugEnabled ? (
-          <div className="debug-banner" role="status" aria-live="polite">
-            Connecté: {isConnected ? 'oui' : 'non'} | Email: {email ?? 'inconnu'} | Token: {hasToken ? 'présent' : 'absent'} |
-            API: {apiBaseUrl}
-          </div>
-        ) : null}
+      <Sidebar
+        isOpen={isSidebarOpen}
+        statusBadge={statusBadge}
+        debugMode={debugMode}
+        setDebugMode={setDebugMode}
+        pendingMerchantAliasesCount={pendingMerchantAliasesCount}
+        isResolvingPendingAliases={isResolvingPendingAliases}
+        onResolvePendingAliases={handleResolvePendingAliases}
+        resolvePendingAliasesFeedback={resolvePendingAliasesFeedback}
+        bankAccounts={bankAccounts}
+        selectedBankAccountId={selectedBankAccountId}
+        setSelectedBankAccountId={setSelectedBankAccountId}
+        onOpenImport={() => setIsImportDialogOpen(true)}
+        onHardReset={handleHardReset}
+        envDebugEnabled={envDebugEnabled}
+        apiBaseUrl={apiBaseUrl}
+        email={email}
+        hasToken={hasToken}
+        onQuestionClick={(question) => setMessage(question)}
+      />
 
-        <section className="import-panel">
-          <h2>Paramètres du chat</h2>
-          <label>
-            <input type="checkbox" checked={debugMode} onChange={(event) => setDebugMode(event.target.checked)} /> Debug
-          </label>
-          {pendingMerchantAliasesCount > 0 ? (
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={() => void handleResolvePendingAliases()}
-              disabled={isResolvingPendingAliases}
-            >
-              {isResolvingPendingAliases ? 'Résolution en cours…' : 'Résoudre les marchands restants'}
-            </button>
-          ) : null}
-          {debugMode ? (
-            <button type="button" className="secondary-button" onClick={() => void handleHardReset()}>
-              Reset (tests)
-            </button>
-          ) : null}
-          {resolvePendingAliasesFeedback ? <p className="placeholder-text">{resolvePendingAliasesFeedback}</p> : null}
-        </section>
+      <section className="chat-panel">
+        <ChatHeader onLogout={handleLogout} />
 
-        <div className="messages" aria-live="polite" ref={messagesRef}>
-          {messages.length === 0 ? <p className="placeholder-text">Commencez la conversation avec l’IA.</p> : null}
-          {messages.map((chatMessage) => {
-            const inlineImportRequest = chatMessage.role === 'assistant' ? toImportUiRequest(chatMessage.toolResult) : null
+        <MessageList
+          messages={messages}
+          isLoading={isLoading}
+          debugMode={debugMode}
+          messagesRef={messagesRef}
+          onScroll={(event) => {
+            const element = event.currentTarget
+            const threshold = 48
+            shouldAutoScrollRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < threshold
+          }}
+          onStartConversation={() => setMessage('Analyse mes dépenses des 30 derniers jours.')}
+          onOpenImport={() => setIsImportDialogOpen(true)}
+        />
 
-            return (
-              <article key={chatMessage.id} className={`message message-${chatMessage.role}`}>
-                <p className="message-role">{chatMessage.role === 'user' ? 'Vous' : 'Assistant'}</p>
-                <p>{chatMessage.content}</p>
-                {inlineImportRequest ? (
-                  <ImportInline
-                    uiRequest={inlineImportRequest}
-                    onImported={(successText, debugPayload) => {
-                      setMessages((previousMessages) =>
-                        consumeImportRequestAndAppendSuccessMessage(previousMessages, chatMessage.id, successText, debugPayload),
-                      )
-                    }}
-                  />
-                ) : null}
-                {debugMode && chatMessage.role === 'assistant' ? <DebugPanel payload={chatMessage.debugPayload ?? null} /> : null}
-            </article>
-            )
-          })}
-          {isLoading ? <p className="placeholder-text">Envoi...</p> : null}
-        </div>
-
-        <form onSubmit={handleSubmit} className="chat-form">
-          <input
-            type="text"
-            value={message}
-            onChange={(event) => setMessage(event.target.value)}
-            placeholder="Posez une question sur vos finances..."
-            aria-label="Message"
-            disabled={isImportRequired}
-          />
-          <button type="submit" disabled={!canSubmit}>
-            {isLoading ? 'Envoi...' : 'Envoyer'}
-          </button>
-        </form>
-        {isImportRequired ? <p className="placeholder-text">Import requis avant de continuer.</p> : null}
+        <Composer
+          message={message}
+          setMessage={setMessage}
+          onSubmit={handleSubmit}
+          isLoading={isLoading}
+          disabled={isImportRequired}
+        />
 
         {error ? <p className="error-text">{error}</p> : null}
-        {hasUnauthorizedError && isConnected ? (
-          <div>
+        {hasUnauthorizedError && email ? (
+          <div className="session-recovery">
             <button type="button" className="secondary-button" onClick={handleRefreshSession} disabled={isRefreshingSession}>
               {isRefreshingSession ? 'Rafraîchissement...' : 'Rafraîchir la session'}
             </button>
-            <p className="placeholder-text">Si le problème persiste, reconnectez-vous pour renouveler vos identifiants.</p>
+            <p className="subtle-text">Si le problème persiste, reconnectez-vous pour renouveler vos identifiants.</p>
           </div>
         ) : null}
       </section>
+
+      <ImportDialog
+        isOpen={isImportDialogOpen}
+        autoOpenPicker={autoOpenImportPicker}
+        onAutoOpenHandled={() => setAutoOpenImportPicker(false)}
+        onClose={() => setIsImportDialogOpen(false)}
+        pendingImportIntent={pendingImportIntent}
+        bankAccounts={bankAccounts}
+        selectedBankAccountId={selectedBankAccountId}
+        onSelectBankAccount={setSelectedBankAccountId}
+        onImportSuccess={(resultMessage, debugPayload, sourceMessageId) => {
+          setMessages((previous) => {
+            if (!sourceMessageId) {
+              return [...previous, { id: crypto.randomUUID(), role: 'assistant', content: resultMessage, createdAt: Date.now(), debugPayload }]
+            }
+
+            const index = previous.findIndex((item) => item.id === sourceMessageId)
+            if (index < 0) {
+              return [...previous, { id: crypto.randomUUID(), role: 'assistant', content: resultMessage, createdAt: Date.now(), debugPayload }]
+            }
+
+            const updated = [...previous]
+            updated[index] = { ...updated[index], toolResult: null }
+            updated.splice(index + 1, 0, {
+              id: crypto.randomUUID(),
+              role: 'assistant',
+              content: resultMessage,
+              createdAt: Date.now(),
+              debugPayload,
+            })
+            return updated
+          })
+          setIsImportDialogOpen(false)
+          setToast({ type: 'success', message: 'Import terminé. Tu peux continuer la conversation.' })
+        }}
+        onImportError={(messageText) => setToast({ type: 'error', message: messageText })}
+      />
+
+      <Toast toast={toast} />
     </main>
   )
 }
 
-type ImportInlineProps = {
-  uiRequest: ImportUiRequest
-  onImported: (successText: string, debugPayload: unknown) => void
+type SidebarProps = {
+  isOpen: boolean
+  statusBadge: string
+  debugMode: boolean
+  setDebugMode: (value: boolean) => void
+  pendingMerchantAliasesCount: number
+  isResolvingPendingAliases: boolean
+  onResolvePendingAliases: () => void
+  resolvePendingAliasesFeedback: string | null
+  bankAccounts: BankAccount[]
+  selectedBankAccountId: string
+  setSelectedBankAccountId: (value: string) => void
+  onOpenImport: () => void
+  onHardReset: () => void
+  envDebugEnabled: boolean
+  apiBaseUrl: string
+  email?: string
+  hasToken: boolean
+  onQuestionClick: (question: string) => void
 }
 
-function ImportInline({ uiRequest, onImported }: ImportInlineProps) {
-  const [isImporting, setIsImporting] = useState(false)
-  const [importError, setImportError] = useState<string | null>(null)
-  const fileInputRef = useRef<HTMLInputElement | null>(null)
+function Sidebar(props: SidebarProps) {
+  return (
+    <aside className={`sidebar ${props.isOpen ? 'open' : ''}`}>
+      <section className="card sidebar-card">
+        <h2>Profil & Actions</h2>
+        <p className="status-badge">{props.statusBadge}</p>
+        <button type="button" onClick={props.onOpenImport}>
+          Importer un relevé
+        </button>
 
-  const fileAccept = useMemo(() => {
-    const acceptedTypes = uiRequest.accepted_types
-    if (!acceptedTypes || acceptedTypes.length === 0) {
-      return '.csv,.pdf'
-    }
+        <label className="field-label" htmlFor="bank-account-select">
+          Compte bancaire
+        </label>
+        <select
+          id="bank-account-select"
+          value={props.selectedBankAccountId}
+          onChange={(event) => props.setSelectedBankAccountId(event.target.value)}
+        >
+          {props.bankAccounts.length === 0 ? <option value="">Aucun compte</option> : null}
+          {props.bankAccounts.map((account) => (
+            <option key={account.id} value={account.id}>
+              {account.name}
+            </option>
+          ))}
+        </select>
 
-    const extensions = acceptedTypes
-      .map((type) => type.trim().replace(/^\./, '').toLowerCase())
-      .filter((type) => type.length > 0)
-      .map((type) => `.${type}`)
+        <label className="switch-row">
+          <input type="checkbox" checked={props.debugMode} onChange={(event) => props.setDebugMode(event.target.checked)} />
+          Mode debug
+        </label>
 
-    return extensions.length > 0 ? extensions.join(',') : '.csv,.pdf'
-  }, [uiRequest.accepted_types])
+        {props.pendingMerchantAliasesCount > 0 ? (
+          <button type="button" className="secondary-button" onClick={props.onResolvePendingAliases} disabled={props.isResolvingPendingAliases}>
+            {props.isResolvingPendingAliases ? 'Résolution en cours…' : 'Résoudre les marchands restants'}
+          </button>
+        ) : null}
 
-  async function handleImportFileSelection(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0]
-    if (!file || isImporting) {
-      return
-    }
+        {props.debugMode ? (
+          <button type="button" className="secondary-button" onClick={props.onHardReset}>
+            Reset (tests)
+          </button>
+        ) : null}
 
-    const allowedExtensions = (uiRequest.accepted_types ?? ['csv', 'pdf']).map((item) => item.toLowerCase())
-    const extension = file.name.split('.').pop()?.toLowerCase()
-    if (!extension || !allowedExtensions.includes(extension)) {
-      setImportError('Format invalide. Sélectionne un fichier CSV ou PDF.')
-      event.target.value = ''
-      return
-    }
+        {props.resolvePendingAliasesFeedback ? <p className="subtle-text">{props.resolvePendingAliasesFeedback}</p> : null}
+      </section>
 
-    setImportError(null)
-    setIsImporting(true)
+      <section className="card sidebar-card">
+        <h3>Exemples utiles</h3>
+        <div className="chip-list">
+          {EXAMPLE_QUESTIONS.map((question) => (
+            <button key={question} type="button" className="chip" onClick={() => props.onQuestionClick(question)}>
+              {question}
+            </button>
+          ))}
+        </div>
+      </section>
 
-    try {
-      const contentBase64 = await readFileAsBase64(file)
-      const result = await importReleves({
-        files: [{ filename: file.name, content_base64: contentBase64 }],
-        bank_account_id: uiRequest.bank_account_id,
-        import_mode: 'commit',
-        modified_action: 'replace',
-      })
+      {props.envDebugEnabled ? (
+        <section className="card sidebar-card debug-banner" role="status" aria-live="polite">
+          Connecté: {props.email ? 'oui' : 'non'} · Token: {props.hasToken ? 'présent' : 'absent'} · API: {props.apiBaseUrl}
+        </section>
+      ) : null}
+    </aside>
+  )
+}
 
-      onImported(buildImportSuccessText(result, uiRequest), result)
-    } catch (caughtError) {
-      const errorMessage = caughtError instanceof Error ? caughtError.message : 'Erreur inconnue'
-      setImportError(errorMessage)
-    } finally {
-      if (fileInputRef.current) {
-        fileInputRef.current.value = ''
-      }
-      setIsImporting(false)
+function ChatHeader({ onLogout }: { onLogout: () => void }) {
+  return (
+    <header className="chat-header sticky-top">
+      <div>
+        <h1>Assistant financier IA</h1>
+        <p className="subtle-text">Analyse tes relevés, classe tes dépenses et répond à tes questions rapidement.</p>
+      </div>
+      <button type="button" className="secondary-button" onClick={onLogout}>
+        Se déconnecter
+      </button>
+    </header>
+  )
+}
+
+type MessageListProps = {
+  messages: ChatMessage[]
+  isLoading: boolean
+  debugMode: boolean
+  messagesRef: RefObject<HTMLDivElement | null>
+  onScroll: (event: UIEvent<HTMLDivElement>) => void
+  onStartConversation: () => void
+  onOpenImport: () => void
+}
+
+function MessageList({ messages, isLoading, debugMode, messagesRef, onScroll, onStartConversation, onOpenImport }: MessageListProps) {
+  return (
+    <div className="messages card" aria-live="polite" ref={messagesRef} onScroll={onScroll}>
+      {messages.length === 0 ? <EmptyState onStartConversation={onStartConversation} onOpenImport={onOpenImport} /> : null}
+      {messages.map((chatMessage) => (
+        <MessageBubble key={chatMessage.id} message={chatMessage} debugMode={debugMode} />
+      ))}
+      {isLoading ? (
+        <div className="loading-state">
+          <span className="spinner" />
+          <p className="subtle-text">L’assistant réfléchit…</p>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function EmptyState({ onStartConversation, onOpenImport }: { onStartConversation: () => void; onOpenImport: () => void }) {
+  return (
+    <section className="empty-state">
+      <h3>Bienvenue 👋</h3>
+      <p className="subtle-text">Je peux t’aider à comprendre tes dépenses, tes revenus et tes tendances.</p>
+      <div className="empty-actions">
+        <button type="button" onClick={onStartConversation}>
+          Commencer
+        </button>
+        <button type="button" className="secondary-button" onClick={onOpenImport}>
+          Importer un relevé
+        </button>
+      </div>
+    </section>
+  )
+}
+
+function MessageBubble({ message, debugMode }: { message: ChatMessage; debugMode: boolean }) {
+  const dateLabel = new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  const hasPdfAction = toPdfUiRequest(message.toolResult) !== null
+
+  return (
+    <article className={`message message-${message.role}`}>
+      <p className="message-role">{roleLabel(message.role)}</p>
+      <p className="message-content">{renderContentWithLinks(message.content)}</p>
+      <div className="message-meta-row">
+        <span className="subtle-text">{dateLabel}</span>
+        {hasPdfAction ? <span className="pdf-pill">PDF</span> : null}
+      </div>
+      {debugMode && message.role === 'assistant' ? <DebugPanel payload={message.debugPayload ?? null} /> : null}
+    </article>
+  )
+}
+
+function Composer({
+  message,
+  setMessage,
+  onSubmit,
+  isLoading,
+  disabled,
+}: {
+  message: string
+  setMessage: (next: string) => void
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void
+  isLoading: boolean
+  disabled: boolean
+}) {
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+
+  useEffect(() => {
+    if (!textareaRef.current) return
+    textareaRef.current.style.height = 'auto'
+    textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 128)}px`
+  }, [message])
+
+  function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault()
+      const form = event.currentTarget.form
+      form?.requestSubmit()
     }
   }
 
   return (
-    <section className="import-panel" aria-live="polite">
-      <p className="placeholder-text">Compte: {uiRequest.bank_account_name || uiRequest.bank_account_id}</p>
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept={fileAccept}
-        onChange={handleImportFileSelection}
-        style={{ display: 'none' }}
-        disabled={isImporting}
+    <form onSubmit={onSubmit} className="composer sticky-bottom">
+      <textarea
+        ref={textareaRef}
+        value={message}
+        onChange={(event) => setMessage(event.target.value)}
+        onKeyDown={handleComposerKeyDown}
+        placeholder={disabled ? 'Import requis avant de continuer.' : 'Pose une question sur tes finances…'}
+        aria-label="Message"
+        rows={1}
+        disabled={disabled}
       />
-      <button type="button" onClick={() => fileInputRef.current?.click()} disabled={isImporting}>
-        Parcourir...
+      <button type="submit" disabled={isLoading || disabled || message.trim().length === 0}>
+        Envoyer
       </button>
-      {isImporting ? <progress aria-label="Import en cours" /> : null}
-      {isImporting ? <p className="placeholder-text">Import en cours...</p> : null}
-      {importError ? <p className="error-text">{importError}</p> : null}
-    </section>
+    </form>
   )
+}
+
+type ImportDialogProps = {
+  isOpen: boolean
+  autoOpenPicker: boolean
+  onAutoOpenHandled: () => void
+  onClose: () => void
+  pendingImportIntent: ImportIntent | null
+  bankAccounts: BankAccount[]
+  selectedBankAccountId: string
+  onSelectBankAccount: (value: string) => void
+  onImportSuccess: (resultMessage: string, debugPayload: unknown, sourceMessageId?: string) => void
+  onImportError: (messageText: string) => void
+}
+
+function ImportDialog({
+  isOpen,
+  autoOpenPicker,
+  onAutoOpenHandled,
+  onClose,
+  pendingImportIntent,
+  bankAccounts,
+  selectedBankAccountId,
+  onSelectBankAccount,
+  onImportSuccess,
+  onImportError,
+}: ImportDialogProps) {
+  const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [isImporting, setIsImporting] = useState(false)
+  const [progress, setProgress] = useState(0)
+  const inputRef = useRef<HTMLInputElement | null>(null)
+
+  const acceptedTypes = pendingImportIntent?.acceptedTypes ?? ['csv', 'pdf']
+  const accept = acceptedTypes.map((type) => `.${type.replace(/^\./, '')}`).join(',')
+
+  useEffect(() => {
+    if (autoOpenPicker && isOpen) {
+      inputRef.current?.click()
+      onAutoOpenHandled()
+    }
+  }, [autoOpenPicker, isOpen, onAutoOpenHandled])
+
+  useEffect(() => {
+    if (!isImporting) {
+      setProgress(0)
+      return
+    }
+
+    const interval = window.setInterval(() => {
+      setProgress((value) => (value >= 90 ? value : value + 10))
+    }, 180)
+
+    return () => window.clearInterval(interval)
+  }, [isImporting])
+
+  if (!isOpen) {
+    return null
+  }
+
+  const targetAccountId = pendingImportIntent?.bankAccountId ?? selectedBankAccountId
+  const hasAccountChoice = targetAccountId || bankAccounts.length > 0
+
+  async function handleImport() {
+    if (!selectedFile || isImporting) {
+      return
+    }
+
+    if (!hasAccountChoice) {
+      onImportError('Aucun compte bancaire disponible pour l’import.')
+      return
+    }
+
+    const extension = selectedFile.name.split('.').pop()?.toLowerCase()
+    if (!extension || !acceptedTypes.includes(extension)) {
+      onImportError('Format invalide. Sélectionne un fichier compatible.')
+      return
+    }
+
+    setIsImporting(true)
+    try {
+      const contentBase64 = await readFileAsBase64(selectedFile)
+      const result = await importReleves({
+        files: [{ filename: selectedFile.name, content_base64: contentBase64 }],
+        bank_account_id: targetAccountId || undefined,
+        import_mode: 'commit',
+        modified_action: 'replace',
+      })
+      setProgress(100)
+      onImportSuccess(buildImportSuccessText(result, {
+        messageId: pendingImportIntent?.messageId ?? crypto.randomUUID(),
+        bankAccountId: targetAccountId || undefined,
+        bankAccountName:
+          pendingImportIntent?.bankAccountName ?? bankAccounts.find((item) => item.id === targetAccountId)?.name,
+        acceptedTypes,
+        source: pendingImportIntent?.source ?? 'ui_request',
+      }), result, pendingImportIntent?.messageId)
+      setSelectedFile(null)
+    } catch (caughtError) {
+      onImportError(caughtError instanceof Error ? caughtError.message : 'Erreur inconnue pendant l’import')
+    } finally {
+      setIsImporting(false)
+    }
+  }
+
+  function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    if (file) {
+      setSelectedFile(file)
+    }
+  }
+
+  return (
+    <div className="dialog-backdrop" role="presentation" onClick={onClose}>
+      <section className="dialog card" role="dialog" aria-modal="true" aria-label="Importer un relevé" onClick={(event) => event.stopPropagation()}>
+        <h3>Importer un relevé</h3>
+        <p className="subtle-text">Ajoute ton fichier pour continuer l’analyse.</p>
+
+        <label className="dropzone" htmlFor="import-file-input">
+          <input id="import-file-input" ref={inputRef} type="file" accept={accept} onChange={handleFileChange} disabled={isImporting} />
+          <span>{selectedFile ? `Fichier: ${selectedFile.name}` : 'Dépose le fichier ici ou clique pour le choisir'}</span>
+          <small>{selectedFile ? formatFileSize(selectedFile.size) : `Formats acceptés: ${acceptedTypes.join(', ')}`}</small>
+        </label>
+
+        {pendingImportIntent?.bankAccountId ? (
+          <p className="subtle-text">Compte ciblé: {pendingImportIntent.bankAccountName ?? pendingImportIntent.bankAccountId}</p>
+        ) : (
+          <>
+            <label className="field-label" htmlFor="import-account-select">
+              Compte bancaire
+            </label>
+            <select
+              id="import-account-select"
+              value={selectedBankAccountId}
+              onChange={(event) => onSelectBankAccount(event.target.value)}
+              disabled={isImporting}
+            >
+              {bankAccounts.length === 0 ? <option value="">Aucun compte</option> : null}
+              {bankAccounts.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {account.name}
+                </option>
+              ))}
+            </select>
+          </>
+        )}
+
+        {isImporting ? (
+          <div>
+            <progress value={progress} max={100} aria-label="envoi" />
+            <p className="subtle-text">Envoi…</p>
+          </div>
+        ) : null}
+
+        <div className="dialog-actions">
+          <button type="button" className="secondary-button" onClick={onClose} disabled={isImporting}>
+            Annuler
+          </button>
+          <button type="button" onClick={() => void handleImport()} disabled={!selectedFile || isImporting}>
+            Importer
+          </button>
+        </div>
+      </section>
+    </div>
+  )
+}
+
+function Toast({ toast }: { toast: ToastState }) {
+  if (!toast) {
+    return null
+  }
+
+  return <div className={`toast ${toast.type === 'error' ? 'toast-error' : 'toast-success'}`}>{toast.message}</div>
 }
