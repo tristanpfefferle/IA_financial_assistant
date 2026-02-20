@@ -486,13 +486,11 @@ def _canonicalize_merchant(candidate: str) -> tuple[str, str, str] | None:
             filtered.append(cleaned_token)
         return filtered
 
-    filtered_tokens = _filter_tokens(all_tokens)
-    if all_tokens:
-        first_cleaned_token = re.sub(r"[^a-z0-9]", "", all_tokens[0])
-        if first_cleaned_token in _MERCHANT_GENERIC_HEADS:
-            filtered_after_head = _filter_tokens(all_tokens[1:])
-            if filtered_after_head:
-                filtered_tokens = filtered_after_head
+    first_cleaned_token = re.sub(r"[^a-z0-9]", "", all_tokens[0]) if all_tokens else ""
+    if first_cleaned_token in _MERCHANT_GENERIC_HEADS:
+        filtered_tokens = _filter_tokens(all_tokens[1:])
+    else:
+        filtered_tokens = _filter_tokens(all_tokens)
 
     if filtered_tokens:
         selected_tokens = filtered_tokens[:3]
@@ -501,8 +499,6 @@ def _canonicalize_merchant(candidate: str) -> tuple[str, str, str] | None:
             token.upper() if token in _MERCHANT_KNOWN_ACRONYMS else token[:1].upper() + token[1:]
             for token in selected_tokens
         )
-        if _normalize_text(display_name) in _MERCHANT_STOPWORDS:
-            return (alias_raw[:64], base_norm[:64], alias_raw)
         return (display_name[:64], name_norm[:64], alias_raw)
 
     return (alias_raw[:64], base_norm[:64], alias_raw)
