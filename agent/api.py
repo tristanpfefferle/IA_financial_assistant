@@ -2476,7 +2476,7 @@ def _fetch_spending_transactions(
     *,
     profile_id: UUID,
     payload: dict[str, Any],
-) -> tuple[list[SpendingTransactionRow], bool]:
+) -> tuple[list[SpendingTransactionRow], bool, bool]:
     """Fetch DEBIT_ONLY transactions for spending PDF detail page."""
 
     router = get_tool_router()
@@ -2492,15 +2492,15 @@ def _fetch_spending_transactions(
             extra={
                 "profile_id": str(profile_id),
                 "error_code": result.code.value,
-                "message": result.message,
+                "error_message": result.message,
             },
         )
-        return [], False
+        return [], False, True
 
     payload_dict = jsonable_encoder(result)
     items = payload_dict.get("items") if isinstance(payload_dict, dict) else None
     if not isinstance(items, list):
-        return [], False
+        return [], False, False
 
     rows: list[SpendingTransactionRow] = []
     for item in items:
@@ -2544,7 +2544,7 @@ def _fetch_spending_transactions(
 
     total = payload_dict.get("total") if isinstance(payload_dict, dict) else None
     truncated = isinstance(total, int) and total > len(rows)
-    return rows, truncated
+    return rows, truncated, False
 
 
 @app.get("/finance/reports/spending.pdf")
@@ -2617,7 +2617,7 @@ def get_spending_report_pdf(
             name = category_name if isinstance(category_name, str) and category_name.strip() else "Sans catégorie"
             category_rows.append(SpendingCategoryRow(name=name, amount=amount))
 
-    transactions, transactions_truncated = _fetch_spending_transactions(
+    transactions, transactions_truncated, transactions_unavailable = _fetch_spending_transactions(
         profile_id=profile_id,
         payload=payload,
     )
@@ -2640,6 +2640,7 @@ def get_spending_report_pdf(
             categories=category_rows,
             transactions=transactions,
             transactions_truncated=transactions_truncated,
+            transactions_unavailable=transactions_unavailable,
         )
     )
     return Response(

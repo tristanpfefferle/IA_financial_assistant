@@ -40,6 +40,7 @@ class SpendingReportData:
     categories: list[SpendingCategoryRow]
     transactions: list["SpendingTransactionRow"]
     transactions_truncated: bool = False
+    transactions_unavailable: bool = False
 
 
 @dataclass(slots=True)
@@ -128,11 +129,19 @@ class _FooterCanvas(Canvas):
 
 
 def _build_kpi_cards(data: SpendingReportData) -> Table:
+    styles = getSampleStyleSheet()
+    card_style = ParagraphStyle(
+        name="KpiCard",
+        parent=styles["BodyText"],
+        fontSize=10,
+        leading=14,
+        textColor=colors.HexColor("#1F2937"),
+    )
     cells = [
         [
-            Paragraph("<b>Total</b><br/>" + _format_amount(data.total, data.currency), getSampleStyleSheet()["BodyText"]),
-            Paragraph("<b># opérations</b><br/>" + str(data.count), getSampleStyleSheet()["BodyText"]),
-            Paragraph("<b>Moyenne</b><br/>" + _format_amount(data.average, data.currency), getSampleStyleSheet()["BodyText"]),
+            Paragraph("<b>Total dépenses</b><br/>" + _format_amount(data.total, data.currency), card_style),
+            Paragraph("<b>Nb opérations</b><br/>" + str(data.count), card_style),
+            Paragraph("<b>Moyenne</b><br/>" + _format_amount(data.average, data.currency), card_style),
         ]
     ]
     table = Table(cells, colWidths=[58 * mm, 58 * mm, 58 * mm])
@@ -153,15 +162,24 @@ def _build_kpi_cards(data: SpendingReportData) -> Table:
 
 
 def _build_transactions_table(data: SpendingReportData) -> Table:
+    display_limit = 250
+
+    def _truncate_text(value: str, max_length: int = 36) -> str:
+        if len(value) <= max_length:
+            return value
+        return value[: max_length - 1].rstrip() + "…"
+
     table_data = [["Date", "Marchand", "Catégorie", "Montant"]]
-    if not data.transactions:
+    if data.transactions_unavailable:
+        table_data.append(["-", "Détails indisponibles", "-", "-"])
+    elif not data.transactions:
         table_data.append(["-", "Aucune transaction", "-", _format_amount(Decimal("0"), data.currency)])
     else:
-        for row in data.transactions:
+        for row in data.transactions[:display_limit]:
             table_data.append(
                 [
                     row.date,
-                    row.merchant,
+                    _truncate_text(row.merchant),
                     row.category,
                     _format_amount(abs(row.amount), data.currency),
                 ]
@@ -198,17 +216,19 @@ def generate_spending_report_pdf(data: SpendingReportData) -> bytes:
     )
     styles = getSampleStyleSheet()
     section_title_style = ParagraphStyle(name="SectionTitle", parent=styles["Heading2"], spaceAfter=4, fontSize=12)
+    subtitle_style = ParagraphStyle(name="Subtitle", parent=styles["BodyText"], fontSize=9, textColor=colors.HexColor("#6B7280"))
 
     story = [
-        Paragraph("Rapport des dépenses", styles["Title"]),
-        Spacer(1, 4 * mm),
+        Paragraph("Rapport de dépenses", styles["Title"]),
+        Spacer(1, 1 * mm),
         Paragraph(f"Période: {data.period_label}", styles["BodyText"]),
+        Paragraph(f"Généré le {date.today().isoformat()}", subtitle_style),
         Spacer(1, 5 * mm),
         _build_kpi_cards(data),
         Spacer(1, 6 * mm),
     ]
 
-    story.append(Paragraph("Répartition par catégorie", section_title_style))
+    story.append(Paragraph("Répartition des dépenses", section_title_style))
     story.append(Spacer(1, 1 * mm))
     if not data.categories:
         story.append(Paragraph("Aucune transaction sur la période.", styles["BodyText"]))
@@ -220,7 +240,7 @@ def generate_spending_report_pdf(data: SpendingReportData) -> bytes:
         total_categories = sum((row.amount for row in data.categories), Decimal("0"))
         top10 = sorted(data.categories, key=lambda row: row.amount, reverse=True)[:10]
         story.append(Paragraph("Top catégories", section_title_style))
-        table_data = [["Catégorie", "Montant", "%"]]
+        table_data = [["Catégorie", "Montant", "Part (%)"]]
         for row in top10:
             ratio = (row.amount / total_categories * Decimal("100")) if total_categories > 0 else Decimal("0")
             table_data.append([
@@ -246,12 +266,15 @@ def generate_spending_report_pdf(data: SpendingReportData) -> bytes:
         story.append(table)
 
     story.append(PageBreak())
-    story.append(Paragraph("Détails des transactions", styles["Title"]))
+    story.append(Paragraph("Détail des transactions", styles["Title"]))
     story.append(Spacer(1, 2 * mm))
     story.append(Paragraph(f"Période: {data.period_label}", styles["BodyText"]))
     story.append(Spacer(1, 4 * mm))
-    if data.transactions_truncated:
-        story.append(Paragraph("Liste tronquée aux 500 premières opérations.", styles["Italic"]))
+    if data.transactions_truncated or len(data.transactions) > 250:
+        story.append(Paragraph("Liste tronquée à 250 transactions (max 500 récupérées).", styles["Italic"]))
+        story.append(Spacer(1, 2 * mm))
+    if data.transactions_unavailable:
+        story.append(Paragraph("Les détails des transactions sont indisponibles pour cette période.", styles["Italic"]))
         story.append(Spacer(1, 2 * mm))
     story.append(_build_transactions_table(data))
 
