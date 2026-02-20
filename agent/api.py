@@ -27,6 +27,7 @@ from agent.tool_router import ToolRouter
 from agent.bank_catalog import extract_canonical_banks
 from agent.merchant_cleanup import MerchantSuggestion, run_merchant_cleanup
 from agent.merchant_alias_resolver import resolve_pending_map_alias
+from agent.import_label_normalizer import extract_observed_alias_from_label
 from backend.factory import build_backend_tool_service
 from backend.auth.supabase_auth import UnauthorizedError, get_user_from_bearer_token
 from backend.db.supabase_client import SupabaseClient, SupabaseSettings
@@ -560,7 +561,7 @@ def _bootstrap_merchants_from_imported_releves(
         processed_count += 1
         payee = " ".join(str(row.get("payee") or "").split())
         libelle = " ".join(str(row.get("libelle") or "").split())
-        observed_alias = payee or libelle
+        observed_alias = payee or extract_observed_alias_from_label(libelle) or libelle
         releve_id_raw = row.get("id")
 
         if not observed_alias or not releve_id_raw:
