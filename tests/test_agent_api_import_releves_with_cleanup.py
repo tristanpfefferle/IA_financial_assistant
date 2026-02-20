@@ -466,6 +466,46 @@ def test_bootstrap_merchants_from_imported_releves_unknown_alias_creates_deduped
     assert {row["observed_alias_norm"] for row in repo.suggestion_rows} == {"unknown shop"}
 
 
+def test_bootstrap_merchants_from_imported_releves_uses_short_observed_alias_from_ubs_label() -> None:
+    releve_id = UUID("aaaaaaaa-3333-3333-3333-333333333333")
+
+    class _Repo:
+        def __init__(self) -> None:
+            self.suggestion_rows: list[dict] = []
+
+        def list_releves_without_merchant(self, *, profile_id: UUID, limit: int = 500):
+            return [
+                {
+                    "id": str(releve_id),
+                    "payee": None,
+                    "libelle": "XXXX XXXX XXXX 7708;TRISTAN PFEFFERLE Paiement à une carte Account no. IBAN: ...",
+                }
+            ]
+
+        def list_profile_categories(self, *, profile_id: UUID):
+            return []
+
+        def find_merchant_entity_by_alias_norm(self, *, alias_norm: str):
+            return None
+
+        def create_map_alias_suggestions(self, *, profile_id: UUID, rows: list[dict]):
+            self.suggestion_rows = rows
+            return 1
+
+    repo = _Repo()
+
+    summary = agent_api._bootstrap_merchants_from_imported_releves(
+        profiles_repository=repo,
+        profile_id=PROFILE_ID,
+        limit=50,
+    )
+
+    assert summary == {"processed_count": 1, "linked_count": 0, "skipped_count": 1}
+    assert len(repo.suggestion_rows) == 1
+    assert repo.suggestion_rows[0]["observed_alias"] == "Paiement à une carte"
+    assert repo.suggestion_rows[0]["observed_alias_norm"] == "paiement a une carte"
+
+
 def test_bootstrap_merchants_from_imported_releves_does_not_fallback_to_suggested_category_label() -> None:
     entity_id = UUID("44444444-4444-4444-4444-444444444444")
     releve_id = UUID("55555555-5555-5555-5555-555555555555")
