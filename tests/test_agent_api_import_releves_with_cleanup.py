@@ -369,6 +369,61 @@ def test_bootstrap_merchants_from_imported_releves_known_alias_sets_entity_and_c
     assert repo.override_upserts == [(PROFILE_ID, entity_id, category_id, "auto")]
 
 
+
+
+def test_bootstrap_merchants_from_imported_releves_matches_category_with_normalized_system_key() -> None:
+    entity_id = UUID("12121212-1212-1212-1212-121212121212")
+    releve_id = UUID("34343434-3434-3434-3434-343434343434")
+    category_id = UUID("56565656-5656-5656-5656-565656565656")
+
+    class _Repo:
+        def __init__(self) -> None:
+            self.attach_calls: list[tuple[UUID, UUID, UUID | None]] = []
+
+        def list_releves_without_merchant(self, *, profile_id: UUID, limit: int = 500):
+            return [{"id": str(releve_id), "payee": "Fresh Market", "libelle": None}]
+
+        def list_profile_categories(self, *, profile_id: UUID):
+            return [{"id": str(category_id), "system_key": " food ", "name_norm": " alimentation "}]
+
+        def find_merchant_entity_by_alias_norm(self, *, alias_norm: str):
+            return {
+                "id": str(entity_id),
+                "suggested_category_norm": " Food ",
+                "suggested_category_label": "Food",
+            }
+
+        def get_profile_merchant_override(self, *, profile_id: UUID, merchant_entity_id: UUID):
+            return None
+
+        def attach_merchant_entity_to_releve(
+            self,
+            *,
+            releve_id: UUID,
+            merchant_entity_id: UUID,
+            category_id: UUID | None,
+        ) -> None:
+            self.attach_calls.append((releve_id, merchant_entity_id, category_id))
+
+        def upsert_merchant_alias(self, **kwargs) -> None:
+            return None
+
+        def upsert_profile_merchant_override(self, **kwargs) -> None:
+            return None
+
+        def create_map_alias_suggestions(self, *, profile_id: UUID, rows: list[dict]):
+            return 0
+
+    repo = _Repo()
+
+    summary = agent_api._bootstrap_merchants_from_imported_releves(
+        profiles_repository=repo,
+        profile_id=PROFILE_ID,
+        limit=50,
+    )
+
+    assert summary == {"processed_count": 1, "linked_count": 1, "skipped_count": 0}
+    assert repo.attach_calls == [(releve_id, entity_id, category_id)]
 def test_bootstrap_merchants_from_imported_releves_unknown_alias_creates_deduped_map_alias_suggestion() -> None:
     releve_id_1 = UUID("aaaaaaaa-1111-1111-1111-111111111111")
     releve_id_2 = UUID("aaaaaaaa-2222-2222-2222-222222222222")

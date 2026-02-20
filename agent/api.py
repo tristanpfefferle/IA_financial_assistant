@@ -544,13 +544,12 @@ def _bootstrap_merchants_from_imported_releves(
         categories_rows = profiles_repository.list_profile_categories(profile_id=profile_id)
     categories_by_key: dict[str, dict[str, Any]] = {}
     for row in categories_rows:
-        system_key = str(row.get("system_key") or "").strip()
-        if system_key:
-            categories_by_key[system_key] = row
-            continue
-        name_norm = str(row.get("name_norm") or "").strip()
-        if name_norm:
-            categories_by_key[name_norm] = row
+        system_key_norm = _normalize_text(str(row.get("system_key") or ""))
+        if system_key_norm:
+            categories_by_key[system_key_norm] = row
+        name_norm_norm = _normalize_text(str(row.get("name_norm") or ""))
+        if name_norm_norm:
+            categories_by_key[name_norm_norm] = row
     processed_count = 0
     linked_count = 0
     skipped_count = 0
@@ -599,8 +598,8 @@ def _bootstrap_merchants_from_imported_releves(
             if override_category_id:
                 category_id = UUID(str(override_category_id))
             else:
-                suggested_category_norm = str(entity.get("suggested_category_norm") or "").strip()
-                matched_category = categories_by_key.get(suggested_category_norm)
+                suggested_key = _normalize_text(str(entity.get("suggested_category_norm") or ""))
+                matched_category = categories_by_key.get(suggested_key)
                 if matched_category and matched_category.get("id"):
                     category_id = UUID(str(matched_category["id"]))
 
