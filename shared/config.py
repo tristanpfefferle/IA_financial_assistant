@@ -102,6 +102,28 @@ def llm_model() -> str:
     return (get_env("AGENT_LLM_MODEL", "gpt-5") or "gpt-5").strip() or "gpt-5"
 
 
+def auto_resolve_merchant_aliases_enabled() -> bool:
+    """Return whether import should auto-trigger map_alias suggestion resolution."""
+
+    raw_value = get_env("AGENT_AUTO_RESOLVE_MERCHANT_ALIASES", "1") or "1"
+    return raw_value.strip().lower() in _TRUE_VALUES
+
+
+def auto_resolve_merchant_aliases_limit() -> int:
+    """Return max pending map_alias suggestions auto-resolved after import."""
+
+    raw_value = (get_env("AGENT_AUTO_RESOLVE_MERCHANT_ALIASES_LIMIT", "50") or "50").strip()
+    try:
+        return max(1, int(raw_value))
+    except ValueError:
+        logger.warning(
+            "invalid_auto_resolve_merchant_aliases_limit value=%s default=%s",
+            raw_value,
+            50,
+        )
+        return 50
+
+
 def llm_strict() -> bool:
     """Return whether strict LLM clarification behavior is enabled."""
     raw_value = get_env("AGENT_LLM_STRICT", "") or ""

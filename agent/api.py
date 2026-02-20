@@ -2009,6 +2009,55 @@ def import_releves(payload: ImportRequestPayload, authorization: str | None = He
         else:
             response_payload["warnings"] = ["merchant_linking_failed"]
 
+    merchant_alias_auto_resolve_payload: dict[str, Any] = {
+        "attempted": False,
+        "skipped_reason": None,
+        "stats": None,
+    }
+    response_payload["merchant_alias_auto_resolve"] = merchant_alias_auto_resolve_payload
+
+    if not _config.auto_resolve_merchant_aliases_enabled():
+        merchant_alias_auto_resolve_payload["skipped_reason"] = "merchant_alias_auto_resolve_disabled"
+    elif not _config.llm_enabled():
+        merchant_alias_auto_resolve_payload["skipped_reason"] = "merchant_alias_auto_resolve_llm_disabled"
+    else:
+        try:
+            profiles_repository = get_profiles_repository()
+            if not hasattr(profiles_repository, "list_map_alias_suggestions"):
+                merchant_alias_auto_resolve_payload["skipped_reason"] = "merchant_alias_auto_resolve_unsupported"
+            else:
+                auto_resolve_limit = _config.auto_resolve_merchant_aliases_limit()
+                pending_map_alias_suggestions = profiles_repository.list_map_alias_suggestions(
+                    profile_id=profile_id,
+                    limit=auto_resolve_limit + 1,
+                )
+
+                if not pending_map_alias_suggestions:
+                    merchant_alias_auto_resolve_payload["skipped_reason"] = "merchant_alias_auto_resolve_no_suggestions"
+                elif len(pending_map_alias_suggestions) > auto_resolve_limit:
+                    merchant_alias_auto_resolve_payload["skipped_reason"] = "merchant_alias_auto_resolve_skipped_too_many"
+                    warnings = response_payload.get("warnings")
+                    if isinstance(warnings, list):
+                        warnings.append("merchant_alias_auto_resolve_skipped_too_many")
+                    else:
+                        response_payload["warnings"] = ["merchant_alias_auto_resolve_skipped_too_many"]
+                else:
+                    merchant_alias_auto_resolve_payload["attempted"] = True
+                    merchant_alias_auto_resolve_payload["stats"] = resolve_pending_map_alias(
+                        profile_id=profile_id,
+                        profiles_repository=profiles_repository,
+                        limit=auto_resolve_limit,
+                    )
+        except Exception:
+            logger.exception("import_releves_merchant_alias_auto_resolve_failed profile_id=%s", profile_id)
+            warnings = response_payload.get("warnings")
+            if isinstance(warnings, list):
+                warnings.append("merchant_alias_auto_resolve_failed")
+            else:
+                response_payload["warnings"] = ["merchant_alias_auto_resolve_failed"]
+            merchant_alias_auto_resolve_payload["attempted"] = True
+            merchant_alias_auto_resolve_payload["stats"] = None
+
     response_payload["merchant_suggestions_pending_count"] = 0
     response_payload["merchant_suggestions_applied_count"] = 0
     response_payload["merchant_suggestions_failed_count"] = 0
