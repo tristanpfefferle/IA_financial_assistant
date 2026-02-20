@@ -88,38 +88,43 @@ def test_import_releves_auto_apply_cleanup(monkeypatch) -> None:
 
     def _run_cleanup(**kwargs):
         assert kwargs["merchants"]
-        return [
-            agent_api.MerchantSuggestion(
-                action="rename",
-                source_merchant_id=UUID("11111111-1111-1111-1111-111111111111"),
-                target_merchant_id=None,
-                suggested_name="Coop",
-                suggested_category=None,
-                confidence=0.95,
-                rationale="clear brand",
-                sample_aliases=["COOP-123"],
-            ),
-            agent_api.MerchantSuggestion(
-                action="merge",
-                source_merchant_id=UUID("22222222-2222-2222-2222-222222222222"),
-                target_merchant_id=UUID("11111111-1111-1111-1111-111111111111"),
-                suggested_name=None,
-                suggested_category=None,
-                confidence=0.80,
-                rationale="possible duplicate",
-                sample_aliases=["COOP CITY"],
-            ),
-            agent_api.MerchantSuggestion(
-                action="categorize",
-                source_merchant_id=UUID("33333333-3333-3333-3333-333333333333"),
-                target_merchant_id=None,
-                suggested_name=None,
-                suggested_category="Transport",
-                confidence=0.93,
-                rationale="sbb",
-                sample_aliases=["SBB"],
-            ),
-        ]
+        return (
+            [
+                agent_api.MerchantSuggestion(
+                    action="rename",
+                    source_merchant_id=UUID("11111111-1111-1111-1111-111111111111"),
+                    target_merchant_id=None,
+                    suggested_name="Coop",
+                    suggested_category=None,
+                    confidence=0.95,
+                    rationale="clear brand",
+                    sample_aliases=["COOP-123"],
+                ),
+                agent_api.MerchantSuggestion(
+                    action="merge",
+                    source_merchant_id=UUID("22222222-2222-2222-2222-222222222222"),
+                    target_merchant_id=UUID("11111111-1111-1111-1111-111111111111"),
+                    suggested_name=None,
+                    suggested_category=None,
+                    confidence=0.80,
+                    rationale="possible duplicate",
+                    sample_aliases=["COOP CITY"],
+                ),
+                agent_api.MerchantSuggestion(
+                    action="categorize",
+                    source_merchant_id=UUID("33333333-3333-3333-3333-333333333333"),
+                    target_merchant_id=None,
+                    suggested_name=None,
+                    suggested_category="Transport",
+                    confidence=0.93,
+                    rationale="sbb",
+                    sample_aliases=["SBB"],
+                ),
+            ],
+            "run123",
+            {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+            {"raw_count": 3, "parsed_count": 3, "rejected_count": 0, "rejected_reasons": {}},
+        )
 
     monkeypatch.setattr(agent_api, "run_merchant_cleanup", _run_cleanup)
 
@@ -139,9 +144,13 @@ def test_import_releves_auto_apply_cleanup(monkeypatch) -> None:
     assert repo.list_merchants_calls == 1
     assert repo.get_merchant_by_id_calls == []
     assert len(repo.inserted_rows) == 3
+    assert all(row["llm_run_id"] == "run123" for row in repo.inserted_rows)
     statuses = [row["status"] for row in repo.inserted_rows]
     assert statuses.count("applied") == 2
     assert statuses.count("pending") == 1
+    assert payload["merchant_cleanup_llm_run_id"] == "run123"
+    assert payload["merchant_cleanup_usage"]["total_tokens"] == 150
+    assert payload["merchant_cleanup_stats"]["parsed_count"] == 3
 
 
 def test_maybe_auto_apply_categorize_refetches_missing_snapshot_merchant() -> None:
@@ -225,3 +234,61 @@ def test_import_releves_cleanup_failure_does_not_increment_failed_count(monkeypa
     payload = response.json()
     assert payload["merchant_suggestions_failed_count"] == 0
     assert "merchant_cleanup_failed" in payload["warnings"]
+
+
+def test_import_releves_cleanup_no_suggestions_warning(monkeypatch) -> None:
+    monkeypatch.setattr(
+        agent_api,
+        "get_user_from_bearer_token",
+        lambda _token: {"id": str(AUTH_USER_ID), "email": "user@example.com"},
+    )
+    monkeypatch.setattr(agent_api._config, "llm_enabled", lambda: True)
+
+    class _Repo:
+        def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None):
+            return PROFILE_ID
+
+        def get_chat_state(self, *, profile_id: UUID, user_id: UUID):
+            return {}
+
+        def update_chat_state(self, *, profile_id: UUID, user_id: UUID, chat_state: dict):
+            return None
+
+        def list_releves_without_merchant(self, *, profile_id: UUID, limit: int = 500):
+            return []
+
+        def list_merchants(self, *, profile_id: UUID, limit: int = 5000):
+            return [{"id": str(UUID("11111111-1111-1111-1111-111111111111")), "category": ""}]
+
+        def create_merchant_suggestions(self, *, profile_id: UUID, suggestions: list[dict]):
+            return len(suggestions)
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: _Repo())
+
+    class _Router:
+        def call(self, tool_name: str, _payload: dict, *, profile_id: UUID | None = None):
+            return {"imported_count": 1}
+
+    monkeypatch.setattr(agent_api, "get_tool_router", lambda: _Router())
+    monkeypatch.setattr(
+        agent_api,
+        "run_merchant_cleanup",
+        lambda **_kwargs: (
+            [],
+            "run123",
+            {},
+            {"raw_count": 3, "parsed_count": 0, "rejected_count": 3, "rejected_reasons": {"missing_ids": 3}},
+        ),
+    )
+
+    response = client.post(
+        "/finance/releves/import",
+        headers=_headers(),
+        json={"files": [{"filename": "x.csv", "content_base64": "YQ=="}]},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "merchant_cleanup_no_suggestions" in payload["warnings"]
+    assert payload["merchant_cleanup_llm_run_id"] == "run123"
+    assert payload["merchant_cleanup_stats"]["parsed_count"] == 0
