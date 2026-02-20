@@ -1950,11 +1950,29 @@ def import_releves(payload: ImportRequestPayload, authorization: str | None = He
                 for row in merchants
                 if row.get("id")
             }
-            suggestions = run_merchant_cleanup(
+            suggestions, llm_run_id, usage, cleanup_stats = run_merchant_cleanup(
                 profile_id=profile_id,
                 profiles_repository=profiles_repository,
                 merchants=merchants,
             )
+            response_payload["merchant_cleanup_llm_run_id"] = llm_run_id
+            response_payload["merchant_cleanup_usage"] = usage
+            response_payload["merchant_cleanup_stats"] = cleanup_stats
+
+            if int(cleanup_stats.get("parsed_count") or 0) == 0:
+                warnings = response_payload.get("warnings")
+                if isinstance(warnings, list):
+                    warnings.append("merchant_cleanup_no_suggestions")
+                else:
+                    response_payload["warnings"] = ["merchant_cleanup_no_suggestions"]
+                logger.info(
+                    "import_releves_merchant_cleanup_no_suggestions profile_id=%s llm_run_id=%s stats=%s no_suggestions=%s",
+                    profile_id,
+                    llm_run_id,
+                    cleanup_stats,
+                    True,
+                )
+
             suggestion_rows: list[dict[str, Any]] = []
             for suggestion in suggestions:
                 auto_applied, error_message = _maybe_auto_apply_suggestion(
@@ -1967,15 +1985,16 @@ def import_releves(payload: ImportRequestPayload, authorization: str | None = He
                     response_payload["merchant_suggestions_failed_count"] += 1
                     suggestion_rows.append({
                         **_build_suggestion_row(suggestion, status="failed"),
+                        "llm_run_id": llm_run_id,
                         "error": error_message,
                     })
                     continue
                 if auto_applied:
                     response_payload["merchant_suggestions_applied_count"] += 1
-                    suggestion_rows.append(_build_suggestion_row(suggestion, status="applied"))
+                    suggestion_rows.append({**_build_suggestion_row(suggestion, status="applied"), "llm_run_id": llm_run_id})
                 else:
                     response_payload["merchant_suggestions_pending_count"] += 1
-                    suggestion_rows.append(_build_suggestion_row(suggestion, status="pending"))
+                    suggestion_rows.append({**_build_suggestion_row(suggestion, status="pending"), "llm_run_id": llm_run_id})
 
             profiles_repository.create_merchant_suggestions(
                 profile_id=profile_id,
