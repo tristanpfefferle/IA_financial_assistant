@@ -375,7 +375,6 @@ def test_categories_bootstrap_creates_categories_classifies_merchants_and_skips_
                     "bank_accounts_confirmed": True,
                     "has_bank_accounts": True,
                     "has_imported_transactions": True,
-                    "has_imported_transactions": True,
                     "budget_created": False,
                 }
             }
@@ -442,7 +441,7 @@ def test_categories_review_oui_goes_to_report_offer_without_loop(monkeypatch) ->
     assert loop.called is False
 
 
-def test_categories_review_non_falls_back_to_loop(monkeypatch) -> None:
+def test_categories_review_non_switches_to_free_chat_without_loop(monkeypatch) -> None:
     _mock_auth(monkeypatch)
     repo = _Repo(
         initial_chat_state={
@@ -468,10 +467,11 @@ def test_categories_review_non_falls_back_to_loop(monkeypatch) -> None:
     response = client.post("/agent/chat", json={"message": "NON"}, headers=_auth_headers())
 
     assert response.status_code == 200
-    assert response.json()["reply"].startswith("loop")
-    assert repo.update_calls == []
-    assert repo.chat_state["state"]["global_state"]["onboarding_substep"] == "categories_review"
-    assert loop.called is True
+    payload = response.json()
+    assert "chat libre" in payload["reply"].lower()
+    persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
+    assert persisted["mode"] == "free_chat"
+    assert loop.called is False
 
 
 
@@ -522,8 +522,6 @@ def test_free_chat_rapport_pdf_generates_ui_request(monkeypatch) -> None:
                     "onboarding_step": None,
                     "onboarding_substep": None,
                     "has_bank_accounts": True,
-                    "has_imported_transactions": True,
-                    "has_imported_transactions": True,
                     "has_imported_transactions": True,
                 }
             }
@@ -1224,75 +1222,6 @@ def test_onboarding_profile_combined_name_and_birth_date_in_one_message_moves_to
     assert persisted["onboarding_substep"] == "profile_confirm"
     assert "Résumé profil" in response.json()["reply"]
     assert "Confirmez-vous" in response.json()["reply"]
-
-
-def test_report_offer_oui_returns_pdf_ui_request_and_switches_to_free_chat(monkeypatch) -> None:
-    _mock_auth(monkeypatch)
-    repo = _Repo(
-        initial_chat_state={
-            "state": {
-                "last_query": {"month": "2026-01"},
-                "global_state": {
-                    "mode": "onboarding",
-                    "onboarding_step": "report",
-                    "onboarding_substep": "report_offer",
-                    "profile_confirmed": True,
-                    "bank_accounts_confirmed": True,
-                    "has_bank_accounts": True,
-                    "has_imported_transactions": True,
-                    "budget_created": False,
-                },
-            }
-        },
-    )
-    loop = _LoopSpy()
-    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
-    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: loop)
-
-    response = client.post("/agent/chat", json={"message": "OUI"}, headers=_auth_headers())
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["tool_result"]["type"] == "ui_request"
-    assert payload["tool_result"]["name"] == "open_pdf_report"
-    assert "month=2026-01" in payload["tool_result"]["url"]
-    persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
-    assert persisted["mode"] == "free_chat"
-    assert persisted["onboarding_step"] is None
-    assert persisted["onboarding_substep"] is None
-    assert loop.called is False
-
-
-def test_free_chat_rapport_pdf_generates_ui_request(monkeypatch) -> None:
-    _mock_auth(monkeypatch)
-    repo = _Repo(
-        initial_chat_state={
-            "state": {
-                "global_state": {
-                    "mode": "free_chat",
-                    "onboarding_step": None,
-                    "onboarding_substep": None,
-                    "has_bank_accounts": True,
-                    "has_imported_transactions": True,
-                }
-            }
-        },
-    )
-    loop = _LoopSpy()
-    repo.bank_accounts = [{"id": "bank-1", "name": "UBS"}]
-    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
-    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: loop)
-
-    response = client.post("/agent/chat", json={"message": "rapport pdf janvier 2026"}, headers=_auth_headers())
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["tool_result"]["type"] == "ui_request"
-    assert payload["tool_result"]["name"] == "open_pdf_report"
-    assert "month=2026-01" in payload["tool_result"]["url"]
-    assert payload["plan"]["tool_name"] == "finance_report_spending_pdf"
-    assert payload["plan"]["payload"]["month"] == "2026-01"
-    assert loop.called is False
 
 
 @pytest.mark.parametrize(
