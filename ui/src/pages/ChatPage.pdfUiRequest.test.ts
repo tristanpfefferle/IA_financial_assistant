@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
-import { claimPdfUiRequestExecution, toPdfUiRequest } from './chatUiRequests'
+import { claimPdfUiRequestExecution, toOpenImportPanelUiAction, toPdfUiRequest } from './chatUiRequests'
 
-describe('toPdfUiRequest', () => {
+describe('chatUiRequests', () => {
   it('parses open_pdf_report ui request', () => {
     expect(
       toPdfUiRequest({
@@ -17,7 +17,7 @@ describe('toPdfUiRequest', () => {
     })
   })
 
-  it('returns null for invalid payloads', () => {
+  it('returns null for invalid pdf payloads', () => {
     expect(toPdfUiRequest(null)).toBeNull()
     expect(toPdfUiRequest({ type: 'ui_request', name: 'import_file' })).toBeNull()
     expect(toPdfUiRequest({ type: 'ui_request', name: 'open_pdf_report', url: '' })).toBeNull()
@@ -33,5 +33,22 @@ describe('toPdfUiRequest', () => {
 
     expect(claimPdfUiRequestExecution(executed, 'msg-1', toolResult)).not.toBeNull()
     expect(claimPdfUiRequestExecution(executed, 'msg-1', toolResult)).toBeNull()
+  })
+
+  it('parses ui_action open_import_panel payload', () => {
+    expect(
+      toOpenImportPanelUiAction({
+        type: 'ui_action',
+        action: 'open_import_panel',
+        bank_account_id: 'acc-1',
+        accepted_types: ['csv'],
+      }),
+    ).toEqual({
+      type: 'ui_action',
+      action: 'open_import_panel',
+      bank_account_id: 'acc-1',
+      bank_account_name: undefined,
+      accepted_types: ['csv'],
+    })
   })
 })

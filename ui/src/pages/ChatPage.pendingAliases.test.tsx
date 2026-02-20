@@ -4,18 +4,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ChatPage } from './ChatPage'
 
-const { getPendingMerchantAliasesCount, resolvePendingMerchantAliases } = vi.hoisted(() => ({
+const { getPendingMerchantAliasesCount, resolvePendingMerchantAliases, listBankAccounts } = vi.hoisted(() => ({
   getPendingMerchantAliasesCount: vi.fn(),
   resolvePendingMerchantAliases: vi.fn(),
+  listBankAccounts: vi.fn(),
 }))
 
 vi.mock('../api/agentApi', () => ({
   getPendingMerchantAliasesCount,
   resolvePendingMerchantAliases,
+  listBankAccounts,
   sendChatMessage: vi.fn(),
   importReleves: vi.fn(),
   hardResetProfile: vi.fn(),
   resetSession: vi.fn(),
+  openPdfFromUrl: vi.fn(),
 }))
 
 vi.mock('../lib/sessionLifecycle', () => ({
@@ -51,6 +54,8 @@ describe('ChatPage pending merchant aliases action', () => {
     document.body.appendChild(container)
     getPendingMerchantAliasesCount.mockReset()
     resolvePendingMerchantAliases.mockReset()
+    listBankAccounts.mockReset()
+    listBankAccounts.mockResolvedValue({ items: [] })
   })
 
   afterEach(() => {
@@ -99,5 +104,4 @@ describe('ChatPage pending merchant aliases action', () => {
 
     expect(resolvePendingMerchantAliases).toHaveBeenCalledWith({ limit: 20, max_batches: 10 })
   })
-
 })
