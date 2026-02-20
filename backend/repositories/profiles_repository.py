@@ -79,6 +79,49 @@ class ProfilesRepository(Protocol):
     def list_releves_without_merchant(self, *, profile_id: UUID, limit: int = 500) -> list[dict[str, Any]]:
         """Return statement rows missing merchant linkage for one profile."""
 
+    def find_merchant_entity_by_alias_norm(self, *, alias_norm: str) -> dict[str, Any] | None:
+        """Return one global merchant entity for an alias_norm when available."""
+
+    def upsert_merchant_alias(
+        self,
+        *,
+        merchant_entity_id: UUID,
+        alias: str,
+        alias_norm: str,
+        source: str = "import",
+    ) -> None:
+        """Create or update one global merchant alias usage counters."""
+
+    def get_profile_merchant_override(
+        self,
+        *,
+        profile_id: UUID,
+        merchant_entity_id: UUID,
+    ) -> dict[str, Any] | None:
+        """Return one profile merchant override for a merchant entity."""
+
+    def upsert_profile_merchant_override(
+        self,
+        *,
+        profile_id: UUID,
+        merchant_entity_id: UUID,
+        category_id: UUID | None,
+        status: str = "auto",
+    ) -> None:
+        """Create or update one profile merchant override idempotently."""
+
+    def create_map_alias_suggestions(self, *, profile_id: UUID, rows: list[dict[str, Any]]) -> int:
+        """Create deduplicated map_alias merchant suggestions."""
+
+    def attach_merchant_entity_to_releve(
+        self,
+        *,
+        releve_id: UUID,
+        merchant_entity_id: UUID,
+        category_id: UUID | None,
+    ) -> None:
+        """Attach one global merchant entity and optional category to one bank statement row."""
+
     def upsert_merchant_by_name_norm(
         self,
         *,
@@ -521,7 +564,7 @@ class SupabaseProfilesRepository:
             query={
                 "select": "id,payee,libelle,created_at,date",
                 "profile_id": f"eq.{profile_id}",
-                "merchant_id": "is.null",
+                "merchant_entity_id": "is.null",
                 "or": "(payee.not.is.null,libelle.not.is.null)",
                 "limit": max(1, limit),
             },
@@ -529,6 +572,192 @@ class SupabaseProfilesRepository:
             use_anon_key=False,
         )
         return rows
+
+    def find_merchant_entity_by_alias_norm(self, *, alias_norm: str) -> dict[str, Any] | None:
+        cleaned_alias_norm = self._normalize_name_norm(alias_norm)
+        if not cleaned_alias_norm:
+            return None
+
+        rows, _ = self._client.get_rows(
+            table="merchant_aliases",
+            query={
+                "select": "merchant_entity_id,alias,alias_norm,merchant_entities(id,canonical_name,canonical_name_norm,suggested_category_norm,suggested_category_label,suggested_confidence)",
+                "alias_norm": f"eq.{cleaned_alias_norm}",
+                "limit": 1,
+            },
+            with_count=False,
+            use_anon_key=False,
+        )
+        if not rows:
+            return None
+
+        row = rows[0]
+        entity = row.get("merchant_entities") if isinstance(row.get("merchant_entities"), dict) else None
+        if entity is None:
+            return None
+        entity_id = entity.get("id") or row.get("merchant_entity_id")
+        if not entity_id:
+            return None
+
+        return {
+            "id": str(entity_id),
+            "canonical_name": entity.get("canonical_name"),
+            "canonical_name_norm": entity.get("canonical_name_norm"),
+            "suggested_category_norm": entity.get("suggested_category_norm"),
+            "suggested_category_label": entity.get("suggested_category_label"),
+            "suggested_confidence": entity.get("suggested_confidence"),
+        }
+
+    def upsert_merchant_alias(
+        self,
+        *,
+        merchant_entity_id: UUID,
+        alias: str,
+        alias_norm: str,
+        source: str = "import",
+    ) -> None:
+        cleaned_alias = " ".join(alias.strip().split())
+        cleaned_alias_norm = self._normalize_name_norm(alias_norm)
+        if not cleaned_alias or not cleaned_alias_norm:
+            return
+
+        rows, _ = self._client.get_rows(
+            table="merchant_aliases",
+            query={
+                "select": "id,times_seen",
+                "merchant_entity_id": f"eq.{merchant_entity_id}",
+                "alias_norm": f"eq.{cleaned_alias_norm}",
+                "limit": 1,
+            },
+            with_count=False,
+            use_anon_key=False,
+        )
+        now_iso = datetime.now(timezone.utc).isoformat()
+        if rows and rows[0].get("id"):
+            row = rows[0]
+            times_seen = int(row.get("times_seen") or 0) + 1
+            self._client.patch_rows(
+                table="merchant_aliases",
+                query={"id": f"eq.{row['id']}"},
+                payload={"times_seen": times_seen, "last_seen": now_iso},
+                use_anon_key=False,
+            )
+            return
+
+        self._client.post_rows(
+            table="merchant_aliases",
+            payload={
+                "merchant_entity_id": str(merchant_entity_id),
+                "alias": cleaned_alias,
+                "alias_norm": cleaned_alias_norm,
+                "times_seen": 1,
+                "last_seen": now_iso,
+                "source": source,
+            },
+            use_anon_key=False,
+        )
+
+    def get_profile_merchant_override(
+        self,
+        *,
+        profile_id: UUID,
+        merchant_entity_id: UUID,
+    ) -> dict[str, Any] | None:
+        rows, _ = self._client.get_rows(
+            table="profile_merchant_overrides",
+            query={
+                "select": "id,profile_id,merchant_entity_id,display_name_override,category_id,status",
+                "profile_id": f"eq.{profile_id}",
+                "merchant_entity_id": f"eq.{merchant_entity_id}",
+                "limit": 1,
+            },
+            with_count=False,
+            use_anon_key=False,
+        )
+        if not rows:
+            return None
+        return rows[0]
+
+    def upsert_profile_merchant_override(
+        self,
+        *,
+        profile_id: UUID,
+        merchant_entity_id: UUID,
+        category_id: UUID | None,
+        status: str = "auto",
+    ) -> None:
+        payload = {
+            "profile_id": str(profile_id),
+            "merchant_entity_id": str(merchant_entity_id),
+            "category_id": str(category_id) if category_id else None,
+            "status": status,
+        }
+        self._client.upsert_row(
+            table="profile_merchant_overrides",
+            payload=payload,
+            on_conflict="profile_id,merchant_entity_id",
+            use_anon_key=False,
+        )
+
+    def create_map_alias_suggestions(self, *, profile_id: UUID, rows: list[dict[str, Any]]) -> int:
+        if not rows:
+            return 0
+
+        inserted_count = 0
+        seen_in_batch: set[str] = set()
+        for row in rows:
+            observed_alias_norm = self._normalize_name_norm(str(row.get("observed_alias_norm") or ""))
+            if not observed_alias_norm or observed_alias_norm in seen_in_batch:
+                continue
+            seen_in_batch.add(observed_alias_norm)
+
+            existing_rows, _ = self._client.get_rows(
+                table="merchant_suggestions",
+                query={
+                    "select": "id",
+                    "profile_id": f"eq.{profile_id}",
+                    "action": "eq.map_alias",
+                    "observed_alias_norm": f"eq.{observed_alias_norm}",
+                    "status": "in.(pending,failed)",
+                    "limit": 1,
+                },
+                with_count=False,
+                use_anon_key=False,
+            )
+            if existing_rows:
+                continue
+
+            payload = {
+                "profile_id": str(profile_id),
+                "action": "map_alias",
+                "status": row.get("status") or "pending",
+                "observed_alias": row.get("observed_alias"),
+                "observed_alias_norm": observed_alias_norm,
+                "suggested_entity_name": row.get("suggested_entity_name"),
+                "confidence": row.get("confidence"),
+                "rationale": row.get("rationale"),
+            }
+            self._client.post_rows(table="merchant_suggestions", payload=payload, use_anon_key=False)
+            inserted_count += 1
+
+        return inserted_count
+
+    def attach_merchant_entity_to_releve(
+        self,
+        *,
+        releve_id: UUID,
+        merchant_entity_id: UUID,
+        category_id: UUID | None,
+    ) -> None:
+        payload: dict[str, Any] = {"merchant_entity_id": str(merchant_entity_id)}
+        if category_id is not None:
+            payload["category_id"] = str(category_id)
+        self._client.patch_rows(
+            table="releves_bancaires",
+            query={"id": f"eq.{releve_id}"},
+            payload=payload,
+            use_anon_key=False,
+        )
 
     def upsert_merchant_by_name_norm(
         self,

@@ -347,7 +347,7 @@ def test_list_releves_without_merchant_filters_profile_and_null_merchant() -> No
     assert client.calls[0]["query"] == {
         "select": "id,payee,libelle,created_at,date",
         "profile_id": f"eq.{profile_id}",
-        "merchant_id": "is.null",
+        "merchant_entity_id": "is.null",
         "or": "(payee.not.is.null,libelle.not.is.null)",
         "limit": 123,
     }
@@ -586,3 +586,39 @@ def test_merge_merchants_moves_releves_merges_aliases_and_deletes_source() -> No
         "aliases_added_count": 1,
         "target_aliases_count": 3,
     }
+
+
+def test_upsert_merchant_alias_updates_times_seen_when_alias_exists() -> None:
+    entity_id = UUID("11111111-1111-1111-1111-111111111111")
+    alias_id = UUID("22222222-2222-2222-2222-222222222222")
+    client = _ClientStub(
+        responses=[[{"id": str(alias_id), "times_seen": 2}]],
+        patch_responses=[[{"id": str(alias_id)}]],
+    )
+    repository = SupabaseProfilesRepository(client=client)
+
+    repository.upsert_merchant_alias(
+        merchant_entity_id=entity_id,
+        alias="Coop City",
+        alias_norm="coop city",
+        source="import",
+    )
+
+    assert client.calls == [
+        {
+            "table": "merchant_aliases",
+            "query": {
+                "select": "id,times_seen",
+                "merchant_entity_id": f"eq.{entity_id}",
+                "alias_norm": "eq.coop city",
+                "limit": 1,
+            },
+            "with_count": False,
+            "use_anon_key": False,
+        }
+    ]
+    assert len(client.patch_calls) == 1
+    assert client.patch_calls[0]["table"] == "merchant_aliases"
+    assert client.patch_calls[0]["query"] == {"id": f"eq.{alias_id}"}
+    assert client.patch_calls[0]["payload"]["times_seen"] == 3
+    assert "last_seen" in client.patch_calls[0]["payload"]

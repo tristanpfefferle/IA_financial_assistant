@@ -290,9 +290,9 @@ def test_import_releves_links_merchants_from_imported_transactions(monkeypatch) 
 
     class _Repo:
         def __init__(self) -> None:
-            self.upsert_calls: list[tuple[str, str]] = []
-            self.attach_calls: list[tuple[UUID, UUID]] = []
-            self.alias_calls: list[tuple[UUID, str]] = []
+            self.attach_calls: list[tuple[UUID, UUID, UUID | None]] = []
+            self.alias_calls: list[tuple[UUID, str, str]] = []
+            self.override_calls: list[tuple[UUID, UUID, UUID | None, str]] = []
 
         def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None):
             assert auth_user_id == AUTH_USER_ID
@@ -328,16 +328,47 @@ def test_import_releves_links_merchants_from_imported_transactions(monkeypatch) 
                 },
             ]
 
-        def upsert_merchant_by_name_norm(self, *, profile_id: UUID, name: str, name_norm: str, scope: str = "personal"):
-            assert profile_id == PROFILE_ID
-            self.upsert_calls.append((name, name_norm))
-            return UUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
+        def list_profile_categories(self, *, profile_id: UUID):
+            return []
 
-        def attach_merchant_to_releve(self, *, releve_id: UUID, merchant_id: UUID) -> None:
-            self.attach_calls.append((releve_id, merchant_id))
+        def find_merchant_entity_by_alias_norm(self, *, alias_norm: str):
+            if "coop" in alias_norm:
+                return {"id": str(UUID("cccccccc-cccc-cccc-cccc-cccccccccccc"))}
+            if "sbb" in alias_norm:
+                return {"id": str(UUID("dddddddd-dddd-dddd-dddd-dddddddddddd"))}
+            return None
 
-        def append_merchant_alias(self, *, merchant_id: UUID, alias: str) -> None:
-            self.alias_calls.append((merchant_id, alias))
+        def get_profile_merchant_override(self, *, profile_id: UUID, merchant_entity_id: UUID):
+            return None
+
+        def attach_merchant_entity_to_releve(
+            self,
+            *,
+            releve_id: UUID,
+            merchant_entity_id: UUID,
+            category_id: UUID | None,
+        ) -> None:
+            self.attach_calls.append((releve_id, merchant_entity_id, category_id))
+
+        def upsert_merchant_alias(
+            self,
+            *,
+            merchant_entity_id: UUID,
+            alias: str,
+            alias_norm: str,
+            source: str = "import",
+        ) -> None:
+            self.alias_calls.append((merchant_entity_id, alias, alias_norm))
+
+        def upsert_profile_merchant_override(
+            self,
+            *,
+            profile_id: UUID,
+            merchant_entity_id: UUID,
+            category_id: UUID | None,
+            status: str = "auto",
+        ) -> None:
+            self.override_calls.append((profile_id, merchant_entity_id, category_id, status))
 
     repo = _Repo()
     monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
@@ -358,16 +389,32 @@ def test_import_releves_links_merchants_from_imported_transactions(monkeypatch) 
     )
 
     assert response.status_code == 200
-    assert len(repo.upsert_calls) == 2
-    assert repo.upsert_calls == [("Coop", "coop"), ("SBB", "sbb")]
+    assert len(repo.attach_calls) == 2
+    assert repo.attach_calls == [
+        (
+            UUID("11111111-1111-1111-1111-111111111111"),
+            UUID("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+            None,
+        ),
+        (
+            UUID("22222222-2222-2222-2222-222222222222"),
+            UUID("dddddddd-dddd-dddd-dddd-dddddddddddd"),
+            None,
+        ),
+    ]
     assert repo.alias_calls == [
         (
             UUID("cccccccc-cccc-cccc-cccc-cccccccccccc"),
             "COOP-4815 MONTHEY; Paiement UBS TWINT Motif du paiement: ...",
+            "coop-4815 monthey; paiement ubs twint motif du paiement: ...",
         ),
-        (UUID("cccccccc-cccc-cccc-cccc-cccccccccccc"), "SBB MOBILE; Paiement UBS TWINT ..."),
+        (
+            UUID("dddddddd-dddd-dddd-dddd-dddddddddddd"),
+            "SBB MOBILE; Paiement UBS TWINT ...",
+            "sbb mobile; paiement ubs twint ...",
+        ),
     ]
-    assert len(repo.attach_calls) == 2
+    assert len(repo.override_calls) == 2
 
 
 def test_rename_merchant_endpoint_returns_200_and_calls_repo(monkeypatch) -> None:
