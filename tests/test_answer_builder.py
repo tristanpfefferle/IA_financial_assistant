@@ -47,12 +47,33 @@ def test_build_final_reply_with_releves_sum_result() -> None:
 
     reply = build_final_reply(plan=plan, tool_result=result)
 
-    assert "-123.45" in reply
-    assert "Moyenne: -30.86 EUR" in reply
+    assert "123.45" in reply
+    assert "Moyenne: 30.86 EUR" in reply
     assert "EUR" in reply
     assert "4" in reply
     assert DEBIT_ONLY_NOTE in reply
 
+
+
+
+def test_build_final_reply_with_releves_sum_debit_only_displays_absolute_values() -> None:
+    plan = ToolCallPlan(tool_name="finance_releves_sum", payload={}, user_reply="OK")
+    result = RelevesSumResult(
+        total=Decimal("-2250.0"),
+        count=3,
+        average=Decimal("-750.0"),
+        currency="CHF",
+        filters=RelevesFilters(
+            profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            direction=RelevesDirection.DEBIT_ONLY,
+        ),
+    )
+
+    reply = build_final_reply(plan=plan, tool_result=result)
+
+    assert "2250.00 CHF" in reply
+    assert "-2250.00" not in reply
+    assert result.total == Decimal("-2250.0")
 
 def test_format_money_rounds_half_up_for_average() -> None:
     assert format_money(Decimal("-25.816666666666666666666"), "CHF") == "-25.82 CHF"

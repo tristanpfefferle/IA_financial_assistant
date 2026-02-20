@@ -19,6 +19,20 @@ from shared.models import (
 )
 
 
+
+
+def _category_norm_candidates(value: str) -> tuple[str, ...]:
+    normalized = normalize_category_name(value)
+    if not normalized:
+        return ()
+    candidates = {normalized}
+    if normalized.endswith("s") and len(normalized) > 1:
+        candidates.add(normalized[:-1])
+    else:
+        candidates.add(f"{normalized}s")
+    return tuple(candidates)
+
+
 class RelevesRepository(Protocol):
     def list_releves(self, filters: RelevesFilters) -> tuple[list[ReleveBancaire], int | None]:
         """Return paginated releves plus optional total count."""
@@ -215,22 +229,35 @@ class InMemoryRelevesRepository:
         groups: dict[str, tuple[Decimal, int]] = {}
 
         category_names_by_id: dict[UUID, str] = {}
+        category_names_by_norm: dict[str, str] = {}
         if request.group_by == RelevesGroupBy.CATEGORIE:
             for row in self._profile_categories_seed:
                 if row.get("profile_id") != request.profile_id:
                     continue
                 category_id = row.get("id")
                 category_name = row.get("name")
-                if isinstance(category_id, UUID) and isinstance(category_name, str) and category_name.strip():
-                    category_names_by_id[category_id] = category_name.strip()
+                if isinstance(category_name, str) and category_name.strip():
+                    cleaned_name = category_name.strip()
+                    if isinstance(category_id, UUID):
+                        category_names_by_id[category_id] = cleaned_name
+                    norm_source_raw = row.get("name_norm") or row.get("name") or row.get("system_key")
+                    norm_source = str(norm_source_raw).strip() if norm_source_raw else ""
+                    if norm_source:
+                        for candidate_norm in _category_norm_candidates(norm_source):
+                            category_names_by_norm[candidate_norm] = cleaned_name
 
         for item in filtered:
             if request.group_by == RelevesGroupBy.CATEGORIE:
-                key = (
-                    category_names_by_id.get(item.category_id)
-                    if isinstance(item.category_id, UUID)
-                    else None
-                ) or item.categorie or "Autre"
+                key: str | None = None
+                if isinstance(item.category_id, UUID):
+                    key = category_names_by_id.get(item.category_id)
+
+                if key is None and isinstance(item.categorie, str) and item.categorie.strip():
+                    normalized_candidates = _category_norm_candidates(item.categorie)
+                    key = next((category_names_by_norm.get(candidate) for candidate in normalized_candidates if category_names_by_norm.get(candidate)), None) or item.categorie
+
+                if key is None:
+                    key = "Autres"
             elif request.group_by == RelevesGroupBy.PAYEE:
                 key = item.payee or "Inconnu"
             else:
@@ -498,12 +525,13 @@ class SupabaseRelevesRepository:
         groups: dict[str, tuple[Decimal, int]] = {}
         currency: str | None = rows[0].get("devise") if rows else None
         category_names_by_id: dict[str, str] = {}
+        category_names_by_norm: dict[str, str] = {}
         if request.group_by == RelevesGroupBy.CATEGORIE:
             categories_rows, _ = self._client.get_rows(
                 table="profile_categories",
                 query=[
                     ("profile_id", f"eq.{request.profile_id}"),
-                    ("select", "id,name"),
+                    ("select", "id,name,name_norm,system_key"),
                     ("limit", 500),
                 ],
                 with_count=False,
@@ -513,14 +541,26 @@ class SupabaseRelevesRepository:
                 raw_name = category_row.get("name")
                 if raw_id is None or not isinstance(raw_name, str) or not raw_name.strip():
                     continue
-                category_names_by_id[str(raw_id)] = raw_name.strip()
+                cleaned_name = raw_name.strip()
+                category_names_by_id[str(raw_id)] = cleaned_name
+                norm_source_raw = category_row.get("name_norm") or category_row.get("name") or category_row.get("system_key")
+                norm_source = str(norm_source_raw).strip() if norm_source_raw else ""
+                if norm_source:
+                    for candidate_norm in _category_norm_candidates(norm_source):
+                        category_names_by_norm[candidate_norm] = cleaned_name
 
         for row in rows:
             if request.group_by == RelevesGroupBy.CATEGORIE:
                 category_id = row.get("category_id")
-                key = (
-                    category_names_by_id.get(str(category_id)) if category_id is not None else None
-                ) or row.get("categorie") or "Autre"
+                key: str | None = category_names_by_id.get(str(category_id)) if category_id is not None else None
+
+                raw_category = row.get("categorie")
+                if key is None and isinstance(raw_category, str) and raw_category.strip():
+                    normalized_candidates = _category_norm_candidates(raw_category)
+                    key = next((category_names_by_norm.get(candidate) for candidate in normalized_candidates if category_names_by_norm.get(candidate)), None) or raw_category
+
+                if key is None:
+                    key = "Autres"
             elif request.group_by == RelevesGroupBy.PAYEE:
                 key = row.get("payee") or "Inconnu"
             else:

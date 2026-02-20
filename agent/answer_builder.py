@@ -205,6 +205,12 @@ def _releves_total_label(result: RelevesSumResult) -> str:
     return "Total"
 
 
+def _display_amount_for_direction(amount: Decimal, direction: RelevesDirection | None) -> Decimal:
+    if direction == RelevesDirection.DEBIT_ONLY:
+        return abs(amount)
+    return amount
+
+
 def _build_aggregate_reply(result: RelevesAggregateResult) -> str:
     currency = result.currency or "CHF"
     direction = result.filters.direction if result.filters is not None else None
@@ -215,13 +221,13 @@ def _build_aggregate_reply(result: RelevesAggregateResult) -> str:
 
     top_groups = sorted_groups[:10]
     lines = [
-        f"- {name}: {abs(group.total):.2f} {currency} ({group.count} opérations)"
+        f"- {name}: {_display_amount_for_direction(group.total, direction):.2f} {currency} ({group.count} opérations)"
         for name, group in top_groups
     ]
 
     if len(sorted_groups) > 10:
         others = sorted_groups[10:]
-        others_total = sum((abs(group.total) for _, group in others), start=Decimal("0"))
+        others_total = sum((_display_amount_for_direction(group.total, direction) for _, group in others), start=Decimal("0"))
         others_count = sum(group.count for _, group in others)
         lines.append(f"- Autres: {others_total:.2f} {currency} ({others_count} opérations)")
 
@@ -401,11 +407,13 @@ def build_final_reply(*, plan: ToolCallPlan, tool_result: object) -> str:
     if isinstance(tool_result, RelevesSumResult):
         currency = tool_result.currency or ""
         direction = tool_result.filters.direction if tool_result.filters is not None else None
+        display_total = _display_amount_for_direction(tool_result.total, direction)
+        display_average = _display_amount_for_direction(tool_result.average, direction)
         average = ""
         if tool_result.count > 0:
-            average = f" Moyenne: {format_money(tool_result.average, currency)}."
+            average = f" Moyenne: {format_money(display_average, currency)}."
         return (
-            f"{_releves_total_label(tool_result)}: {format_money(tool_result.total, currency)} "
+            f"{_releves_total_label(tool_result)}: {format_money(display_total, currency)} "
             f"sur {tool_result.count} opération(s).{average}{_debit_only_note(direction)}"
         ).strip()
 
