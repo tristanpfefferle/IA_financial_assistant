@@ -113,6 +113,59 @@ class ProfilesRepository(Protocol):
     def create_map_alias_suggestions(self, *, profile_id: UUID, rows: list[dict[str, Any]]) -> int:
         """Create deduplicated map_alias merchant suggestions."""
 
+    def list_map_alias_suggestions(self, *, profile_id: UUID, limit: int = 100) -> list[dict[str, Any]]:
+        """List pending/failed map_alias suggestions for one profile."""
+
+    def get_merchant_entity_by_canonical_name_norm(
+        self,
+        *,
+        country: str,
+        canonical_name_norm: str,
+    ) -> dict[str, Any] | None:
+        """Return one global merchant entity by canonical_name_norm/country."""
+
+    def create_merchant_entity(
+        self,
+        *,
+        canonical_name: str,
+        canonical_name_norm: str,
+        country: str,
+        suggested_category_norm: str | None,
+        suggested_category_label: str | None,
+        suggested_confidence: float | None,
+        suggested_source: str | None,
+    ) -> dict[str, Any]:
+        """Create or upsert a global merchant entity and return it."""
+
+    def update_merchant_suggestion_after_resolve(
+        self,
+        *,
+        profile_id: UUID,
+        suggestion_id: UUID,
+        status: str,
+        error: str | None,
+        llm_model: str | None,
+        llm_run_id: str | None,
+        confidence: float | None,
+        rationale: str | None,
+        target_merchant_entity_id: UUID | None,
+        suggested_entity_name: str | None,
+        suggested_entity_name_norm: str | None,
+        suggested_category_norm: str | None,
+        suggested_category_label: str | None,
+    ) -> None:
+        """Update one map_alias suggestion outcome after LLM resolution."""
+
+    def apply_entity_to_profile_transactions(
+        self,
+        *,
+        profile_id: UUID,
+        observed_alias_norm: str,
+        merchant_entity_id: UUID,
+        category_id: UUID | None,
+    ) -> int:
+        """Apply resolved merchant entity to best-effort matching profile transactions."""
+
     def attach_merchant_entity_to_releve(
         self,
         *,
@@ -741,6 +794,197 @@ class SupabaseProfilesRepository:
             inserted_count += 1
 
         return inserted_count
+
+    def list_map_alias_suggestions(self, *, profile_id: UUID, limit: int = 100) -> list[dict[str, Any]]:
+        rows, _ = self._client.get_rows(
+            table="merchant_suggestions",
+            query={
+                "select": "id,observed_alias,observed_alias_norm,created_at",
+                "profile_id": f"eq.{profile_id}",
+                "action": "eq.map_alias",
+                "status": "in.(pending,failed)",
+                "order": "created_at.asc",
+                "limit": max(1, limit),
+            },
+            with_count=False,
+            use_anon_key=False,
+        )
+        return rows
+
+    def get_merchant_entity_by_canonical_name_norm(
+        self,
+        *,
+        country: str,
+        canonical_name_norm: str,
+    ) -> dict[str, Any] | None:
+        cleaned_country = country.strip().upper() or "CH"
+        cleaned_name_norm = self._normalize_name_norm(canonical_name_norm)
+        if not cleaned_name_norm:
+            return None
+
+        rows, _ = self._client.get_rows(
+            table="merchant_entities",
+            query={
+                "select": "id,canonical_name,canonical_name_norm,country,suggested_category_norm,suggested_category_label,suggested_confidence,suggested_source",
+                "country": f"eq.{cleaned_country}",
+                "canonical_name_norm": f"eq.{cleaned_name_norm}",
+                "limit": 1,
+            },
+            with_count=False,
+            use_anon_key=False,
+        )
+        return rows[0] if rows else None
+
+    def create_merchant_entity(
+        self,
+        *,
+        canonical_name: str,
+        canonical_name_norm: str,
+        country: str,
+        suggested_category_norm: str | None,
+        suggested_category_label: str | None,
+        suggested_confidence: float | None,
+        suggested_source: str | None,
+    ) -> dict[str, Any]:
+        cleaned_name = " ".join(canonical_name.strip().split())
+        cleaned_name_norm = self._normalize_name_norm(canonical_name_norm)
+        cleaned_country = country.strip().upper() or "CH"
+        if not cleaned_name or not cleaned_name_norm:
+            raise ValueError("canonical_name and canonical_name_norm must be non-empty")
+
+        existing = self.get_merchant_entity_by_canonical_name_norm(
+            country=cleaned_country,
+            canonical_name_norm=cleaned_name_norm,
+        )
+        if existing is not None:
+            return existing
+
+        payload = {
+            "canonical_name": cleaned_name,
+            "canonical_name_norm": cleaned_name_norm,
+            "country": cleaned_country,
+            "suggested_category_norm": suggested_category_norm,
+            "suggested_category_label": suggested_category_label,
+            "suggested_confidence": suggested_confidence,
+            "suggested_source": suggested_source,
+        }
+
+        try:
+            created_rows = self._client.post_rows(
+                table="merchant_entities",
+                payload=payload,
+                use_anon_key=False,
+            )
+            if created_rows:
+                return created_rows[0]
+        except RuntimeError as exc:
+            error_message = str(exc).lower()
+            if "duplicate key" not in error_message and "unique" not in error_message:
+                raise
+
+        existing = self.get_merchant_entity_by_canonical_name_norm(
+            country=cleaned_country,
+            canonical_name_norm=cleaned_name_norm,
+        )
+        if existing is not None:
+            return existing
+        raise RuntimeError("unable to upsert merchant entity")
+
+    def update_merchant_suggestion_after_resolve(
+        self,
+        *,
+        profile_id: UUID,
+        suggestion_id: UUID,
+        status: str,
+        error: str | None,
+        llm_model: str | None,
+        llm_run_id: str | None,
+        confidence: float | None,
+        rationale: str | None,
+        target_merchant_entity_id: UUID | None,
+        suggested_entity_name: str | None,
+        suggested_entity_name_norm: str | None,
+        suggested_category_norm: str | None,
+        suggested_category_label: str | None,
+    ) -> None:
+        payload: dict[str, Any] = {
+            "status": status,
+            "error": error,
+            "llm_model": llm_model,
+            "llm_run_id": llm_run_id,
+            "confidence": confidence,
+            "rationale": rationale,
+            "target_merchant_entity_id": str(target_merchant_entity_id) if target_merchant_entity_id else None,
+            "suggested_entity_name": suggested_entity_name,
+            "suggested_entity_name_norm": self._normalize_name_norm(suggested_entity_name_norm or "")
+            if suggested_entity_name_norm
+            else None,
+            "suggested_category_norm": self._normalize_name_norm(suggested_category_norm or "")
+            if suggested_category_norm
+            else None,
+            "suggested_category_label": suggested_category_label,
+        }
+        self._client.patch_rows(
+            table="merchant_suggestions",
+            query={"profile_id": f"eq.{profile_id}", "id": f"eq.{suggestion_id}"},
+            payload=payload,
+            use_anon_key=False,
+        )
+
+    def apply_entity_to_profile_transactions(
+        self,
+        *,
+        profile_id: UUID,
+        observed_alias_norm: str,
+        merchant_entity_id: UUID,
+        category_id: UUID | None,
+    ) -> int:
+        alias = " ".join(observed_alias_norm.strip().split())
+        if not alias:
+            return 0
+
+        payload: dict[str, Any] = {"merchant_entity_id": str(merchant_entity_id)}
+        if category_id is not None:
+            payload["category_id"] = str(category_id)
+
+        def _count_and_patch(or_filter: str) -> int:
+            rows, total = self._client.get_rows(
+                table="releves_bancaires",
+                query={
+                    "select": "id",
+                    "profile_id": f"eq.{profile_id}",
+                    "merchant_entity_id": "is.null",
+                    "or": or_filter,
+                    "limit": 1,
+                },
+                with_count=True,
+                use_anon_key=False,
+            )
+            matched_count = int(total or 0)
+            if matched_count <= 0 and not rows:
+                return 0
+            self._client.patch_rows(
+                table="releves_bancaires",
+                query={
+                    "profile_id": f"eq.{profile_id}",
+                    "merchant_entity_id": "is.null",
+                    "or": or_filter,
+                },
+                payload=payload,
+                use_anon_key=False,
+            )
+            if matched_count > 0:
+                return matched_count
+            return len(rows)
+
+        exact_filter = f"(payee.eq.{alias},libelle.eq.{alias})"
+        updated_exact = _count_and_patch(exact_filter)
+        if updated_exact > 0:
+            return updated_exact
+
+        ilike_alias = f"*{alias}*"
+        ilike_filter = f"(payee.ilike.{ilike_alias},libelle.ilike.{ilike_alias})"
+        return _count_and_patch(ilike_filter)
 
     def attach_merchant_entity_to_releve(
         self,

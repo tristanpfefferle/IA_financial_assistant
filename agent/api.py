@@ -26,6 +26,7 @@ from agent.loop import AgentLoop
 from agent.tool_router import ToolRouter
 from agent.bank_catalog import extract_canonical_banks
 from agent.merchant_cleanup import MerchantSuggestion, run_merchant_cleanup
+from agent.merchant_alias_resolver import resolve_pending_map_alias
 from backend.factory import build_backend_tool_service
 from backend.auth.supabase_auth import UnauthorizedError, get_user_from_bearer_token
 from backend.db.supabase_client import SupabaseClient, SupabaseSettings
@@ -933,6 +934,12 @@ class MerchantSuggestionApplyPayload(BaseModel):
     """Payload for merchant suggestion apply endpoint."""
 
     suggestion_id: UUID
+
+
+class MerchantAliasResolvePayload(BaseModel):
+    """Payload for map_alias suggestion batch resolver endpoint."""
+
+    limit: int = 100
 
 
 @lru_cache(maxsize=1)
@@ -2141,6 +2148,33 @@ def _maybe_auto_apply_suggestion(
         return False, str(exc)
 
     return False, None
+
+
+@app.post("/finance/merchants/suggestions/resolve")
+def resolve_merchant_alias_suggestions(
+    payload: MerchantAliasResolvePayload,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Resolve pending/failed map_alias suggestions for authenticated profile."""
+
+    if not _config.llm_enabled():
+        raise HTTPException(status_code=400, detail="LLM is disabled (set AGENT_LLM_ENABLED=1)")
+
+    _, profile_id = _resolve_authenticated_profile(authorization)
+    profiles_repository = get_profiles_repository()
+
+    limit = max(1, min(int(payload.limit), 500))
+    try:
+        stats = resolve_pending_map_alias(
+            profile_id=profile_id,
+            profiles_repository=profiles_repository,
+            limit=limit,
+        )
+    except Exception as exc:
+        logger.exception("resolve_map_alias_suggestions_failed profile_id=%s", profile_id)
+        raise HTTPException(status_code=500, detail="Failed to resolve map_alias suggestions") from exc
+
+    return jsonable_encoder(stats)
 
 
 @app.post("/finance/merchants/suggestions/list")
