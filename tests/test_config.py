@@ -133,3 +133,10 @@ def test_auto_resolve_merchant_aliases_limit_uses_default_on_invalid(monkeypatch
     monkeypatch.setenv("AGENT_AUTO_RESOLVE_MERCHANT_ALIASES_LIMIT", "invalid")
 
     assert config.auto_resolve_merchant_aliases_limit() == 20
+
+
+def test_auto_resolve_merchant_aliases_default_ignores_legacy_import_flag(monkeypatch) -> None:
+    monkeypatch.delenv("AGENT_AUTO_RESOLVE_MERCHANT_ALIASES", raising=False)
+    monkeypatch.delenv("MERCHANT_AUTO_RESOLVE_ON_IMPORT", raising=False)
+
+    assert config.auto_resolve_merchant_aliases_enabled() is True

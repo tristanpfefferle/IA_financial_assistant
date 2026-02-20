@@ -462,7 +462,7 @@ def test_bootstrap_merchants_from_imported_releves_unknown_alias_creates_deduped
 
     assert summary == {"processed_count": 2, "linked_count": 0, "skipped_count": 2}
     assert repo.attach_calls == 0
-    assert len(repo.suggestion_rows) == 2
+    assert len(repo.suggestion_rows) == 1
     assert {row["observed_alias_norm"] for row in repo.suggestion_rows} == {"unknown shop"}
 
 
