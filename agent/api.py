@@ -784,6 +784,7 @@ def _bootstrap_merchants_from_imported_releves(
     linked_count = 0
     skipped_count = 0
     suggestion_rows: list[dict[str, Any]] = []
+    seen_pending_alias_norms: set[str] = set()
 
     for row in rows:
         processed_count += 1
@@ -809,17 +810,19 @@ def _bootstrap_merchants_from_imported_releves(
             releve_id = UUID(str(releve_id_raw))
             entity = profiles_repository.find_merchant_entity_by_alias_norm(alias_norm=observed_alias_norm)
             if not entity:
-                suggestion_rows.append(
-                    {
-                        "status": "pending",
-                        "action": "map_alias",
-                        "observed_alias": observed_alias,
-                        "observed_alias_norm": observed_alias_norm,
-                        "suggested_entity_name": None,
-                        "confidence": None,
-                        "rationale": "unknown alias from import",
-                    }
-                )
+                if observed_alias_norm not in seen_pending_alias_norms:
+                    suggestion_rows.append(
+                        {
+                            "status": "pending",
+                            "action": "map_alias",
+                            "observed_alias": observed_alias,
+                            "observed_alias_norm": observed_alias_norm,
+                            "suggested_entity_name": None,
+                            "confidence": None,
+                            "rationale": "unknown alias from import",
+                        }
+                    )
+                    seen_pending_alias_norms.add(observed_alias_norm)
                 skipped_count += 1
                 continue
 
@@ -2779,9 +2782,7 @@ def import_releves(payload: ImportRequestPayload, authorization: str | None = He
     }
     response_payload["merchant_alias_auto_resolve"] = merchant_alias_auto_resolve_payload
 
-    if not _config.merchant_auto_resolve_on_import_enabled():
-        merchant_alias_auto_resolve_payload["skipped_reason"] = "merchant_alias_auto_resolve_disabled"
-    elif not _config.auto_resolve_merchant_aliases_enabled():
+    if not _config.auto_resolve_merchant_aliases_enabled():
         merchant_alias_auto_resolve_payload["skipped_reason"] = "merchant_alias_auto_resolve_disabled"
     elif not _config.llm_enabled():
         merchant_alias_auto_resolve_payload["skipped_reason"] = "merchant_alias_auto_resolve_llm_disabled"
