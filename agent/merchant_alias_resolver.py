@@ -284,6 +284,17 @@ def resolve_pending_map_alias(*, profile_id: UUID, profiles_repository: Any, lim
     if not llm_items:
         return stats
 
+    def _safe_update_merchant_suggestion_after_resolve(**kwargs: Any) -> None:
+        try:
+            profiles_repository.update_merchant_suggestion_after_resolve(**kwargs)
+        except Exception as exc:
+            stats["warnings"].append("merchant_suggestion_update_failed")
+            logger.warning(
+                "merchant suggestion update failed suggestion_id=%s error=%s",
+                kwargs.get("suggestion_id"),
+                _compact_error(exc),
+            )
+
     for start in range(0, len(llm_items), _MAX_LLM_BATCH_SIZE):
         llm_batch_items = llm_items[start : start + _MAX_LLM_BATCH_SIZE]
         batch_ids: set[UUID] = {UUID(item["suggestion_id"]) for item in llm_batch_items}
@@ -317,7 +328,7 @@ def resolve_pending_map_alias(*, profile_id: UUID, profiles_repository: Any, lim
                     stats["processed"] += 1
                     stats["failed"] += 1
                     seen_ids.add(suggestion_id)
-                    profiles_repository.update_merchant_suggestion_after_resolve(
+                    _safe_update_merchant_suggestion_after_resolve(
                         profile_id=profile_id,
                         suggestion_id=suggestion_id,
                         status="failed",
@@ -387,7 +398,7 @@ def resolve_pending_map_alias(*, profile_id: UUID, profiles_repository: Any, lim
                 )
                 stats["updated_transactions"] += int(updated_transactions or 0)
 
-                profiles_repository.update_merchant_suggestion_after_resolve(
+                _safe_update_merchant_suggestion_after_resolve(
                     profile_id=profile_id,
                     suggestion_id=suggestion_id,
                     status="applied",
@@ -405,7 +416,7 @@ def resolve_pending_map_alias(*, profile_id: UUID, profiles_repository: Any, lim
                 stats["applied"] += 1
             except Exception as exc:
                 stats["failed"] += 1
-                profiles_repository.update_merchant_suggestion_after_resolve(
+                _safe_update_merchant_suggestion_after_resolve(
                     profile_id=profile_id,
                     suggestion_id=suggestion_id,
                     status="failed",
@@ -426,7 +437,7 @@ def resolve_pending_map_alias(*, profile_id: UUID, profiles_repository: Any, lim
                 continue
             stats["processed"] += 1
             stats["failed"] += 1
-            profiles_repository.update_merchant_suggestion_after_resolve(
+            _safe_update_merchant_suggestion_after_resolve(
                 profile_id=profile_id,
                 suggestion_id=suggestion_id,
                 status="failed",

@@ -678,3 +678,47 @@ def test_count_map_alias_suggestions_returns_none_when_count_missing() -> None:
     count = repository.count_map_alias_suggestions(profile_id=profile_id)
 
     assert count is None
+
+
+def test_update_merchant_suggestion_after_resolve_falls_back_to_minimal_payload() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    suggestion_id = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+
+    class _ClientPatchFallbackStub(_ClientStub):
+        def __init__(self) -> None:
+            super().__init__(responses=[])
+
+        def patch_rows(self, *, table, query, payload, use_anon_key=False):
+            self.patch_calls.append(
+                {
+                    "table": table,
+                    "query": query,
+                    "payload": payload,
+                    "use_anon_key": use_anon_key,
+                }
+            )
+            if len(self.patch_calls) == 1:
+                raise Exception("schema mismatch")
+            return []
+
+    client = _ClientPatchFallbackStub()
+    repository = SupabaseProfilesRepository(client=client)
+
+    repository.update_merchant_suggestion_after_resolve(
+        profile_id=profile_id,
+        suggestion_id=suggestion_id,
+        status="failed",
+        error="invalid_item",
+        llm_model="gpt-test",
+        llm_run_id="run_1",
+        confidence=0.0,
+        rationale="invalid_item",
+        target_merchant_entity_id=None,
+        suggested_entity_name=None,
+        suggested_entity_name_norm=None,
+        suggested_category_norm=None,
+        suggested_category_label=None,
+    )
+
+    assert len(client.patch_calls) == 2
+    assert client.patch_calls[1]["payload"] == {"status": "failed", "error": "invalid_item"}
