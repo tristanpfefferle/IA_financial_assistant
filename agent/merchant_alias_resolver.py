@@ -24,6 +24,14 @@ _CANONICAL_CATEGORY_LABELS: dict[str, str] = {
     "other": "Autres",
 }
 _ALLOWED_CATEGORY_KEYS = set(_CANONICAL_CATEGORY_LABELS)
+_MAX_LLM_BATCH_SIZE = 20
+_PROMPT_COMPACT_REPLACEMENTS = (
+    "Paiement UBS TWINT",
+    "Motif du paiement",
+    "Paiement UBS",
+    "Débit UBS TWINT",
+    "Debit UBS TWINT",
+)
 
 
 def _normalize_text(value: str) -> str:
@@ -64,6 +72,21 @@ def _build_batch_prompt(*, items: list[dict[str, str]]) -> str:
     )
 
 
+def _compact_observed_alias(value: str) -> str:
+    compact = " ".join(str(value or "").split())
+    for noise in _PROMPT_COMPACT_REPLACEMENTS:
+        compact = compact.replace(noise, " ")
+    compact = " ".join(compact.split())
+    return compact[:140]
+
+
+def _is_response_format_unsupported(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return "response_format" in message and (
+        "unsupported" in message or "not supported" in message or "invalid_request_error" in message
+    )
+
+
 def _call_llm_json(prompt: str) -> tuple[dict[str, Any], str | None, dict[str, int]]:
     api_key = _config.openai_api_key()
     if not api_key:
@@ -72,14 +95,29 @@ def _call_llm_json(prompt: str) -> tuple[dict[str, Any], str | None, dict[str, i
     from openai import OpenAI
 
     client = OpenAI(api_key=api_key, timeout=30.0)
-    response = client.chat.completions.create(
-        model=_config.llm_model(),
-        messages=[
-            {"role": "system", "content": "Tu réponds toujours avec du JSON strict."},
-            {"role": "user", "content": prompt},
-        ],
-        response_format={"type": "json_object"},
-    )
+    messages = [
+        {"role": "system", "content": "Tu réponds toujours avec du JSON strict."},
+        {"role": "user", "content": prompt},
+    ]
+    try:
+        response = client.chat.completions.create(
+            model=_config.llm_model(),
+            messages=messages,
+            response_format={"type": "json_object"},
+        )
+    except Exception as exc:
+        if not _is_response_format_unsupported(exc):
+            raise
+        response = client.chat.completions.create(
+            model=_config.llm_model(),
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Tu réponds uniquement avec un objet JSON strict valide. Aucun markdown, aucun texte hors JSON.",
+                },
+                {"role": "user", "content": prompt},
+            ],
+        )
     llm_run_id = str(response.id) if getattr(response, "id", None) else None
 
     usage_dict: dict[str, int] = {}
@@ -93,7 +131,29 @@ def _call_llm_json(prompt: str) -> tuple[dict[str, Any], str | None, dict[str, i
     content = response.choices[0].message.content if response.choices else None
     if not content:
         return {}, llm_run_id, usage_dict
-    return json.loads(content), llm_run_id, usage_dict
+    try:
+        return json.loads(content), llm_run_id, usage_dict
+    except json.JSONDecodeError:
+        usage_dict["json_parse_failed"] = 1
+        return {}, llm_run_id, usage_dict
+
+
+def _unpack_llm_call_result(result: Any) -> tuple[dict[str, Any], str | None, dict[str, int], list[str]]:
+    if not isinstance(result, tuple):
+        return {}, None, {}, ["invalid_llm_call_result"]
+    if len(result) == 3:
+        payload, llm_run_id, usage = result
+        warnings: list[str] = []
+    elif len(result) == 4:
+        payload, llm_run_id, usage, warnings = result
+    else:
+        return {}, None, {}, ["invalid_llm_call_result"]
+    payload_dict = payload if isinstance(payload, dict) else {}
+    usage_dict = usage if isinstance(usage, dict) else {}
+    warning_list = warnings if isinstance(warnings, list) else []
+    if usage_dict.get("json_parse_failed"):
+        warning_list = [*warning_list, "json_parse_failed"]
+    return payload_dict, llm_run_id, usage_dict, warning_list
 
 
 def _validate_resolution(raw: Any) -> tuple[dict[str, Any] | None, str | None]:
@@ -215,6 +275,7 @@ def resolve_pending_map_alias(*, profile_id: UUID, profiles_repository: Any, lim
         llm_items.append(
             {
                 "suggestion_id": str(suggestion_id),
+                "observed_alias_compact": _compact_observed_alias(observed_alias),
                 "observed_alias": observed_alias,
                 "observed_alias_norm": observed_alias_norm,
             }
@@ -223,155 +284,162 @@ def resolve_pending_map_alias(*, profile_id: UUID, profiles_repository: Any, lim
     if not llm_items:
         return stats
 
-    prompt = _build_batch_prompt(items=llm_items)
-    llm_payload, llm_run_id, usage = _call_llm_json(prompt)
-    stats["llm_run_id"] = llm_run_id
-    stats["usage"] = usage
+    for start in range(0, len(llm_items), _MAX_LLM_BATCH_SIZE):
+        llm_batch_items = llm_items[start : start + _MAX_LLM_BATCH_SIZE]
+        prompt = _build_batch_prompt(items=llm_batch_items)
+        llm_payload, llm_run_id, usage, warnings = _unpack_llm_call_result(_call_llm_json(prompt))
+        if llm_run_id:
+            stats["llm_run_id"] = llm_run_id
+        for token_name, value in usage.items():
+            if isinstance(value, int):
+                stats["usage"][token_name] = int(stats["usage"].get(token_name, 0)) + value
+        stats["warnings"].extend(warnings)
 
-    raw_resolutions = llm_payload.get("resolutions") if isinstance(llm_payload, dict) else None
-    if not isinstance(raw_resolutions, list):
-        raw_resolutions = []
-        stats["warnings"].append("invalid_llm_payload")
+        raw_resolutions = llm_payload.get("resolutions") if isinstance(llm_payload, dict) else None
+        if not isinstance(raw_resolutions, list):
+            raw_resolutions = []
+            stats["warnings"].append("invalid_llm_payload")
 
-    seen_ids: set[UUID] = set()
-    for raw_resolution in raw_resolutions:
-        parsed, reason = _validate_resolution(raw_resolution)
-        suggestion_id = None
-        if isinstance(raw_resolution, dict):
+        seen_ids: set[UUID] = set()
+        batch_ids = {UUID(str(item["suggestion_id"])) for item in llm_batch_items}
+        for raw_resolution in raw_resolutions:
+            parsed, reason = _validate_resolution(raw_resolution)
+            suggestion_id = None
+            if isinstance(raw_resolution, dict):
+                try:
+                    suggestion_id = UUID(str(raw_resolution.get("suggestion_id")))
+                except (TypeError, ValueError):
+                    suggestion_id = None
+
+            if parsed is None:
+                if suggestion_id and suggestion_id in suggestions_by_id:
+                    stats["processed"] += 1
+                    stats["failed"] += 1
+                    seen_ids.add(suggestion_id)
+                    profiles_repository.update_merchant_suggestion_after_resolve(
+                        profile_id=profile_id,
+                        suggestion_id=suggestion_id,
+                        status="failed",
+                        error=reason,
+                        llm_model=_config.llm_model(),
+                        llm_run_id=llm_run_id,
+                        confidence=0.0,
+                        rationale=reason,
+                        target_merchant_entity_id=None,
+                        suggested_entity_name=None,
+                        suggested_entity_name_norm=None,
+                        suggested_category_norm=None,
+                        suggested_category_label=None,
+                    )
+                continue
+
+            resolution = parsed
+            suggestion_id = resolution["suggestion_id"]
+            suggestion = suggestions_by_id.get(suggestion_id)
+            if suggestion is None or suggestion_id not in batch_ids:
+                continue
+
+            seen_ids.add(suggestion_id)
+            stats["processed"] += 1
+            merchant_entity_id: UUID | None = resolution["merchant_entity_id"]
             try:
-                suggestion_id = UUID(str(raw_resolution.get("suggestion_id")))
-            except (TypeError, ValueError):
-                suggestion_id = None
+                if resolution["action"] == "create_entity":
+                    entity = profiles_repository.create_merchant_entity(
+                        canonical_name=resolution["canonical_name"],
+                        canonical_name_norm=resolution["canonical_name_norm"],
+                        country=resolution["country"],
+                        suggested_category_norm=resolution["suggested_category_norm"],
+                        suggested_category_label=resolution["suggested_category_label"],
+                        suggested_confidence=resolution["confidence"],
+                        suggested_source="llm",
+                    )
+                    merchant_entity_id = UUID(str(entity["id"]))
+                    stats["created_entities"] += 1
 
-        if parsed is None:
-            if suggestion_id and suggestion_id in suggestions_by_id:
-                stats["processed"] += 1
+                if merchant_entity_id is None:
+                    raise ValueError("missing merchant_entity_id")
+
+                profiles_repository.upsert_merchant_alias(
+                    merchant_entity_id=merchant_entity_id,
+                    alias=suggestion["observed_alias"],
+                    alias_norm=suggestion["observed_alias_norm"],
+                    source="llm",
+                )
+                stats["linked_aliases"] += 1
+
+                category_id = categories_by_key.get(resolution["suggested_category_norm"])
+                if category_id is None:
+                    category_id = categories_by_key.get(_normalize_text(resolution["suggested_category_label"]))
+                if category_id is not None:
+                    profiles_repository.upsert_profile_merchant_override(
+                        profile_id=profile_id,
+                        merchant_entity_id=merchant_entity_id,
+                        category_id=category_id,
+                        status="auto",
+                    )
+
+                updated_transactions = profiles_repository.apply_entity_to_profile_transactions(
+                    profile_id=profile_id,
+                    observed_alias=suggestion["observed_alias"],
+                    merchant_entity_id=merchant_entity_id,
+                    category_id=category_id,
+                )
+                stats["updated_transactions"] += int(updated_transactions or 0)
+
+                profiles_repository.update_merchant_suggestion_after_resolve(
+                    profile_id=profile_id,
+                    suggestion_id=suggestion_id,
+                    status="applied",
+                    error=None,
+                    llm_model=_config.llm_model(),
+                    llm_run_id=llm_run_id,
+                    confidence=resolution["confidence"],
+                    rationale=resolution["rationale"],
+                    target_merchant_entity_id=merchant_entity_id,
+                    suggested_entity_name=resolution["canonical_name"],
+                    suggested_entity_name_norm=resolution["canonical_name_norm"],
+                    suggested_category_norm=resolution["suggested_category_norm"],
+                    suggested_category_label=resolution["suggested_category_label"],
+                )
+                stats["applied"] += 1
+            except Exception as exc:
                 stats["failed"] += 1
-                seen_ids.add(suggestion_id)
                 profiles_repository.update_merchant_suggestion_after_resolve(
                     profile_id=profile_id,
                     suggestion_id=suggestion_id,
                     status="failed",
-                    error=reason,
+                    error=_compact_error(exc),
                     llm_model=_config.llm_model(),
                     llm_run_id=llm_run_id,
-                    confidence=0.0,
-                    rationale=reason,
-                    target_merchant_entity_id=None,
-                    suggested_entity_name=None,
-                    suggested_entity_name_norm=None,
-                    suggested_category_norm=None,
-                    suggested_category_label=None,
-                )
-            continue
-
-        resolution = parsed
-        suggestion_id = resolution["suggestion_id"]
-        suggestion = suggestions_by_id.get(suggestion_id)
-        if suggestion is None:
-            continue
-
-        seen_ids.add(suggestion_id)
-        stats["processed"] += 1
-        merchant_entity_id: UUID | None = resolution["merchant_entity_id"]
-        try:
-            if resolution["action"] == "create_entity":
-                entity = profiles_repository.create_merchant_entity(
-                    canonical_name=resolution["canonical_name"],
-                    canonical_name_norm=resolution["canonical_name_norm"],
-                    country=resolution["country"],
+                    confidence=resolution["confidence"],
+                    rationale=resolution["rationale"],
+                    target_merchant_entity_id=merchant_entity_id,
+                    suggested_entity_name=resolution["canonical_name"],
+                    suggested_entity_name_norm=resolution["canonical_name_norm"],
                     suggested_category_norm=resolution["suggested_category_norm"],
                     suggested_category_label=resolution["suggested_category_label"],
-                    suggested_confidence=resolution["confidence"],
-                    suggested_source="llm",
-                )
-                merchant_entity_id = UUID(str(entity["id"]))
-                stats["created_entities"] += 1
-
-            if merchant_entity_id is None:
-                raise ValueError("missing merchant_entity_id")
-
-            profiles_repository.upsert_merchant_alias(
-                merchant_entity_id=merchant_entity_id,
-                alias=suggestion["observed_alias"],
-                alias_norm=suggestion["observed_alias_norm"],
-                source="llm",
-            )
-            stats["linked_aliases"] += 1
-
-            category_id = categories_by_key.get(resolution["suggested_category_norm"])
-            if category_id is None:
-                category_id = categories_by_key.get(_normalize_text(resolution["suggested_category_label"]))
-            if category_id is not None:
-                profiles_repository.upsert_profile_merchant_override(
-                    profile_id=profile_id,
-                    merchant_entity_id=merchant_entity_id,
-                    category_id=category_id,
-                    status="auto",
                 )
 
-            updated_transactions = profiles_repository.apply_entity_to_profile_transactions(
-                profile_id=profile_id,
-                observed_alias=suggestion["observed_alias"],
-                merchant_entity_id=merchant_entity_id,
-                category_id=category_id,
-            )
-            stats["updated_transactions"] += int(updated_transactions or 0)
-
-            profiles_repository.update_merchant_suggestion_after_resolve(
-                profile_id=profile_id,
-                suggestion_id=suggestion_id,
-                status="applied",
-                error=None,
-                llm_model=_config.llm_model(),
-                llm_run_id=llm_run_id,
-                confidence=resolution["confidence"],
-                rationale=resolution["rationale"],
-                target_merchant_entity_id=merchant_entity_id,
-                suggested_entity_name=resolution["canonical_name"],
-                suggested_entity_name_norm=resolution["canonical_name_norm"],
-                suggested_category_norm=resolution["suggested_category_norm"],
-                suggested_category_label=resolution["suggested_category_label"],
-            )
-            stats["applied"] += 1
-        except Exception as exc:
+        for suggestion_id in batch_ids:
+            if suggestion_id in seen_ids:
+                continue
+            stats["processed"] += 1
             stats["failed"] += 1
             profiles_repository.update_merchant_suggestion_after_resolve(
                 profile_id=profile_id,
                 suggestion_id=suggestion_id,
                 status="failed",
-                error=_compact_error(exc),
+                error="missing_llm_resolution",
                 llm_model=_config.llm_model(),
                 llm_run_id=llm_run_id,
-                confidence=resolution["confidence"],
-                rationale=resolution["rationale"],
-                target_merchant_entity_id=merchant_entity_id,
-                suggested_entity_name=resolution["canonical_name"],
-                suggested_entity_name_norm=resolution["canonical_name_norm"],
-                suggested_category_norm=resolution["suggested_category_norm"],
-                suggested_category_label=resolution["suggested_category_label"],
+                confidence=0.0,
+                rationale="missing_llm_resolution",
+                target_merchant_entity_id=None,
+                suggested_entity_name=None,
+                suggested_entity_name_norm=None,
+                suggested_category_norm=None,
+                suggested_category_label=None,
             )
-
-    for suggestion_id in suggestions_by_id:
-        if suggestion_id in seen_ids:
-            continue
-        stats["processed"] += 1
-        stats["failed"] += 1
-        profiles_repository.update_merchant_suggestion_after_resolve(
-            profile_id=profile_id,
-            suggestion_id=suggestion_id,
-            status="failed",
-            error="missing_llm_resolution",
-            llm_model=_config.llm_model(),
-            llm_run_id=llm_run_id,
-            confidence=0.0,
-            rationale="missing_llm_resolution",
-            target_merchant_entity_id=None,
-            suggested_entity_name=None,
-            suggested_entity_name_norm=None,
-            suggested_category_norm=None,
-            suggested_category_label=None,
-        )
 
     logger.info(
         "map_alias_resolve_done profile_id=%s llm_run_id=%s usage=%s stats=%s",
