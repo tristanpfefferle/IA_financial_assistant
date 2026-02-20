@@ -112,16 +112,17 @@ def auto_resolve_merchant_aliases_enabled() -> bool:
 def auto_resolve_merchant_aliases_limit() -> int:
     """Return max pending map_alias suggestions auto-resolved after import."""
 
-    raw_value = (get_env("AGENT_AUTO_RESOLVE_MERCHANT_ALIASES_LIMIT", "50") or "50").strip()
+    default_limit = 20
+    raw_value = (get_env("AGENT_AUTO_RESOLVE_MERCHANT_ALIASES_LIMIT", str(default_limit)) or str(default_limit)).strip()
     try:
         return max(1, int(raw_value))
     except ValueError:
         logger.warning(
             "invalid_auto_resolve_merchant_aliases_limit value=%s default=%s",
             raw_value,
-            50,
+            default_limit,
         )
-        return 50
+        return default_limit
 
 
 def llm_strict() -> bool:

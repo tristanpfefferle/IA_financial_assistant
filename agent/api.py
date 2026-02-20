@@ -1986,6 +1986,7 @@ def import_releves(payload: ImportRequestPayload, authorization: str | None = He
         else:
             response_payload["warnings"] = ["chat_state_update_failed"]
 
+    profiles_repository = None
     try:
         profiles_repository = get_profiles_repository()
         if hasattr(profiles_repository, "ensure_system_categories"):
@@ -2022,7 +2023,8 @@ def import_releves(payload: ImportRequestPayload, authorization: str | None = He
         merchant_alias_auto_resolve_payload["skipped_reason"] = "merchant_alias_auto_resolve_llm_disabled"
     else:
         try:
-            profiles_repository = get_profiles_repository()
+            if profiles_repository is None:
+                profiles_repository = get_profiles_repository()
             if not hasattr(profiles_repository, "list_map_alias_suggestions"):
                 merchant_alias_auto_resolve_payload["skipped_reason"] = "merchant_alias_auto_resolve_unsupported"
             else:
@@ -2056,6 +2058,7 @@ def import_releves(payload: ImportRequestPayload, authorization: str | None = He
             else:
                 response_payload["warnings"] = ["merchant_alias_auto_resolve_failed"]
             merchant_alias_auto_resolve_payload["attempted"] = True
+            merchant_alias_auto_resolve_payload["skipped_reason"] = "merchant_alias_auto_resolve_failed"
             merchant_alias_auto_resolve_payload["stats"] = None
 
     response_payload["merchant_suggestions_pending_count"] = 0
