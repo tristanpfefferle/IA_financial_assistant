@@ -196,7 +196,7 @@ def test_in_memory_sum_and_aggregate_exclude_categories_for_debit_only(monkeypat
     assert groups == {
         "Transfert interne": (Decimal("-150.00"), 1),
         "Logement": (Decimal("-900.00"), 1),
-        "Autre": (Decimal("-5.00"), 1),
+        "Autres": (Decimal("-5.00"), 1),
     }
     assert aggregate_currency == "EUR"
 
@@ -239,7 +239,7 @@ def test_supabase_sum_and_aggregate_exclude_categories_for_debit_only(monkeypatc
 
     assert groups == {
         "Transport": (Decimal("-20"), 1),
-        "Autre": (Decimal("-3"), 1),
+        "Autres": (Decimal("-3"), 1),
     }
     assert aggregate_currency == "EUR"
 
@@ -553,3 +553,125 @@ def test_supabase_aggregate_group_by_category_id_prefers_profile_category_name()
         "Santé": (Decimal("-9"), 1),
     }
     assert currency == "EUR"
+
+
+def test_in_memory_aggregate_category_normalization_merges_autre_autres() -> None:
+    repository = InMemoryRelevesRepository()
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    autres_id = UUID("99999999-9999-9999-9999-999999999999")
+
+    repository._profile_categories_seed.append(
+        {
+            "id": autres_id,
+            "profile_id": profile_id,
+            "name": "Autres",
+            "name_norm": "autres",
+            "exclude_from_totals": False,
+        }
+    )
+    repository._seed = [
+        ReleveBancaire(
+            id=UUID("aaaaaaaa-0000-0000-0000-000000000010"),
+            profile_id=profile_id,
+            date=date(2026, 2, 1),
+            libelle="Divers 1",
+            montant=Decimal("-10.00"),
+            devise="CHF",
+            categorie=None,
+            category_id=autres_id,
+            payee="A",
+            merchant_id=None,
+        ),
+        ReleveBancaire(
+            id=UUID("aaaaaaaa-0000-0000-0000-000000000011"),
+            profile_id=profile_id,
+            date=date(2026, 2, 2),
+            libelle="Divers 2",
+            montant=Decimal("-5.00"),
+            devise="CHF",
+            categorie="Autre",
+            category_id=None,
+            payee="B",
+            merchant_id=None,
+        ),
+        ReleveBancaire(
+            id=UUID("aaaaaaaa-0000-0000-0000-000000000012"),
+            profile_id=profile_id,
+            date=date(2026, 2, 3),
+            libelle="Divers 3",
+            montant=Decimal("-2.00"),
+            devise="CHF",
+            categorie="Autres",
+            category_id=None,
+            payee="C",
+            merchant_id=None,
+        ),
+    ]
+
+    groups, _ = repository.aggregate_releves(
+        RelevesAggregateRequest(profile_id=profile_id, group_by=RelevesGroupBy.CATEGORIE)
+    )
+
+    assert sorted(groups.items()) == [("Autres", (Decimal("-17.00"), 3))]
+
+
+def test_supabase_aggregate_category_normalization_merges_autre_autres() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+
+    class _AggregateNormalizeClientStub(_ClientStub):
+        def get_rows(self, *, table, query, with_count, use_anon_key=False):
+            self.calls.append(
+                {
+                    "table": table,
+                    "query": query,
+                    "with_count": with_count,
+                    "use_anon_key": use_anon_key,
+                }
+            )
+            if table == "releves_bancaires":
+                return [
+                    {
+                        "montant": -10,
+                        "devise": "CHF",
+                        "date": "2026-01-02",
+                        "categorie": None,
+                        "category_id": "99999999-9999-9999-9999-999999999999",
+                        "payee": "A",
+                    },
+                    {
+                        "montant": -5,
+                        "devise": "CHF",
+                        "date": "2026-01-03",
+                        "categorie": "Autre",
+                        "category_id": None,
+                        "payee": "B",
+                    },
+                    {
+                        "montant": -2,
+                        "devise": "CHF",
+                        "date": "2026-01-04",
+                        "categorie": "Autres",
+                        "category_id": None,
+                        "payee": "C",
+                    },
+                ], 0
+            if table == "profile_categories":
+                return [
+                    {
+                        "id": "99999999-9999-9999-9999-999999999999",
+                        "name": "Autres",
+                        "name_norm": "autres",
+                        "system_key": "other",
+                    }
+                ], 0
+            return [], 0
+
+    client = _AggregateNormalizeClientStub()
+    repository = SupabaseRelevesRepository(client=client)
+
+    groups, currency = repository.aggregate_releves(
+        RelevesAggregateRequest(profile_id=profile_id, group_by=RelevesGroupBy.CATEGORIE)
+    )
+
+    assert sorted(groups.items()) == [("Autres", (Decimal("-17"), 3))]
+    assert currency == "CHF"
