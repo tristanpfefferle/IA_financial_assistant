@@ -23,6 +23,7 @@ from shared import config as _config
 from agent.backend_client import BackendClient
 from agent.llm_planner import LLMPlanner
 from agent.loop import AgentLoop
+from agent.memory import period_payload_from_message
 from agent.tool_router import ToolRouter
 from agent.bank_catalog import extract_canonical_banks
 from agent.merchant_cleanup import MerchantSuggestion, run_merchant_cleanup
@@ -172,6 +173,71 @@ def _extract_import_date_range(result: dict[str, Any]) -> dict[str, str] | None:
         "end": max(valid_dates).isoformat(),
     }
 
+
+def _build_pending_clarification_from_tool_result(
+    tool_result: Any,
+) -> dict[str, Any] | None:
+    """Build persisted pending clarification context from a clarification tool result."""
+
+    if not isinstance(tool_result, dict) or tool_result.get("type") != "clarification":
+        return None
+
+    payload = tool_result.get("payload")
+    if not isinstance(payload, dict):
+        return None
+
+    tool_name = payload.get("tool_name") or payload.get("expected_tool_name")
+    if not isinstance(tool_name, str) or not tool_name.strip():
+        return None
+
+    partial_payload = payload.get("partial_payload")
+    if not isinstance(partial_payload, dict):
+        partial_payload = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
+
+    missing_fields_raw = payload.get("missing_fields")
+    missing_fields = [
+        str(field).strip()
+        for field in missing_fields_raw
+        if isinstance(field, str) and str(field).strip()
+    ] if isinstance(missing_fields_raw, list) else []
+
+    return {
+        "type": "clarification_pending",
+        "tool_name": tool_name.strip(),
+        "intent": payload.get("intent") if isinstance(payload.get("intent"), str) else None,
+        "partial_payload": dict(partial_payload),
+        "missing_fields": missing_fields,
+    }
+
+
+def _resolve_pending_clarification_payload(
+    *,
+    message: str,
+    pending_clarification: dict[str, Any],
+) -> tuple[str, dict[str, Any], list[str]] | None:
+    """Return tool name/payload/remaining missing fields for a pending clarification."""
+
+    tool_name = pending_clarification.get("tool_name")
+    if not isinstance(tool_name, str) or not tool_name.strip():
+        return None
+
+    payload = dict(pending_clarification.get("partial_payload") or {})
+    missing_fields_raw = pending_clarification.get("missing_fields")
+    missing_fields = [
+        str(field).strip()
+        for field in missing_fields_raw
+        if isinstance(field, str) and str(field).strip()
+    ] if isinstance(missing_fields_raw, list) else []
+
+    if "date_range" in missing_fields and "date_range" not in payload:
+        period_payload = period_payload_from_message(message)
+        if isinstance(period_payload, dict):
+            date_range = period_payload.get("date_range")
+            if isinstance(date_range, dict):
+                payload["date_range"] = date_range
+
+    remaining_missing_fields = [field for field in missing_fields if payload.get(field) is None]
+    return tool_name.strip(), payload, remaining_missing_fields
 
 
 def _handler_accepts_debug_kwarg(handler: Any) -> bool:
@@ -1713,6 +1779,42 @@ def agent_chat(
                     if not _is_no(payload.message):
                         return ChatResponse(reply="Réponds OUI ou NON.", tool_result=None, plan=None)
 
+        pending_clarification = state_dict.get("pending_clarification") if isinstance(state_dict, dict) else None
+        if (
+            isinstance(pending_clarification, dict)
+            and pending_clarification.get("type") == "clarification_pending"
+            and isinstance(pending_clarification.get("tool_name"), str)
+        ):
+            resolved_pending = _resolve_pending_clarification_payload(
+                message=payload.message,
+                pending_clarification=pending_clarification,
+            )
+            if resolved_pending is not None:
+                tool_name, tool_payload, remaining_missing_fields = resolved_pending
+                if not remaining_missing_fields:
+                    pending_result = get_tool_router().call(
+                        tool_name,
+                        tool_payload,
+                        profile_id=profile_id,
+                    )
+                    state_after_pending = dict(state_dict) if isinstance(state_dict, dict) else {}
+                    state_after_pending.pop("pending_clarification", None)
+                    updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                    if state_after_pending:
+                        updated_chat_state["state"] = state_after_pending
+                    else:
+                        updated_chat_state.pop("state", None)
+                    profiles_repository.update_chat_state(
+                        profile_id=profile_id,
+                        user_id=auth_user_id,
+                        chat_state=updated_chat_state,
+                    )
+                    return ChatResponse(
+                        reply="OK.",
+                        tool_result=jsonable_encoder(pending_result),
+                        plan=jsonable_encoder({"tool_name": tool_name, "payload": tool_payload}),
+                    )
+
         memory_for_loop = state_dict if isinstance(state_dict, dict) else None
 
         logger.info(
@@ -1740,6 +1842,11 @@ def agent_chat(
         response_plan = dict(agent_reply.plan) if isinstance(agent_reply.plan, dict) else agent_reply.plan
 
         memory_update = getattr(agent_reply, "memory_update", None)
+        pending_from_clarification = _build_pending_clarification_from_tool_result(agent_reply.tool_result)
+        if pending_from_clarification is not None:
+            memory_update_dict = dict(memory_update) if isinstance(memory_update, dict) else {}
+            memory_update_dict["pending_clarification"] = pending_from_clarification
+            memory_update = memory_update_dict
         should_update_chat_state = (
             agent_reply.should_update_active_task
             or isinstance(memory_update, dict)

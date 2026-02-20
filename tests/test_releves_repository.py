@@ -415,3 +415,141 @@ def test_aggregate_releves_uses_merchant_id_filter_when_match_found() -> None:
     assert groups == {"Coop": (Decimal("-10.00"), 1)}
     assert currency == "CHF"
     assert ("merchant_id", f"in.({merchant_id})") in client.calls[1]["query"]
+
+
+def test_in_memory_aggregate_group_by_category_id_prefers_profile_category_name() -> None:
+    repository = InMemoryRelevesRepository()
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    food_id = UUID("11111111-1111-1111-1111-111111111111")
+    housing_id = UUID("22222222-2222-2222-2222-222222222222")
+
+    repository._profile_categories_seed.extend(
+        [
+            {
+                "id": food_id,
+                "profile_id": profile_id,
+                "name": "Alimentation",
+                "name_norm": "alimentation",
+                "exclude_from_totals": False,
+            },
+            {
+                "id": housing_id,
+                "profile_id": profile_id,
+                "name": "Logement",
+                "name_norm": "logement",
+                "exclude_from_totals": False,
+            },
+        ]
+    )
+
+    repository._seed = [
+        ReleveBancaire(
+            id=UUID("aaaaaaaa-0000-0000-0000-000000000001"),
+            profile_id=profile_id,
+            date=date(2026, 1, 3),
+            libelle="Supermarché",
+            montant=Decimal("-25"),
+            devise="EUR",
+            categorie=None,
+            category_id=food_id,
+            payee="Shop",
+            merchant_id=None,
+        ),
+        ReleveBancaire(
+            id=UUID("aaaaaaaa-0000-0000-0000-000000000002"),
+            profile_id=profile_id,
+            date=date(2026, 1, 5),
+            libelle="Loyer",
+            montant=Decimal("-900"),
+            devise="EUR",
+            categorie=None,
+            category_id=housing_id,
+            payee="Agence",
+            merchant_id=None,
+        ),
+        ReleveBancaire(
+            id=UUID("aaaaaaaa-0000-0000-0000-000000000003"),
+            profile_id=profile_id,
+            date=date(2026, 1, 8),
+            libelle="Transport",
+            montant=Decimal("-10"),
+            devise="EUR",
+            categorie="Transport",
+            category_id=None,
+            payee="TPG",
+            merchant_id=None,
+        ),
+    ]
+
+    groups, currency = repository.aggregate_releves(
+        RelevesAggregateRequest(profile_id=profile_id, group_by=RelevesGroupBy.CATEGORIE)
+    )
+
+    assert groups == {
+        "Alimentation": (Decimal("-25"), 1),
+        "Logement": (Decimal("-900"), 1),
+        "Transport": (Decimal("-10"), 1),
+    }
+    assert currency == "EUR"
+
+
+def test_supabase_aggregate_group_by_category_id_prefers_profile_category_name() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+
+    class _AggregateClientStub(_ClientStub):
+        def get_rows(self, *, table, query, with_count, use_anon_key=False):
+            self.calls.append(
+                {
+                    "table": table,
+                    "query": query,
+                    "with_count": with_count,
+                    "use_anon_key": use_anon_key,
+                }
+            )
+            if table == "releves_bancaires":
+                return [
+                    {
+                        "montant": -30,
+                        "devise": "EUR",
+                        "date": "2026-01-02",
+                        "categorie": None,
+                        "category_id": "11111111-1111-1111-1111-111111111111",
+                        "payee": "A",
+                    },
+                    {
+                        "montant": -700,
+                        "devise": "EUR",
+                        "date": "2026-01-03",
+                        "categorie": None,
+                        "category_id": "22222222-2222-2222-2222-222222222222",
+                        "payee": "B",
+                    },
+                    {
+                        "montant": -9,
+                        "devise": "EUR",
+                        "date": "2026-01-04",
+                        "categorie": "Santé",
+                        "category_id": None,
+                        "payee": "C",
+                    },
+                ], 0
+            if table == "profile_categories":
+                return [
+                    {"id": "11111111-1111-1111-1111-111111111111", "name": "Alimentation"},
+                    {"id": "22222222-2222-2222-2222-222222222222", "name": "Logement"},
+                ], 0
+            return [], 0
+
+    client = _AggregateClientStub()
+    repository = SupabaseRelevesRepository(client=client)
+
+    groups, currency = repository.aggregate_releves(
+        RelevesAggregateRequest(profile_id=profile_id, group_by=RelevesGroupBy.CATEGORIE)
+    )
+
+    assert groups == {
+        "Alimentation": (Decimal("-30"), 1),
+        "Logement": (Decimal("-700"), 1),
+        "Santé": (Decimal("-9"), 1),
+    }
+    assert currency == "EUR"
