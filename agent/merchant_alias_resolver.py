@@ -290,7 +290,8 @@ def resolve_pending_map_alias(*, profile_id: UUID, profiles_repository: Any, lim
         except Exception as exc:
             stats["warnings"].append("merchant_suggestion_update_failed")
             logger.warning(
-                "merchant suggestion update failed suggestion_id=%s error=%s",
+                "merchant suggestion update failed profile_id=%s suggestion_id=%s error=%s",
+                kwargs.get("profile_id"),
                 kwargs.get("suggestion_id"),
                 _compact_error(exc),
             )
