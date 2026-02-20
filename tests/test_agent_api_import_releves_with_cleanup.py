@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from uuid import UUID
+from typing import Any
 
 from fastapi.testclient import TestClient
 
@@ -408,3 +409,105 @@ def test_bootstrap_merchants_from_imported_releves_unknown_alias_creates_deduped
     assert repo.attach_calls == 0
     assert len(repo.suggestion_rows) == 2
     assert {row["observed_alias_norm"] for row in repo.suggestion_rows} == {"unknown shop"}
+
+
+def test_bootstrap_merchants_from_imported_releves_does_not_fallback_to_suggested_category_label() -> None:
+    entity_id = UUID("44444444-4444-4444-4444-444444444444")
+    releve_id = UUID("55555555-5555-5555-5555-555555555555")
+
+    class _Repo:
+        def __init__(self) -> None:
+            self.attach_calls: list[tuple[UUID, UUID, UUID | None]] = []
+
+        def list_releves_without_merchant(self, *, profile_id: UUID, limit: int = 500):
+            return [{"id": str(releve_id), "payee": "COOP CITY", "libelle": None}]
+
+        def list_profile_categories(self, *, profile_id: UUID):
+            return [{"id": str(UUID("66666666-6666-6666-6666-666666666666")), "name_norm": "courses"}]
+
+        def find_merchant_entity_by_alias_norm(self, *, alias_norm: str):
+            return {
+                "id": str(entity_id),
+                "suggested_category_norm": "",
+                "suggested_category_label": "Courses",
+            }
+
+        def get_profile_merchant_override(self, *, profile_id: UUID, merchant_entity_id: UUID):
+            return None
+
+        def attach_merchant_entity_to_releve(
+            self,
+            *,
+            releve_id: UUID,
+            merchant_entity_id: UUID,
+            category_id: UUID | None,
+        ) -> None:
+            self.attach_calls.append((releve_id, merchant_entity_id, category_id))
+
+        def upsert_merchant_alias(self, **kwargs) -> None:
+            return None
+
+        def upsert_profile_merchant_override(self, **kwargs) -> None:
+            return None
+
+        def create_map_alias_suggestions(self, *, profile_id: UUID, rows: list[dict]):
+            return 0
+
+    repo = _Repo()
+
+    summary = agent_api._bootstrap_merchants_from_imported_releves(
+        profiles_repository=repo,
+        profile_id=PROFILE_ID,
+        limit=50,
+    )
+
+    assert summary == {"processed_count": 1, "linked_count": 1, "skipped_count": 0}
+    assert repo.attach_calls == [(releve_id, entity_id, None)]
+
+
+def test_bootstrap_merchants_from_imported_releves_does_not_upsert_override_without_category() -> None:
+    entity_id = UUID("77777777-7777-7777-7777-777777777777")
+    releve_id = UUID("88888888-8888-8888-8888-888888888888")
+
+    class _Repo:
+        def __init__(self) -> None:
+            self.override_upserts: list[dict[str, Any]] = []
+
+        def list_releves_without_merchant(self, *, profile_id: UUID, limit: int = 500):
+            return [{"id": str(releve_id), "payee": "Unknown", "libelle": None}]
+
+        def list_profile_categories(self, *, profile_id: UUID):
+            return []
+
+        def find_merchant_entity_by_alias_norm(self, *, alias_norm: str):
+            return {
+                "id": str(entity_id),
+                "suggested_category_norm": "",
+                "suggested_category_label": "",
+            }
+
+        def get_profile_merchant_override(self, *, profile_id: UUID, merchant_entity_id: UUID):
+            return None
+
+        def attach_merchant_entity_to_releve(self, **kwargs) -> None:
+            return None
+
+        def upsert_merchant_alias(self, **kwargs) -> None:
+            return None
+
+        def upsert_profile_merchant_override(self, **kwargs) -> None:
+            self.override_upserts.append(kwargs)
+
+        def create_map_alias_suggestions(self, *, profile_id: UUID, rows: list[dict]):
+            return 0
+
+    repo = _Repo()
+
+    summary = agent_api._bootstrap_merchants_from_imported_releves(
+        profiles_repository=repo,
+        profile_id=PROFILE_ID,
+        limit=50,
+    )
+
+    assert summary == {"processed_count": 1, "linked_count": 1, "skipped_count": 0}
+    assert repo.override_upserts == []

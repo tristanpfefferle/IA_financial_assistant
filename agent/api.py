@@ -114,6 +114,15 @@ _MERCHANT_CATEGORY_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
 _FALLBACK_MERCHANT_CATEGORY = "Autres"
 
 
+def _build_system_categories_payload() -> list[dict[str, str]]:
+    """Return canonical default system categories payload for repository bootstrap."""
+
+    return [
+        {"system_key": system_key, "name": category_name}
+        for system_key, category_name in _SYSTEM_CATEGORIES
+    ]
+
+
 def _build_import_file_ui_request(import_context: dict[str, Any] | None) -> dict[str, Any] | None:
     """Return a UI upload request payload when import context includes a selected account."""
 
@@ -587,8 +596,7 @@ def _bootstrap_merchants_from_imported_releves(
                 category_id = UUID(str(override_category_id))
             else:
                 suggested_category_norm = str(entity.get("suggested_category_norm") or "").strip()
-                suggested_category_label = str(entity.get("suggested_category_label") or "").strip()
-                category_norm = suggested_category_norm or _normalize_text(suggested_category_label)
+                category_norm = suggested_category_norm
                 matched_category = categories_by_norm.get(category_norm)
                 if matched_category and matched_category.get("id"):
                     category_id = UUID(str(matched_category["id"]))
@@ -604,12 +612,13 @@ def _bootstrap_merchants_from_imported_releves(
                 alias_norm=observed_alias_norm,
                 source="import",
             )
-            profiles_repository.upsert_profile_merchant_override(
-                profile_id=profile_id,
-                merchant_entity_id=entity_id,
-                category_id=category_id,
-                status="auto",
-            )
+            if category_id is not None:
+                profiles_repository.upsert_profile_merchant_override(
+                    profile_id=profile_id,
+                    merchant_entity_id=entity_id,
+                    category_id=category_id,
+                    status="auto",
+                )
             linked_count += 1
         except Exception:
             skipped_count += 1
@@ -1604,10 +1613,7 @@ def agent_chat(
                 if substep in {"categories_intro", "categories_bootstrap"}:
                     ensure_result = profiles_repository.ensure_system_categories(
                         profile_id=profile_id,
-                        categories=[
-                            {"system_key": system_key, "name": category_name}
-                            for system_key, category_name in _SYSTEM_CATEGORIES
-                        ],
+                        categories=_build_system_categories_payload(),
                     )
                     created_count = int(ensure_result.get("created_count", 0))
                     system_total = int(ensure_result.get("system_total_count", 0))
@@ -1973,6 +1979,11 @@ def import_releves(payload: ImportRequestPayload, authorization: str | None = He
 
     try:
         profiles_repository = get_profiles_repository()
+        if hasattr(profiles_repository, "ensure_system_categories"):
+            profiles_repository.ensure_system_categories(
+                profile_id=profile_id,
+                categories=_build_system_categories_payload(),
+            )
         merchant_link_summary = _bootstrap_merchants_from_imported_releves(
             profiles_repository=profiles_repository,
             profile_id=profile_id,

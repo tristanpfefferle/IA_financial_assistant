@@ -290,9 +290,11 @@ def test_import_releves_links_merchants_from_imported_transactions(monkeypatch) 
 
     class _Repo:
         def __init__(self) -> None:
+            self.ensure_system_categories_calls = 0
             self.attach_calls: list[tuple[UUID, UUID, UUID | None]] = []
             self.alias_calls: list[tuple[UUID, str, str]] = []
             self.override_calls: list[tuple[UUID, UUID, UUID | None, str]] = []
+            self._categories: list[dict[str, str]] = []
 
         def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None):
             assert auth_user_id == AUTH_USER_ID
@@ -307,6 +309,18 @@ def test_import_releves_links_merchants_from_imported_transactions(monkeypatch) 
         def update_chat_state(self, *, profile_id: UUID, user_id: UUID, chat_state: dict):
             assert profile_id == PROFILE_ID
             assert user_id == AUTH_USER_ID
+
+        def ensure_system_categories(self, *, profile_id: UUID, categories: list[dict[str, str]]) -> dict[str, int]:
+            assert profile_id == PROFILE_ID
+            self.ensure_system_categories_calls += 1
+            self._categories = [
+                {
+                    "id": str(UUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee")),
+                    "name_norm": "food",
+                }
+            ]
+            assert any(category.get("system_key") == "food" for category in categories)
+            return {"created_count": 1, "system_total_count": len(self._categories)}
 
         def list_releves_without_merchant(self, *, profile_id: UUID, limit: int = 500):
             assert profile_id == PROFILE_ID
@@ -329,13 +343,21 @@ def test_import_releves_links_merchants_from_imported_transactions(monkeypatch) 
             ]
 
         def list_profile_categories(self, *, profile_id: UUID):
-            return []
+            return self._categories
 
         def find_merchant_entity_by_alias_norm(self, *, alias_norm: str):
             if "coop" in alias_norm:
-                return {"id": str(UUID("cccccccc-cccc-cccc-cccc-cccccccccccc"))}
+                return {
+                    "id": str(UUID("cccccccc-cccc-cccc-cccc-cccccccccccc")),
+                    "suggested_category_norm": "food",
+                    "suggested_category_label": "Alimentation",
+                }
             if "sbb" in alias_norm:
-                return {"id": str(UUID("dddddddd-dddd-dddd-dddd-dddddddddddd"))}
+                return {
+                    "id": str(UUID("dddddddd-dddd-dddd-dddd-dddddddddddd")),
+                    "suggested_category_norm": "food",
+                    "suggested_category_label": "Alimentation",
+                }
             return None
 
         def get_profile_merchant_override(self, *, profile_id: UUID, merchant_entity_id: UUID):
@@ -389,17 +411,18 @@ def test_import_releves_links_merchants_from_imported_transactions(monkeypatch) 
     )
 
     assert response.status_code == 200
+    assert repo.ensure_system_categories_calls == 1
     assert len(repo.attach_calls) == 2
     assert repo.attach_calls == [
         (
             UUID("11111111-1111-1111-1111-111111111111"),
             UUID("cccccccc-cccc-cccc-cccc-cccccccccccc"),
-            None,
+            UUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"),
         ),
         (
             UUID("22222222-2222-2222-2222-222222222222"),
             UUID("dddddddd-dddd-dddd-dddd-dddddddddddd"),
-            None,
+            UUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"),
         ),
     ]
     assert repo.alias_calls == [
