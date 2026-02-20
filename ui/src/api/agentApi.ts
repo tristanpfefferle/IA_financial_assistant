@@ -67,6 +67,10 @@ export type ResolvePendingMerchantAliasesPayload = {
   max_batches?: number
 }
 
+export type PendingMerchantAliasesCountResult = {
+  pending_total_count: number
+}
+
 export type ResolvePendingMerchantAliasesResult = {
   ok: boolean
   type: string
@@ -181,6 +185,21 @@ export async function importReleves(payload: ImportRequestPayload): Promise<Rele
   }
 
   return (await response.json()) as RelevesImportResult
+}
+
+
+export async function getPendingMerchantAliasesCount(): Promise<PendingMerchantAliasesCountResult> {
+  const response = await fetch(`${getBaseUrl()}/finance/merchants/aliases/pending-count`, {
+    method: 'GET',
+    headers: await buildAuthHeaders(),
+  })
+
+  if (!response.ok) {
+    const detail = await extractErrorDetail(response)
+    throw new Error(`Erreur API pending marchands (${response.status}): ${detail}`)
+  }
+
+  return (await response.json()) as PendingMerchantAliasesCountResult
 }
 
 

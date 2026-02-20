@@ -396,7 +396,9 @@ class SupabaseRelevesRepository:
             query.append(("date", f"gte.{filters.date_range.start_date}"))
             query.append(("date", f"lte.{filters.date_range.end_date}"))
 
-        if filters.categorie:
+        if filters.category_id:
+            query.append(("category_id", f"eq.{filters.category_id}"))
+        elif filters.categorie:
             query.append(("categorie", f"eq.{filters.categorie.strip()}"))
 
         if filters.merchant_id:
@@ -427,7 +429,7 @@ class SupabaseRelevesRepository:
     def list_releves(self, filters: RelevesFilters) -> tuple[list[ReleveBancaire], int | None]:
         query = [
             *self._build_query(filters),
-            ("select", "id,profile_id,date,libelle,montant,devise,categorie,payee,merchant_id,bank_account_id"),
+            ("select", "id,profile_id,date,libelle,montant,devise,categorie,category_id,payee,merchant_id,bank_account_id"),
             ("limit", filters.limit),
             ("offset", filters.offset),
         ]

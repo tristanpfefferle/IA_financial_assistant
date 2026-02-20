@@ -2255,6 +2255,26 @@ def resolve_merchant_alias_suggestions(
     return jsonable_encoder(stats)
 
 
+@app.get("/finance/merchants/aliases/pending-count")
+def get_pending_merchant_aliases_count(authorization: str | None = Header(default=None)) -> dict[str, int]:
+    """Return count of pending/failed map_alias suggestions for authenticated profile."""
+
+    _, profile_id = _resolve_authenticated_profile(authorization)
+    profiles_repository = get_profiles_repository()
+
+    pending_total_count: int | None = None
+    if hasattr(profiles_repository, "count_map_alias_suggestions"):
+        counted = profiles_repository.count_map_alias_suggestions(profile_id=profile_id)
+        if isinstance(counted, int):
+            pending_total_count = counted
+
+    if pending_total_count is None:
+        suggestions = profiles_repository.list_map_alias_suggestions(profile_id=profile_id, limit=1000)
+        pending_total_count = len(suggestions)
+
+    return {"pending_total_count": max(0, pending_total_count)}
+
+
 @app.post("/finance/merchants/aliases/resolve-pending")
 def resolve_pending_merchant_aliases(
     payload: ResolvePendingMerchantAliasesPayload | None = None,
