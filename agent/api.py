@@ -21,8 +21,10 @@ from pydantic import BaseModel
 
 from shared import config as _config
 from agent.backend_client import BackendClient
+from agent.answer_builder import build_final_reply
 from agent.llm_planner import LLMPlanner
 from agent.loop import AgentLoop
+from agent.planner import ToolCallPlan
 from agent.memory import period_payload_from_message
 from agent.tool_router import ToolRouter
 from agent.bank_catalog import extract_canonical_banks
@@ -183,7 +185,25 @@ def _build_pending_clarification_from_tool_result(
         return None
 
     payload = tool_result.get("payload")
+    clarification_type = tool_result.get("clarification_type")
+    message = tool_result.get("message")
+
     if not isinstance(payload, dict):
+        if isinstance(clarification_type, str) and isinstance(message, str) and message.strip():
+            missing_fields = (
+                ["date_range"]
+                if _clarification_type_indicates_missing_period(clarification_type)
+                else []
+            )
+            return {
+                "type": "clarification_pending",
+                "tool_name": None,
+                "intent": None,
+                "partial_payload": {},
+                "missing_fields": missing_fields,
+                "mode": "date_range_only",
+                "clarification_type": clarification_type,
+            }
         return None
 
     tool_name = payload.get("tool_name") or payload.get("expected_tool_name")
@@ -210,14 +230,56 @@ def _build_pending_clarification_from_tool_result(
     }
 
 
+def _clarification_type_indicates_missing_period(clarification_type: str) -> bool:
+    """Return True when clarification type semantically requests a missing period/date range."""
+
+    normalized = clarification_type.strip().casefold()
+    return any(
+        token in normalized
+        for token in ("missing_date_range", "date_range", "period", "periode", "période")
+    )
+
+
 def _resolve_pending_clarification_payload(
     *,
     message: str,
     pending_clarification: dict[str, Any],
+    state_dict: dict[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any], list[str]] | None:
     """Return tool name/payload/remaining missing fields for a pending clarification."""
 
     tool_name = pending_clarification.get("tool_name")
+    mode = pending_clarification.get("mode")
+
+    if (not isinstance(tool_name, str) or not tool_name.strip()) and mode == "date_range_only":
+        last_query = state_dict.get("last_query") if isinstance(state_dict, dict) else None
+        last_tool_name = last_query.get("last_tool_name") if isinstance(last_query, dict) else None
+        inferred_tool_name = (
+            last_tool_name.strip()
+            if isinstance(last_tool_name, str) and last_tool_name.strip()
+            else "finance_releves_sum"
+        )
+        tool_name = inferred_tool_name
+
+        last_filters = last_query.get("filters") if isinstance(last_query, dict) else None
+        base_payload: dict[str, Any] = {}
+        if isinstance(last_filters, dict):
+            base_payload.update(last_filters)
+
+        payload = {**base_payload, **dict(pending_clarification.get("partial_payload") or {})}
+        if inferred_tool_name == "finance_releves_sum":
+            payload["categorie"] = None
+
+        period_payload = period_payload_from_message(message)
+        if not isinstance(period_payload, dict):
+            return None
+        date_range = period_payload.get("date_range")
+        if not isinstance(date_range, dict):
+            return None
+        payload["date_range"] = date_range
+
+        return inferred_tool_name, payload, []
+
     if not isinstance(tool_name, str) or not tool_name.strip():
         return None
 
@@ -238,6 +300,62 @@ def _resolve_pending_clarification_payload(
 
     remaining_missing_fields = [field for field in missing_fields if payload.get(field) is None]
     return tool_name.strip(), payload, remaining_missing_fields
+
+
+def _build_pending_resolution_reply(
+    *,
+    tool_name: str,
+    tool_payload: dict[str, Any],
+    pending_result: Any,
+) -> tuple[str, Any]:
+    """Build user-facing reply for a pending clarification execution result."""
+
+    loop = get_agent_loop()
+    normalized_result = pending_result
+    normalize_result = getattr(loop, "_normalize_tool_result", None)
+    if callable(normalize_result):
+        try:
+            normalized_result = normalize_result(tool_name, pending_result)
+        except Exception:
+            logger.exception("pending_clarification_normalization_failed tool=%s", tool_name)
+            normalized_result = pending_result
+
+    if isinstance(normalized_result, ToolError):
+        plan = ToolCallPlan(tool_name=tool_name, payload=dict(tool_payload), user_reply="")
+        return build_final_reply(plan=plan, tool_result=normalized_result), jsonable_encoder(normalized_result)
+
+    try:
+        plan = ToolCallPlan(tool_name=tool_name, payload=dict(tool_payload), user_reply="")
+        reply = build_final_reply(plan=plan, tool_result=normalized_result)
+        if "résultat indisponible" not in reply:
+            return reply, jsonable_encoder(normalized_result)
+    except Exception:
+        logger.exception("pending_clarification_reply_build_failed tool=%s", tool_name)
+
+    if isinstance(pending_result, dict):
+        total = pending_result.get("total")
+        count = pending_result.get("count")
+        currency = pending_result.get("currency")
+        if isinstance(total, (int, float, str)) and isinstance(count, int) and isinstance(currency, str):
+            average = (float(total) / count) if count > 0 else 0.0
+            return (
+                f"Total des dépenses: {float(total):.2f} {currency} sur {count} opération(s). "
+                f"Moyenne: {average:.2f} {currency}.",
+                jsonable_encoder(pending_result),
+            )
+        if "groups" in pending_result and isinstance(pending_result.get("groups"), dict):
+            groups = pending_result["groups"]
+            if not groups:
+                return "Je n'ai trouvé aucune opération pour cette agrégation.", jsonable_encoder(pending_result)
+            lines = ["Voici vos dépenses agrégées :"]
+            for name, values in list(groups.items())[:10]:
+                if isinstance(values, dict):
+                    group_total = values.get("total", 0)
+                    group_count = values.get("count", 0)
+                    lines.append(f"- {name}: {group_total} ({group_count} opérations)")
+            return "\n".join(lines), jsonable_encoder(pending_result)
+
+    return "C'est fait.", jsonable_encoder(pending_result)
 
 
 def _handler_accepts_debug_kwarg(handler: Any) -> bool:
@@ -1783,11 +1901,15 @@ def agent_chat(
         if (
             isinstance(pending_clarification, dict)
             and pending_clarification.get("type") == "clarification_pending"
-            and isinstance(pending_clarification.get("tool_name"), str)
+            and (
+                isinstance(pending_clarification.get("tool_name"), str)
+                or pending_clarification.get("mode") == "date_range_only"
+            )
         ):
             resolved_pending = _resolve_pending_clarification_payload(
                 message=payload.message,
                 pending_clarification=pending_clarification,
+                state_dict=state_dict if isinstance(state_dict, dict) else None,
             )
             if resolved_pending is not None:
                 tool_name, tool_payload, remaining_missing_fields = resolved_pending
@@ -1809,9 +1931,14 @@ def agent_chat(
                         user_id=auth_user_id,
                         chat_state=updated_chat_state,
                     )
+                    pending_reply, serialized_pending_result = _build_pending_resolution_reply(
+                        tool_name=tool_name,
+                        tool_payload=tool_payload,
+                        pending_result=pending_result,
+                    )
                     return ChatResponse(
-                        reply="OK.",
-                        tool_result=jsonable_encoder(pending_result),
+                        reply=pending_reply,
+                        tool_result=serialized_pending_result,
                         plan=jsonable_encoder({"tool_name": tool_name, "payload": tool_payload}),
                     )
 
