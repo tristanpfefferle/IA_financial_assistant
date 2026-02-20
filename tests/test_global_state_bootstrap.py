@@ -244,7 +244,7 @@ def test_bank_accounts_collect_creates_then_moves_to_confirm(monkeypatch) -> Non
     assert response.status_code == 200
     assert repo.ensure_bank_accounts_calls == [{"names": ["UBS", "Revolut"]}]
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
-    assert persisted["onboarding_substep"] == "bank_accounts_confirm"
+    assert persisted["onboarding_substep"] == "import_select_account"
 
 
 def test_bank_accounts_confirm_yes_back_to_collect(monkeypatch) -> None:
@@ -359,7 +359,7 @@ def test_import_select_account_ubs_selects_account_and_skips_loop(monkeypatch) -
     assert payload["tool_result"]["type"] == "ui_request"
     assert payload["tool_result"]["name"] == "import_file"
     assert payload["tool_result"]["bank_account_id"] == "bank-1"
-    assert "envoie ton fichier" in payload["reply"].lower()
+    assert "envoie-moi le fichier csv" in payload["reply"].lower()
     assert loop.called is False
 
 
@@ -395,25 +395,23 @@ def test_categories_bootstrap_creates_categories_classifies_merchants_and_skips_
 
     assert response.status_code == 200
     payload = response.json()
-    assert "Import terminé" in payload["reply"]
-    assert "je reconnais d’abord" in payload["reply"].lower()
-    assert "Marchands classés" in payload["reply"]
-    assert "Tout est classé" in payload["reply"]
-    assert "Réponds 1 ou 2" not in payload["reply"]
-    assert "identifiant invalide" in payload["reply"].lower()
+    assert "Je classe automatiquement les marchands" in payload["reply"]
+    assert "Tout est déjà classé" in payload["reply"]
+    assert "Ton rapport est prêt" in payload["reply"]
     assert len(repo.profile_categories) == 10
     assert repo.merchants[0]["category"] == "Alimentation"
     assert repo.merchants[1]["category"] == "Autres"
     assert repo.merchants[2]["category"] == ""
-    assert "Marchands classés : 2/3" in payload["reply"]
-    assert "transactions mises à jour" not in payload["reply"]
+    assert "[Ouvrir le PDF]" in payload["reply"]
+    assert payload["tool_result"]["name"] == "open_pdf_report"
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
-    assert persisted["onboarding_step"] == "categories"
-    assert persisted["onboarding_substep"] == "categories_review"
+    assert persisted["mode"] == "free_chat"
+    assert persisted["onboarding_step"] is None
+    assert persisted["onboarding_substep"] is None
     assert loop.called is False
 
 
-def test_categories_review_requires_choice_1_or_2(monkeypatch) -> None:
+def test_import_classification_direct_to_pdf_when_already_classified(monkeypatch) -> None:
     _mock_auth(monkeypatch)
     repo = _Repo(
         initial_chat_state={
@@ -421,7 +419,7 @@ def test_categories_review_requires_choice_1_or_2(monkeypatch) -> None:
                 "global_state": {
                     "mode": "onboarding",
                     "onboarding_step": "categories",
-                    "onboarding_substep": "categories_review",
+                    "onboarding_substep": "categories_bootstrap",
                     "profile_confirmed": True,
                     "bank_accounts_confirmed": True,
                     "has_bank_accounts": True,
@@ -432,58 +430,19 @@ def test_categories_review_requires_choice_1_or_2(monkeypatch) -> None:
         },
     )
     repo.bank_accounts = [{"id": "bank-1", "name": "UBS"}]
-    loop = _LoopSpy()
-    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
-    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: loop)
-
-    response = client.post("/agent/chat", json={"message": "OUI"}, headers=_auth_headers())
-
-    assert response.status_code == 200
-    assert response.json()["reply"] == "Réponds 1 ou 2."
-    assert repo.update_calls == []
-    assert loop.called is False
-
-
-
-
-def test_categories_review_choice_1_runs_more_classification(monkeypatch) -> None:
-    _mock_auth(monkeypatch)
-    repo = _Repo(
-        initial_chat_state={
-            "state": {
-                "global_state": {
-                    "mode": "onboarding",
-                    "onboarding_step": "categories",
-                    "onboarding_substep": "categories_review",
-                    "profile_confirmed": True,
-                    "bank_accounts_confirmed": True,
-                    "has_bank_accounts": True,
-                    "has_imported_transactions": True,
-                    "budget_created": False,
-                }
-            }
-        },
-    )
-    repo.bank_accounts = [{"id": "bank-1", "name": "UBS"}]
-    repo.merchants = [
-        {"id": UUID("11111111-1111-1111-1111-111111111111"), "name_norm": "migros rive", "name": "Migros Rive", "category": None},
-        {"id": "not-a-uuid", "name_norm": "broken", "name": "Broken", "category": ""},
-    ]
     monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
     monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
 
-    response = client.post("/agent/chat", json={"message": "1"}, headers=_auth_headers())
+    response = client.post("/agent/chat", json={"message": ""}, headers=_auth_headers())
 
     assert response.status_code == 200
     payload = response.json()
-    assert repo.merchants[0]["category"] == "Alimentation"
-    assert "classés" in payload["reply"].lower()
-    assert "tout est classé" in payload["reply"].lower()
-    assert "il reste" not in payload["reply"].lower()
-    assert "identifiant invalide" in payload["reply"].lower()
+    assert "Tout est déjà classé" in payload["reply"]
+    assert payload["tool_result"]["name"] == "open_pdf_report"
 
 
 def test_classify_merchants_without_category_invalid_ids_not_counted_as_remaining() -> None:
+
     repo = _Repo()
     repo.merchants = [
         {"id": UUID("11111111-1111-1111-1111-111111111111"), "name_norm": "coop city", "name": "Coop City", "category": ""},
@@ -500,39 +459,6 @@ def test_classify_merchants_without_category_invalid_ids_not_counted_as_remainin
     assert invalid_count == 1
     assert repo.merchants[0]["category"] == "Alimentation"
     assert repo.merchants[1]["category"] == ""
-
-
-def test_categories_review_non_switches_to_free_chat_without_loop(monkeypatch) -> None:
-    _mock_auth(monkeypatch)
-    repo = _Repo(
-        initial_chat_state={
-            "state": {
-                "global_state": {
-                    "mode": "onboarding",
-                    "onboarding_step": "categories",
-                    "onboarding_substep": "categories_review",
-                    "profile_confirmed": True,
-                    "bank_accounts_confirmed": True,
-                    "has_bank_accounts": True,
-                    "has_imported_transactions": True,
-                    "budget_created": False,
-                }
-            }
-        },
-    )
-    repo.bank_accounts = [{"id": "bank-1", "name": "UBS"}]
-    loop = _LoopSpy()
-    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
-    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: loop)
-
-    response = client.post("/agent/chat", json={"message": "NON"}, headers=_auth_headers())
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["reply"] == "Réponds 1 ou 2."
-    assert repo.update_calls == []
-    assert loop.called is False
-
 
 
 def test_report_offer_oui_returns_pdf_ui_request_and_switches_to_free_chat(monkeypatch) -> None:
@@ -1281,7 +1207,7 @@ def test_onboarding_profile_combined_name_and_birth_date_in_one_message_moves_to
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
     assert persisted["onboarding_substep"] == "bank_accounts_collect"
     assert "Parfait" in response.json()["reply"]
-    assert "comptes bancaires" in response.json()["reply"].lower()
+    assert "quelle banque utilises-tu" in response.json()["reply"].lower()
     assert "Confirmez-vous" not in response.json()["reply"]
 
 
@@ -1438,8 +1364,8 @@ def test_onboarding_bank_accounts_creates_accounts_and_moves_to_import(monkeypat
     assert response.status_code == 200
     assert repo.ensure_bank_accounts_calls == [{"names": ["UBS", "Revolut"]}]
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
-    assert persisted["onboarding_substep"] == "bank_accounts_confirm"
-    assert "autre" in response.json()["reply"].lower()
+    assert persisted["onboarding_substep"] == "import_select_account"
+    assert "on peut importer ton premier relevé" in response.json()["reply"].lower()
     assert "import" in response.json()["reply"].lower()
 
 
@@ -1635,37 +1561,6 @@ def test_profile_collect_name_then_birth_date_skips_confirmation(monkeypatch) ->
     assert "date de naissance" in first.json()["reply"].lower()
     assert second.status_code == 200
     assert "parfait" in second.json()["reply"].lower()
-    assert "comptes bancaires" in second.json()["reply"].lower()
+    assert "quelle banque utilises-tu" in second.json()["reply"].lower()
     assert "confirmez-vous" not in second.json()["reply"].lower()
 
-
-
-def test_categories_review_choice_2_returns_report_link(monkeypatch) -> None:
-    _mock_auth(monkeypatch)
-    repo = _Repo(
-        initial_chat_state={
-            "state": {
-                "global_state": {
-                    "mode": "onboarding",
-                    "onboarding_step": "categories",
-                    "onboarding_substep": "categories_review",
-                    "profile_confirmed": True,
-                    "bank_accounts_confirmed": True,
-                    "has_bank_accounts": True,
-                    "has_imported_transactions": True,
-                    "budget_created": False,
-                }
-            }
-        },
-    )
-    repo.bank_accounts = [{"id": "bank-1", "name": "UBS"}]
-    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
-    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
-
-    response = client.post("/agent/chat", json={"message": "2"}, headers=_auth_headers())
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert "[Ouvrir le PDF]" in payload["reply"]
-    assert "Super, on peut s’arrêter ici" in payload["reply"]
-    assert payload["tool_result"]["name"] == "open_pdf_report"

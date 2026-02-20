@@ -46,13 +46,6 @@ type ImportIntent = {
 
 type ToastState = { type: 'error' | 'success'; message: string } | null
 
-function formatDateRange(dateRange: { start: string; end: string } | null): string {
-  if (!dateRange) {
-    return 'Période détectée: non disponible'
-  }
-  return `Période détectée: ${dateRange.start} → ${dateRange.end}`
-}
-
 function formatFileSize(fileSize: number): string {
   if (fileSize < 1024) {
     return `${fileSize} o`
@@ -71,10 +64,18 @@ function buildImportSuccessText(result: RelevesImportResult, intent: ImportInten
     bank_account_name?: string | null
   }
   const importedCount = typedResult.transactions_imported_count ?? typedResult.transactions_imported ?? result.imported_count ?? 0
-  const accountName = typedResult.bank_account_name ?? intent.bankAccountName ?? intent.bankAccountId ?? 'Compte sélectionné'
-  const periodText = formatDateRange(typedResult.date_range ?? null)
+  const accountName = typedResult.bank_account_name ?? intent.bankAccountName ?? intent.bankAccountId ?? 'ce compte'
+  const dateRange = typedResult.date_range ?? null
 
-  return `✅ Import OK (${accountName}). Transactions importées: ${importedCount}. ${periodText}`
+  if (dateRange) {
+    return `Parfait, j’ai bien reçu ton relevé ${accountName}.
+
+${importedCount} transactions détectées entre le ${dateRange.start} et le ${dateRange.end}.`
+  }
+
+  return `Parfait, j’ai bien reçu ton relevé ${accountName}.
+
+${importedCount} transactions détectées.`
 }
 
 function readFileAsBase64(file: File): Promise<string> {
@@ -511,7 +512,28 @@ export function ChatPage({ email }: ChatPageProps) {
             return updated
           })
           setIsImportDialogOpen(false)
-          setToast({ type: 'success', message: 'Import terminé. Tu peux continuer la conversation.' })
+          setToast({ type: 'success', message: 'Import terminé. Analyse automatique en cours…' })
+
+          setIsLoading(true)
+          setError(null)
+          void sendChatMessage('', { debug: debugMode }).then((response) => {
+            setMessages((previous) => [
+              ...previous,
+              {
+                id: crypto.randomUUID(),
+                role: 'assistant',
+                content: response.reply,
+                createdAt: Date.now(),
+                toolResult: response.tool_result,
+                plan: response.plan,
+                debugPayload: response,
+              },
+            ])
+          }).catch((caughtError) => {
+            setError(caughtError instanceof Error ? caughtError.message : 'Erreur inconnue')
+          }).finally(() => {
+            setIsLoading(false)
+          })
         }}
         onImportError={(messageText) => setToast({ type: 'error', message: messageText })}
       />

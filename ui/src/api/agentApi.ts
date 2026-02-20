@@ -138,7 +138,7 @@ async function buildAuthHeaders(): Promise<Record<string, string>> {
   return headers
 }
 
-export async function sendChatMessage(message: string, options?: { debug?: boolean }): Promise<AgentChatResponse> {
+export async function sendChatMessage(message: string, options?: { debug?: boolean; requestGreeting?: boolean }): Promise<AgentChatResponse> {
   const headers = await buildAuthHeaders()
   if (options?.debug) {
     headers['X-Debug'] = '1'
@@ -147,7 +147,7 @@ export async function sendChatMessage(message: string, options?: { debug?: boole
   const response = await fetch(`${getBaseUrl()}/agent/chat`, {
     method: 'POST',
     headers,
-    body: JSON.stringify({ message }),
+    body: JSON.stringify({ message, request_greeting: options?.requestGreeting ?? false }),
   })
 
   if (!response.ok) {

@@ -57,7 +57,6 @@ _GLOBAL_STATE_ONBOARDING_SUBSTEPS = {
     "import_select_account",
     "categories_intro",
     "categories_bootstrap",
-    "categories_review",
     "report_offer",
     "report_sent",
     None,
@@ -563,7 +562,7 @@ def _normalize_onboarding_step_substep(global_state: dict[str, Any]) -> dict[str
         "profile": {"profile_collect", "profile_confirm"},
         "bank_accounts": {"bank_accounts_collect", "bank_accounts_confirm"},
         "import": {"import_select_account"},
-        "categories": {"categories_intro", "categories_bootstrap", "categories_review"},
+        "categories": {"categories_intro", "categories_bootstrap"},
         "report": {"report_offer", "report_sent"},
     }
     default_substep_by_step = {
@@ -979,8 +978,6 @@ def _build_onboarding_reminder(global_state: dict[str, Any] | None) -> str | Non
         return "(Pour continuer l’onboarding : démarrons le bootstrap des catégories.)"
     if substep == "categories_bootstrap":
         return "(Pour continuer l’onboarding : je prépare automatiquement les catégories et les marchands.)"
-    if substep == "categories_review":
-        return "(Pour continuer l’onboarding : réponds OUI/NON pour afficher ton rapport de dépenses.)"
     if substep == "report_offer":
         return "(Pour continuer l’onboarding : réponds OUI/NON pour ouvrir le rapport PDF.)"
     return None
@@ -1488,8 +1485,11 @@ def agent_chat(
         if payload.request_greeting and is_onboarding_profile_collect:
             return ChatResponse(
                 reply=(
-                    "Salut 🙂 Je vais te poser 2–3 infos pour créer ton profil, "
-                    "puis on importera ton premier relevé bancaire (CSV)."
+                    "Salut 👋\n"
+                    "Je suis ton assistant financier.\n"
+                    "On va commencer par créer ton profil, puis importer ton premier relevé bancaire pour analyser tes dépenses.\n"
+                    "Ça prend 1 minute.\n\n"
+                    "Quel est ton prénom et ton nom ?"
                 ),
                 tool_result=None,
                 plan=None,
@@ -1580,16 +1580,16 @@ def agent_chat(
                         return ChatResponse(
                             reply=(
                                 "Parfait ✅\n"
-                                "Tu veux ajouter quels comptes bancaires ? (ex: UBS, Revolut)"
+                                "Ajoutons maintenant ton compte bancaire.\nQuelle banque utilises-tu ? (ex: UBS, Revolut)"
                             ),
                             tool_result=None,
                             plan=None,
                         )
 
                     if not has_name:
-                        reply = "Ton prénom et ton nom ?"
+                        reply = "Quel est ton prénom et ton nom ?"
                     else:
-                        reply = "Merci ! Ta date de naissance ? (ex: 2002-01-10)"
+                        reply = f"Merci {first_name} 🙂\nTa date de naissance ? (format: 2002-01-10)"
 
                     updated_global_state = _build_onboarding_global_state(
                         global_state,
@@ -1625,7 +1625,7 @@ def agent_chat(
                             chat_state=updated_chat_state,
                         )
                         return ChatResponse(
-                            reply="Tu veux ajouter quels comptes bancaires ? (ex: UBS, Revolut)",
+                            reply="Ajoutons maintenant ton compte bancaire.\nQuelle banque utilises-tu ? (ex: UBS, Revolut)",
                             tool_result=None,
                             plan=None,
                         )
@@ -1827,12 +1827,26 @@ def agent_chat(
 
                     profiles_repository.ensure_bank_accounts(profile_id=profile_id, names=matched_banks)
                     refreshed_accounts = profiles_repository.list_bank_accounts(profile_id=profile_id)
-                    accounts_display = _format_accounts_for_reply(refreshed_accounts)
-                    updated_global_state = _build_bank_accounts_onboarding_global_state(
-                        global_state,
-                        onboarding_substep="bank_accounts_confirm",
+
+                    updated_global_state = _build_onboarding_global_state(
+                        {
+                            **global_state,
+                            "bank_accounts_confirmed": True,
+                            "has_bank_accounts": bool(refreshed_accounts),
+                        },
+                        onboarding_step="import",
+                        onboarding_substep="import_select_account",
                     )
-                    updated_global_state["has_bank_accounts"] = True
+                    updated_global_state["bank_accounts_confirmed"] = True
+                    updated_global_state["has_bank_accounts"] = bool(refreshed_accounts)
+
+                    if len(refreshed_accounts) == 1:
+                        selected_account = refreshed_accounts[0]
+                        state_dict["import_context"] = {
+                            "selected_bank_account_id": str(selected_account.get("id")),
+                            "selected_bank_account_name": str(selected_account.get("name", "")),
+                        }
+
                     state_dict["global_state"] = updated_global_state
                     updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
                     updated_chat_state["state"] = state_dict
@@ -1841,12 +1855,28 @@ def agent_chat(
                         user_id=auth_user_id,
                         chat_state=updated_chat_state,
                     )
-                    action_prompt = "Tu veux en ajouter un autre ou on passe à l’import ? (réponds « autre » ou « import »)"
+
+                    if len(matched_banks) == 1 and len(refreshed_accounts) == 1:
+                        account_name = str(refreshed_accounts[0].get("name", matched_banks[0])).strip() or matched_banks[0]
+                        return ChatResponse(
+                            reply=(
+                                f"Top, compte {account_name} ajouté.\n\n"
+                                "On peut importer ton premier relevé maintenant.\n\n"
+                                f"Envoie-moi le fichier CSV de ton compte {account_name}."
+                            ),
+                            tool_result=_build_import_file_ui_request(state_dict.get("import_context")),
+                            plan=None,
+                        )
+
                     if len(matched_banks) == 1:
-                        reply = f"OK, compte {matched_banks[0]} ajouté. {action_prompt}"
+                        added_reply = f"Top, compte {matched_banks[0]} ajouté."
                     else:
-                        reply = f"OK, comptes {', '.join(matched_banks)} ajoutés. {action_prompt}"
-                    return ChatResponse(reply=reply, tool_result=None, plan=None)
+                        added_reply = f"Top, comptes {', '.join(matched_banks)} ajoutés."
+                    return ChatResponse(
+                        reply=f"{added_reply}\nOn peut importer ton premier relevé maintenant.\nQuel compte veux-tu importer ?",
+                        tool_result=None,
+                        plan=None,
+                    )
 
                 if substep == "bank_accounts_confirm":
                     normalized_message = _normalize_text(payload.message)
@@ -1908,7 +1938,7 @@ def agent_chat(
                             )
                             account_name = str(selected_account.get("name", "ce compte")).strip() or "ce compte"
                             return ChatResponse(
-                                reply=f"Parfait. Envoie ton fichier de relevé {account_name} (CSV).",
+                                reply=f"On peut importer ton premier relevé maintenant.\n\nEnvoie-moi le fichier CSV de ton compte {account_name}.",
                                 tool_result=_build_import_file_ui_request(state_dict.get("import_context")),
                                 plan=None,
                             )
@@ -1958,7 +1988,7 @@ def agent_chat(
                 ui_request = _build_import_file_ui_request(updated_state.get("import_context"))
                 account_name = str(matched_account.get("name", "ce compte")).strip() or "ce compte"
                 return ChatResponse(
-                    reply=f"Parfait. Envoie ton fichier de relevé {account_name} (CSV).",
+                    reply=f"On peut importer ton premier relevé maintenant.\n\nEnvoie-moi le fichier CSV de ton compte {account_name}.",
                     tool_result=ui_request,
                     plan=None,
                 )
@@ -1966,24 +1996,18 @@ def agent_chat(
             if mode == "onboarding" and onboarding_step == "categories":
                 substep = global_state.get("onboarding_substep")
                 if substep in {"categories_intro", "categories_bootstrap"}:
-                    ensure_result = profiles_repository.ensure_system_categories(
+                    profiles_repository.ensure_system_categories(
                         profile_id=profile_id,
                         categories=_build_system_categories_payload(),
                     )
-                    created_count = int(ensure_result.get("created_count", 0))
-                    system_total = int(ensure_result.get("system_total_count", 0))
-
                     merchants_without_category = profiles_repository.list_merchants_without_category(profile_id=profile_id)
-                    classified_count, remaining_count, invalid_count = _classify_merchants_without_category(
+                    classified_count, remaining_count, _invalid_count = _classify_merchants_without_category(
                         profiles_repository=profiles_repository,
                         profile_id=profile_id,
                     )
 
-                    updated_global_state = _build_onboarding_global_state(
-                        global_state,
-                        onboarding_step="categories",
-                        onboarding_substep="categories_review",
-                    )
+                    report_url = _build_spending_pdf_url()
+                    updated_global_state = _build_free_chat_global_state(global_state)
                     updated_global_state = _normalize_onboarding_step_substep(updated_global_state)
                     state_dict["global_state"] = updated_global_state
                     updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
@@ -1993,108 +2017,31 @@ def agent_chat(
                         user_id=auth_user_id,
                         chat_state=updated_chat_state,
                     )
+
+                    total_merchants = len(merchants_without_category)
+                    if total_merchants == 0 or remaining_count == 0:
+                        reply = (
+                            "Je classe automatiquement les marchands…\n\n"
+                            "Tout est déjà classé 👍\n\n"
+                            "Je te prépare ton rapport.\n\n"
+                            "Ton rapport est prêt.\n"
+                            f"[Ouvrir le PDF]({report_url})"
+                        )
+                    else:
+                        reply = (
+                            "Je classe automatiquement les marchands…\n\n"
+                            f"{classified_count} marchands classés automatiquement.\n\n"
+                            f"Il reste {remaining_count} marchands à analyser plus finement.\n"
+                            "Je continue.\n\n"
+                            "Ton rapport est prêt.\n"
+                            f"[Ouvrir le PDF]({report_url})"
+                        )
+
                     return ChatResponse(
-                        reply=(
-                            f"✅ Import terminé. Catégories créées : {created_count} (système total: {system_total}).\n"
-                            "Je reconnais d’abord ce que je peux automatiquement, puis je complète avec l’IA pour le reste.\n"
-                            f"C’est fait. Marchands classés : {classified_count}/{len(merchants_without_category)}. "
-                            + (
-                                "Tout est classé.\n"
-                                if remaining_count == 0
-                                else (
-                                    f"Il reste {remaining_count} marchands.\n"
-                                    "Tu préfères : (1) Je continue maintenant "
-                                    f"({remaining_count} restants) (2) On s’arrête là et tu regardes le rapport. Réponds 1 ou 2."
-                                )
-                            )
-                            + (
-                                f"\n⚠️ {invalid_count} marchand(s) ont un identifiant invalide et ne peuvent pas être classés automatiquement."
-                                if invalid_count > 0
-                                else ""
-                            )
-                        ),
-                        tool_result=None,
+                        reply=reply,
+                        tool_result=_build_open_pdf_ui_request(report_url),
                         plan=None,
                     )
-
-                if substep == "categories_review":
-                    if payload.message.strip() == "1":
-                        ensure_result = profiles_repository.ensure_system_categories(
-                            profile_id=profile_id,
-                            categories=_build_system_categories_payload(),
-                        )
-                        system_total = int(ensure_result.get("system_total_count", 0))
-                        classified_count, remaining_count, invalid_count = _classify_merchants_without_category(
-                            profiles_repository=profiles_repository,
-                            profile_id=profile_id,
-                        )
-
-                        if remaining_count == 0:
-                            updated_global_state = _build_free_chat_global_state(global_state)
-                            updated_global_state = _normalize_onboarding_step_substep(updated_global_state)
-                            state_dict["global_state"] = updated_global_state
-                            updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
-                            updated_chat_state["state"] = state_dict
-                            profiles_repository.update_chat_state(
-                                profile_id=profile_id,
-                                user_id=auth_user_id,
-                                chat_state=updated_chat_state,
-                            )
-                            report_url = _build_spending_pdf_url()
-                            done_reply = (
-                                f"OK, j’ai continué : {classified_count} nouveaux marchands classés. "
-                                "Tout est classé. Voici ton rapport : "
-                                f"[Ouvrir le PDF]({report_url})."
-                            )
-                            if invalid_count > 0:
-                                done_reply += (
-                                    f" ⚠️ {invalid_count} marchand(s) ont un identifiant invalide et ne peuvent pas être classés automatiquement."
-                                )
-
-                            return ChatResponse(
-                                reply=done_reply,
-                                tool_result=_build_open_pdf_ui_request(report_url),
-                                plan=None,
-                            )
-
-                        review_reply = (
-                            f"OK, j’ai continué : {classified_count} nouveaux marchands classés. "
-                            f"Il reste {remaining_count}. Tu préfères : (1) Je continue maintenant "
-                            f"({remaining_count} restants) (2) On s’arrête là et tu regardes le rapport. "
-                            f"Catégories système disponibles : {system_total}."
-                        )
-                        if invalid_count > 0:
-                            review_reply += (
-                                f" ⚠️ {invalid_count} marchand(s) ont un identifiant invalide et ne peuvent pas être classés automatiquement."
-                            )
-
-                        return ChatResponse(
-                            reply=review_reply,
-                            tool_result=None,
-                            plan=None,
-                        )
-                    if payload.message.strip() == "2":
-                        report_url = _build_spending_pdf_url()
-                        updated_global_state = _build_free_chat_global_state(global_state)
-                        updated_global_state = _normalize_onboarding_step_substep(updated_global_state)
-                        state_dict["global_state"] = updated_global_state
-                        updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
-                        updated_chat_state["state"] = state_dict
-                        profiles_repository.update_chat_state(
-                            profile_id=profile_id,
-                            user_id=auth_user_id,
-                            chat_state=updated_chat_state,
-                        )
-                        return ChatResponse(
-                            reply=(
-                                "Super, on peut s’arrêter ici pour l’instant. "
-                                f"Voici ton rapport : [Ouvrir le PDF]({report_url}).\n"
-                                "Si tu veux, je peux aussi te faire un résumé ici (top catégories + top marchands)."
-                            ),
-                            tool_result=_build_open_pdf_ui_request(report_url),
-                            plan=None,
-                        )
-                    return ChatResponse(reply="Réponds 1 ou 2.", tool_result=None, plan=None)
 
             if mode == "onboarding" and onboarding_step == "report" and global_state.get("onboarding_substep") == "report_offer":
                 if _is_yes(payload.message):
