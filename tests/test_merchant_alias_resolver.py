@@ -178,3 +178,122 @@ def test_resolver_marks_invalid_item_failed(monkeypatch) -> None:
     assert stats["failed"] == 1
     assert stats["applied"] == 0
     assert repo.updates[-1]["status"] == "failed"
+
+
+
+def test_batching_limit_25_calls_llm_twice(monkeypatch) -> None:
+    class _BatchRepo(_RepoStub):
+        def list_map_alias_suggestions(self, *, profile_id: UUID, limit: int):
+            assert profile_id == PROFILE_ID
+            assert limit == 25
+            return [
+                {
+                    "id": f"00000000-0000-0000-0000-{i:012d}",
+                    "observed_alias": f"ALIAS {i}",
+                    "observed_alias_norm": f"alias {i}",
+                }
+                for i in range(1, 26)
+            ]
+
+        def apply_entity_to_profile_transactions(self, **kwargs):
+            return 0
+
+    repo = _BatchRepo()
+    calls: list[int] = []
+
+    def _fake_call(prompt: str):
+        payload = __import__("json").loads(prompt.split("Suggestions à résoudre: ", 1)[1])
+        calls.append(len(payload))
+        return {"resolutions": []}, "run", {}
+
+    monkeypatch.setattr(resolver, "_call_llm_json", _fake_call)
+
+    stats = resolver.resolve_pending_map_alias(profile_id=PROFILE_ID, profiles_repository=repo, limit=25)
+
+    assert calls == [20, 5]
+    assert stats["processed"] == 25
+    assert stats["failed"] == 25
+
+
+def test_truncation_observed_alias_compact_in_prompt(monkeypatch) -> None:
+    class _LongAliasRepo(_RepoStub):
+        def list_map_alias_suggestions(self, *, profile_id: UUID, limit: int):
+            return [
+                {
+                    "id": str(SUGGESTION_ID),
+                    "observed_alias": "Paiement UBS TWINT Motif du paiement " + ("X" * 220),
+                    "observed_alias_norm": "paiement ubs twint motif du paiement " + ("x" * 220),
+                }
+            ]
+
+        def apply_entity_to_profile_transactions(self, **kwargs):
+            return 0
+
+    repo = _LongAliasRepo()
+    captured_prompt = {"value": ""}
+
+    def _fake_call(prompt: str):
+        captured_prompt["value"] = prompt
+        return {"resolutions": []}, "run", {}
+
+    monkeypatch.setattr(resolver, "_call_llm_json", _fake_call)
+
+    resolver.resolve_pending_map_alias(profile_id=PROFILE_ID, profiles_repository=repo, limit=1)
+
+    payload = __import__("json").loads(captured_prompt["value"].split("Suggestions à résoudre: ", 1)[1])
+    compact = payload[0]["observed_alias_compact"]
+    assert len(compact) <= 140
+    assert "Paiement UBS TWINT" not in compact
+    assert "Motif du paiement" not in compact
+
+
+def test_fallback_response_format(monkeypatch) -> None:
+    class _Response:
+        id = "run_fallback"
+
+        class usage:
+            prompt_tokens = 10
+            completion_tokens = 4
+            total_tokens = 14
+
+        class _Choice:
+            class _Message:
+                content = '{"resolutions": []}'
+
+            message = _Message()
+
+        choices = [_Choice()]
+
+    class _Client:
+        def __init__(self, *args, **kwargs):
+            self.calls = []
+            self.count = 0
+
+        class _Chat:
+            def __init__(self, parent):
+                self.completions = parent
+
+        @property
+        def chat(self):
+            return self._Chat(self)
+
+        def create(self, **kwargs):
+            self.count += 1
+            self.calls.append(kwargs)
+            if self.count == 1:
+                raise Exception("invalid_request_error: response_format not supported with this model")
+            return _Response()
+
+    client = _Client()
+    monkeypatch.setattr(resolver._config, "openai_api_key", lambda: "test")
+    monkeypatch.setattr(resolver._config, "llm_model", lambda: "gpt-test")
+    monkeypatch.setitem(__import__("sys").modules, "openai", type("M", (), {"OpenAI": lambda **kwargs: client}))
+
+    payload, llm_run_id, usage = resolver._call_llm_json("prompt")
+
+    assert payload == {"resolutions": []}
+    assert llm_run_id == "run_fallback"
+    assert usage["total_tokens"] == 14
+    assert len(client.calls) == 2
+    assert "response_format" in client.calls[0]
+    assert "response_format" not in client.calls[1]
