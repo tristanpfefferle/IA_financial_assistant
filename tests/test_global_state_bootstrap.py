@@ -320,7 +320,7 @@ def test_bank_accounts_collect_no_with_existing_account_moves_to_import_select(m
     response = client.post("/agent/chat", json={"message": "non"}, headers=_auth_headers())
 
     assert response.status_code == 200
-    assert response.json()["reply"] == "Parfait. On passe à l’import des relevés. Quel compte veux-tu importer ?"
+    assert response.json()["reply"] == "Parfait. Quel compte veux-tu importer ?"
     assert "nom exact" not in response.json()["reply"].lower()
     assert "Voulez-vous créer encore d'autres comptes" not in response.json()["reply"]
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
@@ -359,6 +359,7 @@ def test_import_select_account_ubs_selects_account_and_skips_loop(monkeypatch) -
     assert payload["tool_result"]["type"] == "ui_request"
     assert payload["tool_result"]["name"] == "import_file"
     assert payload["tool_result"]["bank_account_id"] == "bank-1"
+    assert "envoie ton fichier" in payload["reply"].lower()
     assert loop.called is False
 
 
@@ -394,21 +395,22 @@ def test_categories_bootstrap_creates_categories_classifies_merchants_and_skips_
 
     assert response.status_code == 200
     payload = response.json()
-    assert "Catégories créées" in payload["reply"]
-    assert "système total" in payload["reply"]
+    assert "Import terminé" in payload["reply"]
+    assert "je reconnais d’abord" in payload["reply"].lower()
     assert "Marchands classés" in payload["reply"]
+    assert "Réponds 1 ou 2" in payload["reply"]
     assert len(repo.profile_categories) == 10
     assert repo.merchants[0]["category"] == "Alimentation"
     assert repo.merchants[1]["category"] == "Autres"
     assert repo.merchants[2]["category"] == ""
-    assert "Marchands classés: 2" in payload["reply"]
+    assert "Marchands classés : 2/3" in payload["reply"]
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
     assert persisted["onboarding_step"] == "categories"
     assert persisted["onboarding_substep"] == "categories_review"
     assert loop.called is False
 
 
-def test_categories_review_oui_goes_to_report_offer_without_loop(monkeypatch) -> None:
+def test_categories_review_requires_choice_1_or_2(monkeypatch) -> None:
     _mock_auth(monkeypatch)
     repo = _Repo(
         initial_chat_state={
@@ -434,10 +436,8 @@ def test_categories_review_oui_goes_to_report_offer_without_loop(monkeypatch) ->
     response = client.post("/agent/chat", json={"message": "OUI"}, headers=_auth_headers())
 
     assert response.status_code == 200
-    persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
-    assert persisted["onboarding_step"] == "report"
-    assert persisted["onboarding_substep"] == "report_offer"
-    assert "rapport" in response.json()["reply"].lower()
+    assert response.json()["reply"] == "Réponds 1 ou 2."
+    assert repo.update_calls == []
     assert loop.called is False
 
 
@@ -468,9 +468,8 @@ def test_categories_review_non_switches_to_free_chat_without_loop(monkeypatch) -
 
     assert response.status_code == 200
     payload = response.json()
-    assert "chat libre" in payload["reply"].lower()
-    persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
-    assert persisted["mode"] == "free_chat"
+    assert payload["reply"] == "Réponds 1 ou 2."
+    assert repo.update_calls == []
     assert loop.called is False
 
 
@@ -912,7 +911,7 @@ def test_onboarding_profile_get_profile_fields_failure_does_not_crash(monkeypatc
     response = client.post("/agent/chat", json={"message": "Salut"}, headers=_auth_headers())
 
     assert response.status_code == 200
-    assert "Pour démarrer" in response.json()["reply"]
+    assert "prénom" in response.json()["reply"].lower()
 
 
 class _LoopWithoutGlobal:
@@ -1165,7 +1164,7 @@ def test_onboarding_profile_name_message_updates_first_and_last_name(monkeypatch
     assert repo.profile_update_calls == [{"first_name": "Tristan", "last_name": "Pfefferlé"}]
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
     assert persisted["onboarding_substep"] == "profile_collect"
-    assert "j’ai enregistré" in response.json()["reply"]
+    assert "date de naissance" in response.json()["reply"].lower()
     assert "date de naissance" in response.json()["reply"]
     assert loop.called is False
 
@@ -1191,7 +1190,7 @@ def test_onboarding_profile_name_message_acknowledges_and_asks_birth_date(monkey
 
     assert response.status_code == 200
     assert {"first_name": "Paul", "last_name": "Gorok"} in repo.profile_update_calls
-    assert "j’ai enregistré" in response.json()["reply"]
+    assert "date de naissance" in response.json()["reply"].lower()
     assert "date de naissance" in response.json()["reply"]
     assert "Pour démarrer, j’ai besoin" not in response.json()["reply"]
 
@@ -1219,9 +1218,10 @@ def test_onboarding_profile_combined_name_and_birth_date_in_one_message_moves_to
     assert {"first_name": "Paul", "last_name": "Gorok"} in repo.profile_update_calls
     assert {"birth_date": "1994-01-10"} in repo.profile_update_calls
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
-    assert persisted["onboarding_substep"] == "profile_confirm"
-    assert "Résumé profil" in response.json()["reply"]
-    assert "Confirmez-vous" in response.json()["reply"]
+    assert persisted["onboarding_substep"] == "bank_accounts_collect"
+    assert "Parfait" in response.json()["reply"]
+    assert "comptes bancaires" in response.json()["reply"].lower()
+    assert "Confirmez-vous" not in response.json()["reply"]
 
 
 @pytest.mark.parametrize(
@@ -1254,8 +1254,8 @@ def test_onboarding_profile_birth_date_message_promotes_to_bank_accounts_step(mo
     assert response.status_code == 200
     assert {"birth_date": expected_birth_date} in repo.profile_update_calls
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
-    assert persisted["onboarding_step"] == "profile"
-    assert persisted["onboarding_substep"] == "profile_confirm"
+    assert persisted["onboarding_step"] == "bank_accounts"
+    assert persisted["onboarding_substep"] == "bank_accounts_collect"
 
 
 def test_onboarding_profile_non_profile_message_returns_help_and_skips_loop(monkeypatch) -> None:
@@ -1279,7 +1279,7 @@ def test_onboarding_profile_non_profile_message_returns_help_and_skips_loop(monk
     response = client.post("/agent/chat", json={"message": "Liste mes catégories"}, headers=_auth_headers())
 
     assert response.status_code == 200
-    assert "Pour démarrer" in response.json()["reply"]
+    assert "prénom" in response.json()["reply"].lower()
     assert loop.called is False
 
 
@@ -1303,14 +1303,9 @@ def test_promotes_to_bank_accounts_onboarding_when_profile_becomes_complete(monk
     response_collect = client.post("/agent/chat", json={"message": "1992-01-15"}, headers=_auth_headers())
     assert response_collect.status_code == 200
     persisted_collect = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
-    assert persisted_collect["onboarding_substep"] == "profile_confirm"
+    assert persisted_collect["onboarding_substep"] == "bank_accounts_collect"
 
-    response_confirm = client.post("/agent/chat", json={"message": "oui"}, headers=_auth_headers())
-    assert response_confirm.status_code == 200
-    persisted_confirm = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
-    assert persisted_confirm["onboarding_step"] == "bank_accounts"
-    assert persisted_confirm["onboarding_substep"] == "bank_accounts_collect"
-
+    
 
 def test_onboarding_bank_accounts_unrecognized_input_returns_help_without_creation(monkeypatch) -> None:
     _mock_auth(monkeypatch)
@@ -1383,7 +1378,8 @@ def test_onboarding_bank_accounts_creates_accounts_and_moves_to_import(monkeypat
     assert repo.ensure_bank_accounts_calls == [{"names": ["UBS", "Revolut"]}]
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
     assert persisted["onboarding_substep"] == "bank_accounts_confirm"
-    assert "Voulez-vous créer encore d'autres" in response.json()["reply"]
+    assert "autre" in response.json()["reply"].lower()
+    assert "import" in response.json()["reply"].lower()
 
 
 def test_onboarding_bank_accounts_skips_creation_if_already_exists(monkeypatch) -> None:
@@ -1409,7 +1405,8 @@ def test_onboarding_bank_accounts_skips_creation_if_already_exists(monkeypatch) 
     assert repo.ensure_bank_accounts_calls == []
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
     assert persisted["onboarding_substep"] == "bank_accounts_confirm"
-    assert "Voulez-vous en ajouter d’autres" in response.json()["reply"]
+    assert "autre" in response.json()["reply"].lower()
+    assert "import" in response.json()["reply"].lower()
 
 
 
@@ -1519,3 +1516,94 @@ def test_onboarding_reminder_ignores_invalid_memory_update_state(monkeypatch) ->
 
     assert response.status_code == 200
     assert "(Pour continuer" not in response.json()["reply"]
+
+
+
+def test_onboarding_request_greeting_returns_intro_without_user_message(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "onboarding",
+                    "onboarding_step": "profile",
+                    "onboarding_substep": "profile_collect",
+                }
+            }
+        },
+        profile_fields={"first_name": "", "last_name": "", "birth_date": ""},
+    )
+    loop = _LoopSpy()
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: loop)
+
+    response = client.post(
+        "/agent/chat",
+        json={"message": "", "request_greeting": True},
+        headers=_auth_headers(),
+    )
+
+    assert response.status_code == 200
+    assert "salut" in response.json()["reply"].lower()
+    assert "profil" in response.json()["reply"].lower()
+    assert "import" in response.json()["reply"].lower()
+    assert loop.called is False
+
+
+def test_profile_collect_name_then_birth_date_skips_confirmation(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "onboarding",
+                    "onboarding_step": "profile",
+                    "onboarding_substep": "profile_collect",
+                }
+            }
+        },
+        profile_fields={"first_name": "", "last_name": "", "birth_date": ""},
+    )
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
+
+    first = client.post("/agent/chat", json={"message": "Paul Mart"}, headers=_auth_headers())
+    second = client.post("/agent/chat", json={"message": "10.01.2002"}, headers=_auth_headers())
+
+    assert first.status_code == 200
+    assert "date de naissance" in first.json()["reply"].lower()
+    assert second.status_code == 200
+    assert "parfait" in second.json()["reply"].lower()
+    assert "comptes bancaires" in second.json()["reply"].lower()
+    assert "confirmez-vous" not in second.json()["reply"].lower()
+
+
+
+def test_categories_review_choice_2_returns_report_link(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "onboarding",
+                    "onboarding_step": "categories",
+                    "onboarding_substep": "categories_review",
+                    "profile_confirmed": True,
+                    "bank_accounts_confirmed": True,
+                    "has_bank_accounts": True,
+                    "has_imported_transactions": True,
+                    "budget_created": False,
+                }
+            }
+        },
+    )
+    repo.bank_accounts = [{"id": "bank-1", "name": "UBS"}]
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
+
+    response = client.post("/agent/chat", json={"message": "2"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "[Ouvrir le PDF]" in payload["reply"]
+    assert payload["tool_result"]["name"] == "open_pdf_report"
