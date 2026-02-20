@@ -2607,7 +2607,10 @@ class AgentLoop:
                 action = nlu_intent.get("action")
                 if action == "open_import_panel":
                     return AgentReply(
-                        reply="D'accord, j'ouvre le panneau d'import de relevés.",
+                        reply=(
+                            "Parcours tes fichiers et sélectionne ton relevé "
+                            "bancaire (.csv) à importer."
+                        ),
                         tool_result={
                             "type": "ui_action",
                             "action": "open_import_panel",
