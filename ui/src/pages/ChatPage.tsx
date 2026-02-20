@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
 
 import { hardResetProfile, importReleves, resetSession, sendChatMessage, type RelevesImportResult } from '../api/agentApi'
+import { DebugPanel } from '../components/DebugPanel'
 import { installSessionResetOnPageExit, logoutWithSessionReset } from '../lib/sessionLifecycle'
 import { supabase } from '../lib/supabaseClient'
 
@@ -10,6 +11,7 @@ type ChatMessage = {
   content: string
   toolResult?: Record<string, unknown> | null
   plan?: Record<string, unknown> | null
+  debugPayload?: unknown
 }
 
 type ChatPageProps = {
@@ -77,6 +79,7 @@ function consumeImportRequestAndAppendSuccessMessage(
   previousMessages: ChatMessage[],
   messageId: string,
   successText: string,
+  debugPayload: unknown,
 ): ChatMessage[] {
   const messageIndex = previousMessages.findIndex((chatMessage) => chatMessage.id === messageId)
   if (messageIndex < 0) {
@@ -93,6 +96,7 @@ function consumeImportRequestAndAppendSuccessMessage(
     role: 'assistant',
     content: successText,
     toolResult: null,
+    debugPayload,
   }
 
   return [
@@ -297,6 +301,7 @@ export function ChatPage({ email }: ChatPageProps) {
         content: response.reply,
         toolResult: response.tool_result,
         plan: response.plan,
+        debugPayload: response,
       }
       setMessages((previousMessages) => [...previousMessages, assistantMessage])
     } catch (caughtError) {
@@ -348,50 +353,14 @@ export function ChatPage({ email }: ChatPageProps) {
                 {inlineImportRequest ? (
                   <ImportInline
                     uiRequest={inlineImportRequest}
-                    onImported={(successText) => {
+                    onImported={(successText, debugPayload) => {
                       setMessages((previousMessages) =>
-                        consumeImportRequestAndAppendSuccessMessage(previousMessages, chatMessage.id, successText),
+                        consumeImportRequestAndAppendSuccessMessage(previousMessages, chatMessage.id, successText, debugPayload),
                       )
                     }}
                   />
                 ) : null}
-              {debugMode && chatMessage.role === 'assistant' && chatMessage.plan ? (
-                (() => {
-                  const plan = chatMessage.plan as Record<string, unknown>
-                  const planToolName = typeof plan['tool_name'] === 'string' ? plan['tool_name'] : null
-                  const planPayload = plan['payload']
-                  const planMeta = plan['meta']
-                  const memoryInjected =
-                    planMeta && typeof planMeta === 'object'
-                      ? (planMeta as Record<string, unknown>)['debug_memory_injected']
-                      : undefined
-
-                  return (
-                    <details>
-                      <summary>Debug</summary>
-                      {planToolName ? <p>Tool: {planToolName}</p> : null}
-                      {planPayload !== undefined ? (
-                        <>
-                          <p>Payload:</p>
-                          <pre>{JSON.stringify(planPayload, null, 2)}</pre>
-                        </>
-                      ) : null}
-                      {planMeta !== undefined ? (
-                        <>
-                          <p>Meta:</p>
-                          <pre>{JSON.stringify(planMeta, null, 2)}</pre>
-                        </>
-                      ) : null}
-                      {memoryInjected !== undefined ? (
-                        <>
-                          <p>Memory injected:</p>
-                          <pre>{JSON.stringify(memoryInjected, null, 2)}</pre>
-                        </>
-                      ) : null}
-                    </details>
-                  )
-                })()
-              ) : null}
+                {debugMode && chatMessage.role === 'assistant' ? <DebugPanel payload={chatMessage.debugPayload ?? null} /> : null}
             </article>
             )
           })}
@@ -429,7 +398,7 @@ export function ChatPage({ email }: ChatPageProps) {
 
 type ImportInlineProps = {
   uiRequest: ImportUiRequest
-  onImported: (successText: string) => void
+  onImported: (successText: string, debugPayload: unknown) => void
 }
 
 function ImportInline({ uiRequest, onImported }: ImportInlineProps) {
@@ -477,7 +446,7 @@ function ImportInline({ uiRequest, onImported }: ImportInlineProps) {
         modified_action: 'replace',
       })
 
-      onImported(buildImportSuccessText(result, uiRequest))
+      onImported(buildImportSuccessText(result, uiRequest), result)
     } catch (caughtError) {
       const errorMessage = caughtError instanceof Error ? caughtError.message : 'Erreur inconnue'
       setImportError(errorMessage)
