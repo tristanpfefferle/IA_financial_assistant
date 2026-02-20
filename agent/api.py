@@ -2269,8 +2269,16 @@ def get_pending_merchant_aliases_count(authorization: str | None = Header(defaul
             pending_total_count = counted
 
     if pending_total_count is None:
-        suggestions = profiles_repository.list_map_alias_suggestions(profile_id=profile_id, limit=1000)
-        pending_total_count = len(suggestions)
+        if hasattr(profiles_repository, "list_map_alias_suggestions"):
+            suggestions = profiles_repository.list_map_alias_suggestions(profile_id=profile_id, limit=1000)
+            pending_total_count = len(suggestions)
+        else:
+            logger.warning(
+                "pending_alias_count_fallback_unavailable profile_id=%s repository=%s",
+                profile_id,
+                type(profiles_repository).__name__,
+            )
+            pending_total_count = 0
 
     return {"pending_total_count": max(0, pending_total_count)}
 
