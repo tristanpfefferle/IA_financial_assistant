@@ -24,6 +24,26 @@ def test_canonicalize_merchant_skips_suspect_first_name() -> None:
     assert name_norm != "tristan"
 
 
+def test_canonicalize_merchant_restaurant_prefers_distinctive_token() -> None:
+    canonical = _canonicalize_merchant("Restaurant HUIT; Paiement carte")
+
+    assert canonical is not None
+    name, name_norm, _ = canonical
+    assert name in {"Huit", "Restaurant Huit"}
+    assert name != "Restaurant"
+    assert name_norm != "restaurant"
+
+
+def test_canonicalize_merchant_station_service_prefers_brand_name() -> None:
+    canonical = _canonicalize_merchant("Station-service Migrol; Carte")
+
+    assert canonical is not None
+    name, name_norm, _ = canonical
+    assert name.startswith("Migrol")
+    assert name != "Station-service"
+    assert name_norm.startswith("migrol")
+
+
 def test_canonicalize_merchant_avoids_caisse_stopword() -> None:
     canonical = _canonicalize_merchant("Caisse de compensation AVS")
 
@@ -38,3 +58,13 @@ def test_canonicalize_merchant_keeps_known_brand_coop() -> None:
     canonical = _canonicalize_merchant("COOP-4815 MONTHEY")
 
     assert canonical == ("Coop", "coop", "COOP-4815 MONTHEY")
+
+
+def test_canonicalize_merchant_keeps_known_brand_migrol() -> None:
+    canonical = _canonicalize_merchant("Station-service Migrol 1234")
+
+    assert canonical == (
+        "Migrol",
+        "migrol",
+        "Station-service Migrol 1234",
+    )
