@@ -434,8 +434,8 @@ def test_import_releves_links_merchants_from_imported_transactions(monkeypatch) 
         ),
         (
             UUID("dddddddd-dddd-dddd-dddd-dddddddddddd"),
-            "SBB MOBILE; Paiement UBS TWINT ...",
-            "sbb mobile; paiement ubs twint ...",
+            "SBB Mobile",
+            "sbb mobile",
         ),
     ]
     assert len(repo.override_calls) == 2
