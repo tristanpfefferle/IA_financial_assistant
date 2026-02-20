@@ -6,6 +6,7 @@ from backend.repositories.categories_repository import InMemoryCategoriesReposit
 from backend.repositories.releves_repository import InMemoryRelevesRepository
 from backend.repositories.transactions_repository import GestionFinanciereTransactionsRepository
 from backend.services.tools import BackendToolService
+from shared.models import ToolErrorCode
 
 PROFILE_ID = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 SUGGESTION_ID = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
@@ -124,3 +125,29 @@ def test_finance_merchants_apply_suggestion_categorize_maps_to_update_category()
     assert result["ok"] is True
     assert repo.category_calls == [(SOURCE_ID, "Transport")]
     assert repo.status_updates[-1] == (SUGGESTION_ID, "applied", None)
+
+
+def test_finance_merchants_apply_suggestion_maps_value_error_to_not_found() -> None:
+    class _ErrorRepo(_ProfilesRepositoryStub):
+        def rename_merchant(self, *, profile_id: UUID, merchant_id: UUID, new_name: str):
+            raise ValueError("merchant not found")
+
+    repo = _ErrorRepo()
+    service = _build_service(repo)
+    result = service.finance_merchants_apply_suggestion(profile_id=PROFILE_ID, suggestion_id=SUGGESTION_ID)
+
+    assert result.code == ToolErrorCode.NOT_FOUND
+    assert repo.status_updates[-1] == (SUGGESTION_ID, "failed", "merchant not found")
+
+
+def test_finance_merchants_apply_suggestion_maps_value_error_to_validation_error() -> None:
+    class _ErrorRepo(_ProfilesRepositoryStub):
+        def rename_merchant(self, *, profile_id: UUID, merchant_id: UUID, new_name: str):
+            raise ValueError("invalid rename payload")
+
+    repo = _ErrorRepo()
+    service = _build_service(repo)
+    result = service.finance_merchants_apply_suggestion(profile_id=PROFILE_ID, suggestion_id=SUGGESTION_ID)
+
+    assert result.code == ToolErrorCode.VALIDATION_ERROR
+    assert repo.status_updates[-1] == (SUGGESTION_ID, "failed", "invalid rename payload")

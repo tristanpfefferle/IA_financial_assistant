@@ -353,6 +353,25 @@ def test_list_releves_without_merchant_filters_profile_and_null_merchant() -> No
     }
 
 
+def test_get_merchant_by_id_filters_profile_scope_and_id() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    merchant_id = UUID("11111111-1111-1111-1111-111111111111")
+    client = _ClientStub(responses=[[{"id": str(merchant_id), "category": "Courses"}]])
+    repository = SupabaseProfilesRepository(client=client)
+
+    row = repository.get_merchant_by_id(profile_id=profile_id, merchant_id=merchant_id)
+
+    assert row == {"id": str(merchant_id), "category": "Courses"}
+    assert client.calls[0]["table"] == "merchants"
+    assert client.calls[0]["query"] == {
+        "select": "id,name,name_norm,aliases,category",
+        "profile_id": f"eq.{profile_id}",
+        "scope": "eq.personal",
+        "id": f"eq.{merchant_id}",
+        "limit": 1,
+    }
+
+
 def test_upsert_merchant_by_name_norm_returns_existing_id_without_post() -> None:
     profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
     merchant_id = UUID("dddddddd-dddd-dddd-dddd-dddddddddddd")
