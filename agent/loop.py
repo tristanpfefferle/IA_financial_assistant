@@ -2608,6 +2608,7 @@ class AgentLoop:
                 if action == "open_import_panel":
                     return AgentReply(
                         reply=(
+                            "D'accord, j'ouvre le panneau d'import de relevés. "
                             "Parcours tes fichiers et sélectionne ton relevé "
                             "bancaire (.csv) à importer."
                         ),
