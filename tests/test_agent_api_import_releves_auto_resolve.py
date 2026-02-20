@@ -200,7 +200,7 @@ def test_import_releves_auto_resolve_failure_keeps_import_success(monkeypatch) -
     payload = response.json()
     assert payload["merchant_alias_auto_resolve"] == {
         "attempted": True,
-        "skipped_reason": None,
+        "skipped_reason": "merchant_alias_auto_resolve_failed",
         "stats": None,
     }
     assert "merchant_alias_auto_resolve_failed" in payload["warnings"]
