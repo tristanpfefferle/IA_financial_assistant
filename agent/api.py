@@ -1938,7 +1938,26 @@ def agent_chat(
                             chat_state=updated_chat_state,
                         )
                         return ChatResponse(
-                            reply="Parfait — es-tu prêt à voir le rapport de tes dépenses ?",
+                            reply="Parfait — es-tu prêt à voir le rapport de tes dépenses ? (OUI/NON)",
+                            tool_result=None,
+                            plan=None,
+                        )
+                    if _is_no(payload.message):
+                        updated_global_state = _build_free_chat_global_state(global_state)
+                        updated_global_state = _normalize_onboarding_step_substep(updated_global_state)
+                        state_dict["global_state"] = updated_global_state
+                        updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                        updated_chat_state["state"] = state_dict
+                        profiles_repository.update_chat_state(
+                            profile_id=profile_id,
+                            user_id=auth_user_id,
+                            chat_state=updated_chat_state,
+                        )
+                        return ChatResponse(
+                            reply=(
+                                "OK — on passe en chat libre. Tu peux me demander un rapport PDF quand tu veux "
+                                "(ex: 'rapport pdf janvier 2026')."
+                            ),
                             tool_result=None,
                             plan=None,
                         )
@@ -2440,7 +2459,7 @@ def _is_pdf_report_request(message: str) -> bool:
 
     normalized = _normalize_text(message)
     has_report_word = "rapport" in normalized or "report" in normalized or "bilan" in normalized
-    has_pdf_word = "pdf" in normalized or "report" in normalized
+    has_pdf_word = "pdf" in normalized
     return has_report_word and has_pdf_word
 
 
