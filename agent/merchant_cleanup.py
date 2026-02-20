@@ -152,7 +152,11 @@ def _call_llm_json(prompt: str) -> dict[str, Any]:
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY not configured")
 
-    from openai import OpenAI
+    try:
+        from openai import OpenAI
+    except ImportError as exc:
+        logger.warning("openai_sdk_missing")
+        raise RuntimeError("OpenAI SDK unavailable") from exc
 
     client = OpenAI(api_key=api_key, timeout=20.0)
     response = client.chat.completions.create(
@@ -170,14 +174,20 @@ def _call_llm_json(prompt: str) -> dict[str, Any]:
     return json.loads(content)
 
 
-def run_merchant_cleanup(*, profile_id: UUID, profiles_repository: Any) -> list[MerchantSuggestion]:
+def run_merchant_cleanup(
+    *,
+    profile_id: UUID,
+    profiles_repository: Any,
+    merchants: list[dict[str, Any]] | None = None,
+) -> list[MerchantSuggestion]:
     """Run merchant cleanup suggestions through LLM and parse robustly."""
 
-    try:
-        merchants = profiles_repository.list_merchants(profile_id=profile_id, limit=5000)
-    except Exception:
-        logger.exception("merchant_cleanup_list_merchants_failed profile_id=%s", profile_id)
-        return []
+    if merchants is None:
+        try:
+            merchants = profiles_repository.list_merchants(profile_id=profile_id, limit=5000)
+        except Exception:
+            logger.exception("merchant_cleanup_list_merchants_failed profile_id=%s", profile_id)
+            return []
 
     if not merchants:
         return []

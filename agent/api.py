@@ -1953,6 +1953,7 @@ def import_releves(payload: ImportRequestPayload, authorization: str | None = He
             suggestions = run_merchant_cleanup(
                 profile_id=profile_id,
                 profiles_repository=profiles_repository,
+                merchants=merchants,
             )
             suggestion_rows: list[dict[str, Any]] = []
             for suggestion in suggestions:
@@ -1982,7 +1983,6 @@ def import_releves(payload: ImportRequestPayload, authorization: str | None = He
             )
         except Exception:
             logger.exception("import_releves_merchant_cleanup_failed profile_id=%s", profile_id)
-            response_payload["merchant_suggestions_failed_count"] += 1
             warnings = response_payload.get("warnings")
             if isinstance(warnings, list):
                 warnings.append("merchant_cleanup_failed")
@@ -2036,7 +2036,15 @@ def _maybe_auto_apply_suggestion(
             )
             return True, None
         if suggestion.action == "categorize" and suggestion.source_merchant_id and suggestion.suggested_category and suggestion.confidence >= 0.90:
-            merchant = merchants_by_id.get(suggestion.source_merchant_id) or {}
+            merchant = merchants_by_id.get(suggestion.source_merchant_id)
+            if merchant is None:
+                merchant = profiles_repository.get_merchant_by_id(
+                    profile_id=profile_id,
+                    merchant_id=suggestion.source_merchant_id,
+                )
+                if merchant is None:
+                    return False, None
+                merchants_by_id[suggestion.source_merchant_id] = merchant
             current_category = str(merchant.get("category") or "").strip()
             if current_category:
                 return False, None

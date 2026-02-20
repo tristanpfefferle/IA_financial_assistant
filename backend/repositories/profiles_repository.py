@@ -45,6 +45,9 @@ class ProfilesRepository(Protocol):
     def list_merchants(self, *, profile_id: UUID, limit: int = 5000) -> list[dict[str, Any]]:
         """Return merchants for a profile and personal scope."""
 
+    def get_merchant_by_id(self, *, profile_id: UUID, merchant_id: UUID) -> dict[str, Any] | None:
+        """Return one merchant for a profile and personal scope."""
+
     def create_merchant_suggestions(self, *, profile_id: UUID, suggestions: list[dict[str, Any]]) -> int:
         """Create merchant suggestions and return inserted count."""
 
@@ -398,6 +401,23 @@ class SupabaseProfilesRepository:
             use_anon_key=False,
         )
         return rows
+
+    def get_merchant_by_id(self, *, profile_id: UUID, merchant_id: UUID) -> dict[str, Any] | None:
+        rows, _ = self._client.get_rows(
+            table="merchants",
+            query={
+                "select": "id,name,name_norm,aliases,category",
+                "profile_id": f"eq.{profile_id}",
+                "scope": "eq.personal",
+                "id": f"eq.{merchant_id}",
+                "limit": 1,
+            },
+            with_count=False,
+            use_anon_key=False,
+        )
+        if not rows:
+            return None
+        return rows[0]
 
     def create_merchant_suggestions(self, *, profile_id: UUID, suggestions: list[dict[str, Any]]) -> int:
         if not suggestions:

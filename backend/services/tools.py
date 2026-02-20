@@ -576,6 +576,23 @@ class BackendToolService:
                 "suggestion_id": str(suggestion_id),
                 "applied_details": applied_details,
             }
+        except ValueError as exc:
+            try:
+                self.profiles_repository.update_merchant_suggestion_status(
+                    profile_id=profile_id,
+                    suggestion_id=suggestion_id,
+                    status="failed",
+                    error=str(exc),
+                )
+            except Exception:
+                pass
+            error_message = str(exc)
+            error_code = (
+                ToolErrorCode.NOT_FOUND
+                if "not found" in error_message.lower()
+                else ToolErrorCode.VALIDATION_ERROR
+            )
+            return ToolError(code=error_code, message=error_message)
         except Exception as exc:
             try:
                 self.profiles_repository.update_merchant_suggestion_status(
