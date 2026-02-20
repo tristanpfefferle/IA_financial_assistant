@@ -1,11 +1,15 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 type DebugPanelProps = {
   payload: unknown
 }
 
 function stringifyPayload(payload: unknown): string {
-  return JSON.stringify(payload, null, 2)
+  try {
+    return JSON.stringify(payload, null, 2)
+  } catch (error) {
+    return `[Unserializable payload] ${String(error)}`
+  }
 }
 
 function pickMerchantAliasInfo(payload: unknown): Record<string, unknown> | null {
@@ -46,7 +50,16 @@ async function copyToClipboard(value: string): Promise<void> {
 
 export function DebugPanel({ payload }: DebugPanelProps) {
   const [copyStatus, setCopyStatus] = useState<'idle' | 'success' | 'error'>('idle')
+  const copyStatusTimeoutRef = useRef<number | null>(null)
   const payloadText = useMemo(() => stringifyPayload(payload), [payload])
+
+  useEffect(() => {
+    return () => {
+      if (copyStatusTimeoutRef.current !== null) {
+        window.clearTimeout(copyStatusTimeoutRef.current)
+      }
+    }
+  }, [])
 
   const warnings = useMemo(() => {
     if (!payload || typeof payload !== 'object') {
@@ -77,6 +90,13 @@ export function DebugPanel({ payload }: DebugPanelProps) {
       setCopyStatus('success')
     } catch {
       setCopyStatus('error')
+    } finally {
+      if (copyStatusTimeoutRef.current !== null) {
+        window.clearTimeout(copyStatusTimeoutRef.current)
+      }
+      copyStatusTimeoutRef.current = window.setTimeout(() => {
+        setCopyStatus('idle')
+      }, 2000)
     }
   }
 

@@ -148,7 +148,7 @@ export function ChatPage({ email }: ChatPageProps) {
   )
 
   useEffect(() => {
-    const storedDebugMode = localStorage.getItem('chat_debug_mode')
+    const storedDebugMode = localStorage.getItem('debugMode')
     setDebugMode(storedDebugMode === '1')
 
     let active = true
@@ -172,7 +172,7 @@ export function ChatPage({ email }: ChatPageProps) {
   }, [])
 
   useEffect(() => {
-    localStorage.setItem('chat_debug_mode', debugMode ? '1' : '0')
+    localStorage.setItem('debugMode', debugMode ? '1' : '0')
   }, [debugMode])
 
   useEffect(() => {

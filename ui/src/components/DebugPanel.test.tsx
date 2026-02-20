@@ -16,4 +16,14 @@ describe('DebugPanel', () => {
     expect(html).toContain('test warning')
     expect(html).toContain('tool_result')
   })
+
+
+  it('handles unserializable payloads without crashing', () => {
+    const payload: Record<string, unknown> = {}
+    payload.self = payload
+
+    const html = renderToStaticMarkup(<DebugPanel payload={payload} />)
+
+    expect(html).toContain('[Unserializable payload]')
+  })
 })
