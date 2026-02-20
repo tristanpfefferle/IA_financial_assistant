@@ -815,3 +815,56 @@ def test_create_map_alias_suggestions_never_upserts_and_ignores_pending_duplicat
     assert client.upsert_calls == []
     assert len(client.post_calls) == 1
     assert inserted == 0
+
+def test_create_map_alias_suggestions_ignores_duplicate_key_errors_with_pgcode() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+
+    class _DuplicatePendingError(Exception):
+        pgcode = 23505
+
+    client = _ClientStub(
+        responses=[],
+        post_exceptions=[_DuplicatePendingError("constraint violation")],
+    )
+    repository = SupabaseProfilesRepository(client=client)
+
+    inserted = repository.create_map_alias_suggestions(
+        profile_id=profile_id,
+        rows=[
+            {
+                "status": "pending",
+                "observed_alias": "Resolved Shop",
+                "observed_alias_norm": "resolved shop",
+            }
+        ],
+    )
+
+    assert len(client.post_calls) == 1
+    assert inserted == 0
+
+
+def test_create_map_alias_suggestions_ignores_duplicate_key_errors_with_sqlstate() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+
+    class _DuplicatePendingError(Exception):
+        sqlstate = "23505"
+
+    client = _ClientStub(
+        responses=[],
+        post_exceptions=[_DuplicatePendingError("constraint violation")],
+    )
+    repository = SupabaseProfilesRepository(client=client)
+
+    inserted = repository.create_map_alias_suggestions(
+        profile_id=profile_id,
+        rows=[
+            {
+                "status": "pending",
+                "observed_alias": "Resolved Shop",
+                "observed_alias_norm": "resolved shop",
+            }
+        ],
+    )
+
+    assert len(client.post_calls) == 1
+    assert inserted == 0
