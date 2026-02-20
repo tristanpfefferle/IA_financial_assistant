@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 from typing import Protocol
+import unicodedata
 from uuid import UUID, uuid4
 
 from backend.db.supabase_client import SupabaseClient
@@ -344,6 +345,48 @@ class SupabaseRelevesRepository:
     def __init__(self, client: SupabaseClient) -> None:
         self._client = client
 
+    @staticmethod
+    def _normalize_text(value: str) -> str:
+        normalized = unicodedata.normalize("NFKD", value.strip().lower()).encode("ascii", "ignore").decode("ascii")
+        return " ".join(normalized.split())
+
+    def _resolve_merchant_ids(self, *, profile_id: UUID, merchant_query: str) -> list[UUID]:
+        normalized_query = self._normalize_text(merchant_query)
+        if not normalized_query:
+            return []
+
+        rows, _ = self._client.get_rows(
+            table="merchants",
+            query={
+                "select": "id,name,name_norm,aliases",
+                "profile_id": f"eq.{profile_id}",
+                "scope": "eq.personal",
+                "limit": 500,
+            },
+            with_count=False,
+            use_anon_key=False,
+        )
+
+        matching_ids: list[UUID] = []
+        raw_query = merchant_query.strip().lower()
+        for row in rows:
+            merchant_id_raw = row.get("id")
+            if not merchant_id_raw:
+                continue
+
+            name_norm = self._normalize_text(str(row.get("name_norm") or ""))
+            name = str(row.get("name") or "").strip().lower()
+            aliases_raw = row.get("aliases")
+            aliases = aliases_raw if isinstance(aliases_raw, list) else []
+
+            matches_name_norm = name_norm == normalized_query
+            matches_name = bool(raw_query and raw_query in name)
+            matches_alias = any(raw_query in str(alias).strip().lower() for alias in aliases if isinstance(alias, str))
+            if matches_name_norm or matches_name or matches_alias:
+                matching_ids.append(UUID(str(merchant_id_raw)))
+
+        return matching_ids
+
     def _build_query(self, filters: RelevesFilters | RelevesAggregateRequest) -> list[tuple[str, str | int]]:
         query: list[tuple[str, str | int]] = [
             ("profile_id", f"eq.{filters.profile_id}"),
@@ -359,7 +402,17 @@ class SupabaseRelevesRepository:
         if filters.merchant_id:
             query.append(("merchant_id", f"eq.{filters.merchant_id}"))
         elif filters.merchant:
-            query.append(("payee", f"ilike.*{filters.merchant}*"))
+            # Merchant text filters first resolve to merchants.id for this profile. If no
+            # merchant matches, we keep backward compatibility with a payee/libelle ILIKE fallback.
+            merchant_ids = self._resolve_merchant_ids(
+                profile_id=filters.profile_id,
+                merchant_query=filters.merchant,
+            )
+            if merchant_ids:
+                ids = ",".join(str(merchant_id) for merchant_id in merchant_ids)
+                query.append(("merchant_id", f"in.({ids})"))
+            else:
+                query.append(("or", f"(payee.ilike.*{filters.merchant}*,libelle.ilike.*{filters.merchant}*)"))
 
         if filters.bank_account_id is not None:
             query.append(("bank_account_id", f"eq.{filters.bank_account_id}"))

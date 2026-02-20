@@ -338,6 +338,60 @@ _MERCHANT_GENERIC_TOKENS = {
     "inc",
     "co",
 }
+_MERCHANT_STOPWORDS = {
+    "le",
+    "la",
+    "les",
+    "de",
+    "du",
+    "des",
+    "d",
+    "a",
+    "au",
+    "aux",
+    "chez",
+    "route",
+    "rte",
+    "na",
+    "no",
+    "numero",
+    "num",
+    "sa",
+    "ag",
+    "sarl",
+    "gmbh",
+    "ltd",
+    "inc",
+    "co",
+    "compagnie",
+    "caisse",
+    "solde",
+}
+_MERCHANT_ALLOWED_SHORT_TOKENS = {"sbb"}
+_MERCHANT_SUSPECT_FIRST_NAMES = {
+    "tristan",
+    "alex",
+    "alexandre",
+    "antoine",
+    "benjamin",
+    "christophe",
+    "daniel",
+    "david",
+    "jerome",
+    "julien",
+    "kevin",
+    "luc",
+    "marc",
+    "martin",
+    "mathieu",
+    "michael",
+    "nicolas",
+    "olivier",
+    "pierre",
+    "samuel",
+    "sebastien",
+    "thomas",
+}
 
 
 def _canonicalize_merchant(candidate: str) -> tuple[str, str, str] | None:
@@ -373,10 +427,34 @@ def _canonicalize_merchant(candidate: str) -> tuple[str, str, str] | None:
     if "swisscaution" in base_norm:
         return ("SwissCaution", "swisscaution", alias_raw)
 
-    for token in base_norm.split():
-        if token in _MERCHANT_GENERIC_TOKENS or len(token) < 2:
+    all_tokens = [token for token in base_norm.split() if token]
+    if not all_tokens:
+        return (alias_raw[:64], base_norm[:64], alias_raw)
+
+    first_token = all_tokens[0]
+    if len(all_tokens) >= 2 and first_token in _MERCHANT_SUSPECT_FIRST_NAMES:
+        all_tokens = all_tokens[1:]
+
+    filtered_tokens: list[str] = []
+    for token in all_tokens:
+        cleaned_token = re.sub(r"[^a-z0-9]", "", token)
+        if not cleaned_token:
             continue
-        return (token[:1].upper() + token[1:], token, alias_raw)
+        if cleaned_token in _MERCHANT_GENERIC_TOKENS or cleaned_token in _MERCHANT_STOPWORDS:
+            continue
+        if cleaned_token.isnumeric():
+            continue
+        if len(cleaned_token) < 3 and cleaned_token not in _MERCHANT_ALLOWED_SHORT_TOKENS:
+            continue
+        if cleaned_token == "xxxx":
+            continue
+        filtered_tokens.append(cleaned_token)
+
+    if filtered_tokens:
+        selected_tokens = filtered_tokens[:3]
+        name_norm = " ".join(selected_tokens)
+        display_name = " ".join(token[:1].upper() + token[1:] for token in selected_tokens)
+        return (display_name[:64], name_norm[:64], alias_raw)
 
     return (alias_raw[:64], base_norm[:64], alias_raw)
 

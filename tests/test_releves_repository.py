@@ -302,3 +302,96 @@ def test_update_bank_account_id_by_filters_fetches_ids_then_updates() -> None:
     assert updated_count == 1
     assert client.calls[0]["table"] == "releves_bancaires"
     assert client.patch_calls[0]["query"]["id"].startswith("in.(")
+
+
+class _MerchantAwareClientStub(_ClientStub):
+    def __init__(self, *, merchants_rows: list[dict[str, object]], releves_rows: list[dict[str, object]] | None = None) -> None:
+        super().__init__()
+        self._merchants_rows = merchants_rows
+        self._releves_rows = releves_rows or []
+
+    def get_rows(self, *, table, query, with_count, use_anon_key=False):
+        self.calls.append(
+            {
+                "table": table,
+                "query": query,
+                "with_count": with_count,
+                "use_anon_key": use_anon_key,
+            }
+        )
+        if table == "merchants":
+            return self._merchants_rows, 0
+        return self._releves_rows, 0
+
+
+def test_sum_releves_resolves_merchant_to_merchant_ids_case_insensitive() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    merchant_id = UUID("dddddddd-dddd-dddd-dddd-dddddddddddd")
+    client = _MerchantAwareClientStub(
+        merchants_rows=[
+            {
+                "id": str(merchant_id),
+                "name": "Coop",
+                "name_norm": "coop",
+                "aliases": ["COOP-4815 MONTHEY"],
+            }
+        ],
+        releves_rows=[{"montant": "-21.50", "devise": "CHF", "categorie": "Courses"}],
+    )
+    repository = SupabaseRelevesRepository(client=client)
+
+    filters = RelevesFilters(profile_id=profile_id, merchant="COOP", limit=50, offset=0)
+
+    total, count, currency = repository.sum_releves(filters)
+
+    assert total == Decimal("-21.50")
+    assert count == 1
+    assert currency == "CHF"
+    assert client.calls[0]["table"] == "merchants"
+    assert ("merchant_id", f"in.({merchant_id})") in client.calls[1]["query"]
+
+
+def test_list_releves_falls_back_to_payee_libelle_when_no_merchant_match() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    client = _MerchantAwareClientStub(
+        merchants_rows=[],
+        releves_rows=[
+            {
+                "id": "11111111-1111-1111-1111-111111111111",
+                "profile_id": str(profile_id),
+                "date": "2025-01-01",
+                "libelle": "Paiement Inconnu SA",
+                "montant": "-12.00",
+                "devise": "CHF",
+                "categorie": None,
+                "payee": "Inconnu SA",
+                "merchant_id": None,
+                "bank_account_id": None,
+            }
+        ],
+    )
+    repository = SupabaseRelevesRepository(client=client)
+
+    filters = RelevesFilters(profile_id=profile_id, merchant="Inconnu", limit=50, offset=0)
+    rows, total = repository.list_releves(filters)
+
+    assert total == 0
+    assert len(rows) == 1
+    assert ("or", "(payee.ilike.*Inconnu*,libelle.ilike.*Inconnu*)") in client.calls[1]["query"]
+
+
+def test_aggregate_releves_uses_merchant_id_filter_when_match_found() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    merchant_id = UUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee")
+    client = _MerchantAwareClientStub(
+        merchants_rows=[{"id": str(merchant_id), "name": "Coop", "name_norm": "coop", "aliases": []}],
+        releves_rows=[{"montant": "-10.00", "devise": "CHF", "date": "2025-01-15", "payee": "Coop"}],
+    )
+    repository = SupabaseRelevesRepository(client=client)
+
+    request = RelevesAggregateRequest(profile_id=profile_id, merchant="coop", group_by=RelevesGroupBy.PAYEE)
+    groups, currency = repository.aggregate_releves(request)
+
+    assert groups == {"Coop": (Decimal("-10.00"), 1)}
+    assert currency == "CHF"
+    assert ("merchant_id", f"in.({merchant_id})") in client.calls[1]["query"]
