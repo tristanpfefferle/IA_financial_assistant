@@ -367,7 +367,27 @@ _MERCHANT_STOPWORDS = {
     "caisse",
     "solde",
 }
-_MERCHANT_ALLOWED_SHORT_TOKENS = {"sbb"}
+_MERCHANT_GENERIC_HEADS = {
+    "restaurant",
+    "station",
+    "stationservice",
+    "station-service",
+    "boulangerie",
+    "boucherie",
+    "caisse",
+    "assurance",
+    "paybyphone",
+    "parking",
+    "marche",
+    "atelier",
+    "portes",
+    "solde",
+    "decompte",
+    "sante",
+    "banque",
+}
+_MERCHANT_ALLOWED_SHORT_TOKENS = {"sbb", "ubs", "avs"}
+_MERCHANT_KNOWN_ACRONYMS = {"sbb", "ubs", "avs"}
 _MERCHANT_SUSPECT_FIRST_NAMES = {
     "tristan",
     "alex",
@@ -414,8 +434,18 @@ def _canonicalize_merchant(candidate: str) -> tuple[str, str, str] | None:
 
     if "coop" in base_norm or base_norm.startswith("coop-"):
         return ("Coop", "coop", alias_raw)
+    if "migrolino" in base_norm:
+        return ("Migrolino", "migrolino", alias_raw)
+    if "migrol" in base_norm:
+        return ("Migrol", "migrol", alias_raw)
     if "migros" in base_norm:
         return ("Migros", "migros", alias_raw)
+    if "denner" in base_norm:
+        return ("Denner", "denner", alias_raw)
+    if "lidl" in base_norm:
+        return ("Lidl", "lidl", alias_raw)
+    if "aldi" in base_norm:
+        return ("Aldi", "aldi", alias_raw)
     if "sbb" in base_norm:
         return ("SBB", "sbb", alias_raw)
     if "tamoil" in base_norm:
@@ -435,25 +465,44 @@ def _canonicalize_merchant(candidate: str) -> tuple[str, str, str] | None:
     if len(all_tokens) >= 2 and first_token in _MERCHANT_SUSPECT_FIRST_NAMES:
         all_tokens = all_tokens[1:]
 
-    filtered_tokens: list[str] = []
-    for token in all_tokens:
-        cleaned_token = re.sub(r"[^a-z0-9]", "", token)
-        if not cleaned_token:
-            continue
-        if cleaned_token in _MERCHANT_GENERIC_TOKENS or cleaned_token in _MERCHANT_STOPWORDS:
-            continue
-        if cleaned_token.isnumeric():
-            continue
-        if len(cleaned_token) < 3 and cleaned_token not in _MERCHANT_ALLOWED_SHORT_TOKENS:
-            continue
-        if cleaned_token == "xxxx":
-            continue
-        filtered_tokens.append(cleaned_token)
+    def _filter_tokens(tokens: list[str]) -> list[str]:
+        filtered: list[str] = []
+        for token in tokens:
+            cleaned_token = re.sub(r"[^a-z0-9]", "", token)
+            if not cleaned_token:
+                continue
+            if (
+                cleaned_token in _MERCHANT_GENERIC_TOKENS
+                or cleaned_token in _MERCHANT_STOPWORDS
+                or cleaned_token in _MERCHANT_GENERIC_HEADS
+            ):
+                continue
+            if cleaned_token.isnumeric():
+                continue
+            if len(cleaned_token) < 4 and cleaned_token not in _MERCHANT_ALLOWED_SHORT_TOKENS:
+                continue
+            if cleaned_token == "xxxx":
+                continue
+            filtered.append(cleaned_token)
+        return filtered
+
+    filtered_tokens = _filter_tokens(all_tokens)
+    if all_tokens:
+        first_cleaned_token = re.sub(r"[^a-z0-9]", "", all_tokens[0])
+        if first_cleaned_token in _MERCHANT_GENERIC_HEADS:
+            filtered_after_head = _filter_tokens(all_tokens[1:])
+            if filtered_after_head:
+                filtered_tokens = filtered_after_head
 
     if filtered_tokens:
         selected_tokens = filtered_tokens[:3]
         name_norm = " ".join(selected_tokens)
-        display_name = " ".join(token[:1].upper() + token[1:] for token in selected_tokens)
+        display_name = " ".join(
+            token.upper() if token in _MERCHANT_KNOWN_ACRONYMS else token[:1].upper() + token[1:]
+            for token in selected_tokens
+        )
+        if _normalize_text(display_name) in _MERCHANT_STOPWORDS:
+            return (alias_raw[:64], base_norm[:64], alias_raw)
         return (display_name[:64], name_norm[:64], alias_raw)
 
     return (alias_raw[:64], base_norm[:64], alias_raw)
