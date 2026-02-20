@@ -309,3 +309,126 @@ def test_agent_chat_pending_clarification_followup_does_not_reinject_old_categor
     ]
     assert repo.chat_state.get("state", {}).get("pending_clarification") is None
     assert loop.calls == ["Dépenses en santé", "Dépenses totales"]
+
+
+def test_agent_chat_pending_clarification_without_payload_resolves_period_followup(monkeypatch) -> None:
+    monkeypatch.setattr(
+        agent_api,
+        "get_user_from_bearer_token",
+        lambda _token: {"id": str(AUTH_USER_ID), "email": "user@example.com"},
+    )
+
+    repo = _Repo(initial_chat_state={})
+
+    class _RouterWithSum:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, object]]] = []
+
+        def call(self, tool_name: str, payload: dict[str, object], *, profile_id: UUID | None = None):
+            assert profile_id == PROFILE_ID
+            self.calls.append((tool_name, dict(payload)))
+            if tool_name == "finance_releves_sum":
+                return {
+                    "total": -120.0,
+                    "count": 2,
+                    "average": -60.0,
+                    "currency": "CHF",
+                    "filters": payload,
+                }
+            raise AssertionError(f"unexpected tool call: {tool_name}")
+
+    class _LoopWithSimpleClarification:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def handle_user_message(self, message: str, *, profile_id: UUID | None = None, active_task=None, memory=None):
+            assert profile_id == PROFILE_ID
+            self.calls.append(message)
+            if message == "Dépenses en santé":
+                return type("Reply", (), {
+                    "reply": "OK.",
+                    "tool_result": {"ok": True, "total": 10},
+                    "plan": {
+                        "tool_name": "finance_releves_sum",
+                        "payload": {
+                            "direction": "DEBIT_ONLY",
+                            "categorie": "Santé",
+                        },
+                    },
+                    "should_update_active_task": False,
+                    "active_task": None,
+                    "memory_update": {
+                        "last_query": {
+                            "last_tool_name": "finance_releves_sum",
+                            "filters": {
+                                "direction": "DEBIT_ONLY",
+                                "categorie": "Santé",
+                            },
+                        }
+                    },
+                })()
+
+            if message == "Dépenses totales":
+                return type("Reply", (), {
+                    "reply": "Pour quelle période ?",
+                    "tool_result": {
+                        "type": "clarification",
+                        "clarification_type": "missing_date_range",
+                        "message": "Pour quelle période ?",
+                    },
+                    "plan": None,
+                    "should_update_active_task": False,
+                    "active_task": None,
+                    "memory_update": None,
+                })()
+
+            raise AssertionError(f"unexpected message: {message}")
+
+    router = _RouterWithSum()
+    loop = _LoopWithSimpleClarification()
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: loop)
+    monkeypatch.setattr(agent_api, "get_tool_router", lambda: router)
+
+    first = client.post("/agent/chat", json={"message": "Dépenses en santé"}, headers=_auth_headers())
+    assert first.status_code == 200
+
+    second = client.post("/agent/chat", json={"message": "Dépenses totales"}, headers=_auth_headers())
+    assert second.status_code == 200
+    pending = repo.chat_state.get("state", {}).get("pending_clarification")
+    assert isinstance(pending, dict)
+    assert pending.get("mode") == "date_range_only"
+    assert pending.get("tool_name") is None
+    assert pending.get("missing_fields") == ["date_range"]
+
+    third = client.post("/agent/chat", json={"message": "janvier 2026"}, headers=_auth_headers())
+    assert third.status_code == 200
+    assert third.json()["plan"] == {
+        "tool_name": "finance_releves_sum",
+        "payload": {
+            "direction": "DEBIT_ONLY",
+            "categorie": None,
+            "date_range": {
+                "start_date": "2026-01-01",
+                "end_date": "2026-01-31",
+            },
+        },
+    }
+    assert "Total" in third.json()["reply"]
+
+    assert router.calls == [
+        (
+            "finance_releves_sum",
+            {
+                "direction": "DEBIT_ONLY",
+                "categorie": None,
+                "date_range": {
+                    "start_date": "2026-01-01",
+                    "end_date": "2026-01-31",
+                },
+            },
+        )
+    ]
+    assert repo.chat_state.get("state", {}).get("pending_clarification") is None
+    assert loop.calls == ["Dépenses en santé", "Dépenses totales"]
