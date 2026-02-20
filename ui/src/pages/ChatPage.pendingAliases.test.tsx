@@ -104,4 +104,19 @@ describe('ChatPage pending merchant aliases action', () => {
 
     expect(resolvePendingMerchantAliases).toHaveBeenCalledWith({ limit: 20, max_batches: 10 })
   })
+
+  it('does not render permanent import button or examples block in sidebar', async () => {
+    getPendingMerchantAliasesCount.mockResolvedValue({ pending_total_count: 0 })
+
+    await act(async () => {
+      createRoot(container).render(<ChatPage email="user@example.com" />)
+    })
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    expect(findButtonByText(container, 'Importer un relevé')).toBeNull()
+    expect(container.textContent).not.toContain('Exemples utiles')
+  })
 })

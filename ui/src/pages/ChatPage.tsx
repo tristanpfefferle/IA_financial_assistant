@@ -46,12 +46,6 @@ type ImportIntent = {
 
 type ToastState = { type: 'error' | 'success'; message: string } | null
 
-const EXAMPLE_QUESTIONS = [
-  'Analyse mes dépenses du mois',
-  'Quelles sont mes charges fixes ?',
-  'Prépare un résumé pour mon budget',
-]
-
 function formatDateRange(dateRange: { start: string; end: string } | null): string {
   if (!dateRange) {
     return 'Période détectée: non disponible'
@@ -443,13 +437,11 @@ export function ChatPage({ email }: ChatPageProps) {
         bankAccounts={bankAccounts}
         selectedBankAccountId={selectedBankAccountId}
         setSelectedBankAccountId={setSelectedBankAccountId}
-        onOpenImport={() => setIsImportDialogOpen(true)}
         onHardReset={handleHardReset}
         envDebugEnabled={envDebugEnabled}
         apiBaseUrl={apiBaseUrl}
         email={email}
         hasToken={hasToken}
-        onQuestionClick={(question) => setMessage(question)}
       />
 
       <section className="chat-panel">
@@ -465,9 +457,8 @@ export function ChatPage({ email }: ChatPageProps) {
             const threshold = 48
             shouldAutoScrollRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < threshold
           }}
-          onStartConversation={() => setMessage('Analyse mes dépenses des 30 derniers jours.')}
-          onOpenImport={() => setIsImportDialogOpen(true)}
-        />
+          onStartConversation={() => setMessage('Que puis-je te demander ?')}
+          />
 
         <Composer
           message={message}
@@ -542,13 +533,11 @@ type SidebarProps = {
   bankAccounts: BankAccount[]
   selectedBankAccountId: string
   setSelectedBankAccountId: (value: string) => void
-  onOpenImport: () => void
   onHardReset: () => void
   envDebugEnabled: boolean
   apiBaseUrl: string
   email?: string
   hasToken: boolean
-  onQuestionClick: (question: string) => void
 }
 
 function Sidebar(props: SidebarProps) {
@@ -557,10 +546,6 @@ function Sidebar(props: SidebarProps) {
       <section className="card sidebar-card">
         <h2>Profil & Actions</h2>
         <p className="status-badge">{props.statusBadge}</p>
-        <button type="button" onClick={props.onOpenImport}>
-          Importer un relevé
-        </button>
-
         <label className="field-label" htmlFor="bank-account-select">
           Compte bancaire
         </label>
@@ -597,16 +582,6 @@ function Sidebar(props: SidebarProps) {
         {props.resolvePendingAliasesFeedback ? <p className="subtle-text">{props.resolvePendingAliasesFeedback}</p> : null}
       </section>
 
-      <section className="card sidebar-card">
-        <h3>Exemples utiles</h3>
-        <div className="chip-list">
-          {EXAMPLE_QUESTIONS.map((question) => (
-            <button key={question} type="button" className="chip" onClick={() => props.onQuestionClick(question)}>
-              {question}
-            </button>
-          ))}
-        </div>
-      </section>
 
       {props.envDebugEnabled ? (
         <section className="card sidebar-card debug-banner" role="status" aria-live="polite">
@@ -638,13 +613,12 @@ type MessageListProps = {
   messagesRef: RefObject<HTMLDivElement | null>
   onScroll: (event: UIEvent<HTMLDivElement>) => void
   onStartConversation: () => void
-  onOpenImport: () => void
 }
 
-function MessageList({ messages, isLoading, debugMode, messagesRef, onScroll, onStartConversation, onOpenImport }: MessageListProps) {
+function MessageList({ messages, isLoading, debugMode, messagesRef, onScroll, onStartConversation }: MessageListProps) {
   return (
     <div className="messages card" aria-live="polite" ref={messagesRef} onScroll={onScroll}>
-      {messages.length === 0 ? <EmptyState onStartConversation={onStartConversation} onOpenImport={onOpenImport} /> : null}
+      {messages.length === 0 ? <EmptyState onStartConversation={onStartConversation} /> : null}
       {messages.map((chatMessage) => (
         <MessageBubble key={chatMessage.id} message={chatMessage} debugMode={debugMode} />
       ))}
@@ -658,7 +632,7 @@ function MessageList({ messages, isLoading, debugMode, messagesRef, onScroll, on
   )
 }
 
-function EmptyState({ onStartConversation, onOpenImport }: { onStartConversation: () => void; onOpenImport: () => void }) {
+function EmptyState({ onStartConversation }: { onStartConversation: () => void }) {
   return (
     <section className="empty-state">
       <h3>Bienvenue 👋</h3>
@@ -666,9 +640,6 @@ function EmptyState({ onStartConversation, onOpenImport }: { onStartConversation
       <div className="empty-actions">
         <button type="button" onClick={onStartConversation}>
           Commencer
-        </button>
-        <button type="button" className="secondary-button" onClick={onOpenImport}>
-          Importer un relevé
         </button>
       </div>
     </section>

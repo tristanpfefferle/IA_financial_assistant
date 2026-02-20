@@ -15,7 +15,7 @@ export type OpenImportPanelUiAction = {
 export type LegacyImportUiRequest = {
   type: 'ui_request'
   name: 'import_file'
-  bank_account_id: string
+  bank_account_id?: string
   bank_account_name?: string
   accepted_types?: string[]
 }
@@ -62,15 +62,12 @@ export function toLegacyImportUiRequest(value: unknown): LegacyImportUiRequest |
     return null
   }
 
-  const bankAccountId = record.bank_account_id
-  if (typeof bankAccountId !== 'string' || !bankAccountId.trim()) {
-    return null
-  }
+  const bankAccountId = typeof record.bank_account_id === 'string' ? record.bank_account_id.trim() : undefined
 
   return {
     type: 'ui_request',
     name: 'import_file',
-    bank_account_id: bankAccountId,
+    bank_account_id: bankAccountId || undefined,
     bank_account_name: typeof record.bank_account_name === 'string' ? record.bank_account_name : undefined,
     accepted_types: normalizeAcceptedTypes(record.accepted_types),
   }
