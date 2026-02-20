@@ -14,11 +14,13 @@ class _ClientStub:
         patch_responses: list[list[dict[str, str]]] | None = None,
         post_responses: list[list[dict[str, str]]] | None = None,
         post_exceptions: list[Exception] | None = None,
+        delete_responses: list[list[dict[str, str]]] | None = None,
     ) -> None:
         self._responses = responses
         self._patch_responses = patch_responses or []
         self._post_responses = post_responses or []
         self._post_exceptions = post_exceptions or []
+        self._delete_responses = delete_responses or []
         self.calls: list[dict[str, object]] = []
         self.patch_calls: list[dict[str, object]] = []
         self.post_calls: list[dict[str, object]] = []
@@ -82,7 +84,7 @@ class _ClientStub:
                 "use_anon_key": use_anon_key,
             }
         )
-        return []
+        return self._delete_responses[len(self.delete_calls) - 1] if self._delete_responses else []
 
 
 def test_get_profile_id_for_auth_user_prefers_account_id() -> None:
@@ -454,3 +456,102 @@ def test_append_merchant_alias_skips_patch_when_alias_already_exists() -> None:
     repository.append_merchant_alias(merchant_id=merchant_id, alias="COOP-4815 MONTHEY")
 
     assert client.patch_calls == []
+
+
+def test_rename_merchant_patches_name_and_name_norm() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    merchant_id = UUID("dddddddd-dddd-dddd-dddd-dddddddddddd")
+    client = _ClientStub(responses=[], patch_responses=[[{"id": str(merchant_id)}]])
+    repository = SupabaseProfilesRepository(client=client)
+
+    result = repository.rename_merchant(
+        profile_id=profile_id,
+        merchant_id=merchant_id,
+        new_name="  Café   du   Rhône  ",
+    )
+
+    assert result == {
+        "merchant_id": str(merchant_id),
+        "name": "Café du Rhône",
+        "name_norm": "cafe du rhone",
+    }
+    assert client.patch_calls == [
+        {
+            "table": "merchants",
+            "query": {"id": f"eq.{merchant_id}", "profile_id": f"eq.{profile_id}"},
+            "payload": {"name": "Café du Rhône", "name_norm": "cafe du rhone"},
+            "use_anon_key": False,
+        }
+    ]
+
+
+def test_merge_merchants_moves_releves_merges_aliases_and_deletes_source() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    source_merchant_id = UUID("11111111-1111-1111-1111-111111111111")
+    target_merchant_id = UUID("22222222-2222-2222-2222-222222222222")
+    moved_releve_id = UUID("33333333-3333-3333-3333-333333333333")
+
+    client = _ClientStub(
+        responses=[
+            [
+                {
+                    "id": str(source_merchant_id),
+                    "profile_id": str(profile_id),
+                    "scope": "personal",
+                    "name": "Migros Monthey",
+                    "name_norm": "migros monthey",
+                    "aliases": ["MIGROS MONTHEY"],
+                    "category": "Alimentation",
+                }
+            ],
+            [
+                {
+                    "id": str(target_merchant_id),
+                    "profile_id": str(profile_id),
+                    "scope": "personal",
+                    "name": "Migros",
+                    "name_norm": "migros",
+                    "aliases": ["Migros", "MIGROS MONTHEY"],
+                    "category": "Alimentation",
+                }
+            ],
+        ],
+        patch_responses=[
+            [{"id": str(moved_releve_id)}],
+            [{"id": str(target_merchant_id)}],
+        ],
+        delete_responses=[[{"id": str(source_merchant_id)}]],
+    )
+    repository = SupabaseProfilesRepository(client=client)
+
+    result = repository.merge_merchants(
+        profile_id=profile_id,
+        source_merchant_id=source_merchant_id,
+        target_merchant_id=target_merchant_id,
+    )
+
+    assert client.calls[0]["table"] == "merchants"
+    assert client.calls[0]["query"]["id"] == f"eq.{source_merchant_id}"
+    assert client.calls[1]["table"] == "merchants"
+    assert client.calls[1]["query"]["id"] == f"eq.{target_merchant_id}"
+
+    assert client.patch_calls[0] == {
+        "table": "releves_bancaires",
+        "query": {"profile_id": f"eq.{profile_id}", "merchant_id": f"eq.{source_merchant_id}"},
+        "payload": {"merchant_id": str(target_merchant_id)},
+        "use_anon_key": False,
+    }
+    assert client.patch_calls[1] == {
+        "table": "merchants",
+        "query": {"id": f"eq.{target_merchant_id}", "profile_id": f"eq.{profile_id}"},
+        "payload": {"aliases": ["Migros", "MIGROS MONTHEY", "Migros Monthey"]},
+        "use_anon_key": False,
+    }
+
+    assert result == {
+        "target_merchant_id": str(target_merchant_id),
+        "source_merchant_id": str(source_merchant_id),
+        "moved_releves_count": 1,
+        "aliases_added_count": 1,
+        "target_aliases_count": 3,
+    }

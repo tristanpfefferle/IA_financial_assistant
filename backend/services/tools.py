@@ -438,3 +438,49 @@ class BackendToolService:
             return ToolError(code=ToolErrorCode.NOT_FOUND, message=str(exc))
         except Exception as exc:
             return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))
+
+    def finance_merchants_rename(
+        self,
+        *,
+        profile_id: UUID,
+        merchant_id: UUID,
+        name: str,
+    ) -> dict[str, str] | ToolError:
+        if self.profiles_repository is None:
+            return ToolError(
+                code=ToolErrorCode.BACKEND_ERROR,
+                message="Profiles repository unavailable",
+            )
+        try:
+            return self.profiles_repository.rename_merchant(
+                profile_id=profile_id,
+                merchant_id=merchant_id,
+                new_name=name,
+            )
+        except ValueError as exc:
+            return ToolError(code=ToolErrorCode.VALIDATION_ERROR, message=str(exc))
+        except Exception as exc:
+            return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))
+
+    def finance_merchants_merge(
+        self,
+        *,
+        profile_id: UUID,
+        source_merchant_id: UUID,
+        target_merchant_id: UUID,
+    ) -> dict[str, object] | ToolError:
+        if self.profiles_repository is None:
+            return ToolError(
+                code=ToolErrorCode.BACKEND_ERROR,
+                message="Profiles repository unavailable",
+            )
+        try:
+            return self.profiles_repository.merge_merchants(
+                profile_id=profile_id,
+                source_merchant_id=source_merchant_id,
+                target_merchant_id=target_merchant_id,
+            )
+        except ValueError as exc:
+            return ToolError(code=ToolErrorCode.VALIDATION_ERROR, message=str(exc))
+        except Exception as exc:
+            return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))

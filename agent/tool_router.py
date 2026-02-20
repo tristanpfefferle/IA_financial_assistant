@@ -142,6 +142,20 @@ class _RelevesImportPayload(BaseModel):
     modified_action: str = "keep"
 
 
+class _MerchantRenamePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    merchant_id: UUID
+    name: str
+
+
+class _MerchantsMergePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_merchant_id: UUID
+    target_merchant_id: UUID
+
+
 @dataclass(slots=True)
 class ToolRouter:
     backend_client: BackendClient
@@ -333,6 +347,8 @@ class ToolRouter:
             "finance_bank_accounts_delete",
             "finance_bank_accounts_can_delete",
             "finance_bank_accounts_set_default",
+            "finance_merchants_rename",
+            "finance_merchants_merge",
         } and profile_id is None:
             return ToolError(
                 code=ToolErrorCode.VALIDATION_ERROR,
@@ -698,6 +714,36 @@ class ToolRouter:
             return self.backend_client.finance_bank_accounts_set_default(
                 profile_id=request.profile_id,
                 bank_account_id=request.bank_account_id,
+            )
+
+        if tool_name == "finance_merchants_rename":
+            try:
+                request = _MerchantRenamePayload.model_validate(payload)
+            except ValidationError as exc:
+                return ToolError(
+                    code=ToolErrorCode.VALIDATION_ERROR,
+                    message=f"Invalid payload for tool {tool_name}",
+                    details={"validation_errors": exc.errors(), "payload": payload},
+                )
+            return self.backend_client.finance_merchants_rename(
+                profile_id=profile_id,
+                merchant_id=request.merchant_id,
+                name=request.name,
+            )
+
+        if tool_name == "finance_merchants_merge":
+            try:
+                request = _MerchantsMergePayload.model_validate(payload)
+            except ValidationError as exc:
+                return ToolError(
+                    code=ToolErrorCode.VALIDATION_ERROR,
+                    message=f"Invalid payload for tool {tool_name}",
+                    details={"validation_errors": exc.errors(), "payload": payload},
+                )
+            return self.backend_client.finance_merchants_merge(
+                profile_id=profile_id,
+                source_merchant_id=request.source_merchant_id,
+                target_merchant_id=request.target_merchant_id,
             )
 
         return ToolError(

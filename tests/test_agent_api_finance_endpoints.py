@@ -368,3 +368,79 @@ def test_import_releves_links_merchants_from_imported_transactions(monkeypatch) 
         (UUID("cccccccc-cccc-cccc-cccc-cccccccccccc"), "SBB MOBILE; Paiement UBS TWINT ..."),
     ]
     assert len(repo.attach_calls) == 2
+
+
+def test_rename_merchant_endpoint_returns_200_and_calls_repo(monkeypatch) -> None:
+    monkeypatch.setattr(
+        agent_api,
+        "get_user_from_bearer_token",
+        lambda _token: {"id": str(AUTH_USER_ID), "email": "user@example.com"},
+    )
+
+    merchant_id = UUID("dddddddd-dddd-dddd-dddd-dddddddddddd")
+
+    class _Repo:
+        def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None):
+            assert auth_user_id == AUTH_USER_ID
+            assert email == "user@example.com"
+            return PROFILE_ID
+
+        def rename_merchant(self, *, profile_id: UUID, merchant_id: UUID, new_name: str):
+            assert profile_id == PROFILE_ID
+            assert merchant_id == UUID("dddddddd-dddd-dddd-dddd-dddddddddddd")
+            assert new_name == "Nouveau Marchand"
+            return {"merchant_id": str(merchant_id), "name": "Nouveau Marchand", "name_norm": "nouveau marchand"}
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: _Repo())
+
+    response = client.post(
+        "/finance/merchants/rename",
+        headers=_auth_headers(),
+        json={"merchant_id": str(merchant_id), "name": "Nouveau Marchand"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["name_norm"] == "nouveau marchand"
+
+
+def test_merge_merchants_endpoint_returns_200_and_calls_repo(monkeypatch) -> None:
+    monkeypatch.setattr(
+        agent_api,
+        "get_user_from_bearer_token",
+        lambda _token: {"id": str(AUTH_USER_ID), "email": "user@example.com"},
+    )
+
+    source_merchant_id = UUID("11111111-1111-1111-1111-111111111111")
+    target_merchant_id = UUID("22222222-2222-2222-2222-222222222222")
+
+    class _Repo:
+        def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None):
+            assert auth_user_id == AUTH_USER_ID
+            assert email == "user@example.com"
+            return PROFILE_ID
+
+        def merge_merchants(self, *, profile_id: UUID, source_merchant_id: UUID, target_merchant_id: UUID):
+            assert profile_id == PROFILE_ID
+            assert source_merchant_id == UUID("11111111-1111-1111-1111-111111111111")
+            assert target_merchant_id == UUID("22222222-2222-2222-2222-222222222222")
+            return {
+                "target_merchant_id": str(target_merchant_id),
+                "source_merchant_id": str(source_merchant_id),
+                "moved_releves_count": 3,
+                "aliases_added_count": 2,
+                "target_aliases_count": 5,
+            }
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: _Repo())
+
+    response = client.post(
+        "/finance/merchants/merge",
+        headers=_auth_headers(),
+        json={
+            "source_merchant_id": str(source_merchant_id),
+            "target_merchant_id": str(target_merchant_id),
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["moved_releves_count"] == 3
