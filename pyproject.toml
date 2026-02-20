@@ -10,9 +10,11 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
   "fastapi>=0.110",
+  "matplotlib>=3.8",
   "openai>=1.0.0",
   "pydantic>=2",
   "python-dotenv>=1.0.0",
+  "reportlab>=4.0",
   "uvicorn[standard]>=0.29",
 ]
 
