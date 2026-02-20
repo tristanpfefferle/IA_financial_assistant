@@ -17,6 +17,7 @@ from backend.repositories.profiles_repository import ProfilesRepository
 from backend.repositories.releves_repository import RelevesRepository
 from backend.repositories.transactions_repository import TransactionsRepository
 from backend.services.releves_import import RelevesImportService
+from shared.text_utils import normalize_category_name
 from shared.models import (
     BankAccount,
     BankAccountCreateRequest,
@@ -44,6 +45,35 @@ from shared.models import (
     TransactionSearchResult,
     TransactionSumResult,
 )
+
+
+def resolve_category_id(
+    *,
+    profile_id: UUID,
+    categorie: str,
+    profiles_repository: ProfilesRepository,
+) -> UUID | None:
+    """Resolve a user category input to one profile_categories.id when possible."""
+
+    normalized_input = normalize_category_name(categorie)
+    if not normalized_input:
+        return None
+
+    categories = profiles_repository.list_profile_categories(profile_id=profile_id)
+    for row in categories:
+        raw_category_id = row.get("id")
+        if not raw_category_id:
+            continue
+
+        candidates = (
+            str(row.get("system_key") or ""),
+            str(row.get("name_norm") or ""),
+            str(row.get("name") or ""),
+        )
+        if any(normalize_category_name(candidate) == normalized_input for candidate in candidates if candidate.strip()):
+            return UUID(str(raw_category_id))
+
+    return None
 
 
 @dataclass(slots=True)
@@ -83,6 +113,7 @@ class BackendToolService:
         self, filters: RelevesFilters
     ) -> RelevesSearchResult | ToolError:
         try:
+            filters = self._apply_category_filter_resolution(filters)
             items, total = self.releves_repository.list_releves(filters)
             return RelevesSearchResult(
                 items=items, limit=filters.limit, offset=filters.offset, total=total
@@ -92,6 +123,7 @@ class BackendToolService:
 
     def releves_sum(self, filters: RelevesFilters) -> RelevesSumResult | ToolError:
         try:
+            filters = self._apply_category_filter_resolution(filters)
             total, count, currency = self.releves_repository.sum_releves(filters)
             average = (total / count) if count > 0 else total
             return RelevesSumResult(
@@ -108,6 +140,7 @@ class BackendToolService:
         self, request: RelevesAggregateRequest
     ) -> RelevesAggregateResult | ToolError:
         try:
+            request = self._apply_category_filter_resolution(request)
             aggregated, currency = self.releves_repository.aggregate_releves(request)
             groups = {
                 group_key: RelevesAggregateGroup(total=total, count=count)
@@ -121,6 +154,23 @@ class BackendToolService:
             )
         except Exception as exc:  # placeholder normalization at contract boundary
             return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))
+
+    def _apply_category_filter_resolution(
+        self,
+        request: RelevesFilters | RelevesAggregateRequest,
+    ) -> RelevesFilters | RelevesAggregateRequest:
+        if not request.categorie or request.category_id is not None or self.profiles_repository is None:
+            return request
+
+        category_id = resolve_category_id(
+            profile_id=request.profile_id,
+            categorie=request.categorie,
+            profiles_repository=self.profiles_repository,
+        )
+        if category_id is None:
+            return request
+
+        return request.model_copy(update={"category_id": category_id})
 
 
     def finance_releves_set_bank_account(

@@ -121,6 +121,26 @@ def test_build_query_preserves_category_filter_case() -> None:
     assert ("categorie", "eq.Alimentation") in query
 
 
+
+
+def test_build_query_prefers_category_id_over_categorie() -> None:
+    client = _ClientStub()
+    repository = SupabaseRelevesRepository(client=client)
+
+    filters = RelevesFilters(
+        profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+        category_id=UUID("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+        categorie="Alimentation",
+        limit=10,
+        offset=0,
+    )
+
+    repository.list_releves(filters)
+
+    query = client.calls[0]["query"]
+    assert ("category_id", "eq.cccccccc-cccc-cccc-cccc-cccccccccccc") in query
+    assert not any(key == "categorie" for key, _ in query)
+
 def test_build_query_omits_category_filter_when_not_provided() -> None:
     client = _ClientStub()
     repository = SupabaseRelevesRepository(client=client)

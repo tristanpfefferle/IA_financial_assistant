@@ -1,6 +1,14 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
 
-import { hardResetProfile, importReleves, resetSession, sendChatMessage, type RelevesImportResult } from '../api/agentApi'
+import {
+  getPendingMerchantAliasesCount,
+  hardResetProfile,
+  importReleves,
+  resolvePendingMerchantAliases,
+  resetSession,
+  sendChatMessage,
+  type RelevesImportResult,
+} from '../api/agentApi'
 import { DebugPanel } from '../components/DebugPanel'
 import { installSessionResetOnPageExit, logoutWithSessionReset } from '../lib/sessionLifecycle'
 import { supabase } from '../lib/supabaseClient'
@@ -135,6 +143,9 @@ export function ChatPage({ email }: ChatPageProps) {
   const [isLoading, setIsLoading] = useState(false)
   const [hasToken, setHasToken] = useState(false)
   const [isRefreshingSession, setIsRefreshingSession] = useState(false)
+  const [pendingMerchantAliasesCount, setPendingMerchantAliasesCount] = useState(0)
+  const [isResolvingPendingAliases, setIsResolvingPendingAliases] = useState(false)
+  const [resolvePendingAliasesFeedback, setResolvePendingAliasesFeedback] = useState<string | null>(null)
   const envDebugEnabled = import.meta.env.VITE_UI_DEBUG === 'true'
   const [debugMode, setDebugMode] = useState(false)
   const apiBaseUrl = useMemo(() => {
@@ -185,6 +196,33 @@ export function ChatPage({ email }: ChatPageProps) {
     })
 
     return cleanup
+  }, [hasToken])
+
+  useEffect(() => {
+    if (!hasToken) {
+      setPendingMerchantAliasesCount(0)
+      return
+    }
+
+    let active = true
+
+    getPendingMerchantAliasesCount()
+      .then((result) => {
+        if (!active) {
+          return
+        }
+        setPendingMerchantAliasesCount(Math.max(0, result.pending_total_count || 0))
+      })
+      .catch(() => {
+        if (!active) {
+          return
+        }
+        setPendingMerchantAliasesCount(0)
+      })
+
+    return () => {
+      active = false
+    }
   }, [hasToken])
 
   const isConnected = useMemo(() => Boolean(email), [email])
@@ -244,6 +282,32 @@ export function ChatPage({ email }: ChatPageProps) {
       }
     } finally {
       setIsRefreshingSession(false)
+    }
+  }
+
+  async function handleResolvePendingAliases() {
+    if (isResolvingPendingAliases) {
+      return
+    }
+
+    setResolvePendingAliasesFeedback(null)
+    setIsResolvingPendingAliases(true)
+    setError(null)
+
+    try {
+      const result = await resolvePendingMerchantAliases({ limit: 20, max_batches: 10 })
+      const applied = Number(result.stats.applied ?? 0)
+      const failed = Number(result.stats.failed ?? 0)
+      const pendingAfter = result.pending_after ?? 0
+      setPendingMerchantAliasesCount(Math.max(0, pendingAfter))
+      setResolvePendingAliasesFeedback(
+        `Résolution terminée: ${applied} appliqués, ${failed} failed, pending_after=${pendingAfter}.`,
+      )
+    } catch (caughtError) {
+      const errorMessage = caughtError instanceof Error ? caughtError.message : 'Erreur inconnue'
+      setResolvePendingAliasesFeedback(errorMessage)
+    } finally {
+      setIsResolvingPendingAliases(false)
     }
   }
 
@@ -334,11 +398,22 @@ export function ChatPage({ email }: ChatPageProps) {
           <label>
             <input type="checkbox" checked={debugMode} onChange={(event) => setDebugMode(event.target.checked)} /> Debug
           </label>
+          {pendingMerchantAliasesCount > 0 ? (
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => void handleResolvePendingAliases()}
+              disabled={isResolvingPendingAliases}
+            >
+              {isResolvingPendingAliases ? 'Résolution en cours…' : 'Résoudre les marchands restants'}
+            </button>
+          ) : null}
           {debugMode ? (
             <button type="button" className="secondary-button" onClick={() => void handleHardReset()}>
               Reset (tests)
             </button>
           ) : null}
+          {resolvePendingAliasesFeedback ? <p className="placeholder-text">{resolvePendingAliasesFeedback}</p> : null}
         </section>
 
         <div className="messages" aria-live="polite" ref={messagesRef}>

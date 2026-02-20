@@ -5,6 +5,7 @@ from decimal import Decimal
 from uuid import UUID
 
 from agent.tool_router import ToolRouter
+from backend.services.tools import BackendToolService
 from shared.models import (
     DateRange,
     ReleveBancaire,
@@ -122,3 +123,49 @@ def test_sum_with_merchant_and_date_range_filters_are_composed() -> None:
     assert isinstance(result, TransactionSumResult)
     assert result.count == 1
     assert result.total == Decimal("-20.00")
+
+
+class _CategoryAwareRelevesRepository:
+    def __init__(self) -> None:
+        self.last_filters: RelevesFilters | None = None
+
+    def sum_releves(self, filters: RelevesFilters):
+        self.last_filters = filters
+        return Decimal("-25.00"), 1, "CHF"
+
+
+class _ProfileCategoriesRepositoryStub:
+    def list_profile_categories(self, *, profile_id: UUID):
+        assert profile_id == PROFILE_ID
+        return [
+            {
+                "id": "99999999-9999-9999-9999-999999999999",
+                "name": "Alimentation",
+                "name_norm": "alimentation",
+                "system_key": "food",
+            }
+        ]
+
+
+def test_backend_releves_sum_resolves_categorie_to_category_id() -> None:
+    releves_repository = _CategoryAwareRelevesRepository()
+    backend_service = BackendToolService(
+        transactions_repository=object(),
+        releves_repository=releves_repository,
+        categories_repository=object(),
+        profiles_repository=_ProfileCategoriesRepositoryStub(),
+    )
+
+    result = backend_service.releves_sum(
+        RelevesFilters(
+            profile_id=PROFILE_ID,
+            categorie="Alimentation",
+            limit=50,
+            offset=0,
+        )
+    )
+
+    assert isinstance(result, RelevesSumResult)
+    assert releves_repository.last_filters is not None
+    assert releves_repository.last_filters.category_id == UUID("99999999-9999-9999-9999-999999999999")
+    assert releves_repository.last_filters.categorie == "Alimentation"

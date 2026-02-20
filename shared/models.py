@@ -242,6 +242,7 @@ class ReleveBancaire(BaseModel):
     montant: Decimal
     devise: str
     categorie: str | None = None
+    category_id: UUID | None = None
     payee: str | None = None
     merchant_id: UUID | None = None
     bank_account_id: UUID | None = None
@@ -253,6 +254,7 @@ class RelevesFilters(BaseModel):
     profile_id: UUID
     date_range: DateRange | None = None
     categorie: str | None = None
+    category_id: UUID | None = None
     merchant: str | None = None
     merchant_id: UUID | None = None
     bank_account_id: UUID | None = None
@@ -295,6 +297,7 @@ class RelevesAggregateRequest(BaseModel):
     group_by: RelevesGroupBy
     date_range: DateRange | None = None
     categorie: str | None = None
+    category_id: UUID | None = None
     merchant: str | None = None
     merchant_id: UUID | None = None
     bank_account_id: UUID | None = None

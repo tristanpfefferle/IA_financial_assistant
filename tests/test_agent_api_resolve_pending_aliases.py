@@ -152,3 +152,24 @@ def test_resolve_pending_aliases_runs_single_batch_without_count_support(monkeyp
     assert payload["stats"]["processed"] == 5
     assert payload["stats"]["applied"] == 4
     assert payload["stats"]["failed"] == 1
+
+
+def test_pending_aliases_count_endpoint_returns_repository_count(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+
+    class _CountRepo:
+        def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None):
+            assert auth_user_id == AUTH_USER_ID
+            assert email == "user@example.com"
+            return PROFILE_ID
+
+        def count_map_alias_suggestions(self, *, profile_id: UUID) -> int:
+            assert profile_id == PROFILE_ID
+            return 12
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: _CountRepo())
+
+    response = client.get("/finance/merchants/aliases/pending-count", headers=_headers())
+
+    assert response.status_code == 200
+    assert response.json() == {"pending_total_count": 12}
