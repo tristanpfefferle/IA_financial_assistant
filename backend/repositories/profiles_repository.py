@@ -19,6 +19,9 @@ class ProfilesRepository(Protocol):
     def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None) -> UUID | None:
         """Return profile UUID for an authenticated user."""
 
+    def ensure_profile_for_auth_user(self, *, auth_user_id: UUID, email: str | None) -> UUID:
+        """Return existing profile UUID or create and link a new profile."""
+
     def get_chat_state(self, *, profile_id: UUID, user_id: UUID) -> dict[str, Any]:
         """Return persisted chat state for a profile."""
 
@@ -242,6 +245,36 @@ class SupabaseProfilesRepository:
         if email:
             return self._get_profile_id_by_column(column="email", value=email)
         return None
+
+    def ensure_profile_for_auth_user(self, *, auth_user_id: UUID, email: str | None) -> UUID:
+        """Ensure one profile exists and is linked to this authenticated user."""
+
+        existing_profile_id = self.get_profile_id_for_auth_user(auth_user_id=auth_user_id, email=email)
+        if existing_profile_id is not None:
+            return existing_profile_id
+
+        profile_payload: dict[str, Any] = {
+            "account_id": str(auth_user_id),
+            "chat_state": {"state": {}},
+        }
+        if email:
+            profile_payload["email"] = email
+
+        profile_rows = self._client.post_rows(
+            table="profils",
+            payload=profile_payload,
+            use_anon_key=False,
+        )
+        if profile_rows:
+            created_profile_id = profile_rows[0].get("id")
+            if created_profile_id:
+                return UUID(str(created_profile_id))
+
+        fallback_profile_id = self.get_profile_id_for_auth_user(auth_user_id=auth_user_id, email=email)
+        if fallback_profile_id is not None:
+            return fallback_profile_id
+
+        raise RuntimeError("Unable to ensure profile for authenticated user")
 
     def get_chat_state(self, *, profile_id: UUID, user_id: UUID) -> dict[str, Any]:
         conversation_id = str(profile_id)

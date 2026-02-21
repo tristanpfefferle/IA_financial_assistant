@@ -222,34 +222,46 @@ def test_agent_chat_profile_lookup_supports_fallback_email(monkeypatch) -> None:
     assert response.status_code == 200
 
 
-def test_agent_chat_returns_not_linked_message_when_profile_is_missing(monkeypatch) -> None:
+def test_agent_chat_first_login_creates_profile_and_returns_200(monkeypatch) -> None:
     monkeypatch.setattr(
         agent_api,
         "get_user_from_bearer_token",
         lambda _token: {"id": str(AUTH_USER_ID), "email": "user@example.com"},
     )
 
+    created_profile_id = UUID("dddddddd-dddd-dddd-dddd-dddddddddddd")
+
     class _Repo:
-        def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None):
+        def __init__(self) -> None:
+            self.ensure_called = False
+
+        def ensure_profile_for_auth_user(self, *, auth_user_id: UUID, email: str | None) -> UUID:
+            self.ensure_called = True
             assert auth_user_id == AUTH_USER_ID
             assert email == "user@example.com"
-            return None
+            return created_profile_id
 
         def get_chat_state(self, *, profile_id: UUID, user_id: UUID):
+            assert profile_id == created_profile_id
             assert user_id == AUTH_USER_ID
             return {}
 
         def update_chat_state(self, *, profile_id: UUID, user_id: UUID, chat_state: dict[str, object]) -> None:
+            assert profile_id == created_profile_id
             assert user_id == AUTH_USER_ID
             return None
 
+    repo = _Repo()
     agent_api.get_profiles_repository.cache_clear()
-    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: _Repo())
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
 
-    response = client.post("/agent/chat", json={"message": "ping"}, headers=_auth_headers())
+    response = client.post("/agent/chat", json={"message": "bonjour"}, headers=_auth_headers())
 
-    assert response.status_code == 401
-    assert response.json()["detail"] == "No profile linked to authenticated user (by account_id or email)"
+    assert repo.ensure_called is True
+    assert response.status_code == 200
+    payload = response.json()
+    assert isinstance(payload.get("reply"), str)
+    assert payload["reply"]
 
 
 def test_agent_chat_delete_returns_json_reply_when_tool_returns_none(monkeypatch) -> None:
