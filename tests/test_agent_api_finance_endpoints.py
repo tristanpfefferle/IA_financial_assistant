@@ -1003,6 +1003,7 @@ def test_spending_report_pdf_normalizes_categories_and_transaction_rows(monkeypa
                             "montant": "-5",
                             "merchant": "Aucun",
                             "categorie": "",
+                            "category_name": "Transport",
                         },
                     ],
                     "limit": 500,
@@ -1016,9 +1017,9 @@ def test_spending_report_pdf_normalizes_categories_and_transaction_rows(monkeypa
     response = client.get("/finance/reports/spending.pdf?month=2026-01", headers=_auth_headers())
 
     assert response.status_code == 200
-    assert captured["categories"] == [("Autres", "10"), ("Autres", "5"), ("Alimentation", "105")]
+    assert captured["categories"] == [("Autres", "15"), ("Alimentation", "105")]
     transactions = captured["transactions"]
     assert transactions == [
-        ("2026-01-01", "Aucun", "Autres"),
+        ("2026-01-01", "Aucun", "Transport"),
         ("2026-01-11", "Marchand Long", "Alimentation"),
     ]

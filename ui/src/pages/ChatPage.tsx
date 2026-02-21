@@ -265,6 +265,24 @@ export function ChatPage({ email }: ChatPageProps) {
     return null
   }, [messages])
   const quickReplyAction = useMemo(() => toQuickReplyYesNoUiAction(latestAssistantMessage?.toolResult), [latestAssistantMessage])
+  const activeTypingMessageId = useMemo(() => {
+    const revealed = revealedMessageIdsRef.current
+    for (const item of messages) {
+      if (item.role !== 'assistant') {
+        continue
+      }
+      if (!revealed?.has(item.id)) {
+        return item.id
+      }
+    }
+    return null
+  }, [messages, typingCursor])
+  const shouldShowQuickReplies = Boolean(
+    quickReplyAction
+      && latestAssistantMessage
+      && revealedMessageIdsRef.current.has(latestAssistantMessage.id)
+      && activeTypingMessageId === null,
+  )
   const hasUnauthorizedError = useMemo(() => error?.includes('(401)') ?? false, [error])
   const statusBadge = debugMode ? 'Debug' : isImportRequired ? 'Onboarding' : 'Prêt'
 
@@ -364,13 +382,19 @@ export function ChatPage({ email }: ChatPageProps) {
     }
   }, [messages])
 
-  useEffect(() => {
-    const messageContainer = messagesRef.current
-    if (!messageContainer || !shouldAutoScrollRef.current) {
+  const scrollToBottom = () => {
+    const element = messagesRef.current
+    if (!element) {
       return
     }
-    messageContainer.scrollTop = messageContainer.scrollHeight
-  }, [messages, isLoading])
+    element.scrollTop = element.scrollHeight
+  }
+
+  useEffect(() => {
+    if (shouldAutoScrollRef.current) {
+      scrollToBottom()
+    }
+  }, [messages, typingCursor])
 
   useEffect(() => {
     if (!pendingImportIntent) {
@@ -641,10 +665,15 @@ export function ChatPage({ email }: ChatPageProps) {
             void startConversation()
           }}
           onTypingDone={(_messageId) => setTypingCursor((value) => value + 1)}
+          onTypingProgress={() => {
+            if (shouldAutoScrollRef.current) {
+              scrollToBottom()
+            }
+          }}
         />
 
         <QuickReplyBar
-          quickReplyAction={quickReplyAction}
+          quickReplyAction={shouldShowQuickReplies ? quickReplyAction : null}
           isLoading={isLoading}
           disabled={isImportRequired}
           onSubmitQuickReply={(option) => {
@@ -818,9 +847,11 @@ type MessageListProps = {
   onScroll: (event: UIEvent<HTMLDivElement>) => void
   onStartConversation: () => void
   onTypingDone: (messageId: string) => void
+  onActiveTypingChange?: (messageId: string | null) => void
+  onTypingProgress?: () => void
 }
 
-export function MessageList({ messages, isLoading, debugMode, apiBaseUrl, typingCursor, revealedMessageIdsRef, messagesRef, onImportNow, onScroll, onStartConversation, onTypingDone }: MessageListProps) {
+export function MessageList({ messages, isLoading, debugMode, apiBaseUrl, typingCursor, revealedMessageIdsRef, messagesRef, onImportNow, onScroll, onStartConversation, onTypingDone, onActiveTypingChange, onTypingProgress }: MessageListProps) {
   const activeTypingMessageId = useMemo(() => {
     const revealed = revealedMessageIdsRef.current
     for (const item of messages) {
@@ -833,6 +864,10 @@ export function MessageList({ messages, isLoading, debugMode, apiBaseUrl, typing
     }
     return null
   }, [messages, revealedMessageIdsRef, typingCursor])
+
+  useEffect(() => {
+    onActiveTypingChange?.(activeTypingMessageId)
+  }, [activeTypingMessageId, onActiveTypingChange])
 
   const isMessageRevealed = (id: string): boolean => revealedMessageIdsRef.current?.has(id) ?? false
 
@@ -854,6 +889,7 @@ export function MessageList({ messages, isLoading, debugMode, apiBaseUrl, typing
           revealedMessageIdsRef={revealedMessageIdsRef}
           isActiveTyping={chatMessage.id === activeTypingMessageId}
           onTypingDone={onTypingDone}
+          onTypingProgress={onTypingProgress}
         />
         )
       })}
@@ -895,15 +931,18 @@ export function TypingText({
   revealedMessageIdsRef,
   isActiveTyping,
   onTypingDone,
+  onTypingProgress,
 }: {
   message: ChatMessage
   apiBaseUrl: string
   revealedMessageIdsRef: RefObject<Set<string>>
   isActiveTyping: boolean
   onTypingDone: (messageId: string) => void
+  onTypingProgress?: () => void
 }) {
   const shouldBypassTyping = shouldBypassTypingInTests()
   const completionNotifiedRef = useRef(false)
+  const lastTypingProgressAtRef = useRef(0)
   const [visibleLength, setVisibleLength] = useState(() => {
     const revealed = revealedMessageIdsRef.current
     return revealed?.has(message.id) ? message.content.length : 0
@@ -961,6 +1000,12 @@ export function TypingText({
           return message.content.length
         }
 
+        const now = Date.now()
+        if (next > previous && now - lastTypingProgressAtRef.current >= 100) {
+          lastTypingProgressAtRef.current = now
+          onTypingProgress?.()
+        }
+
         const delay = previous > 120 ? 14 : 20
         timerId = window.setTimeout(step, delay)
         return next
@@ -975,7 +1020,7 @@ export function TypingText({
         window.clearTimeout(timerId)
       }
     }
-  }, [isActiveTyping, shouldBypassTyping, message.id, message.content, onTypingDone, revealedMessageIdsRef])
+  }, [isActiveTyping, onTypingProgress, shouldBypassTyping, message.id, message.content, onTypingDone, revealedMessageIdsRef])
 
 
   useEffect(() => {
@@ -1007,6 +1052,7 @@ function MessageBubble({
   revealedMessageIdsRef,
   isActiveTyping,
   onTypingDone,
+  onTypingProgress,
 }: {
   message: ChatMessage
   debugMode: boolean
@@ -1015,6 +1061,7 @@ function MessageBubble({
   revealedMessageIdsRef: RefObject<Set<string>>
   isActiveTyping: boolean
   onTypingDone: (messageId: string) => void
+  onTypingProgress?: () => void
 }) {
   const dateLabel = new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   const pdfUiRequest = toPdfUiRequest(message.toolResult)
@@ -1046,6 +1093,7 @@ function MessageBubble({
             revealedMessageIdsRef={revealedMessageIdsRef}
             isActiveTyping={isActiveTyping}
             onTypingDone={onTypingDone}
+            onTypingProgress={onTypingProgress}
           />
         ) : (
           renderContentWithLinks(message.content, apiBaseUrl)
@@ -1109,7 +1157,7 @@ function QuickReplyBar({
         <button
           key={option.id}
           type="button"
-          className={option.value.toLowerCase() === 'non' ? 'secondary-button' : undefined}
+          className="secondary-button"
           onClick={() => onSubmitQuickReply(option)}
           disabled={isLoading || disabled}
           aria-label={`Quick reply ${option.value}`}

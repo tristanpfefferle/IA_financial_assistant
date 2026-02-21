@@ -121,11 +121,7 @@ _YES_VALUES = {
 _NO_VALUES = {"non", "nope", "no", "n"}
 _IMPORT_FILE_PROMPT = "Parfait. Envoie le fichier CSV/PDF du compte sélectionné."
 _IMPORT_WAIT_READY_REPLY = (
-    "Prochaine étape : importer un relevé mensuel.\n\n"
-    "Idéalement, prends le mois le plus récent complet (un mois entier), comme ça ton premier rapport sera représentatif."
-    "\n\n"
-    "Dis-moi quand ton fichier de relevé CSV est prêt, et je te donnerai le bouton pour l’importer.\n\n"
-    "Tu peux répondre par exemple : « c’est prêt »."
+    "Ton fichier est prêt pour l’import ?"
 )
 _SYSTEM_CATEGORIES: tuple[tuple[str, str], ...] = (
     ("food", "Alimentation"),
@@ -1858,7 +1854,7 @@ def agent_chat(
                         plan=None,
                     )
                 return ChatResponse(
-                    reply="Dis-moi simplement quand ton fichier est prêt (ex: « c’est prêt »).",
+                    reply=_IMPORT_WAIT_READY_REPLY,
                     tool_result=_build_quick_reply_yes_no_ui_action(),
                     plan=None,
                 )
@@ -1931,7 +1927,7 @@ def agent_chat(
                     chat_state=updated_chat_state,
                 )
                 return ChatResponse(
-                    reply="Dis-moi simplement quand ton fichier est prêt (ex: « c’est prêt »).",
+                    reply=_IMPORT_WAIT_READY_REPLY,
                     tool_result=_build_quick_reply_yes_no_ui_action(),
                     plan=None,
                 )
@@ -1972,7 +1968,7 @@ def agent_chat(
                             if len(existing_accounts) == 1:
                                 return ChatResponse(
                                     reply=_IMPORT_WAIT_READY_REPLY,
-                                    tool_result=None,
+                                    tool_result=_build_quick_reply_yes_no_ui_action(),
                                     plan=None,
                                 )
                             return ChatResponse(
@@ -2065,7 +2061,7 @@ def agent_chat(
 
                     return ChatResponse(
                         reply=_IMPORT_WAIT_READY_REPLY,
-                        tool_result=None,
+                        tool_result=_build_quick_reply_yes_no_ui_action(),
                         plan=None,
                     )
 
@@ -2130,7 +2126,7 @@ def agent_chat(
                             )
                             return ChatResponse(
                                 reply=_IMPORT_WAIT_READY_REPLY,
-                                tool_result=None,
+                                tool_result=_build_quick_reply_yes_no_ui_action(),
                                 plan=None,
                             )
 
@@ -2737,7 +2733,7 @@ def _normalize_report_category(value: str | None) -> str:
         if cleaned.casefold() in {"sans catégorie", "sans categorie"}:
             return "Autres"
         return cleaned
-    return "Autres"
+    return "Sans catégorie"
 
 
 def _fetch_spending_transactions(
@@ -2800,9 +2796,24 @@ def _fetch_spending_transactions(
                     item.get("categorie"),
                     item.get("category_name"),
                     item.get("category_label"),
+                    item.get("category"),
+                    item.get("merchant_category"),
+                    item.get("profile_category"),
+                    item.get("category_override"),
+                    item.get("category_norm"),
+                    item.get("category_display_name"),
                 ]
             )
         )
+        if category == "Sans catégorie":
+            logger.debug(
+                "finance_spending_report_transaction_missing_category",
+                extra={
+                    "profile_id": str(profile_id),
+                    "transaction_date": date_label,
+                    "merchant": merchant,
+                },
+            )
 
         rows.append(
             SpendingTransactionRow(
@@ -2875,7 +2886,7 @@ def get_spending_report_pdf(
     raw_groups = aggregate_payload.get("groups") if isinstance(aggregate_payload, dict) else {}
     currency = str(sum_payload.get("currency") or aggregate_payload.get("currency") or "CHF")
 
-    category_rows: list[SpendingCategoryRow] = []
+    category_totals: dict[str, Decimal] = {}
     if isinstance(raw_groups, dict):
         for category_name, group in raw_groups.items():
             if not isinstance(group, dict):
@@ -2888,7 +2899,10 @@ def get_spending_report_pdf(
             if amount == Decimal("0"):
                 continue
             name = _normalize_report_category(category_name if isinstance(category_name, str) else None)
-            category_rows.append(SpendingCategoryRow(name=name, amount=amount))
+            normalized_name = "Autres" if name.casefold() in {"autres", "sans catégorie", "sans categorie"} else name
+            category_totals[normalized_name] = category_totals.get(normalized_name, Decimal("0")) + amount
+
+    category_rows = [SpendingCategoryRow(name=name, amount=amount) for name, amount in category_totals.items()]
 
     transactions, transactions_truncated, transactions_unavailable = _fetch_spending_transactions(
         profile_id=profile_id,

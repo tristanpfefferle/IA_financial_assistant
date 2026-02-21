@@ -348,4 +348,89 @@ describe('ChatPage import intent rendering', () => {
     expect(container.textContent).toContain('Fichier "transactions.csv" envoyé.')
   })
 
+  it('does not show quick replies before assistant typing is revealed', async () => {
+    vi.useFakeTimers()
+    ;(globalThis as { __CHAT_ENABLE_TYPING_IN_TESTS__?: boolean }).__CHAT_ENABLE_TYPING_IN_TESTS__ = true
+    try {
+      sendChatMessage.mockResolvedValue({
+        reply: 'Message assez long pour déclencher un typing progressif sur plusieurs ticks.',
+        tool_result: { type: 'ui_action', action: 'quick_replies', options: [{ id: 'yes', label: '✅', value: 'oui' }, { id: 'no', label: '❌', value: 'non' }] },
+        plan: null,
+      })
+
+      await act(async () => {
+        createRoot(container).render(<ChatPage email="user@example.com" />)
+      })
+      await act(async () => {
+        await Promise.resolve()
+      })
+
+      const startButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.includes('Commencer'))
+      await act(async () => {
+        startButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+        await Promise.resolve()
+      })
+
+      let yesButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.trim() === '✅')
+      expect(yesButton).toBeFalsy()
+
+      await act(async () => {
+        vi.advanceTimersByTime(300)
+      })
+
+      yesButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.trim() === '✅')
+      expect(yesButton).toBeFalsy()
+    } finally {
+      delete (globalThis as { __CHAT_ENABLE_TYPING_IN_TESTS__?: boolean }).__CHAT_ENABLE_TYPING_IN_TESTS__
+      vi.useRealTimers()
+    }
+  })
+
+  it('auto-scrolls to bottom on new messages and during typing', async () => {
+    vi.useFakeTimers()
+    ;(globalThis as { __CHAT_ENABLE_TYPING_IN_TESTS__?: boolean }).__CHAT_ENABLE_TYPING_IN_TESTS__ = true
+    try {
+      sendChatMessage.mockResolvedValue({
+        reply: 'Texte long pour vérifier le défilement automatique pendant la saisie de la réponse assistant.',
+        tool_result: null,
+        plan: null,
+      })
+
+      await act(async () => {
+        createRoot(container).render(<ChatPage email="user@example.com" />)
+      })
+      await act(async () => {
+        await Promise.resolve()
+      })
+
+      const messagesEl = container.querySelector('.messages') as HTMLDivElement
+      Object.defineProperty(messagesEl, 'scrollHeight', { configurable: true, get: () => 1200 })
+      Object.defineProperty(messagesEl, 'clientHeight', { configurable: true, get: () => 300 })
+      let scrollTopValue = 0
+      Object.defineProperty(messagesEl, 'scrollTop', {
+        configurable: true,
+        get: () => scrollTopValue,
+        set: (value: number) => {
+          scrollTopValue = value
+        },
+      })
+
+      const startButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.includes('Commencer'))
+      await act(async () => {
+        startButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+        await Promise.resolve()
+      })
+
+      expect(scrollTopValue).toBe(1200)
+
+      await act(async () => {
+        vi.advanceTimersByTime(400)
+      })
+      expect(scrollTopValue).toBe(1200)
+    } finally {
+      delete (globalThis as { __CHAT_ENABLE_TYPING_IN_TESTS__?: boolean }).__CHAT_ENABLE_TYPING_IN_TESTS__
+      vi.useRealTimers()
+    }
+  })
+
 })
