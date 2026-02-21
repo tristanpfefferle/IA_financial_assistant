@@ -15,7 +15,45 @@ export type OpenImportPanelUiAction = {
 
 export type QuickReplyYesNoUiAction = {
   type: 'ui_action'
-  action: 'quick_reply_yes_no'
+  action: 'quick_replies'
+  options: Array<{
+    id: string
+    label: string
+    value: string
+  }>
+}
+
+function parseQuickReplies(value: unknown): QuickReplyYesNoUiAction | null {
+  if (!Array.isArray(value)) {
+    return null
+  }
+
+  const options = value
+    .map((item) => {
+      if (!item || typeof item !== 'object') {
+        return null
+      }
+      const record = item as Record<string, unknown>
+      if (typeof record.id !== 'string' || typeof record.label !== 'string' || typeof record.value !== 'string') {
+        return null
+      }
+      return {
+        id: record.id,
+        label: record.label,
+        value: record.value,
+      }
+    })
+    .filter((item): item is NonNullable<typeof item> => item !== null)
+
+  if (options.length === 0) {
+    return null
+  }
+
+  return {
+    type: 'ui_action',
+    action: 'quick_replies',
+    options,
+  }
 }
 
 export type LegacyImportUiRequest = {
@@ -65,14 +103,27 @@ export function toQuickReplyYesNoUiAction(value: unknown): QuickReplyYesNoUiActi
   }
 
   const record = value as Record<string, unknown>
-  if (record.type !== 'ui_action' || record.action !== 'quick_reply_yes_no') {
-    return null
+  if (record.type === 'ui_action' && record.action === 'quick_replies') {
+    return parseQuickReplies(record.options)
   }
 
-  return {
-    type: 'ui_action',
-    action: 'quick_reply_yes_no',
+  if (Array.isArray(record.quick_replies)) {
+    return parseQuickReplies(record.quick_replies)
   }
+
+  // backward compatibility for previous contract
+  if (record.type === 'ui_action' && record.action === 'quick_reply_yes_no') {
+    return {
+      type: 'ui_action',
+      action: 'quick_replies',
+      options: [
+        { id: 'yes', label: '✅', value: 'oui' },
+        { id: 'no', label: '❌', value: 'non' },
+      ],
+    }
+  }
+
+  return null
 }
 
 export function toLegacyImportUiRequest(value: unknown): LegacyImportUiRequest | null {

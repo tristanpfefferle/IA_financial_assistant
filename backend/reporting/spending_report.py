@@ -35,7 +35,6 @@ class SpendingReportData:
     end_date: str
     total: Decimal
     count: int
-    average: Decimal
     currency: str
     categories: list[SpendingCategoryRow]
     transactions: list["SpendingTransactionRow"]
@@ -70,8 +69,22 @@ def _summarize_categories(categories: list[SpendingCategoryRow]) -> list[Spendin
     return top_rows
 
 
+def _dedupe_category_rows(categories: list[SpendingCategoryRow]) -> list[SpendingCategoryRow]:
+    deduped: dict[str, Decimal] = {}
+    canonical_names: dict[str, str] = {}
+    for row in categories:
+        label = row.name.strip() or "Autres"
+        normalized = label.lower()
+        canonical = "Autres" if normalized in {"autres", "sans catégorie", "sans categorie"} else label
+        key = canonical.lower()
+        deduped[key] = deduped.get(key, Decimal("0")) + row.amount
+        canonical_names.setdefault(key, canonical)
+
+    return [SpendingCategoryRow(name=canonical_names[key], amount=amount) for key, amount in deduped.items() if amount > 0]
+
+
 def _build_pie_chart(categories: list[SpendingCategoryRow]) -> bytes:
-    rows = _summarize_categories(categories)
+    rows = _summarize_categories(_dedupe_category_rows(categories))
     labels = [row.name for row in rows]
     values = [float(row.amount) for row in rows]
 
@@ -141,10 +154,9 @@ def _build_kpi_cards(data: SpendingReportData) -> Table:
         [
             Paragraph("<b>Total dépenses</b><br/>" + _format_amount(data.total, data.currency), card_style),
             Paragraph("<b>Nb opérations</b><br/>" + str(data.count), card_style),
-            Paragraph("<b>Moyenne</b><br/>" + _format_amount(data.average, data.currency), card_style),
         ]
     ]
-    table = Table(cells, colWidths=[58 * mm, 58 * mm, 58 * mm])
+    table = Table(cells, colWidths=[88 * mm, 88 * mm])
     table.setStyle(
         TableStyle(
             [
@@ -164,7 +176,7 @@ def _build_kpi_cards(data: SpendingReportData) -> Table:
 def _build_transactions_table(data: SpendingReportData) -> Table:
     display_limit = 250
 
-    def _truncate_text(value: str, max_length: int = 36) -> str:
+    def _truncate_text(value: str, max_length: int = 40) -> str:
         if len(value) <= max_length:
             return value
         return value[: max_length - 1].rstrip() + "…"
@@ -185,7 +197,7 @@ def _build_transactions_table(data: SpendingReportData) -> Table:
                 ]
             )
 
-    table = Table(table_data, colWidths=[28 * mm, 62 * mm, 58 * mm, 30 * mm], repeatRows=1)
+    table = Table(table_data, colWidths=[30 * mm, 78 * mm, 46 * mm, 24 * mm], repeatRows=1)
     table_style: list[tuple] = [
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#EEF1F4")),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
@@ -237,8 +249,9 @@ def generate_spending_report_pdf(data: SpendingReportData) -> bytes:
         story.append(Image(BytesIO(pie_bytes), width=166 * mm, height=92 * mm))
         story.append(Spacer(1, 3 * mm))
 
-        total_categories = sum((row.amount for row in data.categories), Decimal("0"))
-        top10 = sorted(data.categories, key=lambda row: row.amount, reverse=True)[:10]
+        deduped_categories = _dedupe_category_rows(data.categories)
+        total_categories = sum((row.amount for row in deduped_categories), Decimal("0"))
+        top10 = sorted(deduped_categories, key=lambda row: row.amount, reverse=True)[:10]
         story.append(Paragraph("Top catégories", section_title_style))
         table_data = [["Catégorie", "Montant", "Part (%)"]]
         for row in top10:

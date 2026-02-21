@@ -99,6 +99,8 @@ describe('MessageList sequential typing cursor', () => {
       let contents = getContents()
       expect(contents).toHaveLength(1)
       expect(contents[0]?.length).toBeGreaterThan(0)
+      const emptyBubbles = Array.from(container.querySelectorAll('.message-content')).filter((node) => (node.textContent ?? '').trim().length === 0)
+      expect(emptyBubbles).toHaveLength(0)
       expect(contents[0]).not.toContain('Premier message très long pour prendre un peu de temps.')
 
       for (let index = 0; index < 200; index += 1) {

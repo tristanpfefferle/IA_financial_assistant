@@ -246,7 +246,7 @@ describe('ChatPage import intent rendering', () => {
     sendChatMessage
       .mockResolvedValueOnce({
         reply: 'Confirmation requise',
-        tool_result: { type: 'ui_action', action: 'quick_reply_yes_no' },
+        tool_result: { type: 'ui_action', action: 'quick_replies', options: [{ id: 'yes', label: '✅', value: 'oui' }, { id: 'no', label: '❌', value: 'non' }] },
         plan: null,
       })
       .mockResolvedValueOnce({
