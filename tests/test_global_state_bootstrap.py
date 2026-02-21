@@ -164,7 +164,8 @@ def test_bootstrap_profile_complete_routes_to_profile_confirm(monkeypatch) -> No
     response = client.post("/agent/chat", json={"message": "Bonjour"}, headers=_auth_headers())
 
     assert response.status_code == 200
-    assert "Tout est correct ? (OUI/NON)" in response.json()["reply"]
+    assert "Tout est correct ?" in response.json()["reply"]
+    assert response.json()["tool_result"] == {"type": "ui_action", "action": "quick_reply_yes_no"}
     assert loop.called is False
 
 
@@ -393,12 +394,12 @@ def test_categories_bootstrap_creates_categories_classifies_merchants_and_skips_
     assert response.status_code == 200
     payload = response.json()
     assert "Import terminé ✅" in payload["reply"]
-    assert "Es-tu prêt à voir ton rapport mensuel ? (OUI/NON)" in payload["reply"]
+    assert "Es-tu prêt à voir ton rapport mensuel ?" in payload["reply"]
     assert len(repo.profile_categories) == 10
     assert repo.merchants[0]["category"] == "Alimentation"
     assert repo.merchants[1]["category"] == "Autres"
     assert repo.merchants[2]["category"] == ""
-    assert payload["tool_result"] is None
+    assert payload["tool_result"] == {"type": "ui_action", "action": "quick_reply_yes_no"}
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
     assert persisted["mode"] == "onboarding"
     assert persisted["onboarding_step"] == "report"
@@ -433,7 +434,7 @@ def test_import_classification_direct_to_pdf_when_already_classified(monkeypatch
     assert response.status_code == 200
     payload = response.json()
     assert "Import terminé ✅" in payload["reply"]
-    assert payload["tool_result"] is None
+    assert payload["tool_result"] == {"type": "ui_action", "action": "quick_reply_yes_no"}
 
 
 
@@ -919,7 +920,7 @@ def test_bootstrap_onboarding_bank_accounts_if_profile_complete(monkeypatch) -> 
     response = client.post("/agent/chat", json={"message": "Bonjour"}, headers=_auth_headers())
 
     assert response.status_code == 200
-    assert "Tout est correct ? (OUI/NON)" in response.json()["reply"]
+    assert "Tout est correct ?" in response.json()["reply"]
     assert repo.update_calls
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
     assert persisted["onboarding_step"] == "profile"
@@ -1207,7 +1208,7 @@ def test_onboarding_profile_combined_name_and_birth_date_in_one_message_moves_to
     assert persisted["onboarding_substep"] == "profile_confirm"
     assert "Parfait" in response.json()["reply"]
     assert "quelle banque utilises-tu" not in response.json()["reply"].lower()
-    assert "Tout est correct ? (OUI/NON)" in response.json()["reply"]
+    assert "Tout est correct ?" in response.json()["reply"]
 
 
 @pytest.mark.parametrize(
@@ -1243,7 +1244,7 @@ def test_onboarding_profile_birth_date_message_promotes_to_bank_accounts_step(mo
     assert persisted["onboarding_step"] == "profile"
     assert persisted["onboarding_substep"] == "profile_confirm"
     assert "Récapitulatif de ton profil" in response.json()["reply"]
-    assert "Tout est correct ? (OUI/NON)" in response.json()["reply"]
+    assert "Tout est correct ?" in response.json()["reply"]
 
 
 def test_onboarding_profile_non_profile_message_returns_help_and_skips_loop(monkeypatch) -> None:
@@ -1567,7 +1568,8 @@ def test_profile_collect_name_then_birth_date_then_confirmation_yes_goes_to_bank
     assert "format" not in first.json()["reply"].lower()
     assert second.status_code == 200
     assert "récapitulatif de ton profil" in second.json()["reply"].lower()
-    assert "tout est correct ? (oui/non)" in second.json()["reply"].lower()
+    assert "tout est correct ?" in second.json()["reply"].lower()
+    assert second.json()["tool_result"] == {"type": "ui_action", "action": "quick_reply_yes_no"}
     assert third.status_code == 200
     assert "maintenant, on ajoute ta banque" in third.json()["reply"].lower()
 

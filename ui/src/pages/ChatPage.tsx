@@ -19,6 +19,7 @@ import {
   toLegacyImportUiRequest,
   toOpenImportPanelUiAction,
   toPdfUiRequest,
+  toQuickReplyYesNoUiAction,
 } from './chatUiRequests'
 
 type ChatMessage = {
@@ -255,6 +256,15 @@ export function ChatPage({ email }: ChatPageProps) {
 
   const pendingImportIntent = useMemo(() => findPendingImportIntent(messages), [messages])
   const isImportRequired = pendingImportIntent !== null
+  const latestAssistantMessage = useMemo(() => {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      if (messages[index]?.role === 'assistant') {
+        return messages[index]
+      }
+    }
+    return null
+  }, [messages])
+  const showQuickReplyYesNo = useMemo(() => toQuickReplyYesNoUiAction(latestAssistantMessage?.toolResult) !== null, [latestAssistantMessage])
   const hasUnauthorizedError = useMemo(() => error?.includes('(401)') ?? false, [error])
   const statusBadge = debugMode ? 'Debug' : isImportRequired ? 'Onboarding' : 'Prêt'
 
@@ -500,6 +510,27 @@ export function ChatPage({ email }: ChatPageProps) {
     }
   }
 
+  async function submitQuickReply(displayMessage: '✅' | '❌', apiMessage: 'oui' | 'non') {
+    if (isLoading || isImportRequired) {
+      return
+    }
+
+    setMessages((previous) => [...previous, { id: crypto.randomUUID(), role: 'user', content: displayMessage, createdAt: Date.now() }])
+    setMessage('')
+    setError(null)
+    setIsLoading(true)
+
+    try {
+      const response = await sendChatMessage(apiMessage, { debug: debugMode })
+      const segments = splitAssistantReply(response.reply)
+      enqueueAssistantMessages(segments, response.tool_result, response.plan, response)
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : 'Erreur inconnue')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const trimmedMessage = message.trim()
@@ -612,6 +643,18 @@ export function ChatPage({ email }: ChatPageProps) {
           onTypingDone={(_messageId) => setTypingCursor((value) => value + 1)}
         />
 
+        <QuickReplyBar
+          isVisible={showQuickReplyYesNo}
+          isLoading={isLoading}
+          disabled={isImportRequired}
+          onYes={() => {
+            void submitQuickReply('✅', 'oui')
+          }}
+          onNo={() => {
+            void submitQuickReply('❌', 'non')
+          }}
+        />
+
         <Composer
           message={message}
           setMessage={setMessage}
@@ -637,18 +680,27 @@ export function ChatPage({ email }: ChatPageProps) {
         onAutoOpenHandled={() => setAutoOpenImportPicker(false)}
         onClose={() => setIsImportDialogOpen(false)}
         pendingImportIntent={pendingImportIntent}
-        onImportSuccess={(resultMessage, debugPayload, sourceMessageId) => {
+        onImportSuccess={(resultMessage, debugPayload, sourceMessageId, selectedFilename) => {
           setMessages((previous) => {
+            const withUserUploadMessage = [
+              ...previous,
+              {
+                id: crypto.randomUUID(),
+                role: 'user' as const,
+                content: `Fichier "${selectedFilename}" envoyé.`,
+                createdAt: Date.now(),
+              },
+            ]
             if (!sourceMessageId) {
-              return [...previous, { id: crypto.randomUUID(), role: 'assistant', content: resultMessage, createdAt: Date.now(), debugPayload }]
+              return [...withUserUploadMessage, { id: crypto.randomUUID(), role: 'assistant', content: resultMessage, createdAt: Date.now(), debugPayload }]
             }
 
-            const index = previous.findIndex((item) => item.id === sourceMessageId)
+            const index = withUserUploadMessage.findIndex((item) => item.id === sourceMessageId)
             if (index < 0) {
-              return [...previous, { id: crypto.randomUUID(), role: 'assistant', content: resultMessage, createdAt: Date.now(), debugPayload }]
+              return [...withUserUploadMessage, { id: crypto.randomUUID(), role: 'assistant', content: resultMessage, createdAt: Date.now(), debugPayload }]
             }
 
-            const updated = [...previous]
+            const updated = [...withUserUploadMessage]
             updated[index] = { ...updated[index], toolResult: null }
             updated.splice(index + 1, 0, {
               id: crypto.randomUUID(),
@@ -779,10 +831,17 @@ export function MessageList({ messages, isLoading, debugMode, apiBaseUrl, typing
     return null
   }, [messages, revealedMessageIdsRef, typingCursor])
 
+  const isMessageRevealed = (id: string): boolean => revealedMessageIdsRef.current?.has(id) ?? false
+
   return (
     <div className="messages card" aria-live="polite" ref={messagesRef} onScroll={onScroll}>
       {messages.length === 0 ? <EmptyState onStartConversation={onStartConversation} /> : null}
-      {messages.map((chatMessage) => (
+      {messages.map((chatMessage) => {
+        if (chatMessage.role === 'assistant' && !isMessageRevealed(chatMessage.id) && chatMessage.id !== activeTypingMessageId) {
+          return null
+        }
+
+        return (
         <MessageBubble
           key={chatMessage.id}
           message={chatMessage}
@@ -793,7 +852,8 @@ export function MessageList({ messages, isLoading, debugMode, apiBaseUrl, typing
           isActiveTyping={chatMessage.id === activeTypingMessageId}
           onTypingDone={onTypingDone}
         />
-      ))}
+        )
+      })}
       {isLoading ? (
         <div className="loading-state">
           <span className="spinner" />
@@ -889,7 +949,7 @@ export function TypingText({
       }
 
       setVisibleLength((previous) => {
-        const increment = previous > 120 ? 3 : 1
+        const increment = previous > 120 ? 4 : 2
         const next = Math.min(message.content.length, previous + increment)
         if (next >= message.content.length) {
           if (!revealed?.has(message.id)) {
@@ -898,13 +958,13 @@ export function TypingText({
           return message.content.length
         }
 
-        const delay = previous > 120 ? 22 : 34
+        const delay = previous > 120 ? 14 : 20
         timerId = window.setTimeout(step, delay)
         return next
       })
     }
 
-    timerId = window.setTimeout(step, 20)
+    timerId = window.setTimeout(step, 10)
 
     return () => {
       active = false
@@ -1024,6 +1084,36 @@ function MessageBubble({
   )
 }
 
+
+function QuickReplyBar({
+  isVisible,
+  isLoading,
+  disabled,
+  onYes,
+  onNo,
+}: {
+  isVisible: boolean
+  isLoading: boolean
+  disabled: boolean
+  onYes: () => void
+  onNo: () => void
+}) {
+  if (!isVisible) {
+    return null
+  }
+
+  return (
+    <div className="message-actions" aria-label="Quick reply yes no">
+      <button type="button" onClick={onYes} disabled={isLoading || disabled}>
+        ✅
+      </button>
+      <button type="button" className="secondary-button" onClick={onNo} disabled={isLoading || disabled}>
+        ❌
+      </button>
+    </div>
+  )
+}
+
 function Composer({
   message,
   setMessage,
@@ -1078,7 +1168,7 @@ type ImportDialogProps = {
   onAutoOpenHandled: () => void
   onClose: () => void
   pendingImportIntent: ImportIntent | null
-  onImportSuccess: (resultMessage: string, debugPayload: unknown, sourceMessageId?: string) => void
+  onImportSuccess: (resultMessage: string, debugPayload: unknown, sourceMessageId: string | undefined, selectedFilename: string) => void
   onImportClarification: (assistantMessage: string) => void
   onImportError: (messageText: string) => void
 }
@@ -1156,7 +1246,7 @@ function ImportDialog({
         messageId: pendingImportIntent?.messageId ?? crypto.randomUUID(),
         acceptedTypes,
         source: pendingImportIntent?.source ?? 'ui_request',
-      }), result, pendingImportIntent?.messageId)
+      }), result, pendingImportIntent?.messageId, selectedFile.name)
       setSelectedFile(null)
     } catch (caughtError) {
       onImportError(caughtError instanceof Error ? caughtError.message : 'Erreur inconnue pendant l’import')
