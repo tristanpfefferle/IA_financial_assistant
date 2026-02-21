@@ -319,7 +319,7 @@ def test_bank_accounts_collect_no_with_existing_account_moves_to_import_select(m
     response = client.post("/agent/chat", json={"message": "non"}, headers=_auth_headers())
 
     assert response.status_code == 200
-    assert "Dis-moi quand ton fichier de relevé CSV est prêt" in response.json()["reply"]
+    assert "Ton fichier est prêt pour l’import" in response.json()["reply"]
     assert "nom exact" not in response.json()["reply"].lower()
     assert "Voulez-vous créer encore d'autres comptes" not in response.json()["reply"]
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
@@ -768,7 +768,7 @@ def test_free_chat_re_gates_to_import_when_transactions_not_imported(monkeypatch
     response = client.post("/agent/chat", json={"message": "Salut"}, headers=_auth_headers())
 
     assert response.status_code == 200
-    assert response.json()["reply"] == "Dis-moi simplement quand ton fichier est prêt (ex: « c’est prêt »)."
+    assert "Ton fichier est prêt pour l’import" in response.json()["reply"]
     persisted_state = repo.update_calls[-1]["chat_state"]["state"]
     assert persisted_state["global_state"]["onboarding_step"] == "import"
     assert persisted_state["global_state"]["onboarding_substep"] == "import_wait_ready"
@@ -1368,7 +1368,7 @@ def test_onboarding_bank_accounts_creates_accounts_and_moves_to_import(monkeypat
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
     assert persisted["onboarding_substep"] == "import_wait_ready"
     assert "Prochaine étape : importer un relevé mensuel." in response.json()["reply"]
-    assert "Dis-moi quand ton fichier de relevé CSV est prêt" in response.json()["reply"]
+    assert "Ton fichier est prêt pour l’import" in response.json()["reply"]
 
 
 def test_onboarding_bank_accounts_skips_creation_if_already_exists(monkeypatch) -> None:
@@ -1426,7 +1426,7 @@ def test_onboarding_bank_accounts_collect_non_with_existing_accounts_moves_to_im
     assert persisted["onboarding_substep"] == "import_wait_ready"
     assert persisted["bank_accounts_confirmed"] is True
     assert persisted["has_bank_accounts"] is True
-    assert "Dis-moi quand ton fichier de relevé CSV est prêt" in response.json()["reply"]
+    assert "Ton fichier est prêt pour l’import" in response.json()["reply"]
     assert "nom exact" not in response.json()["reply"].lower()
 
 
@@ -1633,8 +1633,11 @@ def test_after_bank_added_waits_ready_before_import_ui_request(monkeypatch) -> N
 
     response = client.post("/agent/chat", json={"message": "UBS"}, headers=_auth_headers())
     payload = response.json()
-    assert payload["tool_result"] is None
-    assert "Dis-moi quand ton fichier de relevé CSV est prêt" in payload["reply"]
+    assert payload["tool_result"] is not None
+    assert payload["tool_result"]["type"] == "ui_action"
+    assert payload["tool_result"]["action"] == "quick_replies"
+    assert [opt["label"] for opt in payload["tool_result"]["options"]] == ["✅", "❌"]
+    assert "Ton fichier est prêt pour l’import" in payload["reply"]
 
 
 def test_import_wait_ready_confirmation_returns_import_file(monkeypatch) -> None:

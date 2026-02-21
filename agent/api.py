@@ -121,6 +121,8 @@ _YES_VALUES = {
 _NO_VALUES = {"non", "nope", "no", "n"}
 _IMPORT_FILE_PROMPT = "Parfait. Envoie le fichier CSV/PDF du compte sélectionné."
 _IMPORT_WAIT_READY_REPLY = (
+    "Prochaine étape : importer un relevé mensuel.\n\n"
+    "Idéalement, prends le mois le plus récent complet (un mois entier), comme ça ton premier rapport sera représentatif.\n\n"
     "Ton fichier est prêt pour l’import ?"
 )
 _SYSTEM_CATEGORIES: tuple[tuple[str, str], ...] = (
