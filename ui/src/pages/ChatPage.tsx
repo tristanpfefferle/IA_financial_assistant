@@ -761,6 +761,19 @@ type MessageListProps = {
 }
 
 function MessageList({ messages, isLoading, debugMode, apiBaseUrl, revealedMessageIdsRef, messagesRef, onImportNow, onScroll, onStartConversation }: MessageListProps) {
+  const activeTypingMessageId = useMemo(() => {
+    const revealed = revealedMessageIdsRef.current
+    for (const item of messages) {
+      if (item.role !== 'assistant') {
+        continue
+      }
+      if (!revealed?.has(item.id)) {
+        return item.id
+      }
+    }
+    return null
+  }, [messages, revealedMessageIdsRef])
+
   return (
     <div className="messages card" aria-live="polite" ref={messagesRef} onScroll={onScroll}>
       {messages.length === 0 ? <EmptyState onStartConversation={onStartConversation} /> : null}
@@ -772,6 +785,7 @@ function MessageList({ messages, isLoading, debugMode, apiBaseUrl, revealedMessa
           onImportNow={onImportNow}
           apiBaseUrl={apiBaseUrl}
           revealedMessageIdsRef={revealedMessageIdsRef}
+          isActiveTyping={chatMessage.id === activeTypingMessageId}
         />
       ))}
       {isLoading ? (
@@ -802,10 +816,12 @@ function TypingText({
   message,
   apiBaseUrl,
   revealedMessageIdsRef,
+  isActiveTyping,
 }: {
   message: ChatMessage
   apiBaseUrl: string
   revealedMessageIdsRef: RefObject<Set<string>>
+  isActiveTyping: boolean
 }) {
   const isTestMode = import.meta.env.MODE === 'test'
   const [visibleLength, setVisibleLength] = useState(() => {
@@ -823,6 +839,11 @@ function TypingText({
 
     if (revealed?.has(message.id)) {
       setVisibleLength(message.content.length)
+      return
+    }
+
+    if (!isActiveTyping) {
+      setVisibleLength(0)
       return
     }
 
@@ -855,7 +876,7 @@ function TypingText({
         window.clearTimeout(timerId)
       }
     }
-  }, [isTestMode, message.id, message.content, revealedMessageIdsRef])
+  }, [isActiveTyping, isTestMode, message.id, message.content, revealedMessageIdsRef])
 
   const content = isTestMode ? message.content : message.content.slice(0, visibleLength)
 
@@ -868,12 +889,14 @@ function MessageBubble({
   onImportNow,
   apiBaseUrl,
   revealedMessageIdsRef,
+  isActiveTyping,
 }: {
   message: ChatMessage
   debugMode: boolean
   onImportNow: (intent: ImportIntent) => void
   apiBaseUrl: string
   revealedMessageIdsRef: RefObject<Set<string>>
+  isActiveTyping: boolean
 }) {
   const dateLabel = new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   const pdfUiRequest = toPdfUiRequest(message.toolResult)
@@ -899,7 +922,12 @@ function MessageBubble({
       <p className="message-role">{roleLabel(message.role)}</p>
       <p className="message-content">
         {message.role === 'assistant' ? (
-          <TypingText message={message} apiBaseUrl={apiBaseUrl} revealedMessageIdsRef={revealedMessageIdsRef} />
+          <TypingText
+            message={message}
+            apiBaseUrl={apiBaseUrl}
+            revealedMessageIdsRef={revealedMessageIdsRef}
+            isActiveTyping={isActiveTyping}
+          />
         ) : (
           renderContentWithLinks(message.content, apiBaseUrl)
         )}
