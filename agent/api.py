@@ -1495,6 +1495,13 @@ def agent_chat(
             should_persist_global_state = True
 
             if _is_profile_complete(profile_fields):
+                updated_global_state = _build_onboarding_global_state(
+                    None,
+                    onboarding_step="profile",
+                    onboarding_substep="profile_confirm",
+                )
+                updated_global_state["profile_confirmed"] = False
+                state_dict["global_state"] = _normalize_onboarding_step_substep(updated_global_state)
                 updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
                 updated_chat_state["state"] = state_dict
                 profiles_repository.update_chat_state(
