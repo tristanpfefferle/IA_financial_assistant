@@ -959,6 +959,34 @@ def _match_bank_account_name(message: str, accounts: list[dict[str, Any]]) -> di
     return None
 
 
+def _detect_bank_account_for_import(
+    *,
+    filename: str,
+    existing_accounts: list[dict[str, Any]],
+) -> dict[str, Any] | str | None:
+    """Detect target bank account from filename and available accounts."""
+
+    normalized_filename = _normalize_text(filename)
+    substring_matches: list[dict[str, Any]] = []
+    for account in existing_accounts:
+        account_name = str(account.get("name") or "").strip()
+        if not account_name:
+            continue
+        normalized_name = _normalize_text(account_name)
+        if normalized_name and normalized_name in normalized_filename:
+            substring_matches.append(account)
+
+    if len(substring_matches) == 1:
+        return substring_matches[0]
+    if len(substring_matches) > 1:
+        return "ambiguous"
+    if len(existing_accounts) == 1:
+        return existing_accounts[0]
+    if len(existing_accounts) > 1:
+        return "ambiguous"
+    return None
+
+
 def _build_onboarding_reminder(global_state: dict[str, Any] | None) -> str | None:
     if not isinstance(global_state, dict) or global_state.get("mode") != "onboarding":
         return None
@@ -1440,6 +1468,46 @@ def agent_chat(
             state_dict["global_state"] = global_state
             should_persist_global_state = True
 
+        import_context = state_dict.get("import_context") if isinstance(state_dict, dict) else None
+        pending_files = import_context.get("pending_files") if isinstance(import_context, dict) else None
+        if isinstance(pending_files, list) and pending_files and hasattr(profiles_repository, "list_bank_accounts"):
+            existing_accounts = profiles_repository.list_bank_accounts(profile_id=profile_id)
+            matched_account = _match_bank_account_name(payload.message, existing_accounts)
+            if matched_account is not None:
+                tool_payload = {
+                    "files": pending_files,
+                    "bank_account_id": str(matched_account.get("id")),
+                    "import_mode": "commit",
+                    "modified_action": "replace",
+                }
+                import_result = get_tool_router().call("finance_releves_import_files", tool_payload, profile_id=profile_id)
+                if isinstance(import_result, ToolError):
+                    return ChatResponse(reply=f"Import impossible: {import_result.message}", tool_result=None, plan=None)
+
+                updated_state = dict(state_dict) if isinstance(state_dict, dict) else {}
+                updated_import_context = dict(import_context) if isinstance(import_context, dict) else {}
+                updated_import_context.pop("pending_files", None)
+                updated_import_context.pop("clarification_accounts", None)
+                if updated_import_context:
+                    updated_state["import_context"] = updated_import_context
+                else:
+                    updated_state.pop("import_context", None)
+
+                updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                updated_chat_state["state"] = updated_state
+                profiles_repository.update_chat_state(
+                    profile_id=profile_id,
+                    user_id=auth_user_id,
+                    chat_state=updated_chat_state,
+                )
+                imported_count = int((import_result or {}).get("imported_count", 0)) if isinstance(import_result, dict) else 0
+                account_name = str(matched_account.get("name") or "ce compte")
+                return ChatResponse(
+                    reply=f"Parfait, j’ai importé le relevé sur {account_name}. {imported_count} transactions détectées.",
+                    tool_result=None,
+                    plan=None,
+                )
+
         profile_complete = _has_complete_profile(profiles_repository, profile_id)
         current_mode = global_state.get("mode") if _is_valid_global_state(global_state) else None
         current_step = global_state.get("onboarding_step") if _is_valid_global_state(global_state) else None
@@ -1485,11 +1553,9 @@ def agent_chat(
         if payload.request_greeting and is_onboarding_profile_collect:
             return ChatResponse(
                 reply=(
-                    "Salut 👋\n"
-                    "Je suis ton assistant financier.\n"
-                    "On va commencer par créer ton profil, puis importer ton premier relevé bancaire pour analyser tes dépenses.\n"
-                    "Ça prend 1 minute.\n\n"
-                    "Quel est ton prénom et ton nom ?"
+                    "Salut 👋 Je suis ton assistant financier. "
+                    "On va créer ton profil puis importer ton premier relevé pour analyser tes dépenses. "
+                    "Ça prend 1 minute. Quel est ton prénom et ton nom ?"
                 ),
                 tool_result=None,
                 plan=None,
@@ -2730,6 +2796,10 @@ def import_releves(payload: ImportRequestPayload, authorization: str | None = He
     """Import bank statements using backend tool router."""
 
     auth_user_id, profile_id = _resolve_authenticated_profile(authorization)
+    files_payload = [
+        {"filename": import_file.filename, "content_base64": import_file.content_base64}
+        for import_file in payload.files
+    ]
     tool_payload: dict[str, Any] = {
         "files": [
             {"filename": import_file.filename, "content_base64": import_file.content_base64}
@@ -2738,8 +2808,45 @@ def import_releves(payload: ImportRequestPayload, authorization: str | None = He
         "import_mode": payload.import_mode,
         "modified_action": payload.modified_action,
     }
-    if payload.bank_account_id:
-        tool_payload["bank_account_id"] = payload.bank_account_id
+    selected_bank_account_id = payload.bank_account_id
+    selected_bank_account_name: str | None = None
+    if not selected_bank_account_id:
+        profiles_repository = get_profiles_repository()
+        existing_accounts = profiles_repository.list_bank_accounts(profile_id=profile_id) if hasattr(profiles_repository, "list_bank_accounts") else []
+        first_filename = payload.files[0].filename if payload.files else ""
+        detection_result = _detect_bank_account_for_import(filename=first_filename, existing_accounts=existing_accounts)
+        if isinstance(detection_result, dict):
+            selected_bank_account_id = str(detection_result.get("id") or "") or None
+            selected_bank_account_name = str(detection_result.get("name") or "").strip() or None
+        elif detection_result == "ambiguous":
+            chat_state = profiles_repository.get_chat_state(profile_id=profile_id, user_id=auth_user_id)
+            state = chat_state.get("state") if isinstance(chat_state, dict) else None
+            state_dict = dict(state) if isinstance(state, dict) else {}
+            import_context = state_dict.get("import_context") if isinstance(state_dict.get("import_context"), dict) else {}
+            import_context["pending_files"] = files_payload
+            import_context["clarification_accounts"] = [
+                {"id": str(account.get("id") or ""), "name": str(account.get("name") or "").strip()}
+                for account in existing_accounts
+                if str(account.get("name") or "").strip()
+            ]
+            state_dict["import_context"] = import_context
+            updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+            updated_chat_state["state"] = state_dict
+            profiles_repository.update_chat_state(
+                profile_id=profile_id,
+                user_id=auth_user_id,
+                chat_state=updated_chat_state,
+            )
+            account_names = " / ".join(account["name"] for account in import_context["clarification_accounts"])
+            return {
+                "ok": False,
+                "type": "clarification",
+                "message": f"J’ai trouvé plusieurs comptes: {account_names}. Lequel correspond à ce relevé ?",
+                "clarification_type": "bank_account_for_import",
+            }
+
+    if selected_bank_account_id:
+        tool_payload["bank_account_id"] = selected_bank_account_id
 
     result = get_tool_router().call("finance_releves_import_files", tool_payload, profile_id=profile_id)
     if isinstance(result, ToolError):
@@ -2759,12 +2866,12 @@ def import_releves(payload: ImportRequestPayload, authorization: str | None = He
     response_payload["transactions_imported"] = imported_count
     response_payload["transactions_imported_count"] = imported_count
     response_payload["date_range"] = _extract_import_date_range(response_payload)
-    response_payload["bank_account_id"] = payload.bank_account_id
+    response_payload["bank_account_id"] = selected_bank_account_id
 
     bank_account_name = response_payload.get("bank_account_name")
     if not isinstance(bank_account_name, str) or not bank_account_name.strip():
         bank_account_name = None
-        if payload.bank_account_id:
+        if selected_bank_account_id:
             bank_accounts_result = get_tool_router().call("finance_bank_accounts_list", {}, profile_id=profile_id)
             if not isinstance(bank_accounts_result, ToolError):
                 encoded_accounts_result = jsonable_encoder(bank_accounts_result)
@@ -2774,11 +2881,13 @@ def import_releves(payload: ImportRequestPayload, authorization: str | None = He
                         for account in account_items:
                             if not isinstance(account, dict):
                                 continue
-                            if str(account.get("id")) == str(payload.bank_account_id):
+                            if str(account.get("id")) == str(selected_bank_account_id):
                                 candidate_name = account.get("name")
                                 if isinstance(candidate_name, str) and candidate_name.strip():
                                     bank_account_name = candidate_name
                                 break
+    if bank_account_name is None and selected_bank_account_name:
+        bank_account_name = selected_bank_account_name
     response_payload["bank_account_name"] = bank_account_name
 
     try:

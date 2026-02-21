@@ -6,18 +6,15 @@ import { ChatPage } from './ChatPage'
 
 const {
   getPendingMerchantAliasesCount,
-  listBankAccounts,
   sendChatMessage,
 } = vi.hoisted(() => ({
   getPendingMerchantAliasesCount: vi.fn(),
-  listBankAccounts: vi.fn(),
   sendChatMessage: vi.fn(),
 }))
 
 vi.mock('../api/agentApi', () => ({
   getPendingMerchantAliasesCount,
   resolvePendingMerchantAliases: vi.fn(),
-  listBankAccounts,
   sendChatMessage,
   importReleves: vi.fn(),
   hardResetProfile: vi.fn(),
@@ -52,24 +49,20 @@ describe('ChatPage import intent rendering', () => {
     container = document.createElement('div')
     document.body.appendChild(container)
     getPendingMerchantAliasesCount.mockReset()
-    listBankAccounts.mockReset()
     sendChatMessage.mockReset()
     getPendingMerchantAliasesCount.mockResolvedValue({ pending_total_count: 0 })
-    listBankAccounts.mockResolvedValue({ items: [{ id: 'bank-1', name: 'UBS' }] })
   })
 
   afterEach(() => {
     document.body.removeChild(container)
   })
 
-  it('shows inline import button and opens dialog only on click', async () => {
+  it('starts with assistant greeting and then shows import CTA', async () => {
     sendChatMessage.mockResolvedValue({
-      reply: 'Importe ton relevé quand tu veux.',
+      reply: 'Salut 👋 Je suis ton assistant financier. Quel est ton prénom et ton nom ?',
       tool_result: {
         type: 'ui_request',
         name: 'import_file',
-        bank_account_id: 'bank-1',
-        bank_account_name: 'UBS',
         accepted_types: ['csv'],
       },
       plan: null,
@@ -86,13 +79,12 @@ describe('ChatPage import intent rendering', () => {
     const startButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.includes('Commencer'))
     await act(async () => {
       startButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    })
-
-    const form = container.querySelector('form.composer') as HTMLFormElement
-    await act(async () => {
-      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
       await Promise.resolve()
     })
+
+    expect(sendChatMessage).toHaveBeenCalledWith('', { debug: false, requestGreeting: true })
+    expect(container.textContent).toContain('Salut 👋 Je suis ton assistant financier. Quel est ton prénom et ton nom ?')
+
 
     expect(container.querySelector('[aria-label="Importer un relevé"]')).toBeNull()
 

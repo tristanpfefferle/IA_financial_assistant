@@ -4,12 +4,10 @@ import {
   getPendingMerchantAliasesCount,
   hardResetProfile,
   importReleves,
-  listBankAccounts,
   openPdfFromUrl,
   resolvePendingMerchantAliases,
   resetSession,
   sendChatMessage,
-  type BankAccount,
   type RelevesImportResult,
 } from '../api/agentApi'
 import { DebugPanel } from '../components/DebugPanel'
@@ -38,8 +36,6 @@ type ChatPageProps = {
 
 type ImportIntent = {
   messageId: string
-  bankAccountId?: string
-  bankAccountName?: string
   acceptedTypes: string[]
   source: 'ui_action' | 'ui_request'
 }
@@ -56,7 +52,7 @@ function formatFileSize(fileSize: number): string {
   return `${(fileSize / (1024 * 1024)).toFixed(2)} Mo`
 }
 
-function buildImportSuccessText(result: RelevesImportResult, intent: ImportIntent): string {
+function buildImportSuccessText(result: RelevesImportResult, _intent: ImportIntent): string {
   const typedResult = result as RelevesImportResult & {
     transactions_imported_count?: number
     transactions_imported?: number
@@ -64,7 +60,7 @@ function buildImportSuccessText(result: RelevesImportResult, intent: ImportInten
     bank_account_name?: string | null
   }
   const importedCount = typedResult.transactions_imported_count ?? typedResult.transactions_imported ?? result.imported_count ?? 0
-  const accountName = typedResult.bank_account_name ?? intent.bankAccountName ?? intent.bankAccountId ?? 'ce compte'
+  const accountName = typedResult.bank_account_name ?? 'ce compte'
   const dateRange = typedResult.date_range ?? null
 
   if (dateRange) {
@@ -129,8 +125,6 @@ function findPendingImportIntent(messages: ChatMessage[]): ImportIntent | null {
     if (action) {
       return {
         messageId: message.id,
-        bankAccountId: action.bank_account_id,
-        bankAccountName: action.bank_account_name,
         acceptedTypes: action.accepted_types ?? ['csv', 'pdf'],
         source: 'ui_action',
       }
@@ -140,8 +134,6 @@ function findPendingImportIntent(messages: ChatMessage[]): ImportIntent | null {
     if (legacyRequest) {
       return {
         messageId: message.id,
-        bankAccountId: legacyRequest.bank_account_id,
-        bankAccountName: legacyRequest.bank_account_name,
         acceptedTypes: legacyRequest.accepted_types ?? ['csv', 'pdf'],
         source: 'ui_request',
       }
@@ -163,8 +155,6 @@ export function ChatPage({ email }: ChatPageProps) {
   const [isResolvingPendingAliases, setIsResolvingPendingAliases] = useState(false)
   const [resolvePendingAliasesFeedback, setResolvePendingAliasesFeedback] = useState<string | null>(null)
   const [debugMode, setDebugMode] = useState(false)
-  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([])
-  const [selectedBankAccountId, setSelectedBankAccountId] = useState('')
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false)
   const [autoOpenImportPicker, setAutoOpenImportPicker] = useState(false)
@@ -228,8 +218,6 @@ export function ChatPage({ email }: ChatPageProps) {
   useEffect(() => {
     if (!hasToken) {
       setPendingMerchantAliasesCount(0)
-      setBankAccounts([])
-      setSelectedBankAccountId('')
       return
     }
 
@@ -244,23 +232,6 @@ export function ChatPage({ email }: ChatPageProps) {
       .catch(() => {
         if (active) {
           setPendingMerchantAliasesCount(0)
-        }
-      })
-
-    listBankAccounts()
-      .then((result) => {
-        if (!active) {
-          return
-        }
-        setBankAccounts(result.items)
-        if (result.items.length > 0) {
-          setSelectedBankAccountId((current) => current || result.items[0].id)
-        }
-      })
-      .catch(() => {
-        if (active) {
-          setBankAccounts([])
-          setSelectedBankAccountId('')
         }
       })
 
@@ -413,6 +384,34 @@ export function ChatPage({ email }: ChatPageProps) {
     }
   }
 
+  async function startConversation() {
+    if (isLoading) {
+      return
+    }
+
+    setIsLoading(true)
+    setError(null)
+    try {
+      const response = await sendChatMessage('', { debug: debugMode, requestGreeting: true })
+      setMessages((previous) => [
+        ...previous,
+        {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          content: response.reply,
+          createdAt: Date.now(),
+          toolResult: response.tool_result,
+          plan: response.plan,
+          debugPayload: response,
+        },
+      ])
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : 'Erreur inconnue')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
   return (
     <main className="chat-layout">
       <button type="button" className="mobile-menu-button secondary-button" onClick={() => setIsSidebarOpen((open) => !open)}>
@@ -428,9 +427,6 @@ export function ChatPage({ email }: ChatPageProps) {
         isResolvingPendingAliases={isResolvingPendingAliases}
         onResolvePendingAliases={handleResolvePendingAliases}
         resolvePendingAliasesFeedback={resolvePendingAliasesFeedback}
-        bankAccounts={bankAccounts}
-        selectedBankAccountId={selectedBankAccountId}
-        setSelectedBankAccountId={setSelectedBankAccountId}
         onHardReset={handleHardReset}
         envDebugEnabled={envDebugEnabled}
         apiBaseUrl={apiBaseUrl}
@@ -460,15 +456,11 @@ export function ChatPage({ email }: ChatPageProps) {
                             ? {
                                 type: 'ui_action',
                                 action: 'open_import_panel',
-                                bank_account_id: intent.bankAccountId,
-                                bank_account_name: intent.bankAccountName,
                                 accepted_types: intent.acceptedTypes,
                               }
                             : {
                                 type: 'ui_request',
                                 name: 'import_file',
-                                bank_account_id: intent.bankAccountId,
-                                bank_account_name: intent.bankAccountName,
                                 accepted_types: intent.acceptedTypes,
                               },
                       }
@@ -482,7 +474,9 @@ export function ChatPage({ email }: ChatPageProps) {
             const threshold = 48
             shouldAutoScrollRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < threshold
           }}
-          onStartConversation={() => setMessage('Que puis-je te demander ?')}
+          onStartConversation={() => {
+            void startConversation()
+          }}
           />
 
         <Composer
@@ -510,9 +504,6 @@ export function ChatPage({ email }: ChatPageProps) {
         onAutoOpenHandled={() => setAutoOpenImportPicker(false)}
         onClose={() => setIsImportDialogOpen(false)}
         pendingImportIntent={pendingImportIntent}
-        bankAccounts={bankAccounts}
-        selectedBankAccountId={selectedBankAccountId}
-        onSelectBankAccount={setSelectedBankAccountId}
         onImportSuccess={(resultMessage, debugPayload, sourceMessageId) => {
           setMessages((previous) => {
             if (!sourceMessageId) {
@@ -576,9 +567,6 @@ type SidebarProps = {
   isResolvingPendingAliases: boolean
   onResolvePendingAliases: () => void
   resolvePendingAliasesFeedback: string | null
-  bankAccounts: BankAccount[]
-  selectedBankAccountId: string
-  setSelectedBankAccountId: (value: string) => void
   onHardReset: () => void
   envDebugEnabled: boolean
   apiBaseUrl: string
@@ -592,22 +580,6 @@ function Sidebar(props: SidebarProps) {
       <section className="card sidebar-card">
         <h2>Profil & Actions</h2>
         <p className="status-badge">{props.statusBadge}</p>
-        <label className="field-label" htmlFor="bank-account-select">
-          Compte bancaire
-        </label>
-        <select
-          id="bank-account-select"
-          value={props.selectedBankAccountId}
-          onChange={(event) => props.setSelectedBankAccountId(event.target.value)}
-        >
-          {props.bankAccounts.length === 0 ? <option value="">Aucun compte</option> : null}
-          {props.bankAccounts.map((account) => (
-            <option key={account.id} value={account.id}>
-              {account.name}
-            </option>
-          ))}
-        </select>
-
         <label className="switch-row">
           <input type="checkbox" checked={props.debugMode} onChange={(event) => props.setDebugMode(event.target.checked)} />
           Mode debug
@@ -701,16 +673,12 @@ function MessageBubble({ message, debugMode, onImportNow }: { message: ChatMessa
   const importIntent: ImportIntent | null = importUiAction
     ? {
         messageId: message.id,
-        bankAccountId: importUiAction.bank_account_id,
-        bankAccountName: importUiAction.bank_account_name,
         acceptedTypes: importUiAction.accepted_types ?? ['csv', 'pdf'],
         source: 'ui_action',
       }
     : importUiRequest
       ? {
           messageId: message.id,
-          bankAccountId: importUiRequest.bank_account_id,
-          bankAccountName: importUiRequest.bank_account_name,
           acceptedTypes: importUiRequest.accepted_types ?? ['csv', 'pdf'],
           source: 'ui_request',
         }
@@ -790,9 +758,6 @@ type ImportDialogProps = {
   onAutoOpenHandled: () => void
   onClose: () => void
   pendingImportIntent: ImportIntent | null
-  bankAccounts: BankAccount[]
-  selectedBankAccountId: string
-  onSelectBankAccount: (value: string) => void
   onImportSuccess: (resultMessage: string, debugPayload: unknown, sourceMessageId?: string) => void
   onImportError: (messageText: string) => void
 }
@@ -803,9 +768,6 @@ function ImportDialog({
   onAutoOpenHandled,
   onClose,
   pendingImportIntent,
-  bankAccounts,
-  selectedBankAccountId,
-  onSelectBankAccount,
   onImportSuccess,
   onImportError,
 }: ImportDialogProps) {
@@ -841,16 +803,8 @@ function ImportDialog({
     return null
   }
 
-  const targetAccountId = pendingImportIntent?.bankAccountId ?? selectedBankAccountId
-  const hasAccountChoice = targetAccountId || bankAccounts.length > 0
-
   async function handleImport() {
     if (!selectedFile || isImporting) {
-      return
-    }
-
-    if (!hasAccountChoice) {
-      onImportError('Aucun compte bancaire disponible pour l’import.')
       return
     }
 
@@ -865,16 +819,12 @@ function ImportDialog({
       const contentBase64 = await readFileAsBase64(selectedFile)
       const result = await importReleves({
         files: [{ filename: selectedFile.name, content_base64: contentBase64 }],
-        bank_account_id: targetAccountId || undefined,
         import_mode: 'commit',
         modified_action: 'replace',
       })
       setProgress(100)
       onImportSuccess(buildImportSuccessText(result, {
         messageId: pendingImportIntent?.messageId ?? crypto.randomUUID(),
-        bankAccountId: targetAccountId || undefined,
-        bankAccountName:
-          pendingImportIntent?.bankAccountName ?? bankAccounts.find((item) => item.id === targetAccountId)?.name,
         acceptedTypes,
         source: pendingImportIntent?.source ?? 'ui_request',
       }), result, pendingImportIntent?.messageId)
@@ -905,28 +855,7 @@ function ImportDialog({
           <small>{selectedFile ? formatFileSize(selectedFile.size) : `Formats acceptés: ${acceptedTypes.join(', ')}`}</small>
         </label>
 
-        {pendingImportIntent?.bankAccountId ? (
-          <p className="subtle-text">Compte ciblé: {pendingImportIntent.bankAccountName ?? pendingImportIntent.bankAccountId}</p>
-        ) : (
-          <>
-            <label className="field-label" htmlFor="import-account-select">
-              Compte bancaire
-            </label>
-            <select
-              id="import-account-select"
-              value={selectedBankAccountId}
-              onChange={(event) => onSelectBankAccount(event.target.value)}
-              disabled={isImporting}
-            >
-              {bankAccounts.length === 0 ? <option value="">Aucun compte</option> : null}
-              {bankAccounts.map((account) => (
-                <option key={account.id} value={account.id}>
-                  {account.name}
-                </option>
-              ))}
-            </select>
-          </>
-        )}
+
 
         {isImporting ? (
           <div>
