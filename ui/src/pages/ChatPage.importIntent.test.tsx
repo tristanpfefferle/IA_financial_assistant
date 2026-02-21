@@ -83,47 +83,71 @@ describe('ChatPage import intent rendering', () => {
   })
 
   it('segments assistant greeting and then shows import CTA', async () => {
-    sendChatMessage.mockResolvedValue({
-      reply: 'Premier paragraphe.\n\nDeuxième paragraphe.\n\nTroisième paragraphe.',
-      tool_result: {
-        type: 'ui_request',
-        name: 'import_file',
-        accepted_types: ['csv'],
-      },
-      plan: null,
-    })
+    vi.useFakeTimers()
+    try {
+      sendChatMessage.mockResolvedValue({
+        reply: 'Premier paragraphe\n\nDeuxième paragraphe\n\nTroisième paragraphe.',
+        tool_result: {
+          type: 'ui_request',
+          name: 'import_file',
+          accepted_types: ['csv'],
+        },
+        plan: null,
+      })
 
-    await act(async () => {
-      createRoot(container).render(<ChatPage email="user@example.com" />)
-    })
+      await act(async () => {
+        createRoot(container).render(<ChatPage email="user@example.com" />)
+      })
 
-    await act(async () => {
-      await Promise.resolve()
-    })
+      await act(async () => {
+        await Promise.resolve()
+      })
 
-    const startButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.includes('Commencer'))
-    await act(async () => {
-      startButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-      await Promise.resolve()
-    })
+      const startButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.includes('Commencer'))
+      await act(async () => {
+        startButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+        await Promise.resolve()
+      })
 
-    expect(sendChatMessage).toHaveBeenCalledWith('', { debug: false, requestGreeting: true })
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 1200))
-    })
-    expect(container.textContent).toContain('Premier paragraphe.')
-    expect(container.textContent).toContain('Deuxième paragraphe.')
-    expect(container.textContent).toContain('Troisième paragraphe.')
+      expect(sendChatMessage).toHaveBeenCalledWith('', { debug: false, requestGreeting: true })
 
+      await act(async () => {
+        vi.advanceTimersByTime(300)
+      })
+      expect(container.textContent).toContain('Premier paragraphe')
+      expect(container.textContent).not.toContain('Deuxième paragraphe')
+      expect(container.textContent).not.toContain('Troisième paragraphe')
 
-    const inlineButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.includes('Importer maintenant'))
-    expect(inlineButton).toBeTruthy()
+      await act(async () => {
+        vi.advanceTimersByTime(1300)
+      })
+      expect(container.textContent).toContain('Deuxième paragraphe')
+      expect(container.textContent).not.toContain('Troisième paragraphe')
 
-    await act(async () => {
-      inlineButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    })
+      await act(async () => {
+        vi.advanceTimersByTime(2400)
+      })
+      expect(container.textContent).toContain('Troisième paragraphe')
 
-    expect(container.querySelector('[aria-label="Importer un relevé"]')).not.toBeNull()
+      const fullText = container.textContent ?? ''
+      const firstIndex = fullText.indexOf('Premier paragraphe')
+      const secondIndex = fullText.indexOf('Deuxième paragraphe')
+      const thirdIndex = fullText.indexOf('Troisième paragraphe')
+      expect(firstIndex).toBeGreaterThanOrEqual(0)
+      expect(secondIndex).toBeGreaterThan(firstIndex)
+      expect(thirdIndex).toBeGreaterThan(secondIndex)
+
+      const inlineButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.includes('Importer maintenant'))
+      expect(inlineButton).toBeTruthy()
+
+      await act(async () => {
+        inlineButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      })
+
+      expect(container.querySelector('[aria-label="Importer un relevé"]')).not.toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('closes dialog and appends assistant clarification message when import needs clarification', async () => {
