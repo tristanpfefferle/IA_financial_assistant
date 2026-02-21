@@ -550,6 +550,18 @@ export function ChatPage({ email }: ChatPageProps) {
             setIsLoading(false)
           })
         }}
+        onImportClarification={(assistantMessage) => {
+          setMessages((previous) => [
+            ...previous,
+            {
+              id: crypto.randomUUID(),
+              role: 'assistant',
+              content: assistantMessage,
+              createdAt: Date.now(),
+            },
+          ])
+          setToast({ type: 'success', message: 'Choix du compte requis.' })
+        }}
         onImportError={(messageText) => setToast({ type: 'error', message: messageText })}
       />
 
@@ -759,6 +771,7 @@ type ImportDialogProps = {
   onClose: () => void
   pendingImportIntent: ImportIntent | null
   onImportSuccess: (resultMessage: string, debugPayload: unknown, sourceMessageId?: string) => void
+  onImportClarification: (assistantMessage: string) => void
   onImportError: (messageText: string) => void
 }
 
@@ -769,6 +782,7 @@ function ImportDialog({
   onClose,
   pendingImportIntent,
   onImportSuccess,
+  onImportClarification,
   onImportError,
 }: ImportDialogProps) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
@@ -822,6 +836,13 @@ function ImportDialog({
         import_mode: 'commit',
         modified_action: 'replace',
       })
+
+      if (result.ok === false && result.type === 'clarification') {
+        onClose()
+        onImportClarification(result.message)
+        return
+      }
+
       setProgress(100)
       onImportSuccess(buildImportSuccessText(result, {
         messageId: pendingImportIntent?.messageId ?? crypto.randomUUID(),
