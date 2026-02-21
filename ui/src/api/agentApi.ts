@@ -57,6 +57,14 @@ export type ImportClarificationResult = {
   clarification_type?: string
 }
 
+export function isImportClarificationResult(
+  value: unknown,
+): value is ImportClarificationResult {
+  if (!value || typeof value !== 'object') return false
+  const v = value as Record<string, unknown>
+  return v.ok === false && v.type === 'clarification' && typeof v.message === 'string'
+}
+
 export type ImportFilePayload = {
   filename: string
   content_base64: string
@@ -191,12 +199,12 @@ export async function importReleves(payload: ImportRequestPayload): Promise<Rele
     throw new Error(`Erreur API import (${response.status}): ${detail}`)
   }
 
-  const result = (await response.json()) as RelevesImportResult | ImportClarificationResult
-  if (result.ok === false && result.type === 'clarification') {
+  const result = (await response.json()) as unknown
+  if (isImportClarificationResult(result)) {
     return result
   }
 
-  return result
+  return result as RelevesImportResult
 }
 
 
