@@ -192,7 +192,7 @@ def test_profile_confirm_yes_moves_to_bank_accounts_collect(monkeypatch) -> None
     assert response.status_code == 200
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
     assert persisted["onboarding_step"] == "bank_accounts"
-    assert persisted["onboarding_substep"] == "profile_confirm"
+    assert persisted["onboarding_substep"] == "bank_accounts_collect"
     assert persisted["profile_confirmed"] is True
 
 
@@ -267,7 +267,7 @@ def test_bank_accounts_confirm_yes_back_to_collect(monkeypatch) -> None:
 
     assert response.status_code == 200
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
-    assert persisted["onboarding_substep"] == "profile_confirm"
+    assert persisted["onboarding_substep"] == "bank_accounts_collect"
 
 
 def test_bank_accounts_confirm_no_moves_to_import_select(monkeypatch) -> None:
@@ -318,7 +318,7 @@ def test_bank_accounts_collect_no_with_existing_account_moves_to_import_select(m
     response = client.post("/agent/chat", json={"message": "non"}, headers=_auth_headers())
 
     assert response.status_code == 200
-    assert response.json()["reply"] == "Parfait. Quel compte veux-tu importer ?"
+    assert "Dis-moi quand ton fichier de relevé CSV est prêt" in response.json()["reply"]
     assert "nom exact" not in response.json()["reply"].lower()
     assert "Voulez-vous créer encore d'autres comptes" not in response.json()["reply"]
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
@@ -770,7 +770,7 @@ def test_free_chat_re_gates_to_import_when_transactions_not_imported(monkeypatch
     assert response.json()["reply"] == "Dis-moi simplement quand ton fichier est prêt (ex: « c’est prêt »)."
     persisted_state = repo.update_calls[-1]["chat_state"]["state"]
     assert persisted_state["global_state"]["onboarding_step"] == "import"
-    assert persisted_state["global_state"]["onboarding_substep"] == "import_select_account"
+    assert persisted_state["global_state"]["onboarding_substep"] == "import_wait_ready"
     assert persisted_state["global_state"]["has_imported_transactions"] is False
     assert "import_context" not in persisted_state
     assert loop.called is False
@@ -919,6 +919,8 @@ def test_bootstrap_onboarding_bank_accounts_if_profile_complete(monkeypatch) -> 
     response = client.post("/agent/chat", json={"message": "Bonjour"}, headers=_auth_headers())
 
     assert response.status_code == 200
+    assert "Tout est correct ? (OUI/NON)" in response.json()["reply"]
+    assert repo.update_calls
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
     assert persisted["onboarding_step"] == "profile"
     assert persisted["onboarding_substep"] == "profile_confirm"
@@ -1120,7 +1122,7 @@ def test_free_chat_re_gates_to_bank_accounts_collect_when_no_accounts(monkeypatc
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
     assert persisted["mode"] == "onboarding"
     assert persisted["onboarding_step"] == "bank_accounts"
-    assert persisted["onboarding_substep"] == "profile_confirm"
+    assert persisted["onboarding_substep"] == "bank_accounts_collect"
     assert "Avant de continuer" in response.json()["reply"]
 
 
@@ -1204,8 +1206,8 @@ def test_onboarding_profile_combined_name_and_birth_date_in_one_message_moves_to
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
     assert persisted["onboarding_substep"] == "profile_confirm"
     assert "Parfait" in response.json()["reply"]
-    assert "quelle banque utilises-tu" in response.json()["reply"].lower()
-    assert "Confirmez-vous" not in response.json()["reply"]
+    assert "quelle banque utilises-tu" not in response.json()["reply"].lower()
+    assert "Tout est correct ? (OUI/NON)" in response.json()["reply"]
 
 
 @pytest.mark.parametrize(
@@ -1238,8 +1240,10 @@ def test_onboarding_profile_birth_date_message_promotes_to_bank_accounts_step(mo
     assert response.status_code == 200
     assert {"birth_date": expected_birth_date} in repo.profile_update_calls
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
-    assert persisted["onboarding_step"] == "bank_accounts"
+    assert persisted["onboarding_step"] == "profile"
     assert persisted["onboarding_substep"] == "profile_confirm"
+    assert "Récapitulatif de ton profil" in response.json()["reply"]
+    assert "Tout est correct ? (OUI/NON)" in response.json()["reply"]
 
 
 def test_onboarding_profile_non_profile_message_returns_help_and_skips_loop(monkeypatch) -> None:
@@ -1362,8 +1366,8 @@ def test_onboarding_bank_accounts_creates_accounts_and_moves_to_import(monkeypat
     assert repo.ensure_bank_accounts_calls == [{"names": ["UBS", "Revolut"]}]
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
     assert persisted["onboarding_substep"] == "import_wait_ready"
-    assert "on peut importer ton premier relevé" in response.json()["reply"].lower()
-    assert "import" in response.json()["reply"].lower()
+    assert "Prochaine étape : importer un relevé mensuel." in response.json()["reply"]
+    assert "Dis-moi quand ton fichier de relevé CSV est prêt" in response.json()["reply"]
 
 
 def test_onboarding_bank_accounts_skips_creation_if_already_exists(monkeypatch) -> None:
@@ -1421,6 +1425,7 @@ def test_onboarding_bank_accounts_collect_non_with_existing_accounts_moves_to_im
     assert persisted["onboarding_substep"] == "import_wait_ready"
     assert persisted["bank_accounts_confirmed"] is True
     assert persisted["has_bank_accounts"] is True
+    assert "Dis-moi quand ton fichier de relevé CSV est prêt" in response.json()["reply"]
     assert "nom exact" not in response.json()["reply"].lower()
 
 
@@ -1636,11 +1641,13 @@ def test_import_wait_ready_confirmation_returns_import_file(monkeypatch) -> None
         initial_chat_state={"state": {"global_state": {"mode": "onboarding", "onboarding_step": "import", "onboarding_substep": "import_wait_ready"}}},
         profile_fields={"first_name": "Ada", "last_name": "Lovelace", "birth_date": "1815-12-10"},
     )
+    repo.bank_accounts = [{"id": "bank-1", "name": "UBS"}]
     monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
     monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
 
     response = client.post("/agent/chat", json={"message": "c'est prêt"}, headers=_auth_headers())
     payload = response.json()
+    assert payload["reply"] == "Parfait 🙂\n\nClique sur « Importer maintenant » pour sélectionner ton fichier CSV."
     assert payload["tool_result"]["name"] == "import_file"
     assert payload["tool_result"]["accepted_types"] == ["csv"]
 
