@@ -868,3 +868,41 @@ def test_create_map_alias_suggestions_ignores_duplicate_key_errors_with_sqlstate
 
     assert len(client.post_calls) == 1
     assert inserted == 0
+
+
+def test_ensure_profile_for_auth_user_returns_existing_profile_when_found() -> None:
+    auth_user_id = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+    expected_profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    client = _ClientStub(responses=[[{"id": str(expected_profile_id)}]])
+    repository = SupabaseProfilesRepository(client=client)
+
+    profile_id = repository.ensure_profile_for_auth_user(auth_user_id=auth_user_id, email="user@example.com")
+
+    assert profile_id == expected_profile_id
+    assert client.post_calls == []
+
+
+def test_ensure_profile_for_auth_user_creates_profile_when_missing() -> None:
+    auth_user_id = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+    created_profile_id = UUID("dddddddd-dddd-dddd-dddd-dddddddddddd")
+    client = _ClientStub(
+        responses=[[], []],
+        post_responses=[[{"id": str(created_profile_id)}]],
+    )
+    repository = SupabaseProfilesRepository(client=client)
+
+    profile_id = repository.ensure_profile_for_auth_user(auth_user_id=auth_user_id, email="new@example.com")
+
+    assert profile_id == created_profile_id
+    assert client.post_calls == [
+        {
+            "table": "profils",
+            "payload": {
+                "account_id": str(auth_user_id),
+                "chat_state": {"state": {}},
+                "email": "new@example.com",
+            },
+            "use_anon_key": False,
+            "prefer": "return=representation",
+        }
+    ]

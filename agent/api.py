@@ -1388,6 +1388,11 @@ def _resolve_authenticated_profile(authorization: str | None) -> tuple[UUID, UUI
     email = email_value if isinstance(email_value, str) else None
 
     profiles_repository = get_profiles_repository()
+    ensure_profile = getattr(profiles_repository, "ensure_profile_for_auth_user", None)
+    if callable(ensure_profile):
+        profile_id = ensure_profile(auth_user_id=auth_user_id, email=email)
+        return auth_user_id, profile_id
+
     profile_id = profiles_repository.get_profile_id_for_auth_user(
         auth_user_id=auth_user_id,
         email=email,
