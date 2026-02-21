@@ -234,6 +234,7 @@ export function ChatPage({ email }: ChatPageProps) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false)
   const [autoOpenImportPicker, setAutoOpenImportPicker] = useState(false)
+  const [typingCursor, setTypingCursor] = useState(0)
   const envDebugEnabled = import.meta.env.VITE_UI_DEBUG === 'true'
   const apiBaseUrl = useMemo(() => (import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:8000').replace(/\/+$/, ''), [])
   const messagesRef = useRef<HTMLDivElement | null>(null)
@@ -570,6 +571,7 @@ export function ChatPage({ email }: ChatPageProps) {
           isLoading={isLoading}
           debugMode={debugMode}
           apiBaseUrl={apiBaseUrl}
+          typingCursor={typingCursor}
           revealedMessageIdsRef={revealedMessageIdsRef}
           messagesRef={messagesRef}
           onImportNow={(intent) => {
@@ -607,7 +609,8 @@ export function ChatPage({ email }: ChatPageProps) {
           onStartConversation={() => {
             void startConversation()
           }}
-          />
+          onTypingDone={(_messageId) => setTypingCursor((value) => value + 1)}
+        />
 
         <Composer
           message={message}
@@ -753,14 +756,16 @@ type MessageListProps = {
   isLoading: boolean
   debugMode: boolean
   apiBaseUrl: string
+  typingCursor: number
   revealedMessageIdsRef: RefObject<Set<string>>
   messagesRef: RefObject<HTMLDivElement | null>
   onImportNow: (intent: ImportIntent) => void
   onScroll: (event: UIEvent<HTMLDivElement>) => void
   onStartConversation: () => void
+  onTypingDone: (messageId: string) => void
 }
 
-function MessageList({ messages, isLoading, debugMode, apiBaseUrl, revealedMessageIdsRef, messagesRef, onImportNow, onScroll, onStartConversation }: MessageListProps) {
+export function MessageList({ messages, isLoading, debugMode, apiBaseUrl, typingCursor, revealedMessageIdsRef, messagesRef, onImportNow, onScroll, onStartConversation, onTypingDone }: MessageListProps) {
   const activeTypingMessageId = useMemo(() => {
     const revealed = revealedMessageIdsRef.current
     for (const item of messages) {
@@ -772,7 +777,7 @@ function MessageList({ messages, isLoading, debugMode, apiBaseUrl, revealedMessa
       }
     }
     return null
-  }, [messages, revealedMessageIdsRef])
+  }, [messages, revealedMessageIdsRef, typingCursor])
 
   return (
     <div className="messages card" aria-live="polite" ref={messagesRef} onScroll={onScroll}>
@@ -786,6 +791,7 @@ function MessageList({ messages, isLoading, debugMode, apiBaseUrl, revealedMessa
           apiBaseUrl={apiBaseUrl}
           revealedMessageIdsRef={revealedMessageIdsRef}
           isActiveTyping={chatMessage.id === activeTypingMessageId}
+          onTypingDone={onTypingDone}
         />
       ))}
       {isLoading ? (
@@ -812,28 +818,55 @@ function EmptyState({ onStartConversation }: { onStartConversation: () => void }
   )
 }
 
-function TypingText({
+function shouldBypassTypingInTests(): boolean {
+  if (import.meta.env.MODE !== 'test') {
+    return false
+  }
+
+  return !(globalThis as { __CHAT_ENABLE_TYPING_IN_TESTS__?: boolean }).__CHAT_ENABLE_TYPING_IN_TESTS__
+}
+
+export function TypingText({
   message,
   apiBaseUrl,
   revealedMessageIdsRef,
   isActiveTyping,
+  onTypingDone,
 }: {
   message: ChatMessage
   apiBaseUrl: string
   revealedMessageIdsRef: RefObject<Set<string>>
   isActiveTyping: boolean
+  onTypingDone: (messageId: string) => void
 }) {
-  const isTestMode = import.meta.env.MODE === 'test'
+  const shouldBypassTyping = shouldBypassTypingInTests()
+  const completionNotifiedRef = useRef(false)
   const [visibleLength, setVisibleLength] = useState(() => {
     const revealed = revealedMessageIdsRef.current
     return revealed?.has(message.id) ? message.content.length : 0
   })
 
   useEffect(() => {
+    completionNotifiedRef.current = false
+  }, [message.id])
+
+  useEffect(() => {
     const revealed = revealedMessageIdsRef.current
-    if (isTestMode) {
+
+    const notifyCompletion = () => {
+      if (completionNotifiedRef.current) {
+        return
+      }
+      completionNotifiedRef.current = true
+      onTypingDone(message.id)
+    }
+
+    if (shouldBypassTyping) {
       setVisibleLength(message.content.length)
-      revealed?.add(message.id)
+      if (!revealed?.has(message.id)) {
+        revealed?.add(message.id)
+        notifyCompletion()
+      }
       return
     }
 
@@ -854,11 +887,14 @@ function TypingText({
       if (!active) {
         return
       }
+
       setVisibleLength((previous) => {
         const increment = previous > 120 ? 3 : 1
         const next = Math.min(message.content.length, previous + increment)
         if (next >= message.content.length) {
-          revealed?.add(message.id)
+          if (!revealed?.has(message.id)) {
+            revealed?.add(message.id)
+          }
           return message.content.length
         }
 
@@ -876,9 +912,26 @@ function TypingText({
         window.clearTimeout(timerId)
       }
     }
-  }, [isActiveTyping, isTestMode, message.id, message.content, revealedMessageIdsRef])
+  }, [isActiveTyping, shouldBypassTyping, message.id, message.content, onTypingDone, revealedMessageIdsRef])
 
-  const content = isTestMode ? message.content : message.content.slice(0, visibleLength)
+
+  useEffect(() => {
+    const revealed = revealedMessageIdsRef.current
+    const isFullyVisible = visibleLength >= message.content.length
+    if (!isFullyVisible) {
+      return
+    }
+    if (!revealed?.has(message.id)) {
+      return
+    }
+    if (completionNotifiedRef.current) {
+      return
+    }
+    completionNotifiedRef.current = true
+    onTypingDone(message.id)
+  }, [message.id, message.content.length, onTypingDone, revealedMessageIdsRef, visibleLength])
+
+  const content = shouldBypassTyping ? message.content : message.content.slice(0, visibleLength)
 
   return <>{renderContentWithLinks(content, apiBaseUrl)}</>
 }
@@ -890,6 +943,7 @@ function MessageBubble({
   apiBaseUrl,
   revealedMessageIdsRef,
   isActiveTyping,
+  onTypingDone,
 }: {
   message: ChatMessage
   debugMode: boolean
@@ -897,6 +951,7 @@ function MessageBubble({
   apiBaseUrl: string
   revealedMessageIdsRef: RefObject<Set<string>>
   isActiveTyping: boolean
+  onTypingDone: (messageId: string) => void
 }) {
   const dateLabel = new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   const pdfUiRequest = toPdfUiRequest(message.toolResult)
@@ -927,6 +982,7 @@ function MessageBubble({
             apiBaseUrl={apiBaseUrl}
             revealedMessageIdsRef={revealedMessageIdsRef}
             isActiveTyping={isActiveTyping}
+            onTypingDone={onTypingDone}
           />
         ) : (
           renderContentWithLinks(message.content, apiBaseUrl)
