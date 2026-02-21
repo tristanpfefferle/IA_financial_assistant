@@ -1386,7 +1386,14 @@ def _resolve_authenticated_profile(authorization: str | None) -> tuple[UUID, UUI
     profiles_repository = get_profiles_repository()
     ensure_profile = getattr(profiles_repository, "ensure_profile_for_auth_user", None)
     if callable(ensure_profile):
-        profile_id = ensure_profile(auth_user_id=auth_user_id, email=email)
+        try:
+            profile_id = ensure_profile(auth_user_id=auth_user_id, email=email)
+        except RuntimeError as exc:
+            logger.exception("ensure_profile_for_auth_user_failed auth_user_id=%s", auth_user_id)
+            raise HTTPException(
+                status_code=500,
+                detail="Unable to initialize authenticated profile",
+            ) from exc
         return auth_user_id, profile_id
 
     profile_id = profiles_repository.get_profile_id_for_auth_user(

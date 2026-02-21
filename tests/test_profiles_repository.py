@@ -14,7 +14,7 @@ class _ClientStub:
         counts: list[int | None] | None = None,
         patch_responses: list[list[dict[str, str]]] | None = None,
         post_responses: list[list[dict[str, str]]] | None = None,
-        post_exceptions: list[Exception] | None = None,
+        post_exceptions: list[Exception | None] | None = None,
         delete_responses: list[list[dict[str, str]]] | None = None,
     ) -> None:
         self._responses = responses
@@ -64,7 +64,9 @@ class _ClientStub:
             }
         )
         if call_index < len(self._post_exceptions):
-            raise self._post_exceptions[call_index]
+            maybe_exception = self._post_exceptions[call_index]
+            if maybe_exception is not None:
+                raise maybe_exception
         if call_index < len(self._post_responses):
             return self._post_responses[call_index]
         return []
@@ -873,7 +875,9 @@ def test_create_map_alias_suggestions_ignores_duplicate_key_errors_with_sqlstate
 def test_ensure_profile_for_auth_user_returns_existing_profile_when_found() -> None:
     auth_user_id = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
     expected_profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
-    client = _ClientStub(responses=[[{"id": str(expected_profile_id)}]])
+    client = _ClientStub(
+        responses=[[{"id": str(expected_profile_id)}], [{"conversation_id": str(expected_profile_id)}]],
+    )
     repository = SupabaseProfilesRepository(client=client)
 
     profile_id = repository.ensure_profile_for_auth_user(auth_user_id=auth_user_id, email="user@example.com")
@@ -886,8 +890,11 @@ def test_ensure_profile_for_auth_user_creates_profile_when_missing() -> None:
     auth_user_id = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
     created_profile_id = UUID("dddddddd-dddd-dddd-dddd-dddddddddddd")
     client = _ClientStub(
-        responses=[[], []],
-        post_responses=[[{"id": str(created_profile_id)}]],
+        responses=[[], [], []],
+        post_responses=[
+            [{"id": str(created_profile_id)}],
+            [{"conversation_id": str(created_profile_id)}],
+        ],
     )
     repository = SupabaseProfilesRepository(client=client)
 
@@ -899,10 +906,48 @@ def test_ensure_profile_for_auth_user_creates_profile_when_missing() -> None:
             "table": "profils",
             "payload": {
                 "account_id": str(auth_user_id),
-                "chat_state": {"state": {}},
                 "email": "new@example.com",
+            },
+            "use_anon_key": False,
+            "prefer": "return=representation",
+        },
+        {
+            "table": "chat_state",
+            "payload": {
+                "conversation_id": str(created_profile_id),
+                "profile_id": str(created_profile_id),
+                "user_id": str(auth_user_id),
+                "state": {
+                    "global_state": {
+                        "mode": "onboarding",
+                        "onboarding_step": "profile",
+                        "onboarding_substep": "profile_collect",
+                    }
+                },
             },
             "use_anon_key": False,
             "prefer": "return=representation",
         }
     ]
+
+
+def test_ensure_profile_for_auth_user_ignores_duplicate_chat_state_insert() -> None:
+    auth_user_id = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+    created_profile_id = UUID("dddddddd-dddd-dddd-dddd-dddddddddddd")
+
+    class _DuplicateError(Exception):
+        sqlstate = "23505"
+
+    client = _ClientStub(
+        responses=[[], [], []],
+        post_responses=[[{"id": str(created_profile_id)}]],
+        post_exceptions=[None, _DuplicateError("duplicate key")],
+    )
+    repository = SupabaseProfilesRepository(client=client)
+
+    profile_id = repository.ensure_profile_for_auth_user(auth_user_id=auth_user_id, email="new@example.com")
+
+    assert profile_id == created_profile_id
+    assert len(client.post_calls) == 2
+    assert client.post_calls[0]["table"] == "profils"
+    assert client.post_calls[1]["table"] == "chat_state"

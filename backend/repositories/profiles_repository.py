@@ -253,28 +253,87 @@ class SupabaseProfilesRepository:
         if existing_profile_id is not None:
             return existing_profile_id
 
-        profile_payload: dict[str, Any] = {
-            "account_id": str(auth_user_id),
-            "chat_state": {"state": {}},
-        }
+        profile_payload: dict[str, Any] = {"account_id": str(auth_user_id)}
         if email:
             profile_payload["email"] = email
 
-        profile_rows = self._client.post_rows(
-            table="profils",
-            payload=profile_payload,
-            use_anon_key=False,
-        )
+        try:
+            profile_rows = self._client.post_rows(
+                table="profils",
+                payload=profile_payload,
+                use_anon_key=False,
+            )
+        except Exception as exc:
+            logger.exception(
+                "ensure_profile_for_auth_user failed to insert profile auth_user_id=%s",
+                auth_user_id,
+            )
+            raise RuntimeError("Unable to create profile for authenticated user") from exc
+
         if profile_rows:
             created_profile_id = profile_rows[0].get("id")
             if created_profile_id:
-                return UUID(str(created_profile_id))
+                created_uuid = UUID(str(created_profile_id))
+                self._ensure_initial_chat_state(profile_id=created_uuid, user_id=auth_user_id)
+                return created_uuid
 
         fallback_profile_id = self.get_profile_id_for_auth_user(auth_user_id=auth_user_id, email=email)
         if fallback_profile_id is not None:
+            self._ensure_initial_chat_state(profile_id=fallback_profile_id, user_id=auth_user_id)
             return fallback_profile_id
 
         raise RuntimeError("Unable to ensure profile for authenticated user")
+
+    @staticmethod
+    def _is_duplicate_key_error(exc: Exception) -> bool:
+        error_code = (
+            getattr(exc, "code", None)
+            or getattr(exc, "pgcode", None)
+            or getattr(exc, "sqlstate", None)
+        )
+        if str(error_code) == "23505":
+            return True
+        error_message = str(exc).lower()
+        return "duplicate key" in error_message or "unique" in error_message
+
+    def _ensure_initial_chat_state(self, *, profile_id: UUID, user_id: UUID) -> None:
+        conversation_id = str(profile_id)
+        rows, _ = self._client.get_rows(
+            table="chat_state",
+            query={
+                "select": "conversation_id",
+                "conversation_id": f"eq.{conversation_id}",
+                "profile_id": f"eq.{profile_id}",
+                "user_id": f"eq.{user_id}",
+                "limit": 1,
+            },
+            with_count=False,
+            use_anon_key=False,
+        )
+        if rows:
+            return
+
+        try:
+            self._client.post_rows(
+                table="chat_state",
+                payload={
+                    "conversation_id": conversation_id,
+                    "profile_id": str(profile_id),
+                    "user_id": str(user_id),
+                    "state": {
+                        "global_state": {
+                            "mode": "onboarding",
+                            "onboarding_step": "profile",
+                            "onboarding_substep": "profile_collect",
+                        }
+                    },
+                },
+                use_anon_key=False,
+            )
+        except Exception as exc:
+            if self._is_duplicate_key_error(exc):
+                return
+            raise
 
     def get_chat_state(self, *, profile_id: UUID, user_id: UUID) -> dict[str, Any]:
         conversation_id = str(profile_id)
