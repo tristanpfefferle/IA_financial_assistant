@@ -120,6 +120,13 @@ _YES_VALUES = {
 }
 _NO_VALUES = {"non", "nope", "no", "n"}
 _IMPORT_FILE_PROMPT = "Parfait. Envoie le fichier CSV/PDF du compte sélectionné."
+_IMPORT_WAIT_READY_REPLY = (
+    "Prochaine étape : importer un relevé mensuel.\n\n"
+    "Idéalement, prends le mois le plus récent complet (un mois entier), comme ça ton premier rapport sera représentatif."
+    "\n\n"
+    "Dis-moi quand ton fichier de relevé CSV est prêt, et je te donnerai le bouton pour l’importer.\n\n"
+    "Tu peux répondre par exemple : « c’est prêt »."
+)
 _SYSTEM_CATEGORIES: tuple[tuple[str, str], ...] = (
     ("food", "Alimentation"),
     ("housing", "Logement"),
@@ -204,6 +211,18 @@ def _build_import_file_ui_request(_import_context: dict[str, Any] | None = None)
         "name": "import_file",
         "accepted_types": ["csv"],
     }
+
+
+def _build_profile_recap_reply(profile_fields: dict[str, Any]) -> str:
+    """Build onboarding profile recap confirmation prompt."""
+
+    first_name = str(profile_fields.get("first_name", "")).strip()
+    last_name = str(profile_fields.get("last_name", "")).strip()
+    birth_date_iso = str(profile_fields.get("birth_date", "")).strip()
+    return (
+        f"Parfait ✅\n\nRécapitulatif de ton profil :\n- Prénom: {first_name}\n- Nom: {last_name}\n- Date de naissance: {birth_date_iso}\n\n"
+        "Tout est correct ? (OUI/NON)"
+    )
 
 
 def _build_open_pdf_ui_request(url: str) -> dict[str, str]:
@@ -1475,6 +1494,20 @@ def agent_chat(
             state_dict["global_state"] = global_state
             should_persist_global_state = True
 
+            if _is_profile_complete(profile_fields):
+                updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                updated_chat_state["state"] = state_dict
+                profiles_repository.update_chat_state(
+                    profile_id=profile_id,
+                    user_id=auth_user_id,
+                    chat_state=updated_chat_state,
+                )
+                return ChatResponse(
+                    reply=_build_profile_recap_reply(profile_fields),
+                    tool_result=None,
+                    plan=None,
+                )
+
         import_context = state_dict.get("import_context") if isinstance(state_dict, dict) else None
         pending_files = import_context.get("pending_files") if isinstance(import_context, dict) else None
         if isinstance(pending_files, list) and pending_files and hasattr(profiles_repository, "list_bank_accounts"):
@@ -1791,6 +1824,20 @@ def agent_chat(
 
             mode = global_state.get("mode")
             onboarding_step = global_state.get("onboarding_step")
+
+            if mode == "onboarding" and onboarding_step == "import" and global_state.get("onboarding_substep") == "import_wait_ready":
+                if _is_yes(payload.message):
+                    return ChatResponse(
+                        reply="Parfait 🙂\n\nClique sur « Importer maintenant » pour sélectionner ton fichier CSV.",
+                        tool_result=_build_import_file_ui_request(),
+                        plan=None,
+                    )
+                return ChatResponse(
+                    reply="Dis-moi simplement quand ton fichier est prêt (ex: « c’est prêt »).",
+                    tool_result=None,
+                    plan=None,
+                )
+
             has_bank_accounts = _has_any_bank_accounts(profiles_repository, profile_id)
 
             if mode == "free_chat" and has_bank_accounts is False:
@@ -1871,6 +1918,7 @@ def agent_chat(
                 if substep == "bank_accounts_collect":
                     if _is_no(payload.message):
                         if existing_accounts:
+                            import_substep = "import_wait_ready" if len(existing_accounts) == 1 else "import_select_account"
                             updated_global_state = _build_onboarding_global_state(
                                 {
                                     **global_state,
@@ -1878,10 +1926,16 @@ def agent_chat(
                                     "has_bank_accounts": True,
                                 },
                                 onboarding_step="import",
-                                onboarding_substep="import_select_account",
+                                onboarding_substep=import_substep,
                             )
                             updated_global_state["bank_accounts_confirmed"] = True
                             updated_global_state["has_bank_accounts"] = True
+                            if len(existing_accounts) == 1:
+                                selected_account = existing_accounts[0]
+                                state_dict["import_context"] = {
+                                    "selected_bank_account_id": str(selected_account.get("id")),
+                                    "selected_bank_account_name": str(selected_account.get("name", "")),
+                                }
                             state_dict["global_state"] = updated_global_state
                             updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
                             updated_chat_state["state"] = state_dict
@@ -1890,6 +1944,12 @@ def agent_chat(
                                 user_id=auth_user_id,
                                 chat_state=updated_chat_state,
                             )
+                            if len(existing_accounts) == 1:
+                                return ChatResponse(
+                                    reply=_IMPORT_WAIT_READY_REPLY,
+                                    tool_result=None,
+                                    plan=None,
+                                )
                             return ChatResponse(
                                 reply="Parfait. Quel compte veux-tu importer ?",
                                 tool_result=None,
@@ -1978,24 +2038,8 @@ def agent_chat(
                         chat_state=updated_chat_state,
                     )
 
-                    if len(matched_banks) == 1 and len(refreshed_accounts) == 1:
-                        account_name = str(refreshed_accounts[0].get("name", matched_banks[0])).strip() or matched_banks[0]
-                        return ChatResponse(
-                            reply=(
-                                f"Top, compte {account_name} ajouté.\n\n"
-                                "On peut importer ton premier relevé maintenant.\n\n"
-                                f"Envoie-moi le fichier CSV de ton compte {account_name}."
-                            ),
-                            tool_result=_build_import_file_ui_request(state_dict.get("import_context")),
-                            plan=None,
-                        )
-
-                    if len(matched_banks) == 1:
-                        added_reply = f"Top, compte {matched_banks[0]} ajouté."
-                    else:
-                        added_reply = f"Top, comptes {', '.join(matched_banks)} ajoutés."
                     return ChatResponse(
-                        reply=f"{added_reply}\nOn peut importer ton premier relevé maintenant.\nQuel compte veux-tu importer ?",
+                        reply=_IMPORT_WAIT_READY_REPLY,
                         tool_result=None,
                         plan=None,
                     )
@@ -2031,6 +2075,7 @@ def agent_chat(
                                 plan=None,
                             )
 
+                        import_substep = "import_wait_ready" if len(existing_accounts) == 1 else "import_select_account"
                         updated_global_state = _build_onboarding_global_state(
                             {
                                 **global_state,
@@ -2038,7 +2083,7 @@ def agent_chat(
                                 "has_bank_accounts": bool(existing_accounts),
                             },
                             onboarding_step="import",
-                            onboarding_substep="import_select_account",
+                            onboarding_substep=import_substep,
                         )
                         updated_global_state["bank_accounts_confirmed"] = True
                         updated_global_state["has_bank_accounts"] = bool(existing_accounts)
@@ -2058,10 +2103,9 @@ def agent_chat(
                                 user_id=auth_user_id,
                                 chat_state=updated_chat_state,
                             )
-                            account_name = str(selected_account.get("name", "ce compte")).strip() or "ce compte"
                             return ChatResponse(
-                                reply=f"On peut importer ton premier relevé maintenant.\n\nEnvoie-moi le fichier CSV de ton compte {account_name}.",
-                                tool_result=_build_import_file_ui_request(state_dict.get("import_context")),
+                                reply=_IMPORT_WAIT_READY_REPLY,
+                                tool_result=None,
                                 plan=None,
                             )
 
@@ -2081,20 +2125,6 @@ def agent_chat(
                             plan=None,
                         )
                     return ChatResponse(reply="Réponds « autre » ou « import ».", tool_result=None, plan=None)
-
-
-            if mode == "onboarding" and onboarding_step == "import" and global_state.get("onboarding_substep") == "import_wait_ready":
-                if _is_yes(payload.message):
-                    return ChatResponse(
-                        reply="Parfait 🙂\n\nClique sur « Importer maintenant » pour sélectionner ton fichier CSV.",
-                        tool_result=_build_import_file_ui_request(),
-                        plan=None,
-                    )
-                return ChatResponse(
-                    reply="Dis-moi simplement quand ton fichier est prêt (ex: « c’est prêt »).",
-                    tool_result=None,
-                    plan=None,
-                )
 
             if mode == "onboarding" and onboarding_step == "import" and global_state.get("onboarding_substep") == "import_select_account" and hasattr(profiles_repository, "list_bank_accounts"):
                 existing_accounts = profiles_repository.list_bank_accounts(profile_id=profile_id)
