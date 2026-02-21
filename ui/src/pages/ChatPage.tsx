@@ -4,6 +4,7 @@ import {
   getPendingMerchantAliasesCount,
   hardResetProfile,
   importReleves,
+  isImportClarificationResult,
   openPdfFromUrl,
   resolvePendingMerchantAliases,
   resetSession,
@@ -837,7 +838,7 @@ function ImportDialog({
         modified_action: 'replace',
       })
 
-      if (result.ok === false && result.type === 'clarification') {
+      if (isImportClarificationResult(result)) {
         onClose()
         onImportClarification(result.message)
         return
