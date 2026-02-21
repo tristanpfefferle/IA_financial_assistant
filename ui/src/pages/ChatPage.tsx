@@ -807,17 +807,20 @@ function TypingText({
   apiBaseUrl: string
   revealedMessageIdsRef: RefObject<Set<string>>
 }) {
+  const isTestMode = import.meta.env.MODE === 'test'
   const [visibleLength, setVisibleLength] = useState(() => {
     const revealed = revealedMessageIdsRef.current
     return revealed?.has(message.id) ? message.content.length : 0
   })
 
-  if (import.meta.env.MODE === 'test') {
-    return <>{renderContentWithLinks(message.content, apiBaseUrl)}</>
-  }
-
   useEffect(() => {
     const revealed = revealedMessageIdsRef.current
+    if (isTestMode) {
+      setVisibleLength(message.content.length)
+      revealed?.add(message.id)
+      return
+    }
+
     if (revealed?.has(message.id)) {
       setVisibleLength(message.content.length)
       return
@@ -852,9 +855,11 @@ function TypingText({
         window.clearTimeout(timerId)
       }
     }
-  }, [message.id, message.content, revealedMessageIdsRef])
+  }, [isTestMode, message.id, message.content, revealedMessageIdsRef])
 
-  return <>{renderContentWithLinks(message.content.slice(0, visibleLength), apiBaseUrl)}</>
+  const content = isTestMode ? message.content : message.content.slice(0, visibleLength)
+
+  return <>{renderContentWithLinks(content, apiBaseUrl)}</>
 }
 
 function MessageBubble({
@@ -902,38 +907,25 @@ function MessageBubble({
       <div className="message-meta-row">
         <span className="subtle-text">{dateLabel}</span>
         {hasPdfAction ? (
-          <>
-            <span
-              className="pdf-pill"
-              role="button"
-              tabIndex={0}
-              style={{ cursor: 'pointer' }}
-              onClick={() => {
-                if (pdfUiRequest) {
-                  void openPdfFromUrl(pdfUiRequest.url)
-                }
-              }}
-              onKeyDown={(event) => {
-                if ((event.key === 'Enter' || event.key === ' ') && pdfUiRequest) {
-                  event.preventDefault()
-                  void openPdfFromUrl(pdfUiRequest.url)
-                }
-              }}
-            >
-              PDF
-            </span>
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={() => {
-                if (pdfUiRequest) {
-                  void openPdfFromUrl(pdfUiRequest.url)
-                }
-              }}
-            >
-              PDF
-            </button>
-          </>
+          <span
+            className="pdf-pill"
+            role="button"
+            tabIndex={0}
+            style={{ cursor: 'pointer' }}
+            onClick={() => {
+              if (pdfUiRequest) {
+                void openPdfFromUrl(pdfUiRequest.url)
+              }
+            }}
+            onKeyDown={(event) => {
+              if ((event.key === 'Enter' || event.key === ' ') && pdfUiRequest) {
+                event.preventDefault()
+                void openPdfFromUrl(pdfUiRequest.url)
+              }
+            }}
+          >
+            PDF
+          </span>
         ) : null}
       </div>
       {message.role === 'assistant' && importIntent ? (
