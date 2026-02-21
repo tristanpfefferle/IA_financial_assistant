@@ -100,19 +100,94 @@ function roleLabel(role: ChatMessage['role']): string {
   return role === 'user' ? 'Vous' : 'Assistant'
 }
 
-function renderContentWithLinks(content: string): ReactNode[] {
-  const linksRegex = /(https?:\/\/[^\s]+)/g
-  const parts = content.split(linksRegex)
-  return parts.map((part, index) => {
-    if (linksRegex.test(part)) {
-      return (
-        <a key={`link-${part}-${index}`} href={part} target="_blank" rel="noreferrer" className="inline-link">
-          {part}
-        </a>
+const LINK_LINE_REGEX = /\[Ouvrir le PDF\]\(|https?:\/\//i
+
+function splitAssistantReply(reply: string): string[] {
+  const chunks = reply
+    .split(/\n\n+/)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0)
+
+  return chunks.flatMap((chunk) => {
+    if (chunk.length <= 350 || LINK_LINE_REGEX.test(chunk)) {
+      return [chunk]
+    }
+
+    const sentenceChunks = chunk.match(/[^.!?]+[.!?]?/g) ?? [chunk]
+    const compactSentences = sentenceChunks.map((sentence) => sentence.trim()).filter((sentence) => sentence.length > 0)
+    if (compactSentences.length <= 1) {
+      return [chunk]
+    }
+
+    const reduced: string[] = []
+    let current = ''
+
+    for (const sentence of compactSentences) {
+      const candidate = current ? `${current} ${sentence}` : sentence
+      if (candidate.length <= 350) {
+        current = candidate
+        continue
+      }
+      if (current) {
+        reduced.push(current)
+      }
+      current = sentence
+    }
+
+    if (current) {
+      reduced.push(current)
+    }
+
+    return reduced.length > 0 ? reduced : [chunk]
+  })
+}
+
+function resolveHref(href: string, apiBaseUrl: string): string {
+  if (/^\/finance\/(reports\/)?/i.test(href)) {
+    return `${apiBaseUrl}${href}`
+  }
+  return href
+}
+
+function renderContentWithLinks(content: string, apiBaseUrl: string): ReactNode[] {
+  const linksRegex = /(\[([^\]]+)\]\(([^)]+)\)|https?:\/\/[^\s]+)/g
+  const matches = Array.from(content.matchAll(linksRegex))
+  if (matches.length === 0) {
+    return [content]
+  }
+
+  const nodes: ReactNode[] = []
+  let cursor = 0
+  matches.forEach((match, index) => {
+    const [raw, markdownLink, markdownLabel, markdownHref] = match
+    const start = match.index ?? 0
+    if (start > cursor) {
+      nodes.push(content.slice(cursor, start))
+    }
+
+    if (markdownLink && markdownLabel && markdownHref) {
+      const href = resolveHref(markdownHref, apiBaseUrl)
+      nodes.push(
+        <a key={`md-link-${index}-${href}`} href={href} target="_blank" rel="noreferrer" className="inline-link">
+          {markdownLabel}
+        </a>,
+      )
+    } else {
+      nodes.push(
+        <a key={`raw-link-${index}-${raw}`} href={raw} target="_blank" rel="noreferrer" className="inline-link">
+          {raw}
+        </a>,
       )
     }
-    return part
+
+    cursor = start + raw.length
   })
+
+  if (cursor < content.length) {
+    nodes.push(content.slice(cursor))
+  }
+
+  return nodes
 }
 
 function findPendingImportIntent(messages: ChatMessage[]): ImportIntent | null {
@@ -163,6 +238,17 @@ export function ChatPage({ email }: ChatPageProps) {
   const apiBaseUrl = useMemo(() => (import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:8000').replace(/\/+$/, ''), [])
   const messagesRef = useRef<HTMLDivElement | null>(null)
   const executedPdfMessageIdsRef = useRef<Set<string>>(new Set())
+  const revealedMessageIdsRef = useRef<Set<string>>(new Set())
+  const assistantQueueRef = useRef<
+    Array<{
+      id: string
+      content: string
+      toolResult: Record<string, unknown> | null
+      plan: Record<string, unknown> | null
+      debugPayload: unknown
+    }>
+  >([])
+  const isDrainingAssistantQueueRef = useRef(false)
   const shouldAutoScrollRef = useRef(true)
   const previousIntentMessageIdRef = useRef<string | null>(null)
 
@@ -284,6 +370,67 @@ export function ChatPage({ email }: ChatPageProps) {
     previousIntentMessageIdRef.current = pendingImportIntent.messageId
   }, [pendingImportIntent])
 
+  function computeAssistantSegmentDelay(segment: string): number {
+    return 250 + Math.min(900, segment.length * 8)
+  }
+
+  async function drainAssistantQueue() {
+    if (isDrainingAssistantQueueRef.current) {
+      return
+    }
+
+    isDrainingAssistantQueueRef.current = true
+    try {
+      while (assistantQueueRef.current.length > 0) {
+        const queued = assistantQueueRef.current.shift()
+        if (!queued) {
+          continue
+        }
+
+        setMessages((previous) => [
+          ...previous,
+          {
+            id: queued.id,
+            role: 'assistant',
+            content: queued.content,
+            createdAt: Date.now(),
+            toolResult: queued.toolResult,
+            plan: queued.plan,
+            debugPayload: queued.debugPayload,
+          },
+        ])
+
+        if (assistantQueueRef.current.length > 0) {
+          await new Promise<void>((resolve) => {
+            window.setTimeout(resolve, computeAssistantSegmentDelay(queued.content))
+          })
+        }
+      }
+    } finally {
+      isDrainingAssistantQueueRef.current = false
+    }
+  }
+
+  function enqueueAssistantMessages(
+    segments: string[],
+    toolResult: Record<string, unknown> | null,
+    plan: Record<string, unknown> | null,
+    debugPayload: unknown,
+  ) {
+    segments.forEach((segment, index) => {
+      const isLast = index === segments.length - 1
+      assistantQueueRef.current.push({
+        id: crypto.randomUUID(),
+        content: segment,
+        toolResult: isLast ? toolResult : null,
+        plan: isLast ? plan : null,
+        debugPayload: isLast ? debugPayload : null,
+      })
+    })
+
+    void drainAssistantQueue()
+  }
+
   async function handleLogout() {
     setError(null)
     await logoutWithSessionReset({
@@ -366,18 +513,8 @@ export function ChatPage({ email }: ChatPageProps) {
 
     try {
       const response = await sendChatMessage(trimmedMessage, { debug: debugMode })
-      setMessages((previous) => [
-        ...previous,
-        {
-          id: crypto.randomUUID(),
-          role: 'assistant',
-          content: response.reply,
-          createdAt: Date.now(),
-          toolResult: response.tool_result,
-          plan: response.plan,
-          debugPayload: response,
-        },
-      ])
+      const segments = splitAssistantReply(response.reply)
+      enqueueAssistantMessages(segments, response.tool_result, response.plan, response)
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Erreur inconnue')
     } finally {
@@ -394,18 +531,8 @@ export function ChatPage({ email }: ChatPageProps) {
     setError(null)
     try {
       const response = await sendChatMessage('', { debug: debugMode, requestGreeting: true })
-      setMessages((previous) => [
-        ...previous,
-        {
-          id: crypto.randomUUID(),
-          role: 'assistant',
-          content: response.reply,
-          createdAt: Date.now(),
-          toolResult: response.tool_result,
-          plan: response.plan,
-          debugPayload: response,
-        },
-      ])
+      const segments = splitAssistantReply(response.reply)
+      enqueueAssistantMessages(segments, response.tool_result, response.plan, response)
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Erreur inconnue')
     } finally {
@@ -442,6 +569,8 @@ export function ChatPage({ email }: ChatPageProps) {
           messages={messages}
           isLoading={isLoading}
           debugMode={debugMode}
+          apiBaseUrl={apiBaseUrl}
+          revealedMessageIdsRef={revealedMessageIdsRef}
           messagesRef={messagesRef}
           onImportNow={(intent) => {
             setIsImportDialogOpen(true)
@@ -533,18 +662,8 @@ export function ChatPage({ email }: ChatPageProps) {
           setIsLoading(true)
           setError(null)
           void sendChatMessage('', { debug: debugMode }).then((response) => {
-            setMessages((previous) => [
-              ...previous,
-              {
-                id: crypto.randomUUID(),
-                role: 'assistant',
-                content: response.reply,
-                createdAt: Date.now(),
-                toolResult: response.tool_result,
-                plan: response.plan,
-                debugPayload: response,
-              },
-            ])
+            const segments = splitAssistantReply(response.reply)
+            enqueueAssistantMessages(segments, response.tool_result, response.plan, response)
           }).catch((caughtError) => {
             setError(caughtError instanceof Error ? caughtError.message : 'Erreur inconnue')
           }).finally(() => {
@@ -552,15 +671,7 @@ export function ChatPage({ email }: ChatPageProps) {
           })
         }}
         onImportClarification={(assistantMessage) => {
-          setMessages((previous) => [
-            ...previous,
-            {
-              id: crypto.randomUUID(),
-              role: 'assistant',
-              content: assistantMessage,
-              createdAt: Date.now(),
-            },
-          ])
+          enqueueAssistantMessages(splitAssistantReply(assistantMessage), null, null, null)
           setToast({ type: 'success', message: 'Choix du compte requis.' })
         }}
         onImportError={(messageText) => setToast({ type: 'error', message: messageText })}
@@ -641,18 +752,27 @@ type MessageListProps = {
   messages: ChatMessage[]
   isLoading: boolean
   debugMode: boolean
+  apiBaseUrl: string
+  revealedMessageIdsRef: RefObject<Set<string>>
   messagesRef: RefObject<HTMLDivElement | null>
   onImportNow: (intent: ImportIntent) => void
   onScroll: (event: UIEvent<HTMLDivElement>) => void
   onStartConversation: () => void
 }
 
-function MessageList({ messages, isLoading, debugMode, messagesRef, onImportNow, onScroll, onStartConversation }: MessageListProps) {
+function MessageList({ messages, isLoading, debugMode, apiBaseUrl, revealedMessageIdsRef, messagesRef, onImportNow, onScroll, onStartConversation }: MessageListProps) {
   return (
     <div className="messages card" aria-live="polite" ref={messagesRef} onScroll={onScroll}>
       {messages.length === 0 ? <EmptyState onStartConversation={onStartConversation} /> : null}
       {messages.map((chatMessage) => (
-        <MessageBubble key={chatMessage.id} message={chatMessage} debugMode={debugMode} onImportNow={onImportNow} />
+        <MessageBubble
+          key={chatMessage.id}
+          message={chatMessage}
+          debugMode={debugMode}
+          onImportNow={onImportNow}
+          apiBaseUrl={apiBaseUrl}
+          revealedMessageIdsRef={revealedMessageIdsRef}
+        />
       ))}
       {isLoading ? (
         <div className="loading-state">
@@ -678,9 +798,81 @@ function EmptyState({ onStartConversation }: { onStartConversation: () => void }
   )
 }
 
-function MessageBubble({ message, debugMode, onImportNow }: { message: ChatMessage; debugMode: boolean; onImportNow: (intent: ImportIntent) => void }) {
+function TypingText({
+  message,
+  apiBaseUrl,
+  revealedMessageIdsRef,
+}: {
+  message: ChatMessage
+  apiBaseUrl: string
+  revealedMessageIdsRef: RefObject<Set<string>>
+}) {
+  const [visibleLength, setVisibleLength] = useState(() => {
+    const revealed = revealedMessageIdsRef.current
+    return revealed?.has(message.id) ? message.content.length : 0
+  })
+
+  if (import.meta.env.MODE === 'test') {
+    return <>{renderContentWithLinks(message.content, apiBaseUrl)}</>
+  }
+
+  useEffect(() => {
+    const revealed = revealedMessageIdsRef.current
+    if (revealed?.has(message.id)) {
+      setVisibleLength(message.content.length)
+      return
+    }
+
+    let active = true
+    let timerId: number | undefined
+
+    const step = () => {
+      if (!active) {
+        return
+      }
+      setVisibleLength((previous) => {
+        const increment = previous > 120 ? 3 : 1
+        const next = Math.min(message.content.length, previous + increment)
+        if (next >= message.content.length) {
+          revealed?.add(message.id)
+          return message.content.length
+        }
+
+        const delay = previous > 120 ? 22 : 34
+        timerId = window.setTimeout(step, delay)
+        return next
+      })
+    }
+
+    timerId = window.setTimeout(step, 20)
+
+    return () => {
+      active = false
+      if (timerId !== undefined) {
+        window.clearTimeout(timerId)
+      }
+    }
+  }, [message.id, message.content, revealedMessageIdsRef])
+
+  return <>{renderContentWithLinks(message.content.slice(0, visibleLength), apiBaseUrl)}</>
+}
+
+function MessageBubble({
+  message,
+  debugMode,
+  onImportNow,
+  apiBaseUrl,
+  revealedMessageIdsRef,
+}: {
+  message: ChatMessage
+  debugMode: boolean
+  onImportNow: (intent: ImportIntent) => void
+  apiBaseUrl: string
+  revealedMessageIdsRef: RefObject<Set<string>>
+}) {
   const dateLabel = new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-  const hasPdfAction = toPdfUiRequest(message.toolResult) !== null
+  const pdfUiRequest = toPdfUiRequest(message.toolResult)
+  const hasPdfAction = pdfUiRequest !== null
   const importUiAction = toOpenImportPanelUiAction(message.toolResult)
   const importUiRequest = toLegacyImportUiRequest(message.toolResult)
   const importIntent: ImportIntent | null = importUiAction
@@ -700,10 +892,49 @@ function MessageBubble({ message, debugMode, onImportNow }: { message: ChatMessa
   return (
     <article className={`message message-${message.role}`}>
       <p className="message-role">{roleLabel(message.role)}</p>
-      <p className="message-content">{renderContentWithLinks(message.content)}</p>
+      <p className="message-content">
+        {message.role === 'assistant' ? (
+          <TypingText message={message} apiBaseUrl={apiBaseUrl} revealedMessageIdsRef={revealedMessageIdsRef} />
+        ) : (
+          renderContentWithLinks(message.content, apiBaseUrl)
+        )}
+      </p>
       <div className="message-meta-row">
         <span className="subtle-text">{dateLabel}</span>
-        {hasPdfAction ? <span className="pdf-pill">PDF</span> : null}
+        {hasPdfAction ? (
+          <>
+            <span
+              className="pdf-pill"
+              role="button"
+              tabIndex={0}
+              style={{ cursor: 'pointer' }}
+              onClick={() => {
+                if (pdfUiRequest) {
+                  void openPdfFromUrl(pdfUiRequest.url)
+                }
+              }}
+              onKeyDown={(event) => {
+                if ((event.key === 'Enter' || event.key === ' ') && pdfUiRequest) {
+                  event.preventDefault()
+                  void openPdfFromUrl(pdfUiRequest.url)
+                }
+              }}
+            >
+              PDF
+            </span>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => {
+                if (pdfUiRequest) {
+                  void openPdfFromUrl(pdfUiRequest.url)
+                }
+              }}
+            >
+              PDF
+            </button>
+          </>
+        ) : null}
       </div>
       {message.role === 'assistant' && importIntent ? (
         <div className="message-actions">

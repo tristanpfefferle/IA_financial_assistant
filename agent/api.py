@@ -1535,6 +1535,16 @@ def agent_chat(
                 user_id=auth_user_id,
                 chat_state=updated_chat_state,
             )
+            if payload.request_greeting:
+                return ChatResponse(
+                    reply=(
+                        "Salut 👋 Je suis ton assistant financier. Je vais te poser 2 infos pour créer ton profil, "
+                        "puis tu pourras importer ton premier relevé pour analyser tes dépenses. "
+                        "Quel est ton prénom et ton nom ?"
+                    ),
+                    tool_result=None,
+                    plan=None,
+                )
             return ChatResponse(
                 reply=(
                     "Avant de continuer, quel est ton prénom et ton nom ? "

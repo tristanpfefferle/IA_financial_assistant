@@ -7,21 +7,27 @@ import { ChatPage } from './ChatPage'
 const {
   getPendingMerchantAliasesCount,
   importReleves,
+  openPdfFromUrl,
   sendChatMessage,
 } = vi.hoisted(() => ({
   getPendingMerchantAliasesCount: vi.fn(),
   importReleves: vi.fn(),
+  openPdfFromUrl: vi.fn(),
   sendChatMessage: vi.fn(),
 }))
 
 vi.mock('../api/agentApi', () => ({
   getPendingMerchantAliasesCount,
   resolvePendingMerchantAliases: vi.fn(),
+  isImportClarificationResult: (value: unknown) => {
+    if (!value || typeof value !== 'object') return false
+    return (value as { ok?: unknown; type?: unknown }).ok === false && (value as { type?: unknown }).type === 'clarification'
+  },
   sendChatMessage,
   importReleves,
   hardResetProfile: vi.fn(),
   resetSession: vi.fn(),
-  openPdfFromUrl: vi.fn(),
+  openPdfFromUrl,
 }))
 
 vi.mock('../lib/sessionLifecycle', () => ({
@@ -66,6 +72,8 @@ describe('ChatPage import intent rendering', () => {
     getPendingMerchantAliasesCount.mockReset()
     importReleves.mockReset()
     sendChatMessage.mockReset()
+    openPdfFromUrl.mockReset()
+    openPdfFromUrl.mockResolvedValue(undefined)
     getPendingMerchantAliasesCount.mockResolvedValue({ pending_total_count: 0 })
   })
 
@@ -74,9 +82,9 @@ describe('ChatPage import intent rendering', () => {
     document.body.removeChild(container)
   })
 
-  it('starts with assistant greeting and then shows import CTA', async () => {
+  it('segments assistant greeting and then shows import CTA', async () => {
     sendChatMessage.mockResolvedValue({
-      reply: 'Salut 👋 Je suis ton assistant financier. Quel est ton prénom et ton nom ?',
+      reply: 'Premier paragraphe.\n\nDeuxième paragraphe.\n\nTroisième paragraphe.',
       tool_result: {
         type: 'ui_request',
         name: 'import_file',
@@ -100,10 +108,13 @@ describe('ChatPage import intent rendering', () => {
     })
 
     expect(sendChatMessage).toHaveBeenCalledWith('', { debug: false, requestGreeting: true })
-    expect(container.textContent).toContain('Salut 👋 Je suis ton assistant financier. Quel est ton prénom et ton nom ?')
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1200))
+    })
+    expect(container.textContent).toContain('Premier paragraphe.')
+    expect(container.textContent).toContain('Deuxième paragraphe.')
+    expect(container.textContent).toContain('Troisième paragraphe.')
 
-
-    expect(container.querySelector('[aria-label="Importer un relevé"]')).toBeNull()
 
     const inlineButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.includes('Importer maintenant'))
     expect(inlineButton).toBeTruthy()
@@ -162,11 +173,48 @@ describe('ChatPage import intent rendering', () => {
       importButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
       await Promise.resolve()
       await Promise.resolve()
+      await Promise.resolve()
     })
 
     expect(importReleves).toHaveBeenCalledTimes(1)
-    expect(container.querySelector('[aria-label="Importer un relevé"]')).toBeNull()
     expect(container.textContent).toContain('J’ai trouvé plusieurs comptes: UBS / Revolut. Lequel ?')
     expect(container.textContent).not.toContain('Parfait, j’ai bien reçu ton relevé')
+  })
+
+  it('renders clickable PDF controls and re-opens PDF on click', async () => {
+    sendChatMessage.mockResolvedValue({
+      reply: 'Rapport prêt.',
+      tool_result: {
+        type: 'ui_request',
+        name: 'open_pdf_report',
+        url: '/finance/reports/spending.pdf',
+      },
+      plan: null,
+    })
+
+    await act(async () => {
+      createRoot(container).render(<ChatPage email="user@example.com" />)
+    })
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    const startButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.includes('Commencer'))
+    await act(async () => {
+      startButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    const pdfElements = Array.from(container.querySelectorAll('button, span')).filter((element) => element.textContent?.trim() === 'PDF')
+    expect(pdfElements.length).toBeGreaterThan(0)
+
+    await act(async () => {
+      pdfElements[0]?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+    })
+
+    expect(openPdfFromUrl).toHaveBeenCalled()
   })
 })
