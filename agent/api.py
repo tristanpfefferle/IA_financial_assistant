@@ -221,8 +221,17 @@ def _build_profile_recap_reply(profile_fields: dict[str, Any]) -> str:
     birth_date_iso = str(profile_fields.get("birth_date", "")).strip()
     return (
         f"Parfait ✅\n\nRécapitulatif de ton profil :\n- Prénom: {first_name}\n- Nom: {last_name}\n- Date de naissance: {birth_date_iso}\n\n"
-        "Tout est correct ? (OUI/NON)"
+        "Tout est correct ?"
     )
+
+
+def _build_quick_reply_yes_no_ui_action() -> dict[str, str]:
+    """Return a UI action payload instructing the client to show yes/no quick replies."""
+
+    return {
+        "type": "ui_action",
+        "action": "quick_reply_yes_no",
+    }
 
 
 def _build_open_pdf_ui_request(url: str) -> dict[str, str]:
@@ -1019,11 +1028,11 @@ def _build_onboarding_reminder(global_state: dict[str, Any] | None) -> str | Non
     if substep == "profile_collect":
         return "(Pour continuer l’onboarding : réponds aux informations demandées.)"
     if substep == "profile_confirm":
-        return "(Pour continuer l’onboarding : réponds OUI/NON pour confirmer le profil.)"
+        return "(Pour continuer l’onboarding : réponds oui ou non pour confirmer le profil.)"
     if substep == "bank_accounts_collect":
         return "(Pour continuer l’onboarding : indique les banques à ajouter.)"
     if substep == "bank_accounts_confirm":
-        return "(Pour continuer l’onboarding : réponds OUI/NON à la question sur les comptes.)"
+        return "(Pour continuer l’onboarding : réponds oui ou non à la question sur les comptes.)"
     if substep == "import_select_account":
         return "(Pour continuer : indique le compte à importer.)"
     if substep == "import_wait_ready":
@@ -1033,7 +1042,7 @@ def _build_onboarding_reminder(global_state: dict[str, Any] | None) -> str | Non
     if substep == "categories_bootstrap":
         return "(Pour continuer l’onboarding : je prépare automatiquement les catégories et les marchands.)"
     if substep == "report_offer":
-        return "(Pour continuer l’onboarding : réponds OUI/NON pour ouvrir le rapport PDF.)"
+        return "(Pour continuer l’onboarding : réponds oui ou non pour ouvrir le rapport PDF.)"
     return None
 
 
@@ -1511,7 +1520,7 @@ def agent_chat(
                 )
                 return ChatResponse(
                     reply=_build_profile_recap_reply(profile_fields),
-                    tool_result=None,
+                    tool_result=_build_quick_reply_yes_no_ui_action(),
                     plan=None,
                 )
 
@@ -1700,9 +1709,9 @@ def agent_chat(
                         return ChatResponse(
                             reply=(
                                 f"Parfait ✅\n\nRécapitulatif de ton profil :\n- Prénom: {first_name}\n- Nom: {last_name}\n- Date de naissance: {birth_date_iso}\n\n"
-                                "Tout est correct ? (OUI/NON)"
+                                "Tout est correct ?"
                             ),
-                            tool_result=None,
+                            tool_result=_build_quick_reply_yes_no_ui_action(),
                             plan=None,
                         )
 
@@ -1827,7 +1836,7 @@ def agent_chat(
                         return ChatResponse(reply="Ok. Quelle est ta date de naissance ?", tool_result=None, plan=None)
                     if correction_pending:
                         return ChatResponse(reply="Réponds par 1 ou 2.", tool_result=None, plan=None)
-                    return ChatResponse(reply="Tout est correct ? (OUI/NON)", tool_result=None, plan=None)
+                    return ChatResponse(reply="Tout est correct ?", tool_result=_build_quick_reply_yes_no_ui_action(), plan=None)
 
             mode = global_state.get("mode")
             onboarding_step = global_state.get("onboarding_step")
@@ -1841,7 +1850,7 @@ def agent_chat(
                     )
                 return ChatResponse(
                     reply="Dis-moi simplement quand ton fichier est prêt (ex: « c’est prêt »).",
-                    tool_result=None,
+                    tool_result=_build_quick_reply_yes_no_ui_action(),
                     plan=None,
                 )
 
@@ -1914,7 +1923,7 @@ def agent_chat(
                 )
                 return ChatResponse(
                     reply="Dis-moi simplement quand ton fichier est prêt (ex: « c’est prêt »).",
-                    tool_result=None,
+                    tool_result=_build_quick_reply_yes_no_ui_action(),
                     plan=None,
                 )
 
@@ -2197,9 +2206,9 @@ def agent_chat(
                     return ChatResponse(
                         reply=(
                             "Import terminé ✅\n\nJe viens de classer tes dépenses et de générer ton rapport mensuel.\n\n"
-                            "Es-tu prêt à voir ton rapport mensuel ? (OUI/NON)"
+                            "Es-tu prêt à voir ton rapport mensuel ?"
                         ),
-                        tool_result=None,
+                        tool_result=_build_quick_reply_yes_no_ui_action(),
                         plan=None,
                     )
 

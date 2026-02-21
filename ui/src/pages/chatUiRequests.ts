@@ -12,6 +12,12 @@ export type OpenImportPanelUiAction = {
   accepted_types?: string[]
 }
 
+
+export type QuickReplyYesNoUiAction = {
+  type: 'ui_action'
+  action: 'quick_reply_yes_no'
+}
+
 export type LegacyImportUiRequest = {
   type: 'ui_request'
   name: 'import_file'
@@ -49,6 +55,23 @@ export function toOpenImportPanelUiAction(value: unknown): OpenImportPanelUiActi
     bank_account_id: typeof record.bank_account_id === 'string' ? record.bank_account_id : undefined,
     bank_account_name: typeof record.bank_account_name === 'string' ? record.bank_account_name : undefined,
     accepted_types: normalizeAcceptedTypes(record.accepted_types),
+  }
+}
+
+
+export function toQuickReplyYesNoUiAction(value: unknown): QuickReplyYesNoUiAction | null {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+
+  const record = value as Record<string, unknown>
+  if (record.type !== 'ui_action' || record.action !== 'quick_reply_yes_no') {
+    return null
+  }
+
+  return {
+    type: 'ui_action',
+    action: 'quick_reply_yes_no',
   }
 }
 

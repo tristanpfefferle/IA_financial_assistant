@@ -97,9 +97,9 @@ describe('MessageList sequential typing cursor', () => {
         vi.advanceTimersByTime(20)
       })
       let contents = getContents()
+      expect(contents).toHaveLength(1)
       expect(contents[0]?.length).toBeGreaterThan(0)
       expect(contents[0]).not.toContain('Premier message très long pour prendre un peu de temps.')
-      expect(contents[1]).toBe('')
 
       for (let index = 0; index < 200; index += 1) {
         await act(async () => {
@@ -113,6 +113,7 @@ describe('MessageList sequential typing cursor', () => {
         vi.advanceTimersByTime(200)
       })
       contents = getContents()
+      expect(contents).toHaveLength(2)
       expect(contents[1]?.length).toBeGreaterThan(0)
     } finally {
       vi.useRealTimers()

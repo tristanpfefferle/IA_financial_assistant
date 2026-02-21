@@ -241,4 +241,111 @@ describe('ChatPage import intent rendering', () => {
 
     expect(openPdfFromUrl).toHaveBeenCalled()
   })
+
+  it('shows quick reply yes/no buttons when assistant asks confirmation via ui_action', async () => {
+    sendChatMessage
+      .mockResolvedValueOnce({
+        reply: 'Confirmation requise',
+        tool_result: { type: 'ui_action', action: 'quick_reply_yes_no' },
+        plan: null,
+      })
+      .mockResolvedValueOnce({
+        reply: 'Merci pour la confirmation.',
+        tool_result: null,
+        plan: null,
+      })
+
+    await act(async () => {
+      createRoot(container).render(<ChatPage email="user@example.com" />)
+    })
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    const startButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.includes('Commencer'))
+    await act(async () => {
+      startButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    const yesButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.trim() === '✅')
+    const noButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.trim() === '❌')
+    expect(yesButton).toBeTruthy()
+    expect(noButton).toBeTruthy()
+
+    await act(async () => {
+      yesButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(sendChatMessage).toHaveBeenNthCalledWith(2, 'oui', { debug: false })
+    expect(container.textContent).toContain('✅')
+  })
+
+  it('adds a visual user message after file import starts', async () => {
+    sendChatMessage
+      .mockResolvedValueOnce({
+        reply: 'Importe ton fichier.',
+        tool_result: {
+          type: 'ui_request',
+          name: 'import_file',
+          accepted_types: ['csv'],
+        },
+        plan: null,
+      })
+      .mockResolvedValueOnce({
+        reply: 'Analyse en cours.',
+        tool_result: null,
+        plan: null,
+      })
+
+    importReleves.mockResolvedValue({
+      ok: true,
+      imported_count: 12,
+      transactions_imported_count: 12,
+      bank_account_name: 'UBS',
+      date_range: null,
+    })
+
+    await act(async () => {
+      createRoot(container).render(<ChatPage email="user@example.com" />)
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    const startButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.includes('Commencer'))
+    await act(async () => {
+      startButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    const inlineButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.includes('Importer maintenant'))
+    await act(async () => {
+      inlineButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    const fileInput = container.querySelector('#import-file-input') as HTMLInputElement
+    const file = new File(['date,montant\n2026-01-01,10'], 'transactions.csv', { type: 'text/csv' })
+    await act(async () => {
+      Object.defineProperty(fileInput, 'files', { value: [file] })
+      fileInput.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+
+    const dialog = container.querySelector('[aria-label="Importer un relevé"]') as HTMLElement
+    const importButton = Array.from(dialog.querySelectorAll('button')).find((btn) => btn.textContent?.trim() === 'Importer')
+    await act(async () => {
+      importButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(container.textContent).toContain('Fichier "transactions.csv" envoyé.')
+  })
+
 })
