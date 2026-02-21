@@ -50,6 +50,13 @@ export type RelevesImportResult = {
   bank_account_name?: string | null
 }
 
+export type ImportClarificationResult = {
+  ok: false
+  type: 'clarification'
+  message: string
+  clarification_type?: string
+}
+
 export type ImportFilePayload = {
   filename: string
   content_base64: string
@@ -172,7 +179,7 @@ export async function listBankAccounts(): Promise<BankAccountsListResult> {
   return (await response.json()) as BankAccountsListResult
 }
 
-export async function importReleves(payload: ImportRequestPayload): Promise<RelevesImportResult> {
+export async function importReleves(payload: ImportRequestPayload): Promise<RelevesImportResult | ImportClarificationResult> {
   const response = await fetch(`${getBaseUrl()}/finance/releves/import`, {
     method: 'POST',
     headers: await buildAuthHeaders(),
@@ -184,7 +191,12 @@ export async function importReleves(payload: ImportRequestPayload): Promise<Rele
     throw new Error(`Erreur API import (${response.status}): ${detail}`)
   }
 
-  return (await response.json()) as RelevesImportResult
+  const result = (await response.json()) as RelevesImportResult | ImportClarificationResult
+  if (result.ok === false && result.type === 'clarification') {
+    return result
+  }
+
+  return result
 }
 
 
