@@ -264,7 +264,7 @@ export function ChatPage({ email }: ChatPageProps) {
     }
     return null
   }, [messages])
-  const showQuickReplyYesNo = useMemo(() => toQuickReplyYesNoUiAction(latestAssistantMessage?.toolResult) !== null, [latestAssistantMessage])
+  const quickReplyAction = useMemo(() => toQuickReplyYesNoUiAction(latestAssistantMessage?.toolResult), [latestAssistantMessage])
   const hasUnauthorizedError = useMemo(() => error?.includes('(401)') ?? false, [error])
   const statusBadge = debugMode ? 'Debug' : isImportRequired ? 'Onboarding' : 'Prêt'
 
@@ -644,14 +644,14 @@ export function ChatPage({ email }: ChatPageProps) {
         />
 
         <QuickReplyBar
-          isVisible={showQuickReplyYesNo}
+          quickReplyAction={quickReplyAction}
           isLoading={isLoading}
           disabled={isImportRequired}
-          onYes={() => {
-            void submitQuickReply('✅', 'oui')
-          }}
-          onNo={() => {
-            void submitQuickReply('❌', 'non')
+          onSubmitQuickReply={(option) => {
+            const normalizedValue = option.value.trim().toLowerCase()
+            const displayMessage = option.label.trim() === '❌' || normalizedValue === 'non' ? '❌' : '✅'
+            const apiMessage: 'oui' | 'non' = normalizedValue === 'non' ? 'non' : 'oui'
+            void submitQuickReply(displayMessage, apiMessage)
           }}
         />
 
@@ -680,14 +680,17 @@ export function ChatPage({ email }: ChatPageProps) {
         onAutoOpenHandled={() => setAutoOpenImportPicker(false)}
         onClose={() => setIsImportDialogOpen(false)}
         pendingImportIntent={pendingImportIntent}
-        onImportSuccess={(resultMessage, debugPayload, sourceMessageId, selectedFilename) => {
+        onImportSuccess={(resultMessage, debugPayload, sourceMessageId, selectedFilenames) => {
           setMessages((previous) => {
             const withUserUploadMessage = [
               ...previous,
               {
                 id: crypto.randomUUID(),
                 role: 'user' as const,
-                content: `Fichier "${selectedFilename}" envoyé.`,
+                content:
+                  selectedFilenames.length > 1
+                    ? `Fichiers envoyés: ${selectedFilenames.map((name) => `"${name}"`).join(', ')}`
+                    : `Fichier "${selectedFilenames[0] ?? 'inconnu'}" envoyé.`,
                 createdAt: Date.now(),
               },
             ]
@@ -1086,30 +1089,34 @@ function MessageBubble({
 
 
 function QuickReplyBar({
-  isVisible,
+  quickReplyAction,
   isLoading,
   disabled,
-  onYes,
-  onNo,
+  onSubmitQuickReply,
 }: {
-  isVisible: boolean
+  quickReplyAction: ReturnType<typeof toQuickReplyYesNoUiAction>
   isLoading: boolean
   disabled: boolean
-  onYes: () => void
-  onNo: () => void
+  onSubmitQuickReply: (option: { id: string; label: string; value: string }) => void
 }) {
-  if (!isVisible) {
+  if (!quickReplyAction) {
     return null
   }
 
   return (
     <div className="message-actions" aria-label="Quick reply yes no">
-      <button type="button" onClick={onYes} disabled={isLoading || disabled}>
-        ✅
-      </button>
-      <button type="button" className="secondary-button" onClick={onNo} disabled={isLoading || disabled}>
-        ❌
-      </button>
+      {quickReplyAction.options.map((option) => (
+        <button
+          key={option.id}
+          type="button"
+          className={option.value.toLowerCase() === 'non' ? 'secondary-button' : undefined}
+          onClick={() => onSubmitQuickReply(option)}
+          disabled={isLoading || disabled}
+          aria-label={`Quick reply ${option.value}`}
+        >
+          {option.label}
+        </button>
+      ))}
     </div>
   )
 }
@@ -1168,7 +1175,7 @@ type ImportDialogProps = {
   onAutoOpenHandled: () => void
   onClose: () => void
   pendingImportIntent: ImportIntent | null
-  onImportSuccess: (resultMessage: string, debugPayload: unknown, sourceMessageId: string | undefined, selectedFilename: string) => void
+  onImportSuccess: (resultMessage: string, debugPayload: unknown, sourceMessageId: string | undefined, selectedFilenames: string[]) => void
   onImportClarification: (assistantMessage: string) => void
   onImportError: (messageText: string) => void
 }
@@ -1246,7 +1253,7 @@ function ImportDialog({
         messageId: pendingImportIntent?.messageId ?? crypto.randomUUID(),
         acceptedTypes,
         source: pendingImportIntent?.source ?? 'ui_request',
-      }), result, pendingImportIntent?.messageId, selectedFile.name)
+      }), result, pendingImportIntent?.messageId, [selectedFile.name])
       setSelectedFile(null)
     } catch (caughtError) {
       onImportError(caughtError instanceof Error ? caughtError.message : 'Erreur inconnue pendant l’import')

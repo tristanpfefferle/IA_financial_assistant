@@ -165,7 +165,7 @@ def test_bootstrap_profile_complete_routes_to_profile_confirm(monkeypatch) -> No
 
     assert response.status_code == 200
     assert "Tout est correct ?" in response.json()["reply"]
-    assert response.json()["tool_result"] == {"type": "ui_action", "action": "quick_reply_yes_no"}
+    assert response.json()["tool_result"] == {"type": "ui_action", "action": "quick_replies", "options": [{"id": "yes", "label": "✅", "value": "oui"}, {"id": "no", "label": "❌", "value": "non"}]}
     assert loop.called is False
 
 
@@ -399,7 +399,7 @@ def test_categories_bootstrap_creates_categories_classifies_merchants_and_skips_
     assert repo.merchants[0]["category"] == "Alimentation"
     assert repo.merchants[1]["category"] == "Autres"
     assert repo.merchants[2]["category"] == ""
-    assert payload["tool_result"] == {"type": "ui_action", "action": "quick_reply_yes_no"}
+    assert payload["tool_result"] == {"type": "ui_action", "action": "quick_replies", "options": [{"id": "yes", "label": "✅", "value": "oui"}, {"id": "no", "label": "❌", "value": "non"}]}
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
     assert persisted["mode"] == "onboarding"
     assert persisted["onboarding_step"] == "report"
@@ -434,7 +434,7 @@ def test_import_classification_direct_to_pdf_when_already_classified(monkeypatch
     assert response.status_code == 200
     payload = response.json()
     assert "Import terminé ✅" in payload["reply"]
-    assert payload["tool_result"] == {"type": "ui_action", "action": "quick_reply_yes_no"}
+    assert payload["tool_result"] == {"type": "ui_action", "action": "quick_replies", "options": [{"id": "yes", "label": "✅", "value": "oui"}, {"id": "no", "label": "❌", "value": "non"}]}
 
 
 
@@ -1569,7 +1569,7 @@ def test_profile_collect_name_then_birth_date_then_confirmation_yes_goes_to_bank
     assert second.status_code == 200
     assert "récapitulatif de ton profil" in second.json()["reply"].lower()
     assert "tout est correct ?" in second.json()["reply"].lower()
-    assert second.json()["tool_result"] == {"type": "ui_action", "action": "quick_reply_yes_no"}
+    assert second.json()["tool_result"] == {"type": "ui_action", "action": "quick_replies", "options": [{"id": "yes", "label": "✅", "value": "oui"}, {"id": "no", "label": "❌", "value": "non"}]}
     assert third.status_code == 200
     assert "maintenant, on ajoute ta banque" in third.json()["reply"].lower()
 

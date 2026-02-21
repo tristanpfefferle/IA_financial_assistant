@@ -225,12 +225,16 @@ def _build_profile_recap_reply(profile_fields: dict[str, Any]) -> str:
     )
 
 
-def _build_quick_reply_yes_no_ui_action() -> dict[str, str]:
-    """Return a UI action payload instructing the client to show yes/no quick replies."""
+def _build_quick_reply_yes_no_ui_action() -> dict[str, Any]:
+    """Return a UI payload instructing the client to show yes/no quick replies."""
 
     return {
         "type": "ui_action",
-        "action": "quick_reply_yes_no",
+        "action": "quick_replies",
+        "options": [
+            {"id": "yes", "label": "✅", "value": "oui"},
+            {"id": "no", "label": "❌", "value": "non"},
+        ],
     }
 
 
@@ -2274,7 +2278,7 @@ def agent_chat(
                         tool_result=None,
                         plan=None,
                     )
-                return ChatResponse(reply="Réponds OUI ou NON.", tool_result=None, plan=None)
+                return ChatResponse(reply="Réponds par oui ou non.", tool_result=None, plan=None)
 
         pending_clarification = state_dict.get("pending_clarification") if isinstance(state_dict, dict) else None
         if (
@@ -2709,6 +2713,28 @@ def _pick_first_non_empty_string(values: list[object]) -> str | None:
     return None
 
 
+def _clean_merchant_display_name(raw_value: str) -> str:
+    """Normalize merchant label for compact PDF display."""
+
+    first_segment = raw_value.split(";", 1)[0].strip()
+    if not first_segment:
+        return "Inconnu"
+    if len(first_segment) <= 40:
+        return first_segment
+    return first_segment[:39].rstrip() + "…"
+
+
+def _normalize_report_category(value: str | None) -> str:
+    """Normalize report category label with fallback to Autres."""
+
+    if isinstance(value, str) and value.strip():
+        cleaned = value.strip()
+        if cleaned.casefold() in {"sans catégorie", "sans categorie"}:
+            return "Autres"
+        return cleaned
+    return "Autres"
+
+
 def _fetch_spending_transactions(
     *,
     profile_id: UUID,
@@ -2753,20 +2779,25 @@ def _fetch_spending_transactions(
         date_value = item.get("date")
         date_label = str(date_value) if date_value is not None else ""
 
-        merchant = _pick_first_non_empty_string(
+        merchant_raw = _pick_first_non_empty_string(
             [
+                item.get("merchant_display_name"),
                 item.get("merchant"),
                 item.get("merchant_name"),
                 item.get("payee"),
                 item.get("libelle"),
             ]
         ) or "Inconnu"
-        category = _pick_first_non_empty_string(
-            [
-                item.get("categorie"),
-                item.get("category_name"),
-            ]
-        ) or "Sans catégorie"
+        merchant = _clean_merchant_display_name(merchant_raw)
+        category = _normalize_report_category(
+            _pick_first_non_empty_string(
+                [
+                    item.get("categorie"),
+                    item.get("category_name"),
+                    item.get("category_label"),
+                ]
+            )
+        )
 
         rows.append(
             SpendingTransactionRow(
@@ -2777,7 +2808,7 @@ def _fetch_spending_transactions(
             )
         )
 
-    rows.sort(key=lambda row: row.date, reverse=True)
+    rows.sort(key=lambda row: row.date)
 
     total = payload_dict.get("total") if isinstance(payload_dict, dict) else None
     truncated = isinstance(total, int) and total > len(rows)
@@ -2851,7 +2882,7 @@ def get_spending_report_pdf(
                 continue
             if amount == Decimal("0"):
                 continue
-            name = category_name if isinstance(category_name, str) and category_name.strip() else "Sans catégorie"
+            name = _normalize_report_category(category_name if isinstance(category_name, str) else None)
             category_rows.append(SpendingCategoryRow(name=name, amount=amount))
 
     transactions, transactions_truncated, transactions_unavailable = _fetch_spending_transactions(
@@ -2861,7 +2892,6 @@ def get_spending_report_pdf(
 
     total = abs(Decimal(str(sum_payload.get("total") or "0")))
     count = int(sum_payload.get("count") or 0)
-    average = abs(Decimal(str(sum_payload.get("average") or "0")))
     period_label = f"{period_start.isoformat()} → {period_end.isoformat()}"
     filename_period = period_start.strftime("%Y-%m") if period_start.day == 1 else f"{period_start.isoformat()}_{period_end.isoformat()}"
 
@@ -2872,7 +2902,6 @@ def get_spending_report_pdf(
             end_date=period_end.isoformat(),
             total=total,
             count=count,
-            average=average,
             currency=currency,
             categories=category_rows,
             transactions=transactions,

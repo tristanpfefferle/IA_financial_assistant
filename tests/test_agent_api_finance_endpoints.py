@@ -948,3 +948,77 @@ def test_spending_report_pdf_survives_transactions_unavailable(monkeypatch) -> N
     assert response.headers["content-type"].startswith("application/pdf")
     assert response.content.startswith(b"%PDF")
     assert captured["transactions_unavailable"] is True
+
+def test_spending_report_pdf_normalizes_categories_and_transaction_rows(monkeypatch) -> None:
+    _mock_authenticated(monkeypatch)
+
+    class _Repo:
+        def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None):
+            assert auth_user_id == AUTH_USER_ID
+            assert email == "user@example.com"
+            return PROFILE_ID
+
+        def get_chat_state(self, *, profile_id: UUID, user_id: UUID):
+            assert profile_id == PROFILE_ID
+            assert user_id == AUTH_USER_ID
+            return {"state": {"last_query": {"month": "2026-01"}}}
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: _Repo())
+
+    captured: dict[str, object] = {}
+
+    def _fake_generate(data):
+        captured["categories"] = [(row.name, str(row.amount)) for row in data.categories]
+        captured["transactions"] = [(row.date, row.merchant, row.category) for row in data.transactions]
+        return b"%PDF-1.4\n%fake\n"
+
+    monkeypatch.setattr(agent_api, "generate_spending_report_pdf", _fake_generate)
+
+    class _Router:
+        def call(self, tool_name: str, payload: dict, *, profile_id: UUID | None = None):
+            assert profile_id == PROFILE_ID
+            if tool_name == "finance_releves_sum":
+                return {"total": "-120", "count": 2, "average": "-60", "currency": "CHF"}
+            if tool_name == "finance_releves_aggregate" and payload.get("group_by") == "categorie":
+                return {
+                    "group_by": "categorie",
+                    "currency": "CHF",
+                    "groups": {
+                        "Sans catégorie": {"total": "-10", "count": 1},
+                        "Autres": {"total": "-5", "count": 1},
+                        "Alimentation": {"total": "-105", "count": 1},
+                    },
+                }
+            if tool_name == "finance_releves_search":
+                return {
+                    "items": [
+                        {
+                            "date": "2026-01-11",
+                            "montant": "-10",
+                            "libelle": "Marchand Long; Paiement UBS TWINT Motif 123",
+                            "category_name": "Alimentation",
+                        },
+                        {
+                            "date": "2026-01-01",
+                            "montant": "-5",
+                            "merchant": "Aucun",
+                            "categorie": "",
+                        },
+                    ],
+                    "limit": 500,
+                    "offset": 0,
+                    "total": 2,
+                }
+            raise AssertionError(tool_name)
+
+    monkeypatch.setattr(agent_api, "get_tool_router", lambda: _Router())
+
+    response = client.get("/finance/reports/spending.pdf?month=2026-01", headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert captured["categories"] == [("Autres", "10"), ("Autres", "5"), ("Alimentation", "105")]
+    transactions = captured["transactions"]
+    assert transactions == [
+        ("2026-01-01", "Aucun", "Autres"),
+        ("2026-01-11", "Marchand Long", "Alimentation"),
+    ]
