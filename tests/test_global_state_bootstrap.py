@@ -1535,8 +1535,9 @@ def test_onboarding_request_greeting_returns_intro_without_user_message(monkeypa
 
     assert response.status_code == 200
     assert "salut" in response.json()["reply"].lower()
-    assert "profil" in response.json()["reply"].lower()
-    assert "import" in response.json()["reply"].lower()
+    assert "assistant financier" in response.json()["reply"].lower()
+    assert "prénom" in response.json()["reply"].lower()
+    assert "avant de continuer" not in response.json()["reply"].lower()
     assert loop.called is False
 
 
