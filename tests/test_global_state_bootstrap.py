@@ -395,9 +395,9 @@ def test_categories_bootstrap_creates_categories_classifies_merchants_and_skips_
 
     assert response.status_code == 200
     payload = response.json()
-    assert "Je classe automatiquement les marchands" in payload["reply"]
     assert "Tout est déjà classé" in payload["reply"]
     assert "Ton rapport est prêt" in payload["reply"]
+    assert "Je continue" not in payload["reply"]
     assert len(repo.profile_categories) == 10
     assert repo.merchants[0]["category"] == "Alimentation"
     assert repo.merchants[1]["category"] == "Autres"
@@ -438,7 +438,10 @@ def test_import_classification_direct_to_pdf_when_already_classified(monkeypatch
     assert response.status_code == 200
     payload = response.json()
     assert "Tout est déjà classé" in payload["reply"]
+    assert "Je continue" not in payload["reply"]
     assert payload["tool_result"]["name"] == "open_pdf_report"
+
+
 
 
 def test_classify_merchants_without_category_invalid_ids_not_counted_as_remaining() -> None:

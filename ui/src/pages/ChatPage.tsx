@@ -309,14 +309,7 @@ export function ChatPage({ email }: ChatPageProps) {
       return
     }
 
-    const isNewIntent = previousIntentMessageIdRef.current !== pendingImportIntent.messageId
-    if (!isNewIntent) {
-      return
-    }
-
     previousIntentMessageIdRef.current = pendingImportIntent.messageId
-    setIsImportDialogOpen(true)
-    setAutoOpenImportPicker(true)
   }, [pendingImportIntent])
 
   async function handleLogout() {
@@ -453,6 +446,37 @@ export function ChatPage({ email }: ChatPageProps) {
           isLoading={isLoading}
           debugMode={debugMode}
           messagesRef={messagesRef}
+          onImportNow={(intent) => {
+            setIsImportDialogOpen(true)
+            setAutoOpenImportPicker(true)
+            if (intent.messageId !== pendingImportIntent?.messageId) {
+              setMessages((previous) =>
+                previous.map((item) =>
+                  item.id === intent.messageId
+                    ? {
+                        ...item,
+                        toolResult:
+                          intent.source === 'ui_action'
+                            ? {
+                                type: 'ui_action',
+                                action: 'open_import_panel',
+                                bank_account_id: intent.bankAccountId,
+                                bank_account_name: intent.bankAccountName,
+                                accepted_types: intent.acceptedTypes,
+                              }
+                            : {
+                                type: 'ui_request',
+                                name: 'import_file',
+                                bank_account_id: intent.bankAccountId,
+                                bank_account_name: intent.bankAccountName,
+                                accepted_types: intent.acceptedTypes,
+                              },
+                      }
+                    : item,
+                ),
+              )
+            }
+          }}
           onScroll={(event) => {
             const element = event.currentTarget
             const threshold = 48
@@ -633,16 +657,17 @@ type MessageListProps = {
   isLoading: boolean
   debugMode: boolean
   messagesRef: RefObject<HTMLDivElement | null>
+  onImportNow: (intent: ImportIntent) => void
   onScroll: (event: UIEvent<HTMLDivElement>) => void
   onStartConversation: () => void
 }
 
-function MessageList({ messages, isLoading, debugMode, messagesRef, onScroll, onStartConversation }: MessageListProps) {
+function MessageList({ messages, isLoading, debugMode, messagesRef, onImportNow, onScroll, onStartConversation }: MessageListProps) {
   return (
     <div className="messages card" aria-live="polite" ref={messagesRef} onScroll={onScroll}>
       {messages.length === 0 ? <EmptyState onStartConversation={onStartConversation} /> : null}
       {messages.map((chatMessage) => (
-        <MessageBubble key={chatMessage.id} message={chatMessage} debugMode={debugMode} />
+        <MessageBubble key={chatMessage.id} message={chatMessage} debugMode={debugMode} onImportNow={onImportNow} />
       ))}
       {isLoading ? (
         <div className="loading-state">
@@ -668,9 +693,28 @@ function EmptyState({ onStartConversation }: { onStartConversation: () => void }
   )
 }
 
-function MessageBubble({ message, debugMode }: { message: ChatMessage; debugMode: boolean }) {
+function MessageBubble({ message, debugMode, onImportNow }: { message: ChatMessage; debugMode: boolean; onImportNow: (intent: ImportIntent) => void }) {
   const dateLabel = new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   const hasPdfAction = toPdfUiRequest(message.toolResult) !== null
+  const importUiAction = toOpenImportPanelUiAction(message.toolResult)
+  const importUiRequest = toLegacyImportUiRequest(message.toolResult)
+  const importIntent: ImportIntent | null = importUiAction
+    ? {
+        messageId: message.id,
+        bankAccountId: importUiAction.bank_account_id,
+        bankAccountName: importUiAction.bank_account_name,
+        acceptedTypes: importUiAction.accepted_types ?? ['csv', 'pdf'],
+        source: 'ui_action',
+      }
+    : importUiRequest
+      ? {
+          messageId: message.id,
+          bankAccountId: importUiRequest.bank_account_id,
+          bankAccountName: importUiRequest.bank_account_name,
+          acceptedTypes: importUiRequest.accepted_types ?? ['csv', 'pdf'],
+          source: 'ui_request',
+        }
+      : null
 
   return (
     <article className={`message message-${message.role}`}>
@@ -680,6 +724,13 @@ function MessageBubble({ message, debugMode }: { message: ChatMessage; debugMode
         <span className="subtle-text">{dateLabel}</span>
         {hasPdfAction ? <span className="pdf-pill">PDF</span> : null}
       </div>
+      {message.role === 'assistant' && importIntent ? (
+        <div className="message-actions">
+          <button type="button" className="secondary-button" onClick={() => onImportNow(importIntent)}>
+            Importer maintenant
+          </button>
+        </div>
+      ) : null}
       {debugMode && message.role === 'assistant' ? <DebugPanel payload={message.debugPayload ?? null} /> : null}
     </article>
   )

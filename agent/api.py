@@ -2021,18 +2021,14 @@ def agent_chat(
                     total_merchants = len(merchants_without_category)
                     if total_merchants == 0 or remaining_count == 0:
                         reply = (
-                            "Je classe automatiquement les marchands…\n\n"
                             "Tout est déjà classé 👍\n\n"
-                            "Je te prépare ton rapport.\n\n"
                             "Ton rapport est prêt.\n"
                             f"[Ouvrir le PDF]({report_url})"
                         )
                     else:
                         reply = (
-                            "Je classe automatiquement les marchands…\n\n"
-                            f"{classified_count} marchands classés automatiquement.\n\n"
-                            f"Il reste {remaining_count} marchands à analyser plus finement.\n"
-                            "Je continue.\n\n"
+                            f"J’ai classé {classified_count} marchands automatiquement.\n"
+                            f"Il en reste {remaining_count} que je laisserai en « Autres » pour l’instant.\n\n"
                             "Ton rapport est prêt.\n"
                             f"[Ouvrir le PDF]({report_url})"
                         )
