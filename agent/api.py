@@ -1010,23 +1010,28 @@ def _detect_bank_account_for_import(
     """Detect target bank account from CSV structure first, then fallback to filename."""
 
     normalized_filename = _normalize_text(filename)
-    preview_text = (file_bytes or b"")[:8192].decode("utf-8", errors="ignore") if file_bytes else ""
+    preview_bytes = (file_bytes or b"")[:8192]
+    preview_text = preview_bytes.decode("utf-8", errors="ignore") if preview_bytes else ""
     is_csv_filename = normalized_filename.endswith(".csv")
 
     has_csv_like_header = False
-    if not is_csv_filename and preview_text:
+    if not is_csv_filename and b"\x00" in preview_bytes:
+        has_csv_like_header = False
+    elif not is_csv_filename and preview_text:
         for line in preview_text.splitlines()[:5]:
             stripped_line = line.strip()
             if not stripped_line:
                 continue
             if "," in stripped_line:
                 columns = [col.strip() for col in stripped_line.split(",")]
-                if len(columns) >= 3 and all(columns):
+                letter_columns = sum(1 for col in columns if col and re.search(r"[A-Za-z]", col))
+                if len(columns) >= 3 and all(columns) and letter_columns >= 2:
                     has_csv_like_header = True
                     break
             if ";" in stripped_line:
                 columns = [col.strip() for col in stripped_line.split(";")]
-                if len(columns) >= 3 and all(columns):
+                letter_columns = sum(1 for col in columns if col and re.search(r"[A-Za-z]", col))
+                if len(columns) >= 3 and all(columns) and letter_columns >= 2:
                     has_csv_like_header = True
                     break
 
