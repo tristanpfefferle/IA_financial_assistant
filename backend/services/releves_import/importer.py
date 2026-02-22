@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import base64
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
+from backend.repositories.profiles_repository import ProfilesRepository
 from backend.repositories.releves_repository import RelevesRepository
+from backend.services.classification.decision_engine import decide_releve_classification
 from backend.services.releves_import.classification import classify_and_categorize_transaction
 from backend.services.releves_import.dedup import compare_rows
 from backend.services.releves_import.routing import route_bank_parser
@@ -26,6 +28,24 @@ from shared.models import (
 @dataclass(slots=True)
 class RelevesImportService:
     releves_repository: RelevesRepository
+    profiles_repository: ProfilesRepository | None = None
+
+    def _resolve_category_label(
+        self,
+        *,
+        profile_id: UUID,
+        category_id: UUID | None,
+        fallback_label: str,
+    ) -> str:
+        if category_id is None or self.profiles_repository is None:
+            return fallback_label
+        categories = self.profiles_repository.list_profile_categories(profile_id=profile_id)
+        for row in categories:
+            if str(row.get("id") or "") == str(category_id):
+                name = row.get("name")
+                if isinstance(name, str) and name.strip():
+                    return name.strip()
+        return fallback_label
 
     @staticmethod
     def _extract_external_id(parsed_row: dict[str, object]) -> str | None:
@@ -93,6 +113,34 @@ class RelevesImportService:
         meta_dict["category_status"] = classification.category_status
         meta_dict["tx_kind"] = classification.tx_kind
 
+        decision = None
+        if self.profiles_repository is not None:
+            decision = decide_releve_classification(
+                profile_id=profile_id,
+                bank_account_id=bank_account_id,
+                libelle=str(parsed_row.get("libelle") or "") or None,
+                payee=str(parsed_row.get("payee") or "") or None,
+                montant=amount,
+                devise=str(parsed_row.get("devise") or "CHF"),
+                date=parsed_date,
+                metadata=meta_dict,
+                repositories=self.profiles_repository,
+            )
+            meta_dict["classification_source"] = decision.source.value
+            meta_dict["classification_rationale"] = decision.rationale
+            meta_dict["classify_confidence"] = decision.confidence
+            meta_dict["classify_at"] = datetime.now(timezone.utc).isoformat()
+
+        category_label = (
+            self._resolve_category_label(
+                profile_id=profile_id,
+                category_id=(decision.category_id if decision else None),
+                fallback_label=classification.category_label,
+            )
+            if decision is not None
+            else classification.category_label
+        )
+
         return {
             "profile_id": profile_id,
             "bank_account_id": bank_account_id,
@@ -101,7 +149,9 @@ class RelevesImportService:
             "devise": str(parsed_row.get("devise") or "CHF"),
             "libelle": parsed_row.get("libelle"),
             "payee": parsed_row.get("payee"),
-            "categorie": parsed_row.get("categorie") or classification.category_label,
+            "categorie": parsed_row.get("categorie") or category_label,
+            "merchant_entity_id": decision.merchant_entity_id if decision else None,
+            "category_id": decision.category_id if decision else None,
             "meta": meta_dict,
             "contenu_brut": raw_dict,
             "source": source,

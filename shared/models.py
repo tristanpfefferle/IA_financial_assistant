@@ -253,6 +253,28 @@ class RelevesDirection(str, Enum):
     CREDIT_ONLY = "CREDIT_ONLY"
 
 
+class ClassificationSource(str, Enum):
+    """Origin of a deterministic transaction classification decision."""
+
+    OVERRIDE = "override"
+    RULE = "rule"
+    ENTITY = "entity"
+    SYSTEM = "system"
+    FALLBACK = "fallback"
+
+
+class ClassificationDecision(BaseModel):
+    """Resolved deterministic classification for an imported bank statement row."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    merchant_entity_id: UUID | None = None
+    category_id: UUID | None = None
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    source: ClassificationSource
+    rationale: str
+
+
 class ReleveBancaire(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
