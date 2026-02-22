@@ -71,8 +71,8 @@ class InMemoryTransactionsRepository:
                 for row in rows
                 if filters.date_range.start_date <= row.date <= filters.date_range.end_date
             ]
-        if filters.search:
-            needle = filters.search.lower()
+        if filters.merchant:
+            needle = filters.merchant.lower()
             rows = [
                 row
                 for row in rows
@@ -115,8 +115,8 @@ class SupabaseTransactionsRepository:
             query.append(("date", f"gte.{filters.date_range.start_date}"))
             query.append(("date", f"lte.{filters.date_range.end_date}"))
 
-        if filters.search:
-            query.append(("or", f"(libelle.ilike.*{filters.search}*,payee.ilike.*{filters.search}*)"))
+        if filters.merchant:
+            query.append(("or", f"(libelle.ilike.*{filters.merchant}*,payee.ilike.*{filters.merchant}*)"))
 
         if filters.bank_account_id is not None:
             query.append(("bank_account_id", f"eq.{filters.bank_account_id}"))
@@ -133,6 +133,20 @@ class SupabaseTransactionsRepository:
             query.append(("montant", "gt.0"))
 
         return query
+
+    @staticmethod
+    def _require_uuid(row: dict[str, object], field: str) -> UUID:
+        raw_value = row.get(field)
+        if raw_value is None:
+            raise ValueError(f"Missing required field '{field}' in releves_bancaires row")
+        return UUID(str(raw_value))
+
+    @staticmethod
+    def _optional_uuid(row: dict[str, object], field: str) -> UUID | None:
+        raw_value = row.get(field)
+        if raw_value is None:
+            return None
+        return UUID(str(raw_value))
 
     @staticmethod
     def _parse_row(row: dict[str, object]) -> TransactionRow:
@@ -153,15 +167,15 @@ class SupabaseTransactionsRepository:
             created_at_value = None
 
         return TransactionRow(
-            id=row.get("id"),
-            profile_id=row.get("profile_id"),
-            bank_account_id=row.get("bank_account_id"),
+            id=SupabaseTransactionsRepository._require_uuid(row, "id"),
+            profile_id=SupabaseTransactionsRepository._require_uuid(row, "profile_id"),
+            bank_account_id=SupabaseTransactionsRepository._optional_uuid(row, "bank_account_id"),
             date=parsed_date,
             libelle=row.get("libelle"),
             montant=Decimal(str(row.get("montant"))),
             devise=str(row.get("devise") or "CHF"),
-            merchant_entity_id=row.get("merchant_entity_id"),
-            category_id=row.get("category_id"),
+            merchant_entity_id=SupabaseTransactionsRepository._optional_uuid(row, "merchant_entity_id"),
+            category_id=SupabaseTransactionsRepository._optional_uuid(row, "category_id"),
             payee=row.get("payee"),
             moyen=row.get("moyen"),
             created_at=created_at_value,

@@ -509,12 +509,7 @@ class ProfileDataResult(BaseModel):
 
 # Deprecated aliases kept for backwards compatibility.
 TransactionSumDirection = RelevesDirection
-
-
-class TransactionFilters(RelevesFilters):
-    """Backward-compatible transactions filters (logical view over releves_bancaires)."""
-
-    search: str | None = None
+TransactionFilters = RelevesFilters
 
 
 TransactionSearchResult = RelevesSearchResult

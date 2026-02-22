@@ -27,7 +27,7 @@ def test_sum_transactions_applies_date_range_and_search_filters() -> None:
     filters = TransactionFilters(
         profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
         date_range=DateRange(start_date=date(2025, 1, 1), end_date=date(2025, 1, 31)),
-        search="coop",
+        merchant="coop",
         direction=RelevesDirection.DEBIT_ONLY,
     )
 
@@ -77,3 +77,18 @@ def test_search_transactions_filters_bank_account_and_category() -> None:
     query = client.calls[0]["query"]
     assert ("bank_account_id", "eq.bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb") in query
     assert ("category_id", "eq.cccccccc-cccc-cccc-cccc-cccccccccccc") in query
+
+
+def test_parse_row_raises_clear_error_when_required_uuid_missing() -> None:
+    row = {
+        "profile_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        "date": "2025-01-10",
+        "montant": "-10.00",
+    }
+
+    try:
+        SupabaseTransactionsRepository._parse_row(row)
+    except ValueError as exc:
+        assert "Missing required field 'id'" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError when id is missing")

@@ -37,6 +37,7 @@ from shared.models import (
     RelevesFilters,
     RelevesImportRequest,
     RelevesImportResult,
+    ReleveBancaire,
     RelevesSearchResult,
     RelevesSumResult,
     ToolError,
@@ -104,25 +105,25 @@ class BackendToolService:
             filters = self._apply_category_filter_resolution(filters)
             rows = self.transactions_repository.search_transactions(filters)
             items = [
-                {
-                    "id": row.id,
-                    "profile_id": row.profile_id,
-                    "date": row.date,
-                    "libelle": row.libelle,
-                    "montant": row.montant,
-                    "devise": row.devise,
-                    "category_id": row.category_id,
-                    "payee": row.payee,
-                    "merchant_id": row.merchant_entity_id,
-                    "bank_account_id": row.bank_account_id,
-                }
+                ReleveBancaire(
+                    id=row.id,
+                    profile_id=row.profile_id,
+                    date=row.date,
+                    libelle=row.libelle,
+                    montant=row.montant,
+                    devise=row.devise,
+                    category_id=row.category_id,
+                    payee=row.payee,
+                    merchant_id=row.merchant_entity_id,
+                    bank_account_id=row.bank_account_id,
+                )
                 for row in rows
             ]
             return TransactionSearchResult(
                 items=items,
                 limit=filters.limit,
                 offset=filters.offset,
-                total=None,
+                total=len(items),
             )
         except Exception as exc:
             return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))
