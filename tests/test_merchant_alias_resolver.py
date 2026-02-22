@@ -245,6 +245,7 @@ def test_truncation_observed_alias_compact_in_prompt(monkeypatch) -> None:
     assert len(compact) <= 140
     assert "Paiement UBS TWINT" not in compact
     assert "Motif du paiement" not in compact
+    assert "TWINT" in compact
 
 
 def test_fallback_response_format(monkeypatch) -> None:
