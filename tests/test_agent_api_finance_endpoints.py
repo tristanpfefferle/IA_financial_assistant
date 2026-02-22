@@ -356,7 +356,7 @@ def test_import_releves_without_bank_account_auto_selects_from_csv_structure(mon
 
 
 
-def test_import_releves_pdf_does_not_run_csv_detector_and_returns_ambiguous(monkeypatch) -> None:
+def test_import_releves_textual_pdf_with_commas_does_not_run_csv_detector_and_returns_ambiguous(monkeypatch) -> None:
     _mock_authenticated(monkeypatch)
 
     class _Repo:
@@ -401,7 +401,15 @@ def test_import_releves_pdf_does_not_run_csv_detector_and_returns_ambiguous(monk
             "files": [
                 {
                     "filename": "statement.pdf",
-                    "content_base64": base64.b64encode(b"not a csv file").decode("ascii"),
+                    "content_base64": base64.b64encode(
+                        (
+                            b"%PDF-1.4\n"
+                            b"1 0 obj\n<< /Type /Catalog >>\nendobj\n"
+                            b"stream\x00metadata\n"
+                            b"BT /F1 12 Tf (Statement summary, Jan 2025, total, 1234.56) Tj ET\n"
+                            b"BT /F1 12 Tf (Page 1, Section A, Notes, Footer) Tj ET\n"
+                        )
+                    ).decode("ascii"),
                 }
             ]
         },
@@ -411,6 +419,8 @@ def test_import_releves_pdf_does_not_run_csv_detector_and_returns_ambiguous(monk
     payload = response.json()
     assert payload["type"] == "clarification"
     assert repo.last_chat_state is not None
+
+
 def test_import_releves_updates_chat_state_after_success(monkeypatch) -> None:
     monkeypatch.setattr(
         agent_api,
