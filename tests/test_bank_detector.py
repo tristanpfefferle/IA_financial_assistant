@@ -19,3 +19,8 @@ def test_detect_bank_from_csv_bytes_raiffeisen() -> None:
 def test_detect_bank_from_csv_bytes_unknown_returns_none() -> None:
     content = b"date;label;amount\n2025-01-01;x;-10.00\n"
     assert detect_bank_from_csv_bytes(content) is None
+
+
+def test_detect_bank_from_csv_bytes_without_separator_returns_none() -> None:
+    content = b"Booking date Value date Transaction details Debit Credit\n2025-01-01 2025-01-02 Paiement 12.50\n"
+    assert detect_bank_from_csv_bytes(content) is None

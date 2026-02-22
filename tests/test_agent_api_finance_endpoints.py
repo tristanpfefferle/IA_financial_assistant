@@ -354,6 +354,63 @@ def test_import_releves_without_bank_account_auto_selects_from_csv_structure(mon
     assert payload["bank_account_name"] == "Revolut"
 
 
+
+
+def test_import_releves_pdf_does_not_run_csv_detector_and_returns_ambiguous(monkeypatch) -> None:
+    _mock_authenticated(monkeypatch)
+
+    class _Repo:
+        def __init__(self) -> None:
+            self.last_chat_state: dict | None = None
+
+        def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None):
+            return PROFILE_ID
+
+        def list_bank_accounts(self, *, profile_id: UUID):
+            return [
+                {"id": str(UUID("dddddddd-dddd-dddd-dddd-dddddddddddd")), "name": "UBS"},
+                {"id": str(UUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee")), "name": "Revolut"},
+            ]
+
+        def get_chat_state(self, *, profile_id: UUID, user_id: UUID):
+            return {"state": {}}
+
+        def update_chat_state(self, *, profile_id: UUID, user_id: UUID, chat_state: dict):
+            self.last_chat_state = chat_state
+
+    repo = _Repo()
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+
+    def _raise_if_called(_bytes: bytes) -> str | None:
+        raise AssertionError("detect_bank_from_csv_bytes should not be called for PDF files")
+
+    monkeypatch.setattr(agent_api, "detect_bank_from_csv_bytes", _raise_if_called)
+
+    class _Router:
+        def call(self, tool_name: str, payload: dict, *, profile_id: UUID | None = None):
+            if tool_name == "finance_releves_import_files":
+                raise AssertionError("import tool should not be called in ambiguous mode")
+            return {"items": []}
+
+    monkeypatch.setattr(agent_api, "get_tool_router", lambda: _Router())
+
+    response = client.post(
+        "/finance/releves/import",
+        headers=_auth_headers(),
+        json={
+            "files": [
+                {
+                    "filename": "statement.pdf",
+                    "content_base64": base64.b64encode(b"not a csv file").decode("ascii"),
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["type"] == "clarification"
+    assert repo.last_chat_state is not None
 def test_import_releves_updates_chat_state_after_success(monkeypatch) -> None:
     monkeypatch.setattr(
         agent_api,
