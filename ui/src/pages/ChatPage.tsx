@@ -764,6 +764,7 @@ export function ChatPage({ email }: ChatPageProps) {
         enqueueAssistantMessages(segments, response.tool_result, response.plan, response)
       } catch (caughtError) {
         const message = caughtError instanceof Error ? caughtError.message : 'Erreur inconnue pendant l’import'
+        updateProgressMessage(progressId, { ...buildProgressToolResult(100, steps.length - 1, steps), step_label: 'Terminé' }, 'Import terminé.')
         replaceProgressWithAssistantMessage(progressId, buildImportErrorText(message))
         setToast({ type: 'error', message })
       } finally {
