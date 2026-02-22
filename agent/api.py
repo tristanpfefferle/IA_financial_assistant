@@ -3429,7 +3429,16 @@ def get_pending_transactions(authorization: str | None = Header(default=None)) -
     """List/count pending categorization transactions for authenticated profile."""
 
     _, profile_id = _resolve_authenticated_profile(authorization)
-    releves_repository = get_tool_router().backend_client.tool_service.releves_repository
+    tool_router = get_tool_router()
+    backend_client = getattr(tool_router, "backend_client", None)
+    tool_service = getattr(backend_client, "tool_service", None)
+    releves_repository = getattr(tool_service, "releves_repository", None)
+    if releves_repository is None:
+        return {
+            "count_total": 0,
+            "count_twint_p2p_pending": 0,
+            "items": [],
+        }
     rows = releves_repository.list_pending_categorization_releves(profile_id=profile_id, limit=50)
 
     items: list[dict[str, Any]] = []

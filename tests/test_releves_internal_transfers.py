@@ -11,6 +11,7 @@ PROFILE_ID = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 
 def test_sum_and_aggregate_exclude_internal_transfers_but_keep_twint_pending() -> None:
     repository = InMemoryRelevesRepository()
+    repository._seed = []
     repository.insert_releves_bulk(
         profile_id=PROFILE_ID,
         rows=[
@@ -51,8 +52,8 @@ def test_sum_and_aggregate_exclude_internal_transfers_but_keep_twint_pending() -
         )
     )
 
-    assert total == Decimal("-996.50")
-    assert count == 5
+    assert total == Decimal("-30.00")
+    assert count == 2
 
     groups, _ = repository.aggregate_releves(
         RelevesAggregateRequest(
@@ -63,5 +64,6 @@ def test_sum_and_aggregate_exclude_internal_transfers_but_keep_twint_pending() -
     )
 
     assert "Transferts internes" not in groups
-    assert groups["À catégoriser (TWINT)"][0] == Decimal("-20.00")
-    assert groups["Alimentation"][0] == Decimal("-10.00")
+    assert set(groups.keys()) == {"Alimentation", "À catégoriser (TWINT)"}
+    assert groups["Alimentation"] == (Decimal("-10.00"), 1)
+    assert groups["À catégoriser (TWINT)"] == (Decimal("-20.00"), 1)
