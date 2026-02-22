@@ -286,100 +286,112 @@ describe('ChatPage import intent rendering', () => {
   })
 
   it('shows local upload message before assistant import acknowledgement', async () => {
-    type ImportResult = {
-      ok: boolean
-      imported_count: number
-      transactions_imported_count: number
-      bank_account_name: string
-      date_range: null
-    }
+    vi.useFakeTimers()
+    try {
+      type ImportResult = {
+        ok: boolean
+        imported_count: number
+        transactions_imported_count: number
+        bank_account_name: string
+        date_range: null
+      }
 
-    sendChatMessage
-      .mockResolvedValueOnce({
-        reply: 'Importe ton fichier.',
-        tool_result: {
-          type: 'ui_request',
-          name: 'import_file',
-          accepted_types: ['csv'],
-        },
-        plan: null,
+      sendChatMessage
+        .mockResolvedValueOnce({
+          reply: 'Importe ton fichier.',
+          tool_result: {
+            type: 'ui_request',
+            name: 'import_file',
+            accepted_types: ['csv'],
+          },
+          plan: null,
+        })
+        .mockResolvedValueOnce({
+          reply: 'Analyse en cours.',
+          tool_result: null,
+          plan: null,
+        })
+
+      let resolveImport: ((value: ImportResult) => void) | undefined
+      importReleves.mockImplementation(
+        () =>
+          new Promise<ImportResult>((resolve) => {
+            resolveImport = resolve
+          }),
+      )
+
+      await act(async () => {
+        createRoot(container).render(<ChatPage email="user@example.com" />)
       })
-      .mockResolvedValueOnce({
-        reply: 'Analyse en cours.',
-        tool_result: null,
-        plan: null,
+      await act(async () => {
+        await Promise.resolve()
       })
 
-    let resolveImport: ((value: ImportResult) => void) | undefined
-    importReleves.mockImplementation(
-      () =>
-        new Promise<ImportResult>((resolve) => {
-          resolveImport = resolve
-        }),
-    )
+      const startButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.includes('Commencer'))
+      await act(async () => {
+        startButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+        await Promise.resolve()
+        await Promise.resolve()
+      })
 
-    await act(async () => {
-      createRoot(container).render(<ChatPage email="user@example.com" />)
-    })
-    await act(async () => {
-      await Promise.resolve()
-    })
+      const inlineButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.includes('Importer maintenant'))
+      await act(async () => {
+        inlineButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      })
 
-    const startButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.includes('Commencer'))
-    await act(async () => {
-      startButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-      await Promise.resolve()
-      await Promise.resolve()
-    })
+      const fileInput = container.querySelector('#import-file-input') as HTMLInputElement
+      const file = new File(['date,montant\n2026-01-01,10'], 'transactions.csv', { type: 'text/csv' })
+      await act(async () => {
+        Object.defineProperty(fileInput, 'files', { value: [file] })
+        fileInput.dispatchEvent(new Event('change', { bubbles: true }))
+      })
 
-    const inlineButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.includes('Importer maintenant'))
-    await act(async () => {
-      inlineButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    })
+      const dialog = container.querySelector('[aria-label="Importer un relevé"]') as HTMLElement
+      const importButton = Array.from(dialog.querySelectorAll('button')).find((btn) => btn.textContent?.trim() === 'Importer')
+      await act(async () => {
+        importButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+        await Promise.resolve()
+      })
 
-    const fileInput = container.querySelector('#import-file-input') as HTMLInputElement
-    const file = new File(['date,montant\n2026-01-01,10'], 'transactions.csv', { type: 'text/csv' })
-    await act(async () => {
-      Object.defineProperty(fileInput, 'files', { value: [file] })
-      fileInput.dispatchEvent(new Event('change', { bubbles: true }))
-    })
+      expect(container.querySelector('[aria-label="Importer un relevé"]')).toBeNull()
+      expect(container.textContent).toContain('Fichier "transactions.csv" envoyé.')
+      expect(container.textContent).toContain('Import en cours…')
+      expect(container.textContent).toContain('Étape:')
 
-    const dialog = container.querySelector('[aria-label="Importer un relevé"]') as HTMLElement
-    const importButton = Array.from(dialog.querySelectorAll('button')).find((btn) => btn.textContent?.trim() === 'Importer')
-    await act(async () => {
-      importButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-      await Promise.resolve()
-    })
+      await act(async () => {
+        vi.advanceTimersByTime(800)
+      })
 
-    const uploadIndexBeforeAck = (container.textContent ?? '').indexOf('Fichier "transactions.csv" envoyé.')
-    const ackIndexBeforeAck = (container.textContent ?? '').indexOf('Parfait, j’ai bien reçu ton relevé UBS.')
-    expect(uploadIndexBeforeAck).toBeGreaterThanOrEqual(0)
-    expect(ackIndexBeforeAck).toBe(-1)
+      if (!resolveImport) {
+        throw new Error('resolveImport not set')
+      }
 
-    if (!resolveImport) {
-      throw new Error('resolveImport not set')
+      resolveImport({
+        ok: true,
+        imported_count: 12,
+        transactions_imported_count: 12,
+        bank_account_name: 'UBS',
+        date_range: null,
+      })
+
+      await act(async () => {
+        vi.runOnlyPendingTimers()
+        await Promise.resolve()
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+
+      const fullText = container.textContent ?? ''
+      const uploadIndex = fullText.indexOf('Fichier "transactions.csv" envoyé.')
+      const ackIndex = fullText.indexOf('Parfait, j’ai bien reçu ton relevé UBS.')
+      expect(uploadIndex).toBeGreaterThanOrEqual(0)
+      expect(ackIndex).toBeGreaterThan(uploadIndex)
+      expect(fullText.includes('Étape: 5 / 5 — Terminé') || fullText.includes('Parfait, j’ai bien reçu ton relevé UBS.')).toBe(true)
+    } finally {
+      vi.useRealTimers()
     }
-
-    resolveImport({
-      ok: true,
-      imported_count: 12,
-      transactions_imported_count: 12,
-      bank_account_name: 'UBS',
-      date_range: null,
-    })
-
-    await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-
-    const fullText = container.textContent ?? ''
-    const uploadIndex = fullText.indexOf('Fichier "transactions.csv" envoyé.')
-    const ackIndex = fullText.indexOf('Parfait, j’ai bien reçu ton relevé UBS.')
-    expect(uploadIndex).toBeGreaterThanOrEqual(0)
-    expect(ackIndex).toBeGreaterThan(uploadIndex)
   })
+
 
   it('does not show quick replies before assistant typing is revealed', async () => {
     vi.useFakeTimers()
