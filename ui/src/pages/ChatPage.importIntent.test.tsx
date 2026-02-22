@@ -355,7 +355,7 @@ describe('ChatPage import intent rendering', () => {
 
       expect(container.querySelector('[aria-label="Importer un relevé"]')).toBeNull()
       expect(container.textContent).toContain('Fichier "transactions.csv" envoyé.')
-      expect(container.textContent).toContain('Import en cours…')
+      expect(container.querySelector('[aria-label="import-progress"]')).toBeTruthy()
       expect(container.textContent).toContain('Étape:')
 
       await act(async () => {
@@ -386,7 +386,7 @@ describe('ChatPage import intent rendering', () => {
       const ackIndex = fullText.indexOf('Parfait, j’ai bien reçu ton relevé UBS.')
       expect(uploadIndex).toBeGreaterThanOrEqual(0)
       expect(ackIndex).toBeGreaterThan(uploadIndex)
-      expect(fullText.includes('Étape: 5 / 5 — Terminé') || fullText.includes('Parfait, j’ai bien reçu ton relevé UBS.')).toBe(true)
+      expect(fullText).toContain('Parfait, j’ai bien reçu ton relevé UBS.')
     } finally {
       vi.useRealTimers()
     }
