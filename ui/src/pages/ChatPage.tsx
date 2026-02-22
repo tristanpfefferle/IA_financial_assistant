@@ -864,6 +864,7 @@ export function ChatPage({ email }: ChatPageProps) {
         onClose={() => setIsImportDialogOpen(false)}
         pendingImportIntent={pendingImportIntent}
         onConfirmImport={onConfirmImport}
+        onImportError={(messageText) => setToast({ type: 'error', message: messageText })}
       />
 
       <Toast toast={toast} />
@@ -1353,6 +1354,7 @@ type ImportDialogProps = {
   onClose: () => void
   pendingImportIntent: ImportIntent | null
   onConfirmImport: (file: File, intent: ImportIntent | null) => void
+  onImportError: (messageText: string) => void
 }
 
 function ImportDialog({
@@ -1362,6 +1364,7 @@ function ImportDialog({
   onClose,
   pendingImportIntent,
   onConfirmImport,
+  onImportError,
 }: ImportDialogProps) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
@@ -1387,6 +1390,7 @@ function ImportDialog({
 
     const extension = selectedFile.name.split('.').pop()?.toLowerCase()
     if (!extension || !acceptedTypes.includes(extension)) {
+      onImportError('Format invalide. Sélectionne un fichier compatible.')
       return
     }
 
