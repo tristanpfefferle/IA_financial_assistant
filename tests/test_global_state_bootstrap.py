@@ -404,7 +404,7 @@ def test_categories_bootstrap_creates_categories_classifies_merchants_and_skips_
     payload = response.json()
     assert "Import terminé ✅" in payload["reply"]
     assert "Es-tu prêt à voir ton rapport mensuel ?" in payload["reply"]
-    assert len(repo.profile_categories) == 10
+    assert len(repo.profile_categories) == len(agent_api._SYSTEM_CATEGORIES)
     assert repo.merchants[0]["category"] == "Alimentation"
     assert repo.merchants[1]["category"] == "Autres"
     assert repo.merchants[2]["category"] == ""

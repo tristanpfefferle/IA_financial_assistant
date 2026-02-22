@@ -10,6 +10,7 @@ from typing import Any
 from uuid import UUID
 
 from backend.repositories.releves_repository import RelevesRepository
+from backend.services.releves_import.classification import classify_and_categorize_transaction
 from backend.services.releves_import.dedup import compare_rows
 from backend.services.releves_import.routing import route_bank_parser
 from shared.models import (
@@ -81,6 +82,17 @@ class RelevesImportService:
 
         raw_dict: dict[str, Any] | None = dict(raw_meta) if isinstance(raw_meta, dict) else None
 
+        classification = classify_and_categorize_transaction(
+            {
+                "montant": amount,
+                "payee": parsed_row.get("payee"),
+                "libelle": parsed_row.get("libelle"),
+            }
+        )
+        meta_dict["category_key"] = classification.category_key
+        meta_dict["category_status"] = classification.category_status
+        meta_dict["tx_kind"] = classification.tx_kind
+
         return {
             "profile_id": profile_id,
             "bank_account_id": bank_account_id,
@@ -89,7 +101,7 @@ class RelevesImportService:
             "devise": str(parsed_row.get("devise") or "CHF"),
             "libelle": parsed_row.get("libelle"),
             "payee": parsed_row.get("payee"),
-            "categorie": parsed_row.get("categorie"),
+            "categorie": parsed_row.get("categorie") or classification.category_label,
             "meta": meta_dict,
             "contenu_brut": raw_dict,
             "source": source,

@@ -128,13 +128,20 @@ _IMPORT_WAIT_READY_REPLY = (
     "Ton fichier CSV est prêt pour l’import ?"
 )
 _SYSTEM_CATEGORIES: tuple[tuple[str, str], ...] = (
+    ("income_salary", "Salaire"),
+    ("income_other", "Autres revenus"),
+    ("transfer_internal", "Transferts internes"),
+    ("twint_p2p_pending", "À catégoriser (TWINT)"),
+    ("banking_fees", "Frais bancaires"),
+    ("savings", "Épargne & investissement"),
+    ("gifts", "Cadeaux & dons"),
     ("food", "Alimentation"),
     ("housing", "Logement"),
     ("transport", "Transport"),
     ("health", "Santé"),
     ("leisure", "Loisirs"),
     ("shopping", "Shopping"),
-    ("bills", "Factures"),
+    ("subscriptions", "Abonnements"),
     ("taxes", "Impôts"),
     ("insurance", "Assurance"),
     ("other", "Autres"),
@@ -142,7 +149,7 @@ _SYSTEM_CATEGORIES: tuple[tuple[str, str], ...] = (
 _MERCHANT_CATEGORY_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
     (("migros", "coop", "lidl", "aldi", "denner"), "Alimentation"),
     (("sbb", "cff", "tpg", "tl", "uber", "bolt"), "Transport"),
-    (("swisscom", "salt", "sunrise"), "Factures"),
+    (("swisscom", "salt", "sunrise", "spotify", "netflix", "apple", "google"), "Abonnements"),
     (("axa", "zurich", "helvetia", "mobiliar"), "Assurance"),
 )
 _FALLBACK_MERCHANT_CATEGORY = "Autres"
