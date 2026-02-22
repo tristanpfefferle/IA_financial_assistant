@@ -253,6 +253,7 @@ export function ChatPage({ email }: ChatPageProps) {
   const isDrainingAssistantQueueRef = useRef(false)
   const shouldAutoScrollRef = useRef(true)
   const previousIntentMessageIdRef = useRef<string | null>(null)
+  const uploadMessageGuardsRef = useRef<Set<string>>(new Set())
 
   const pendingImportIntent = useMemo(() => findPendingImportIntent(messages), [messages])
   const isImportRequired = pendingImportIntent !== null
@@ -709,39 +710,27 @@ export function ChatPage({ email }: ChatPageProps) {
         onAutoOpenHandled={() => setAutoOpenImportPicker(false)}
         onClose={() => setIsImportDialogOpen(false)}
         pendingImportIntent={pendingImportIntent}
-        onImportSuccess={(resultMessage, debugPayload, sourceMessageId, selectedFilenames) => {
-          setMessages((previous) => {
-            const withUserUploadMessage = [
-              ...previous,
-              {
-                id: crypto.randomUUID(),
-                role: 'user' as const,
-                content:
-                  selectedFilenames.length > 1
-                    ? `Fichiers envoyés: ${selectedFilenames.map((name) => `"${name}"`).join(', ')}`
-                    : `Fichier "${selectedFilenames[0] ?? 'inconnu'}" envoyé.`,
-                createdAt: Date.now(),
-              },
-            ]
-            if (!sourceMessageId) {
-              return [...withUserUploadMessage, { id: crypto.randomUUID(), role: 'assistant', content: resultMessage, createdAt: Date.now(), debugPayload }]
-            }
-
-            const index = withUserUploadMessage.findIndex((item) => item.id === sourceMessageId)
-            if (index < 0) {
-              return [...withUserUploadMessage, { id: crypto.randomUUID(), role: 'assistant', content: resultMessage, createdAt: Date.now(), debugPayload }]
-            }
-
-            const updated = [...withUserUploadMessage]
-            updated[index] = { ...updated[index], toolResult: null }
-            updated.splice(index + 1, 0, {
-              id: crypto.randomUUID(),
-              role: 'assistant',
-              content: resultMessage,
+        onImportStart={(filename, fingerprint) => {
+          if (uploadMessageGuardsRef.current.has(fingerprint)) {
+            return
+          }
+          uploadMessageGuardsRef.current.add(fingerprint)
+          setMessages((previous) => [
+            ...previous,
+            {
+              id: `upload-${fingerprint}`,
+              role: 'user',
+              content: `Fichier "${filename}" envoyé.`,
               createdAt: Date.now(),
-              debugPayload,
-            })
-            return updated
+            },
+          ])
+        }}
+        onImportSuccess={(resultMessage, debugPayload, sourceMessageId) => {
+          setMessages((previous) => {
+            const updated = sourceMessageId
+              ? previous.map((item) => (item.id === sourceMessageId ? { ...item, toolResult: null } : item))
+              : previous
+            return [...updated, { id: crypto.randomUUID(), role: 'assistant', content: resultMessage, createdAt: Date.now(), debugPayload }]
           })
           setIsImportDialogOpen(false)
           setToast({ type: 'success', message: 'Import terminé. Analyse automatique en cours…' })
@@ -1223,7 +1212,8 @@ type ImportDialogProps = {
   onAutoOpenHandled: () => void
   onClose: () => void
   pendingImportIntent: ImportIntent | null
-  onImportSuccess: (resultMessage: string, debugPayload: unknown, sourceMessageId: string | undefined, selectedFilenames: string[]) => void
+  onImportStart: (filename: string, fingerprint: string) => void
+  onImportSuccess: (resultMessage: string, debugPayload: unknown, sourceMessageId: string | undefined) => void
   onImportClarification: (assistantMessage: string) => void
   onImportError: (messageText: string) => void
 }
@@ -1234,6 +1224,7 @@ function ImportDialog({
   onAutoOpenHandled,
   onClose,
   pendingImportIntent,
+  onImportStart,
   onImportSuccess,
   onImportClarification,
   onImportError,
@@ -1283,6 +1274,8 @@ function ImportDialog({
 
     setIsImporting(true)
     try {
+      const uploadFingerprint = `${selectedFile.name}-${selectedFile.size}-${selectedFile.lastModified}`
+      onImportStart(selectedFile.name, uploadFingerprint)
       const contentBase64 = await readFileAsBase64(selectedFile)
       const result = await importReleves({
         files: [{ filename: selectedFile.name, content_base64: contentBase64 }],
@@ -1301,7 +1294,7 @@ function ImportDialog({
         messageId: pendingImportIntent?.messageId ?? crypto.randomUUID(),
         acceptedTypes,
         source: pendingImportIntent?.source ?? 'ui_request',
-      }), result, pendingImportIntent?.messageId, [selectedFile.name])
+      }), result, pendingImportIntent?.messageId)
       setSelectedFile(null)
     } catch (caughtError) {
       onImportError(caughtError instanceof Error ? caughtError.message : 'Erreur inconnue pendant l’import')
