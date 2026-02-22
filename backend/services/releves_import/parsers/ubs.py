@@ -10,6 +10,33 @@ from decimal import Decimal
 from typing import Any
 
 
+_EXCLUDED_LABEL_KEYWORDS = (
+    "date",
+    "debit",
+    "débit",
+    "credit",
+    "crédit",
+    "montant",
+    "amount",
+    "monnaie",
+    "currency",
+    "solde",
+    "balance",
+    "numéro de compte",
+    "account",
+    "iban",
+    "valeur",
+)
+_PREFERRED_TEXT_KEYWORDS = (
+    "description",
+    "motif",
+    "reference",
+    "référence",
+    "texte",
+    "information",
+)
+
+
 def _parse_date(value: str | None) -> str | None:
     if not value:
         return None
@@ -44,6 +71,48 @@ def _parse_amount(value: str | float | None, debit_credit: str | None) -> Decima
     return amount
 
 
+def _is_textual_value(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    stripped = value.strip()
+    return bool(stripped and not re.fullmatch(r"[0-9\s.,'-]+", stripped))
+
+
+def _build_ubs_label(raw: dict[str, Any]) -> str | None:
+    fragments: list[str] = []
+    seen: set[str] = set()
+
+    def _append_fragment(value: str | None) -> None:
+        if not value:
+            return
+        fragment = " ".join(value.split())
+        if not fragment:
+            return
+        normalized = fragment.casefold()
+        if normalized in seen:
+            return
+        seen.add(normalized)
+        fragments.append(fragment)
+
+    for key in ("Description1", "Description2", "Description3"):
+        _append_fragment(raw.get(key))
+
+    for key, value in raw.items():
+        key_text = (key or "").strip()
+        key_lower = key_text.casefold()
+        if key_text in {"Description1", "Description2", "Description3"}:
+            continue
+        if any(keyword in key_lower for keyword in _EXCLUDED_LABEL_KEYWORDS):
+            continue
+        if not any(keyword in key_lower for keyword in _PREFERRED_TEXT_KEYWORDS):
+            continue
+        if not _is_textual_value(value):
+            continue
+        _append_fragment(str(value))
+
+    return " - ".join(fragments) or None
+
+
 def parse_ubs_csv(file_bytes: bytes) -> list[dict[str, Any]]:
     content = file_bytes.decode("utf-8-sig")
     lines = content.splitlines()
@@ -61,8 +130,7 @@ def parse_ubs_csv(file_bytes: bytes) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
 
     for raw in reader:
-        descriptions = [raw.get("Description1"), raw.get("Description2"), raw.get("Description3")]
-        label = " ".join(part.strip() for part in descriptions if part and part.strip()) or None
+        label = _build_ubs_label(raw)
         amount: Decimal | None = None
         if raw.get("Débit"):
             amount = _parse_amount(raw.get("Débit"), "debit")

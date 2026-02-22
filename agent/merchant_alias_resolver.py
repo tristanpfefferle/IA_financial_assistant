@@ -33,11 +33,13 @@ _CANONICAL_CATEGORY_LABELS: dict[str, str] = {
 _ALLOWED_CATEGORY_KEYS = set(_CANONICAL_CATEGORY_LABELS)
 _MAX_LLM_BATCH_SIZE = 20
 _PROMPT_COMPACT_REPLACEMENTS = (
-    "Paiement UBS TWINT",
-    "Motif du paiement",
-    "Paiement UBS",
-    "Débit UBS TWINT",
-    "Debit UBS TWINT",
+    ("Paiement UBS TWINT", "TWINT"),
+    ("Débit UBS TWINT", "TWINT"),
+    ("Debit UBS TWINT", "TWINT"),
+    ("Crédit UBS TWINT", "TWINT"),
+    ("Credit UBS TWINT", "TWINT"),
+    ("Motif du paiement", " "),
+    ("Paiement UBS", " "),
 )
 
 
@@ -81,8 +83,8 @@ def _build_batch_prompt(*, items: list[dict[str, str]]) -> str:
 
 def _compact_observed_alias(value: str) -> str:
     compact = " ".join(str(value or "").split())
-    for noise in _PROMPT_COMPACT_REPLACEMENTS:
-        compact = compact.replace(noise, " ")
+    for noise, replacement in _PROMPT_COMPACT_REPLACEMENTS:
+        compact = compact.replace(noise, replacement)
     compact = " ".join(compact.split())
     return compact[:140]
 
