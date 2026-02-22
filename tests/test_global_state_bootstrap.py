@@ -777,7 +777,7 @@ def test_free_chat_re_gates_to_import_when_transactions_not_imported(monkeypatch
     response = client.post("/agent/chat", json={"message": "Salut"}, headers=_auth_headers())
 
     assert response.status_code == 200
-    assert "Ton fichier est prêt pour l’import" in response.json()["reply"]
+    assert "Ton fichier CSV est prêt pour l’import" in response.json()["reply"]
     persisted_state = repo.update_calls[-1]["chat_state"]["state"]
     assert persisted_state["global_state"]["onboarding_step"] == "import"
     assert persisted_state["global_state"]["onboarding_substep"] == "import_wait_ready"

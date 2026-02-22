@@ -392,6 +392,57 @@ describe('ChatPage import intent rendering', () => {
     }
   })
 
+  it('enforces CSV-only accept and shows explicit error for PDF upload', async () => {
+    sendChatMessage.mockResolvedValue({
+      reply: 'Importe ton fichier.',
+      tool_result: {
+        type: 'ui_request',
+        name: 'import_file',
+        accepted_types: ['csv', 'pdf'],
+      },
+      plan: null,
+    })
+
+    await act(async () => {
+      createRoot(container).render(<ChatPage email="user@example.com" />)
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    const startButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.includes('Commencer'))
+    await act(async () => {
+      startButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    const inlineButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.includes('Importer maintenant'))
+    await act(async () => {
+      inlineButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    const fileInput = container.querySelector('#import-file-input') as HTMLInputElement
+    expect(fileInput.getAttribute('accept')).toBe('.csv')
+    expect(container.textContent).toContain('Formats acceptés: csv')
+
+    const file = new File(['pdf content'], 'x.pdf', { type: 'application/pdf' })
+    await act(async () => {
+      Object.defineProperty(fileInput, 'files', { value: [file] })
+      fileInput.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+
+    const dialog = container.querySelector('[aria-label="Importer un relevé"]') as HTMLElement
+    const importButton = Array.from(dialog.querySelectorAll('button')).find((btn) => btn.textContent?.trim() === 'Importer')
+    await act(async () => {
+      importButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+    })
+
+    expect(importReleves).not.toHaveBeenCalled()
+    expect(container.textContent).toContain('Format invalide. Pour l’instant, seul le format CSV est supporté.')
+  })
+
 
   it('does not show quick replies before assistant typing is revealed', async () => {
     vi.useFakeTimers()
