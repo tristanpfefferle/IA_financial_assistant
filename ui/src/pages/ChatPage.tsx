@@ -228,8 +228,7 @@ function findPendingImportIntent(messages: ChatMessage[]): ImportIntent | null {
   return null
 }
 
-function sanitizeImportAcceptedTypes(acceptedTypes: string[] | undefined): string[] {
-  void acceptedTypes
+function sanitizeImportAcceptedTypes(_acceptedTypes: string[] | undefined): string[] {
   // CSV-only
   return ['csv']
 }

@@ -522,7 +522,6 @@ describe('ChatPage import intent rendering', () => {
       })
 
       expect(container.textContent).toContain('Format invalide. Pour l’instant, seul le format CSV est supporté.')
-      expect(sendChatMessage).not.toHaveBeenNthCalledWith(2, '', { debug: false })
       expect(sendChatMessage).toHaveBeenCalledTimes(1)
     } finally {
       vi.useRealTimers()
