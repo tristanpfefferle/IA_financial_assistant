@@ -38,6 +38,13 @@ def test_twint_merchant_is_not_pending_and_uses_merchant_fallback() -> None:
     assert result.category_status == "confirmed"
 
 
+def test_twint_with_plain_a_does_not_trigger_p2p_pending() -> None:
+    result = classify_and_categorize_transaction(_tx(montant="-12.00", libelle="TWINT paiement a la poste"))
+    assert result.category_key != "twint_p2p_pending"
+    assert result.category_key == "other"
+    assert result.category_status == "confirmed"
+
+
 def test_banking_fees_category() -> None:
     result = classify_and_categorize_transaction(_tx(montant="-8.00", libelle="UBS frais de tenue de compte"))
     assert result.category_key == "banking_fees"

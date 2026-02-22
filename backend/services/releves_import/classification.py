@@ -85,6 +85,11 @@ _KNOWN_MERCHANT_MARKERS = (
     "starbucks",
 )
 
+_TWINT_P2P_MARKERS_REGEX = re.compile(r"\b(envoi|transfert|p2p|peer)\b")
+_TWINT_P2P_NAME_REGEX = re.compile(r"\btwint\b.*\ba\b\s+([a-z]{2,})\s+([a-z]{2,})")
+_TWINT_NON_PERSON_TOKENS = frozenset({"la", "le", "les", "un", "une", "des", "du", "de", "d", "au", "aux"})
+_TAXES_REGEX = re.compile(r"\b(tax|impot|impots|steuer|estv|afc|vat)\b")
+
 
 def _normalize_text(value: str) -> str:
     normalized = unicodedata.normalize("NFKD", str(value or "").strip().lower()).encode("ascii", "ignore").decode("ascii")
@@ -124,14 +129,21 @@ def _is_twint_p2p(text: str) -> bool:
     if "twint" not in text:
         return False
 
+    if _pick_fallback_category_key(text) != "other":
+        return False
+
     if any(merchant in text for merchant in _KNOWN_MERCHANT_MARKERS):
         return False
 
-    p2p_markers = (" transfert", " envoi", " p2p", " peer", " a ", " a ")
-    if any(marker in text for marker in p2p_markers):
+    if _TWINT_P2P_MARKERS_REGEX.search(text):
         return True
 
-    return bool(re.search(r"twint\s+[a-z]+\s+[a-z]+", text))
+    name_match = _TWINT_P2P_NAME_REGEX.search(text)
+    if not name_match:
+        return False
+
+    first_name_like, last_name_like = name_match.group(1), name_match.group(2)
+    return first_name_like not in _TWINT_NON_PERSON_TOKENS and last_name_like not in _TWINT_NON_PERSON_TOKENS
 
 
 def _pick_fallback_category_key(text: str) -> str:
@@ -170,8 +182,7 @@ def classify_and_categorize_transaction(row: dict[str, Any]) -> ClassifiedTransa
     if any(marker in text for marker in banking_fee_markers) and any(bank in text for bank in _KNOWN_BANK_MARKERS):
         return ClassifiedTransaction("expense", "banking_fees", _SYSTEM_CATEGORY_LABELS["banking_fees"], "confirmed")
 
-    taxes_markers = (" tax", "impot", "steuer", "estv", "afc", "vat")
-    if any(marker in text for marker in taxes_markers):
+    if _TAXES_REGEX.search(text):
         return ClassifiedTransaction("expense", "taxes", _SYSTEM_CATEGORY_LABELS["taxes"], "confirmed")
 
     insurance_markers = ("assurance", "insurance", "axa", "zurich", "helvetia", "mobiliar")
