@@ -5,7 +5,7 @@ from uuid import UUID
 
 from backend.repositories.releves_repository import InMemoryRelevesRepository
 from backend.services.releves_import.importer import RelevesImportService
-from shared.models import RelevesImportFile, RelevesImportMode, RelevesImportModifiedAction, RelevesImportRequest
+from shared.models import RelevesFilters, RelevesImportFile, RelevesImportMode, RelevesImportModifiedAction, RelevesImportRequest
 
 
 PROFILE_ID = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
@@ -38,9 +38,18 @@ Date de transaction;Date de comptabilisation;Description1;Description2;Descripti
     result = service.import_releves(request)
 
     assert result.imported_count == 1
-    imported_rows = repository.list_releves_for_import(profile_id=PROFILE_ID, bank_account_id=None)
-    twint_rows = [row for row in imported_rows if row.get("libelle") == "TWINT envoi à Martin Dupont"]
+    releves, _ = repository.list_releves(RelevesFilters(profile_id=PROFILE_ID, limit=500, offset=0))
+    twint_rows = [row for row in releves if row.libelle == "TWINT envoi à Martin Dupont"]
     assert len(twint_rows) == 1
-    assert twint_rows[0]["categorie"] == "À catégoriser (TWINT)"
-    assert twint_rows[0]["meta"]["category_key"] == "twint_p2p_pending"
-    assert twint_rows[0]["meta"]["category_status"] == "pending"
+    twint_row = twint_rows[0]
+    assert twint_row.categorie == "À catégoriser (TWINT)"
+
+    imported_rows = repository.list_releves_for_import(profile_id=PROFILE_ID, bank_account_id=None)
+    imported_twint_rows = [row for row in imported_rows if row.get("libelle") == "TWINT envoi à Martin Dupont"]
+    assert len(imported_twint_rows) == 1
+    twint_meta = imported_twint_rows[0]["meta"]
+    assert isinstance(twint_meta, dict)
+    assert twint_meta["category_key"] == "twint_p2p_pending"
+    assert twint_meta["category_status"] == "pending"
+    assert twint_meta["tx_kind"] in {"expense", "income"}
+    assert twint_meta["tx_kind"] == "expense"
