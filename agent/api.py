@@ -121,11 +121,11 @@ _YES_VALUES = {
     "c'est pret",
 }
 _NO_VALUES = {"non", "nope", "no", "n"}
-_IMPORT_FILE_PROMPT = "Parfait. Envoie le fichier CSV/PDF du compte sélectionné."
+_IMPORT_FILE_PROMPT = "Parfait. Envoie le fichier CSV du compte sélectionné."
 _IMPORT_WAIT_READY_REPLY = (
     "Prochaine étape : importer un relevé mensuel.\n\n"
     "Idéalement, prends le mois le plus récent complet (un mois entier), comme ça ton premier rapport sera représentatif.\n\n"
-    "Ton fichier est prêt pour l’import ?"
+    "Ton fichier CSV est prêt pour l’import ?"
 )
 _SYSTEM_CATEGORIES: tuple[tuple[str, str], ...] = (
     ("food", "Alimentation"),
@@ -2983,6 +2983,23 @@ def import_releves(payload: ImportRequestPayload, authorization: str | None = He
         {"filename": import_file.filename, "content_base64": import_file.content_base64}
         for import_file in payload.files
     ]
+    invalid_filenames = [
+        import_file.filename
+        for import_file in payload.files
+        if not import_file.filename.lower().endswith(".csv")
+    ]
+    if invalid_filenames:
+        return {
+            "ok": False,
+            "type": "error",
+            "error": {
+                "code": "invalid_file_type",
+                "message": "Format invalide. Pour l’instant, seul le format CSV est supporté.",
+                "details": {"filenames": invalid_filenames},
+            },
+            "message": "Format invalide. Pour l’instant, seul le format CSV est supporté.",
+        }
+
     tool_payload: dict[str, Any] = {
         "files": [
             {"filename": import_file.filename, "content_base64": import_file.content_base64}

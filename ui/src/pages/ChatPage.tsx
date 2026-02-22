@@ -210,7 +210,7 @@ function findPendingImportIntent(messages: ChatMessage[]): ImportIntent | null {
     if (action) {
       return {
         messageId: message.id,
-        acceptedTypes: action.accepted_types ?? ['csv', 'pdf'],
+        acceptedTypes: sanitizeImportAcceptedTypes(action.accepted_types),
         source: 'ui_action',
       }
     }
@@ -219,13 +219,22 @@ function findPendingImportIntent(messages: ChatMessage[]): ImportIntent | null {
     if (legacyRequest) {
       return {
         messageId: message.id,
-        acceptedTypes: legacyRequest.accepted_types ?? ['csv', 'pdf'],
+        acceptedTypes: sanitizeImportAcceptedTypes(legacyRequest.accepted_types),
         source: 'ui_request',
       }
     }
   }
 
   return null
+}
+
+function sanitizeImportAcceptedTypes(acceptedTypes: string[] | undefined): string[] {
+  if (!acceptedTypes) {
+    return ['csv']
+  }
+
+  const hasCsv = acceptedTypes.some((type) => type.trim().replace(/^\./, '').toLowerCase() === 'csv')
+  return hasCsv ? ['csv'] : ['csv']
 }
 
 function toProgressUiAction(toolResult: ChatMessage['toolResult']): ProgressUiAction | null {
@@ -666,7 +675,7 @@ export function ChatPage({ email }: ChatPageProps) {
   }
 
   function onConfirmImport(file: File, intent: ImportIntent | null) {
-    const acceptedTypes = intent?.acceptedTypes ?? ['csv', 'pdf']
+    const acceptedTypes = sanitizeImportAcceptedTypes(intent?.acceptedTypes)
     const uploadFingerprint = `${file.name}-${file.size}-${file.lastModified}`
     if (!uploadMessageGuardsRef.current.has(uploadFingerprint)) {
       uploadMessageGuardsRef.current.add(uploadFingerprint)
@@ -1174,13 +1183,13 @@ function MessageBubble({
   const importIntent: ImportIntent | null = importUiAction
     ? {
         messageId: message.id,
-        acceptedTypes: importUiAction.accepted_types ?? ['csv', 'pdf'],
+        acceptedTypes: sanitizeImportAcceptedTypes(importUiAction.accepted_types),
         source: 'ui_action',
       }
     : importUiRequest
       ? {
           messageId: message.id,
-          acceptedTypes: importUiRequest.accepted_types ?? ['csv', 'pdf'],
+          acceptedTypes: sanitizeImportAcceptedTypes(importUiRequest.accepted_types),
           source: 'ui_request',
         }
       : null
@@ -1369,7 +1378,7 @@ function ImportDialog({
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
 
-  const acceptedTypes = pendingImportIntent?.acceptedTypes ?? ['csv', 'pdf']
+  const acceptedTypes = sanitizeImportAcceptedTypes(pendingImportIntent?.acceptedTypes)
   const accept = acceptedTypes.map((type) => `.${type.replace(/^\./, '')}`).join(',')
 
   useEffect(() => {
@@ -1390,7 +1399,7 @@ function ImportDialog({
 
     const extension = selectedFile.name.split('.').pop()?.toLowerCase()
     if (!extension || !acceptedTypes.includes(extension)) {
-      onImportError('Format invalide. Sélectionne un fichier compatible.')
+      onImportError('Format invalide. Pour l’instant, seul le format CSV est supporté.')
       return
     }
 
@@ -1410,7 +1419,7 @@ function ImportDialog({
     <div className="dialog-backdrop" role="presentation" onClick={onClose}>
       <section className="dialog card" role="dialog" aria-modal="true" aria-label="Importer un relevé" onClick={(event) => event.stopPropagation()}>
         <h3>Importer un relevé</h3>
-        <p className="subtle-text">Ajoute ton fichier pour continuer l’analyse.</p>
+        <p className="subtle-text">Importe un relevé mensuel au format CSV.</p>
 
         <label className="dropzone" htmlFor="import-file-input">
           <input id="import-file-input" ref={inputRef} type="file" accept={accept} onChange={handleFileChange} />
