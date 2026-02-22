@@ -91,7 +91,10 @@ class BackendToolService:
         request: RelevesImportRequest,
     ) -> RelevesImportResult | ToolError:
         try:
-            service = RelevesImportService(releves_repository=self.releves_repository)
+            service = RelevesImportService(
+                releves_repository=self.releves_repository,
+                profiles_repository=self.profiles_repository,
+            )
             return service.import_releves(request)
         except Exception as exc:
             return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))

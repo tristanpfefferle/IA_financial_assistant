@@ -419,7 +419,8 @@ class InMemoryRelevesRepository:
                     devise=str(row.get("devise") or "CHF"),
                     categorie=row.get("categorie"),
                     payee=row.get("payee"),
-                    merchant_id=None,
+                    merchant_id=row.get("merchant_entity_id"),
+                    category_id=row.get("category_id"),
                     bank_account_id=row.get("bank_account_id"),
                 )
             )
@@ -809,6 +810,8 @@ class SupabaseRelevesRepository:
                 "libelle": row.get("libelle"),
                 "payee": row.get("payee"),
                 "categorie": row.get("categorie"),
+                "merchant_entity_id": str(row["merchant_entity_id"]) if row.get("merchant_entity_id") else None,
+                "category_id": str(row["category_id"]) if row.get("category_id") else None,
                 "source": row.get("source"),
                 "metadonnees": row.get("meta") if isinstance(row.get("meta"), dict) else {},
             }

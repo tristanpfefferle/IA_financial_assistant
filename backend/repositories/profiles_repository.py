@@ -107,6 +107,26 @@ class ProfilesRepository(Protocol):
     ) -> dict[str, Any] | None:
         """Return one profile merchant override for a merchant entity."""
 
+    def list_active_classification_rules(self, *, profile_id: UUID) -> list[dict[str, Any]]:
+        """Return active profile classification rules sorted by priority asc."""
+
+    def find_profile_category_id_by_name_norm(self, *, profile_id: UUID, name_norm: str) -> UUID | None:
+        """Resolve one profile category id by normalized name."""
+
+    def get_merchant_entity_suggested_category_norm(self, *, merchant_entity_id: UUID) -> str | None:
+        """Return suggested_category_norm for one merchant entity."""
+
+    def create_pending_map_alias_suggestion(
+        self,
+        *,
+        profile_id: UUID,
+        observed_alias: str,
+        observed_alias_norm: str,
+        rationale: str,
+        confidence: float,
+    ) -> bool:
+        """Create one pending map_alias suggestion when missing and return creation status."""
+
     def upsert_profile_merchant_override(
         self,
         *,
@@ -613,6 +633,85 @@ class SupabaseProfilesRepository:
         if not rows:
             return None
         return rows[0]
+
+    def list_active_classification_rules(self, *, profile_id: UUID) -> list[dict[str, Any]]:
+        rows, _ = self._client.get_rows(
+            table="classification_rules",
+            query={
+                "select": "id,profile_id,active,priority,target_category_id,pattern,match_field,match_mode",
+                "profile_id": f"eq.{profile_id}",
+                "active": "eq.true",
+                "order": "priority.asc",
+                "limit": 500,
+            },
+            with_count=False,
+            use_anon_key=False,
+        )
+        return rows
+
+    def find_profile_category_id_by_name_norm(self, *, profile_id: UUID, name_norm: str) -> UUID | None:
+        cleaned_name_norm = self._normalize_name_norm(name_norm)
+        if not cleaned_name_norm:
+            return None
+
+        rows, _ = self._client.get_rows(
+            table="profile_categories",
+            query={
+                "select": "id",
+                "profile_id": f"eq.{profile_id}",
+                "name_norm": f"eq.{cleaned_name_norm}",
+                "limit": 1,
+            },
+            with_count=False,
+            use_anon_key=False,
+        )
+        if not rows:
+            return None
+
+        category_id = rows[0].get("id")
+        return UUID(str(category_id)) if category_id else None
+
+    def get_merchant_entity_suggested_category_norm(self, *, merchant_entity_id: UUID) -> str | None:
+        rows, _ = self._client.get_rows(
+            table="merchant_entities",
+            query={
+                "select": "suggested_category_norm",
+                "id": f"eq.{merchant_entity_id}",
+                "limit": 1,
+            },
+            with_count=False,
+            use_anon_key=False,
+        )
+        if not rows:
+            return None
+
+        suggested = rows[0].get("suggested_category_norm")
+        if not isinstance(suggested, str):
+            return None
+        cleaned = self._normalize_name_norm(suggested)
+        return cleaned or None
+
+    def create_pending_map_alias_suggestion(
+        self,
+        *,
+        profile_id: UUID,
+        observed_alias: str,
+        observed_alias_norm: str,
+        rationale: str,
+        confidence: float,
+    ) -> bool:
+        created = self.create_map_alias_suggestions(
+            profile_id=profile_id,
+            rows=[
+                {
+                    "observed_alias": observed_alias,
+                    "observed_alias_norm": observed_alias_norm,
+                    "rationale": rationale,
+                    "confidence": confidence,
+                }
+            ],
+        )
+        return created > 0
 
     def create_merchant_suggestions(self, *, profile_id: UUID, suggestions: list[dict[str, Any]]) -> int:
         if not suggestions:
