@@ -285,7 +285,7 @@ describe('ChatPage import intent rendering', () => {
     expect(container.textContent).toContain('✅')
   })
 
-  it('adds a visual user message after file import starts', async () => {
+  it('shows local upload message before assistant import acknowledgement', async () => {
     sendChatMessage
       .mockResolvedValueOnce({
         reply: 'Importe ton fichier.',
@@ -302,13 +302,13 @@ describe('ChatPage import intent rendering', () => {
         plan: null,
       })
 
-    importReleves.mockResolvedValue({
-      ok: true,
-      imported_count: 12,
-      transactions_imported_count: 12,
-      bank_account_name: 'UBS',
-      date_range: null,
-    })
+    let resolveImport: ((value: unknown) => void) | null = null
+    importReleves.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveImport = resolve
+        }),
+    )
 
     await act(async () => {
       createRoot(container).render(<ChatPage email="user@example.com" />)
@@ -341,11 +341,32 @@ describe('ChatPage import intent rendering', () => {
     await act(async () => {
       importButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
       await Promise.resolve()
+    })
+
+    const uploadIndexBeforeAck = (container.textContent ?? '').indexOf('Fichier "transactions.csv" envoyé.')
+    const ackIndexBeforeAck = (container.textContent ?? '').indexOf('Parfait, j’ai bien reçu ton relevé UBS.')
+    expect(uploadIndexBeforeAck).toBeGreaterThanOrEqual(0)
+    expect(ackIndexBeforeAck).toBe(-1)
+
+    resolveImport?.({
+      ok: true,
+      imported_count: 12,
+      transactions_imported_count: 12,
+      bank_account_name: 'UBS',
+      date_range: null,
+    })
+
+    await act(async () => {
+      await Promise.resolve()
       await Promise.resolve()
       await Promise.resolve()
     })
 
-    expect(container.textContent).toContain('Fichier "transactions.csv" envoyé.')
+    const fullText = container.textContent ?? ''
+    const uploadIndex = fullText.indexOf('Fichier "transactions.csv" envoyé.')
+    const ackIndex = fullText.indexOf('Parfait, j’ai bien reçu ton relevé UBS.')
+    expect(uploadIndex).toBeGreaterThanOrEqual(0)
+    expect(ackIndex).toBeGreaterThan(uploadIndex)
   })
 
   it('does not show quick replies before assistant typing is revealed', async () => {

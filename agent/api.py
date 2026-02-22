@@ -2011,24 +2011,13 @@ def agent_chat(
                 if substep == "bank_accounts_collect":
                     if _is_no(payload.message):
                         if existing_accounts:
-                            import_substep = "import_wait_ready" if len(existing_accounts) == 1 else "import_select_account"
-                            updated_global_state = _build_onboarding_global_state(
-                                {
-                                    **global_state,
-                                    "bank_accounts_confirmed": True,
-                                    "has_bank_accounts": True,
-                                },
-                                onboarding_step="import",
-                                onboarding_substep=import_substep,
+                            accounts_display = _format_accounts_for_reply(existing_accounts)
+                            updated_global_state = _build_bank_accounts_onboarding_global_state(
+                                global_state,
+                                onboarding_substep="bank_accounts_confirm",
                             )
-                            updated_global_state["bank_accounts_confirmed"] = True
                             updated_global_state["has_bank_accounts"] = True
-                            if len(existing_accounts) == 1:
-                                selected_account = existing_accounts[0]
-                                state_dict["import_context"] = {
-                                    "selected_bank_account_id": str(selected_account.get("id")),
-                                    "selected_bank_account_name": str(selected_account.get("name", "")),
-                                }
+                            updated_global_state["bank_accounts_confirmed"] = False
                             state_dict["global_state"] = updated_global_state
                             updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
                             updated_chat_state["state"] = state_dict
@@ -2037,15 +2026,9 @@ def agent_chat(
                                 user_id=auth_user_id,
                                 chat_state=updated_chat_state,
                             )
-                            if len(existing_accounts) == 1:
-                                return ChatResponse(
-                                    reply=_IMPORT_WAIT_READY_REPLY,
-                                    tool_result=_build_quick_reply_yes_no_ui_action(),
-                                    plan=None,
-                                )
                             return ChatResponse(
-                                reply="Parfait. Quel compte veux-tu importer ?",
-                                tool_result=None,
+                                reply=f"J’ai noté: {accounts_display}.\n\nC’est correct ?",
+                                tool_result=_build_quick_reply_yes_no_ui_action(),
                                 plan=None,
                             )
                         return ChatResponse(
@@ -2061,6 +2044,7 @@ def agent_chat(
                             onboarding_substep="bank_accounts_confirm",
                         )
                         updated_global_state["has_bank_accounts"] = True
+                        updated_global_state["bank_accounts_confirmed"] = False
                         state_dict["global_state"] = updated_global_state
                         updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
                         updated_chat_state["state"] = state_dict
@@ -2070,8 +2054,8 @@ def agent_chat(
                             chat_state=updated_chat_state,
                         )
                         return ChatResponse(
-                            reply=f"Tu as déjà ces comptes : {accounts_display}. Tu veux en ajouter un autre ou on passe à l’import ? (réponds « autre » ou « import »)",
-                            tool_result=None,
+                            reply=f"J’ai noté: {accounts_display}.\n\nC’est correct ?",
+                            tool_result=_build_quick_reply_yes_no_ui_action(),
                             plan=None,
                         )
 
@@ -2102,25 +2086,15 @@ def agent_chat(
 
                     profiles_repository.ensure_bank_accounts(profile_id=profile_id, names=matched_banks)
                     refreshed_accounts = profiles_repository.list_bank_accounts(profile_id=profile_id)
+                    accounts_display = _format_accounts_for_reply(refreshed_accounts)
 
-                    updated_global_state = _build_onboarding_global_state(
-                        {
-                            **global_state,
-                            "bank_accounts_confirmed": True,
-                            "has_bank_accounts": bool(refreshed_accounts),
-                        },
-                        onboarding_step="import",
-                        onboarding_substep="import_wait_ready",
+                    updated_global_state = _build_bank_accounts_onboarding_global_state(
+                        global_state,
+                        onboarding_substep="bank_accounts_confirm",
                     )
-                    updated_global_state["bank_accounts_confirmed"] = True
+                    updated_global_state["bank_accounts_confirmed"] = False
                     updated_global_state["has_bank_accounts"] = bool(refreshed_accounts)
-
-                    if len(refreshed_accounts) == 1:
-                        selected_account = refreshed_accounts[0]
-                        state_dict["import_context"] = {
-                            "selected_bank_account_id": str(selected_account.get("id")),
-                            "selected_bank_account_name": str(selected_account.get("name", "")),
-                        }
+                    state_dict.pop("import_context", None)
 
                     state_dict["global_state"] = updated_global_state
                     updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
@@ -2132,21 +2106,19 @@ def agent_chat(
                     )
 
                     return ChatResponse(
-                        reply=_IMPORT_WAIT_READY_REPLY,
+                        reply=f"J’ai noté: {accounts_display}.\n\nC’est correct ?",
                         tool_result=_build_quick_reply_yes_no_ui_action(),
                         plan=None,
                     )
 
                 if substep == "bank_accounts_confirm":
-                    normalized_message = _normalize_text(payload.message)
-                    wants_other = _is_yes(payload.message) or "autre" in normalized_message
-                    wants_import = _is_no(payload.message) or "import" in normalized_message
-
-                    if wants_other:
+                    if _is_no(payload.message):
                         updated_global_state = _build_bank_accounts_onboarding_global_state(
                             global_state,
                             onboarding_substep="bank_accounts_collect",
                         )
+                        updated_global_state["bank_accounts_confirmed"] = False
+                        updated_global_state["has_bank_accounts"] = bool(existing_accounts)
                         state_dict["global_state"] = updated_global_state
                         updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
                         updated_chat_state["state"] = state_dict
@@ -2156,11 +2128,11 @@ def agent_chat(
                             chat_state=updated_chat_state,
                         )
                         return ChatResponse(
-                            reply="Super. Donne-moi la banque à ajouter (ex: UBS).",
+                            reply="Ok. Dis-moi la/les banques à ajouter ou corriger (ex: UBS, Revolut).",
                             tool_result=None,
                             plan=None,
                         )
-                    if wants_import:
+                    if _is_yes(payload.message):
                         if not existing_accounts:
                             return ChatResponse(
                                 reply="Il faut au moins une banque pour continuer l’onboarding.",
@@ -2168,7 +2140,6 @@ def agent_chat(
                                 plan=None,
                             )
 
-                        import_substep = "import_wait_ready" if len(existing_accounts) == 1 else "import_select_account"
                         updated_global_state = _build_onboarding_global_state(
                             {
                                 **global_state,
@@ -2176,11 +2147,12 @@ def agent_chat(
                                 "has_bank_accounts": bool(existing_accounts),
                             },
                             onboarding_step="import",
-                            onboarding_substep=import_substep,
+                            onboarding_substep="import_wait_ready",
                         )
                         updated_global_state["bank_accounts_confirmed"] = True
                         updated_global_state["has_bank_accounts"] = bool(existing_accounts)
                         state_dict["global_state"] = updated_global_state
+                        state_dict.pop("import_context", None)
                         updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
                         updated_chat_state["state"] = state_dict
 
@@ -2207,17 +2179,12 @@ def agent_chat(
                             user_id=auth_user_id,
                             chat_state=updated_chat_state,
                         )
-                        account_names = " / ".join(
-                            str(account.get("name", "")).strip()
-                            for account in existing_accounts
-                            if str(account.get("name", "")).strip()
-                        )
                         return ChatResponse(
-                            reply=f"Parfait. Quel compte veux-tu importer ? {account_names}",
-                            tool_result=None,
+                            reply=_IMPORT_WAIT_READY_REPLY,
+                            tool_result=_build_quick_reply_yes_no_ui_action(),
                             plan=None,
                         )
-                    return ChatResponse(reply="Réponds « autre » ou « import ».", tool_result=None, plan=None)
+                    return ChatResponse(reply="C’est correct ? Réponds ✅ ou ❌.", tool_result=_build_quick_reply_yes_no_ui_action(), plan=None)
 
             if mode == "onboarding" and onboarding_step == "import" and global_state.get("onboarding_substep") == "import_select_account" and hasattr(profiles_repository, "list_bank_accounts"):
                 existing_accounts = profiles_repository.list_bank_accounts(profile_id=profile_id)
