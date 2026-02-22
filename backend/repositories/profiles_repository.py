@@ -107,9 +107,6 @@ class ProfilesRepository(Protocol):
     ) -> dict[str, Any] | None:
         """Return one profile merchant override for a merchant entity."""
 
-    def list_active_classification_rules(self, *, profile_id: UUID) -> list[dict[str, Any]]:
-        """Return active profile classification rules sorted by priority asc."""
-
     def find_profile_category_id_by_name_norm(self, *, profile_id: UUID, name_norm: str) -> UUID | None:
         """Resolve one profile category id by normalized name."""
 
@@ -633,21 +630,6 @@ class SupabaseProfilesRepository:
         if not rows:
             return None
         return rows[0]
-
-    def list_active_classification_rules(self, *, profile_id: UUID) -> list[dict[str, Any]]:
-        rows, _ = self._client.get_rows(
-            table="classification_rules",
-            query={
-                "select": "id,profile_id,active,priority,target_category_id,pattern,match_field,match_mode",
-                "profile_id": f"eq.{profile_id}",
-                "active": "eq.true",
-                "order": "priority.asc",
-                "limit": 500,
-            },
-            with_count=False,
-            use_anon_key=False,
-        )
-        return rows
 
     def find_profile_category_id_by_name_norm(self, *, profile_id: UUID, name_norm: str) -> UUID | None:
         cleaned_name_norm = self._normalize_name_norm(name_norm)

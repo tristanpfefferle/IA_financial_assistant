@@ -19,7 +19,6 @@ SYSTEM_CATEGORY = UUID("33333333-3333-3333-3333-333333333333")
 class StubRepos:
     merchant_entity_by_alias: dict[str, UUID] = field(default_factory=dict)
     override_by_entity: dict[UUID, UUID] = field(default_factory=dict)
-    rules: list[dict[str, object]] = field(default_factory=list)
     entity_suggested: dict[UUID, str] = field(default_factory=dict)
     categories_by_name_norm: dict[str, UUID] = field(default_factory=dict)
     created_suggestions: set[str] = field(default_factory=set)
@@ -37,10 +36,6 @@ class StubRepos:
         if category_id is None:
             return None
         return {"category_id": str(category_id)}
-
-    def list_active_classification_rules(self, *, profile_id: UUID):
-        del profile_id
-        return list(self.rules)
 
     def get_merchant_entity_suggested_category_norm(self, *, merchant_entity_id: UUID):
         return self.entity_suggested.get(merchant_entity_id)
@@ -80,11 +75,12 @@ def _decide(repos: StubRepos, *, libelle: str, payee: str, montant: str = "-10")
     )
 
 
-def test_override_bats_rules() -> None:
+def test_override_beats_entity_suggested() -> None:
     repos = StubRepos(
         merchant_entity_by_alias={"coop monthey": MERCHANT_ENTITY_ID},
         override_by_entity={MERCHANT_ENTITY_ID: CATEGORY_B},
-        rules=[{"pattern": "coop", "match_field": "alias_norm", "match_mode": "contains", "target_category_id": str(CATEGORY_A), "priority": 1}],
+        entity_suggested={MERCHANT_ENTITY_ID: "food"},
+        categories_by_name_norm={"food": CATEGORY_A},
     )
 
     decision = _decide(repos, libelle="Paiement COOP MONTHEY", payee="COOP MONTHEY")
@@ -93,18 +89,17 @@ def test_override_bats_rules() -> None:
     assert decision.source.value == "override"
 
 
-def test_rules_beat_entity_suggested() -> None:
+def test_entity_applies_when_no_override() -> None:
     repos = StubRepos(
         merchant_entity_by_alias={"coop monthey": MERCHANT_ENTITY_ID},
-        rules=[{"pattern": "coop", "match_field": "alias_norm", "match_mode": "contains", "target_category_id": str(CATEGORY_B), "priority": 1}],
         entity_suggested={MERCHANT_ENTITY_ID: "food"},
         categories_by_name_norm={"food": CATEGORY_A},
     )
 
     decision = _decide(repos, libelle="Paiement COOP MONTHEY", payee="COOP MONTHEY")
 
-    assert decision.category_id == CATEGORY_B
-    assert decision.source.value == "rule"
+    assert decision.category_id == CATEGORY_A
+    assert decision.source.value == "entity"
 
 
 def test_system_applies_when_no_merchant() -> None:
