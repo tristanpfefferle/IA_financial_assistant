@@ -286,6 +286,14 @@ describe('ChatPage import intent rendering', () => {
   })
 
   it('shows local upload message before assistant import acknowledgement', async () => {
+    type ImportResult = {
+      ok: boolean
+      imported_count: number
+      transactions_imported_count: number
+      bank_account_name: string
+      date_range: null
+    }
+
     sendChatMessage
       .mockResolvedValueOnce({
         reply: 'Importe ton fichier.',
@@ -302,10 +310,10 @@ describe('ChatPage import intent rendering', () => {
         plan: null,
       })
 
-    let resolveImport: ((value: unknown) => void) | null = null
+    let resolveImport: ((value: ImportResult) => void) | undefined
     importReleves.mockImplementation(
       () =>
-        new Promise((resolve) => {
+        new Promise<ImportResult>((resolve) => {
           resolveImport = resolve
         }),
     )
@@ -348,7 +356,11 @@ describe('ChatPage import intent rendering', () => {
     expect(uploadIndexBeforeAck).toBeGreaterThanOrEqual(0)
     expect(ackIndexBeforeAck).toBe(-1)
 
-    resolveImport?.({
+    if (!resolveImport) {
+      throw new Error('resolveImport not set')
+    }
+
+    resolveImport({
       ok: true,
       imported_count: 12,
       transactions_imported_count: 12,
