@@ -146,6 +146,11 @@ _MERCHANT_CATEGORY_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
     (("axa", "zurich", "helvetia", "mobiliar"), "Assurance"),
 )
 _FALLBACK_MERCHANT_CATEGORY = "Autres"
+BANK_CODE_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "ubs": ("ubs",),
+    "raiffeisen": ("raiffeisen",),
+    "revolut": ("revolut",),
+}
 
 
 def _build_system_categories_payload() -> list[dict[str, str]]:
@@ -1004,15 +1009,38 @@ def _detect_bank_account_for_import(
 ) -> dict[str, Any] | str | None:
     """Detect target bank account from CSV structure first, then fallback to filename."""
 
-    detected_bank_code = detect_bank_from_csv_bytes(file_bytes or b"") if file_bytes else None
+    normalized_filename = _normalize_text(filename)
+    preview_text = (file_bytes or b"")[:8192].decode("utf-8", errors="ignore") if file_bytes else ""
+    is_csv_filename = normalized_filename.endswith(".csv")
+
+    has_csv_like_header = False
+    if not is_csv_filename and preview_text:
+        for line in preview_text.splitlines()[:5]:
+            stripped_line = line.strip()
+            if not stripped_line:
+                continue
+            if "," in stripped_line:
+                columns = [col.strip() for col in stripped_line.split(",")]
+                if len(columns) >= 3 and all(columns):
+                    has_csv_like_header = True
+                    break
+            if ";" in stripped_line:
+                columns = [col.strip() for col in stripped_line.split(";")]
+                if len(columns) >= 3 and all(columns):
+                    has_csv_like_header = True
+                    break
+
+    can_run_csv_detection = is_csv_filename or has_csv_like_header
+    detected_bank_code = detect_bank_from_csv_bytes(file_bytes or b"") if can_run_csv_detection and file_bytes else None
     if detected_bank_code:
+        bank_keywords = BANK_CODE_KEYWORDS.get(detected_bank_code, (detected_bank_code,))
         matched_accounts: list[dict[str, Any]] = []
         for account in existing_accounts:
             account_name = str(account.get("name") or "").strip()
             if not account_name:
                 continue
             normalized_name = _normalize_text(account_name)
-            if detected_bank_code in normalized_name:
+            if any(keyword in normalized_name for keyword in bank_keywords):
                 matched_accounts.append(account)
 
         logger.info(
@@ -1032,7 +1060,6 @@ def _detect_bank_account_for_import(
         0,
     )
 
-    normalized_filename = _normalize_text(filename)
     substring_matches: list[dict[str, Any]] = []
     for account in existing_accounts:
         account_name = str(account.get("name") or "").strip()
@@ -3001,9 +3028,10 @@ def import_releves(payload: ImportRequestPayload, authorization: str | None = He
         first_file_bytes: bytes | None = None
         if payload.files:
             try:
-                first_file_bytes = base64.b64decode(payload.files[0].content_base64)
+                decoded = base64.b64decode(payload.files[0].content_base64, validate=False)
+                first_file_bytes = decoded[:65536]
             except Exception:
-                logger.exception("import_bank_detection_decode_failed profile_id=%s", profile_id)
+                logger.warning("import_bank_detection_decode_failed profile_id=%s", profile_id)
         detection_result = _detect_bank_account_for_import(
             filename=first_filename,
             file_bytes=first_file_bytes,

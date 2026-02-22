@@ -54,8 +54,10 @@ def detect_bank_from_csv_bytes(data: bytes) -> str | None:
     lines = [line for line in text.splitlines() if line.strip()][:10]
     if not lines:
         return None
+    if not any(("," in line) or (";" in line) for line in lines):
+        return None
 
-    sample = _normalize_text("\n".join(lines))
+    sample = _normalize_text("\n".join(lines))[:10000]
     best_bank_code: str | None = None
     best_score = 0
     score_threshold = 2
