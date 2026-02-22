@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal
 import re
@@ -11,9 +10,6 @@ from typing import Any, Protocol
 from uuid import UUID
 
 from shared.models import ClassificationDecision, ClassificationSource
-
-
-_RULE_DEFAULT_FIELDS: tuple[str, ...] = ("alias_norm", "libelle", "payee")
 
 
 class ClassificationDecisionRepositories(Protocol):
@@ -27,8 +23,6 @@ class ClassificationDecisionRepositories(Protocol):
         profile_id: UUID,
         merchant_entity_id: UUID,
     ) -> dict[str, Any] | None: ...
-
-    def list_active_classification_rules(self, *, profile_id: UUID) -> list[dict[str, Any]]: ...
 
     def get_merchant_entity_suggested_category_norm(self, *, merchant_entity_id: UUID) -> str | None: ...
 
@@ -45,13 +39,6 @@ class ClassificationDecisionRepositories(Protocol):
     ) -> bool: ...
 
 
-@dataclass(frozen=True, slots=True)
-class RuleMatchContext:
-    alias_norm: str
-    libelle: str
-    payee: str
-
-
 def normalize_merchant_alias(text: str | None) -> str:
     """Normalize merchant alias for deterministic matching and deduplication."""
 
@@ -61,32 +48,6 @@ def normalize_merchant_alias(text: str | None) -> str:
     normalized = unicodedata.normalize("NFKD", raw).encode("ascii", "ignore").decode("ascii")
     normalized = re.sub(r"[\.,;:!\?\(\)\[\]\{\}\-_/\\'\"`~]", " ", normalized)
     return " ".join(normalized.split())
-
-
-def _rule_matches(rule: dict[str, Any], context: RuleMatchContext) -> bool:
-    pattern = str(rule.get("pattern") or "").strip().lower()
-    if not pattern:
-        return False
-
-    field = str(rule.get("match_field") or "alias_norm").strip().lower()
-    mode = str(rule.get("match_mode") or "contains").strip().lower()
-
-    if field not in _RULE_DEFAULT_FIELDS:
-        field = "alias_norm"
-
-    candidate = getattr(context, field)
-    if not candidate:
-        return False
-
-    if mode == "equals":
-        return candidate == pattern
-    if mode == "regex":
-        try:
-            return re.search(pattern, candidate) is not None
-        except re.error:
-            return False
-    return pattern in candidate
-
 
 def _decision(*, merchant_entity_id: UUID | None, category_id: UUID | None, confidence: float, source: ClassificationSource, rationale: str) -> ClassificationDecision:
     return ClassificationDecision(
@@ -143,8 +104,6 @@ def decide_releve_classification(
     del bank_account_id, devise, date, metadata
 
     normalized_alias = normalize_merchant_alias(payee or libelle)
-    normalized_libelle = normalize_merchant_alias(libelle)
-    normalized_payee = normalize_merchant_alias(payee)
     entity = repositories.find_merchant_entity_by_alias_norm(alias_norm=normalized_alias) if normalized_alias else None
     merchant_entity_id = UUID(str(entity["id"])) if entity and entity.get("id") else None
 
@@ -161,21 +120,6 @@ def decide_releve_classification(
                 source=ClassificationSource.OVERRIDE,
                 rationale="override profil marchand appliqué",
             )
-
-    context = RuleMatchContext(alias_norm=normalized_alias, libelle=normalized_libelle, payee=normalized_payee)
-    for rule in repositories.list_active_classification_rules(profile_id=profile_id):
-        if not _rule_matches(rule, context):
-            continue
-        target_category_id = rule.get("target_category_id") or rule.get("category_id")
-        if not target_category_id:
-            continue
-        return _decision(
-            merchant_entity_id=merchant_entity_id,
-            category_id=UUID(str(target_category_id)),
-            confidence=0.95,
-            source=ClassificationSource.RULE,
-            rationale=f"règle active match priority={rule.get('priority', 0)}",
-        )
 
     if merchant_entity_id is not None:
         suggested_norm = repositories.get_merchant_entity_suggested_category_norm(merchant_entity_id=merchant_entity_id)
