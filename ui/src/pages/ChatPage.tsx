@@ -427,7 +427,7 @@ export function ChatPage({ email }: ChatPageProps) {
           ...previous,
           {
             id: queued.id,
-            role: 'assistant',
+            role: 'assistant' as const,
             content: queued.content,
             createdAt: Date.now(),
             toolResult: queued.toolResult,
@@ -540,7 +540,7 @@ export function ChatPage({ email }: ChatPageProps) {
       return
     }
 
-    setMessages((previous) => [...previous, { id: crypto.randomUUID(), role: 'user', content: displayMessage, createdAt: Date.now() }])
+    setMessages((previous) => [...previous, { id: crypto.randomUUID(), role: 'user' as const, content: displayMessage, createdAt: Date.now() }])
     setMessage('')
     setError(null)
     setIsLoading(true)
@@ -563,7 +563,7 @@ export function ChatPage({ email }: ChatPageProps) {
       return
     }
 
-    setMessages((previous) => [...previous, { id: crypto.randomUUID(), role: 'user', content: trimmedMessage, createdAt: Date.now() }])
+    setMessages((previous) => [...previous, { id: crypto.randomUUID(), role: 'user' as const, content: trimmedMessage, createdAt: Date.now() }])
     setMessage('')
     setError(null)
     setIsLoading(true)
@@ -719,7 +719,7 @@ export function ChatPage({ email }: ChatPageProps) {
             ...previous,
             {
               id: `upload-${fingerprint}`,
-              role: 'user',
+              role: 'user' as const,
               content: `Fichier "${filename}" envoyé.`,
               createdAt: Date.now(),
             },
@@ -730,7 +730,7 @@ export function ChatPage({ email }: ChatPageProps) {
             const updated = sourceMessageId
               ? previous.map((item) => (item.id === sourceMessageId ? { ...item, toolResult: null } : item))
               : previous
-            return [...updated, { id: crypto.randomUUID(), role: 'assistant', content: resultMessage, createdAt: Date.now(), debugPayload }]
+            return [...updated, { id: crypto.randomUUID(), role: 'assistant' as const, content: resultMessage, createdAt: Date.now(), debugPayload }]
           })
           setIsImportDialogOpen(false)
           setToast({ type: 'success', message: 'Import terminé. Analyse automatique en cours…' })
