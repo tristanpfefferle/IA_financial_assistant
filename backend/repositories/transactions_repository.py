@@ -64,6 +64,10 @@ class InMemoryTransactionsRepository:
         ]
 
     def _filter_rows(self, filters: TransactionFilters) -> list[TransactionRow]:
+        search_text = (
+            (getattr(filters, "search", None) or getattr(filters, "merchant", None) or "")
+        ).strip()
+
         rows = [row for row in self._seed if row.profile_id == filters.profile_id]
         if filters.date_range is not None:
             rows = [
@@ -71,8 +75,8 @@ class InMemoryTransactionsRepository:
                 for row in rows
                 if filters.date_range.start_date <= row.date <= filters.date_range.end_date
             ]
-        if filters.merchant:
-            needle = filters.merchant.lower()
+        if search_text:
+            needle = search_text.lower()
             rows = [
                 row
                 for row in rows
@@ -109,14 +113,18 @@ class SupabaseTransactionsRepository:
         self._client = client
 
     def _build_query(self, filters: TransactionFilters) -> list[tuple[str, str | int]]:
+        search_text = (
+            (getattr(filters, "search", None) or getattr(filters, "merchant", None) or "")
+        ).strip()
+
         query: list[tuple[str, str | int]] = [("profile_id", f"eq.{filters.profile_id}")]
 
         if filters.date_range is not None:
             query.append(("date", f"gte.{filters.date_range.start_date}"))
             query.append(("date", f"lte.{filters.date_range.end_date}"))
 
-        if filters.merchant:
-            query.append(("or", f"(libelle.ilike.*{filters.merchant}*,payee.ilike.*{filters.merchant}*)"))
+        if search_text:
+            query.append(("or", f"(libelle.ilike.*{search_text}*,payee.ilike.*{search_text}*)"))
 
         if filters.bank_account_id is not None:
             query.append(("bank_account_id", f"eq.{filters.bank_account_id}"))

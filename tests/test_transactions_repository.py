@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
+from types import SimpleNamespace
 from uuid import UUID
 
 from backend.repositories.transactions_repository import SupabaseTransactionsRepository
@@ -41,6 +42,32 @@ def test_sum_transactions_applies_date_range_and_search_filters() -> None:
     assert ("date", "lte.2025-01-31") in query
     assert ("or", "(libelle.ilike.*coop*,payee.ilike.*coop*)") in query
 
+
+
+
+def test_sum_transactions_supports_legacy_search_filter_alias() -> None:
+    client = _ClientStub(rows=[{"montant": "-20.00", "devise": "CHF"}])
+    repository = SupabaseTransactionsRepository(client=client)
+
+    filters = SimpleNamespace(
+        profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+        date_range=None,
+        search="coop",
+        bank_account_id=None,
+        category_id=None,
+        merchant_id=None,
+        direction=RelevesDirection.ALL,
+        limit=50,
+        offset=0,
+    )
+
+    total, count, currency = repository.sum_transactions(filters)
+
+    assert total == Decimal("-20.00")
+    assert count == 1
+    assert currency == "CHF"
+    query = client.calls[0]["query"]
+    assert ("or", "(libelle.ilike.*coop*,payee.ilike.*coop*)") in query
 
 def test_search_transactions_filters_bank_account_and_category() -> None:
     client = _ClientStub(

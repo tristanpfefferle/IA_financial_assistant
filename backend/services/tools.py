@@ -136,6 +136,7 @@ class BackendToolService:
         try:
             filters = self._apply_category_filter_resolution(filters)
             total, count, currency = self.transactions_repository.sum_transactions(filters)
+            currency = currency or "CHF"
             average = (total / count) if count > 0 else total
             return TransactionSumResult(
                 total=total,
