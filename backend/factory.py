@@ -13,19 +13,16 @@ from backend.repositories.bank_accounts_repository import (
 )
 from backend.repositories.profiles_repository import SupabaseProfilesRepository
 from backend.repositories.releves_repository import InMemoryRelevesRepository, SupabaseRelevesRepository
-from backend.repositories.transactions_repository import GestionFinanciereTransactionsRepository
+from backend.repositories.transactions_repository import (
+    InMemoryTransactionsRepository,
+    SupabaseTransactionsRepository,
+)
 from backend.services.tools import BackendToolService
 from shared import config
 
 
 def build_backend_tool_service() -> BackendToolService:
-    """Build backend tool service with repository adapters.
-
-    The default repository is an in-process placeholder adapter over the
-    `gestion_financiere` source-of-truth code.
-    """
-
-    transactions_repository = GestionFinanciereTransactionsRepository()
+    """Build backend tool service with repository adapters."""
 
     supabase_url = config.supabase_url()
     supabase_key = config.supabase_service_role_key()
@@ -38,11 +35,13 @@ def build_backend_tool_service() -> BackendToolService:
             )
         )
         releves_repository = SupabaseRelevesRepository(client=supabase_client)
+        transactions_repository = SupabaseTransactionsRepository(client=supabase_client)
         categories_repository = SupabaseCategoriesRepository(client=supabase_client)
         bank_accounts_repository = SupabaseBankAccountsRepository(client=supabase_client)
         profiles_repository = SupabaseProfilesRepository(client=supabase_client)
     else:
         releves_repository = InMemoryRelevesRepository()
+        transactions_repository = InMemoryTransactionsRepository()
         categories_repository = InMemoryCategoriesRepository()
         bank_accounts_repository = InMemoryBankAccountsRepository()
         profiles_repository = None
