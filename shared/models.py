@@ -276,6 +276,7 @@ class RelevesFilters(BaseModel):
     date_range: DateRange | None = None
     categorie: str | None = None
     category_id: UUID | None = None
+    search: str | None = None
     merchant: str | None = None
     merchant_id: UUID | None = None
     bank_account_id: UUID | None = None

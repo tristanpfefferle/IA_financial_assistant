@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
-from types import SimpleNamespace
 from uuid import UUID
 
 from backend.repositories.transactions_repository import SupabaseTransactionsRepository
@@ -49,7 +48,7 @@ def test_sum_transactions_supports_legacy_search_filter_alias() -> None:
     client = _ClientStub(rows=[{"montant": "-20.00", "devise": "CHF"}])
     repository = SupabaseTransactionsRepository(client=client)
 
-    filters = SimpleNamespace(
+    filters = TransactionFilters(
         profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
         date_range=None,
         search="coop",
