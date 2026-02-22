@@ -182,8 +182,8 @@ def test_in_memory_sum_and_aggregate_exclude_categories_for_debit_only(monkeypat
     )
     total, count, currency = repository.sum_releves(filters)
 
-    assert total == Decimal("-1055.00")
-    assert count == 3
+    assert total == Decimal("-905.00")
+    assert count == 2
     assert currency == "EUR"
 
     aggregate_request = RelevesAggregateRequest(
@@ -194,7 +194,6 @@ def test_in_memory_sum_and_aggregate_exclude_categories_for_debit_only(monkeypat
     groups, aggregate_currency = repository.aggregate_releves(aggregate_request)
 
     assert groups == {
-        "Transfert interne": (Decimal("-150.00"), 1),
         "Logement": (Decimal("-900.00"), 1),
         "Autres": (Decimal("-5.00"), 1),
     }

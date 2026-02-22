@@ -45,6 +45,14 @@ class RelevesRepository(Protocol):
     ) -> tuple[dict[str, tuple[Decimal, int]], str | None]:
         """Return grouped totals/counts plus optional currency."""
 
+    def list_pending_categorization_releves(
+        self,
+        *,
+        profile_id: UUID,
+        limit: int = 50,
+    ) -> list[dict[str, object]]:
+        """Return releves pending categorization, excluding internal transfers by default."""
+
     def get_excluded_category_names(self, profile_id: UUID) -> set[str]:
         """Return normalized category names excluded from totals for the profile."""
 
@@ -192,6 +200,13 @@ class InMemoryRelevesRepository:
 
         return items
 
+    def _is_internal_transfer(self, item: ReleveBancaire) -> bool:
+        sidecar = self._import_sidecar.get(item.id, {})
+        meta = sidecar.get("meta")
+        if isinstance(meta, dict) and str(meta.get("tx_kind") or "").strip().lower() == "transfer_internal":
+            return True
+        return bool(item.categorie and normalize_category_name(item.categorie) in {"transferts internes", "transfert interne"})
+
     def list_releves(self, filters: RelevesFilters) -> tuple[list[ReleveBancaire], int | None]:
         filtered = self._apply_filters(filters)
         start = filters.offset
@@ -200,6 +215,8 @@ class InMemoryRelevesRepository:
 
     def sum_releves(self, filters: RelevesFilters) -> tuple[Decimal, int, str | None]:
         filtered = self._apply_filters(filters)
+        if not filters.include_internal_transfers:
+            filtered = [item for item in filtered if not self._is_internal_transfer(item)]
         if filters.direction == RelevesDirection.DEBIT_ONLY:
             excluded_categories = self.get_excluded_category_names(filters.profile_id)
             if excluded_categories:
@@ -217,6 +234,8 @@ class InMemoryRelevesRepository:
         self, request: RelevesAggregateRequest
     ) -> tuple[dict[str, tuple[Decimal, int]], str | None]:
         filtered = self._apply_filters(request)
+        if not request.include_internal_transfers:
+            filtered = [item for item in filtered if not self._is_internal_transfer(item)]
         if request.direction == RelevesDirection.DEBIT_ONLY:
             excluded_categories = self.get_excluded_category_names(request.profile_id)
             if excluded_categories:
@@ -285,6 +304,44 @@ class InMemoryRelevesRepository:
                 excluded.add(normalize_category_name(name))
 
         return excluded
+
+    def list_pending_categorization_releves(
+        self,
+        *,
+        profile_id: UUID,
+        limit: int = 50,
+    ) -> list[dict[str, object]]:
+        rows: list[dict[str, object]] = []
+        for item in self._seed:
+            if item.profile_id != profile_id or self._is_internal_transfer(item):
+                continue
+
+            sidecar = self._import_sidecar.get(item.id, {})
+            meta = sidecar.get("meta") if isinstance(sidecar.get("meta"), dict) else {}
+            category_status = str(meta.get("category_status") or "").strip().lower()
+            category_key = str(meta.get("category_key") or "").strip().lower()
+            if category_status != "pending" and category_key != "twint_p2p_pending":
+                continue
+
+            rows.append(
+                {
+                    "id": str(item.id),
+                    "date": item.date.isoformat(),
+                    "montant": item.montant,
+                    "devise": item.devise,
+                    "libelle": item.libelle,
+                    "payee": item.payee,
+                    "categorie": item.categorie,
+                    "meta": {
+                        "category_key": meta.get("category_key"),
+                        "category_status": meta.get("category_status"),
+                    },
+                }
+            )
+            if len(rows) >= limit:
+                break
+
+        return rows
 
     def update_bank_account_id_by_ids(
         self,
@@ -469,6 +526,14 @@ class SupabaseRelevesRepository:
 
         return query
 
+    @staticmethod
+    def _row_is_internal_transfer(row: dict[str, object]) -> bool:
+        meta = row.get("metadonnees")
+        if isinstance(meta, dict) and str(meta.get("tx_kind") or "").strip().lower() == "transfer_internal":
+            return True
+        category = row.get("categorie")
+        return isinstance(category, str) and normalize_category_name(category) in {"transferts internes", "transfert interne"}
+
     def list_releves(self, filters: RelevesFilters) -> tuple[list[ReleveBancaire], int | None]:
         query = [
             *self._build_query(filters),
@@ -480,8 +545,11 @@ class SupabaseRelevesRepository:
         return [ReleveBancaire.model_validate(row) for row in rows], total
 
     def sum_releves(self, filters: RelevesFilters) -> tuple[Decimal, int, str | None]:
-        query = [*self._build_query(filters), ("select", "montant,devise,categorie,bank_account_id")]
+        query = [*self._build_query(filters), ("select", "montant,devise,categorie,bank_account_id,metadonnees")]
         rows, _ = self._client.get_rows(table="releves_bancaires", query=query, with_count=False)
+
+        if not filters.include_internal_transfers:
+            rows = [row for row in rows if not self._row_is_internal_transfer(row)]
 
         if filters.direction == RelevesDirection.DEBIT_ONLY:
             excluded_categories = self.get_excluded_category_names(filters.profile_id)
@@ -508,9 +576,12 @@ class SupabaseRelevesRepository:
     ) -> tuple[dict[str, tuple[Decimal, int]], str | None]:
         query = [
             *self._build_query(request),
-            ("select", "montant,devise,date,categorie,category_id,payee,bank_account_id"),
+            ("select", "montant,devise,date,categorie,category_id,payee,bank_account_id,metadonnees"),
         ]
         rows, _ = self._client.get_rows(table="releves_bancaires", query=query, with_count=False)
+
+        if not request.include_internal_transfers:
+            rows = [row for row in rows if not self._row_is_internal_transfer(row)]
 
         if request.direction == RelevesDirection.DEBIT_ONLY:
             excluded_categories = self.get_excluded_category_names(request.profile_id)
@@ -598,6 +669,52 @@ class SupabaseRelevesRepository:
                 excluded.add(normalize_category_name(name))
 
         return excluded
+
+    def list_pending_categorization_releves(
+        self,
+        *,
+        profile_id: UUID,
+        limit: int = 50,
+    ) -> list[dict[str, object]]:
+        query: list[tuple[str, str | int]] = [
+            ("profile_id", f"eq.{profile_id}"),
+            ("select", "id,date,montant,devise,libelle,payee,categorie,metadonnees"),
+            ("limit", max(1, min(limit, 200))),
+            ("offset", 0),
+        ]
+        rows, _ = self._client.get_rows(table="releves_bancaires", query=query, with_count=False)
+
+        filtered_rows: list[dict[str, object]] = []
+        for row in rows:
+            if self._row_is_internal_transfer(row):
+                continue
+
+            meta = row.get("metadonnees") if isinstance(row.get("metadonnees"), dict) else {}
+            category_status = str(meta.get("category_status") or "").strip().lower()
+            category_key = str(meta.get("category_key") or "").strip().lower()
+            if category_status != "pending" and category_key != "twint_p2p_pending":
+                continue
+
+            filtered_rows.append(
+                {
+                    "id": row.get("id"),
+                    "date": row.get("date"),
+                    "montant": row.get("montant"),
+                    "devise": row.get("devise"),
+                    "libelle": row.get("libelle"),
+                    "payee": row.get("payee"),
+                    "categorie": row.get("categorie"),
+                    "meta": {
+                        "category_key": meta.get("category_key"),
+                        "category_status": meta.get("category_status"),
+                    },
+                }
+            )
+
+            if len(filtered_rows) >= limit:
+                break
+
+        return filtered_rows
 
     def update_bank_account_id_by_ids(
         self,

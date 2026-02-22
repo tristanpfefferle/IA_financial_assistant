@@ -5,11 +5,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ChatPage } from './ChatPage'
 
 const {
+  fetchPendingTransactions,
   getPendingMerchantAliasesCount,
   importReleves,
   openPdfFromUrl,
   sendChatMessage,
 } = vi.hoisted(() => ({
+  fetchPendingTransactions: vi.fn(),
   getPendingMerchantAliasesCount: vi.fn(),
   importReleves: vi.fn(),
   openPdfFromUrl: vi.fn(),
@@ -17,6 +19,7 @@ const {
 }))
 
 vi.mock('../api/agentApi', () => ({
+  fetchPendingTransactions,
   getPendingMerchantAliasesCount,
   resolvePendingMerchantAliases: vi.fn(),
   isImportClarificationResult: (value: unknown) => {
@@ -69,12 +72,14 @@ describe('ChatPage import intent rendering', () => {
     container = document.createElement('div')
     document.body.appendChild(container)
     Object.defineProperty(globalThis, 'FileReader', { value: MockFileReader, configurable: true })
+    fetchPendingTransactions.mockReset()
     getPendingMerchantAliasesCount.mockReset()
     importReleves.mockReset()
     sendChatMessage.mockReset()
     openPdfFromUrl.mockReset()
     openPdfFromUrl.mockResolvedValue(undefined)
     getPendingMerchantAliasesCount.mockResolvedValue({ pending_total_count: 0 })
+    fetchPendingTransactions.mockResolvedValue({ count_total: 0, count_twint_p2p_pending: 0, items: [] })
   })
 
   afterEach(() => {
@@ -240,6 +245,74 @@ describe('ChatPage import intent rendering', () => {
     })
 
     expect(openPdfFromUrl).toHaveBeenCalled()
+  })
+
+
+
+  it('shows TWINT pending categorization badge and assistant prompt after import', async () => {
+    sendChatMessage
+      .mockResolvedValueOnce({
+        reply: 'Salut 👋',
+        tool_result: { type: 'ui_request', name: 'import_file', accepted_types: ['csv'] },
+        plan: null,
+      })
+      .mockResolvedValueOnce({
+        reply: 'Import analysé.',
+        tool_result: null,
+        plan: null,
+      })
+
+    importReleves.mockResolvedValue({
+      imported_count: 1,
+      failed_count: 0,
+      duplicates_count: 0,
+      replaced_count: 0,
+      identical_count: 0,
+      modified_count: 0,
+      new_count: 1,
+      requires_confirmation: false,
+      errors: [],
+      preview: [],
+    })
+
+    fetchPendingTransactions.mockResolvedValue({ count_total: 2, count_twint_p2p_pending: 2, items: [] })
+
+    await act(async () => {
+      createRoot(container).render(<ChatPage email="user@example.com" />)
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    const startButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.includes('Commencer'))
+    await act(async () => {
+      startButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+    })
+
+    const inlineButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.includes('Importer maintenant'))
+    await act(async () => {
+      inlineButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    const fileInput = container.querySelector('#import-file-input') as HTMLInputElement
+    const file = new File(['date,montant\n2026-01-01,10'], 'releve.csv', { type: 'text/csv' })
+    await act(async () => {
+      Object.defineProperty(fileInput, 'files', { value: [file] })
+      fileInput.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+
+    const dialog = container.querySelector('[aria-label="Importer un relevé"]') as HTMLElement
+    const importButton = Array.from(dialog.querySelectorAll('button')).find((btn) => btn.textContent?.trim() === 'Importer')
+    await act(async () => {
+      importButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(container.textContent).toContain('À catégoriser (TWINT): 2')
+    expect(container.textContent).toContain('J’ai détecté 2 paiements TWINT à catégoriser')
   })
 
   it('shows quick reply yes/no buttons when assistant asks confirmation via ui_action', async () => {

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent, type ReactNode, type RefObject, type UIEvent } from 'react'
 
 import {
+  fetchPendingTransactions,
   getPendingMerchantAliasesCount,
   hardResetProfile,
   importReleves,
@@ -283,12 +284,14 @@ export function ChatPage({ email }: ChatPageProps) {
   const [hasToken, setHasToken] = useState(false)
   const [isRefreshingSession, setIsRefreshingSession] = useState(false)
   const [pendingMerchantAliasesCount, setPendingMerchantAliasesCount] = useState(0)
+  const [pendingCategorizationCount, setPendingCategorizationCount] = useState(0)
   const [isResolvingPendingAliases, setIsResolvingPendingAliases] = useState(false)
   const [resolvePendingAliasesFeedback, setResolvePendingAliasesFeedback] = useState<string | null>(null)
   const [debugMode, setDebugMode] = useState(false)
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false)
   const [autoOpenImportPicker, setAutoOpenImportPicker] = useState(false)
+  const [awaitingPendingCategorizationReply, setAwaitingPendingCategorizationReply] = useState(false)
   const [typingCursor, setTypingCursor] = useState(0)
   const envDebugEnabled = import.meta.env.VITE_UI_DEBUG === 'true'
   const apiBaseUrl = useMemo(() => (import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:8000').replace(/\/+$/, ''), [])
@@ -389,6 +392,7 @@ export function ChatPage({ email }: ChatPageProps) {
   useEffect(() => {
     if (!hasToken) {
       setPendingMerchantAliasesCount(0)
+      setPendingCategorizationCount(0)
       return
     }
 
@@ -405,6 +409,8 @@ export function ChatPage({ email }: ChatPageProps) {
           setPendingMerchantAliasesCount(0)
         }
       })
+
+    void refreshPendingCategorizationStatus()
 
     return () => {
       active = false
@@ -589,6 +595,41 @@ export function ChatPage({ email }: ChatPageProps) {
     }
   }
 
+  async function refreshPendingCategorizationStatus(options?: { withPrompt?: boolean }) {
+    if (!hasToken) {
+      setPendingCategorizationCount(0)
+      return
+    }
+
+    try {
+      const pending = await fetchPendingTransactions()
+      const twintCount = Math.max(0, Number(pending.count_twint_p2p_pending || 0))
+      setPendingCategorizationCount(twintCount)
+      if (options?.withPrompt && twintCount > 0) {
+        setAwaitingPendingCategorizationReply(true)
+        setMessages((previous) => [
+          ...previous,
+          {
+            id: crypto.randomUUID(),
+            role: 'assistant' as const,
+            content: `J’ai détecté ${twintCount} paiements TWINT à catégoriser. Tu veux t’en occuper maintenant ?`,
+            createdAt: Date.now(),
+            toolResult: {
+              type: 'ui_action',
+              action: 'quick_replies',
+              options: [
+                { id: 'pending-cat-yes', label: '✅', value: 'oui' },
+                { id: 'pending-cat-no', label: '❌', value: 'non' },
+              ],
+            },
+          },
+        ])
+      }
+    } catch {
+      setPendingCategorizationCount(0)
+    }
+  }
+
   async function submitQuickReply(displayMessage: '✅' | '❌', apiMessage: 'oui' | 'non') {
     if (isLoading || isImportRequired) {
       return
@@ -600,9 +641,17 @@ export function ChatPage({ email }: ChatPageProps) {
     setIsLoading(true)
 
     try {
+      if (awaitingPendingCategorizationReply) {
+        setAwaitingPendingCategorizationReply(false)
+        const followup = apiMessage === 'oui' ? 'OK, je t’affiche la liste (bientôt).' : 'OK, on fera ça plus tard.'
+        setMessages((previous) => [...previous, { id: crypto.randomUUID(), role: 'assistant' as const, content: followup, createdAt: Date.now() }])
+        return
+      }
+
       const response = await sendChatMessage(apiMessage, { debug: debugMode })
       const segments = splitAssistantReply(response.reply)
       enqueueAssistantMessages(segments, response.tool_result, response.plan, response)
+      await refreshPendingCategorizationStatus({ withPrompt: true })
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Erreur inconnue')
     } finally {
@@ -644,6 +693,7 @@ export function ChatPage({ email }: ChatPageProps) {
       const response = await sendChatMessage('', { debug: debugMode, requestGreeting: true })
       const segments = splitAssistantReply(response.reply)
       enqueueAssistantMessages(segments, response.tool_result, response.plan, response)
+      await refreshPendingCategorizationStatus({ withPrompt: true })
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Erreur inconnue')
     } finally {
@@ -762,6 +812,7 @@ export function ChatPage({ email }: ChatPageProps) {
         const response = await sendChatMessage('', { debug: debugMode })
         const segments = splitAssistantReply(response.reply)
         enqueueAssistantMessages(segments, response.tool_result, response.plan, response)
+        await refreshPendingCategorizationStatus({ withPrompt: true })
       } catch (caughtError) {
         const message = caughtError instanceof Error ? caughtError.message : 'Erreur inconnue pendant l’import'
         updateProgressMessage(progressId, { ...buildProgressToolResult(100, steps.length - 1, steps), step_label: 'Terminé' }, 'Import terminé.')
@@ -785,6 +836,7 @@ export function ChatPage({ email }: ChatPageProps) {
         debugMode={debugMode}
         setDebugMode={setDebugMode}
         pendingMerchantAliasesCount={pendingMerchantAliasesCount}
+        pendingCategorizationCount={pendingCategorizationCount}
         isResolvingPendingAliases={isResolvingPendingAliases}
         onResolvePendingAliases={handleResolvePendingAliases}
         resolvePendingAliasesFeedback={resolvePendingAliasesFeedback}
@@ -901,6 +953,7 @@ type SidebarProps = {
   debugMode: boolean
   setDebugMode: (value: boolean) => void
   pendingMerchantAliasesCount: number
+  pendingCategorizationCount: number
   isResolvingPendingAliases: boolean
   onResolvePendingAliases: () => void
   resolvePendingAliasesFeedback: string | null
@@ -917,6 +970,8 @@ function Sidebar(props: SidebarProps) {
       <section className="card sidebar-card">
         <h2>Profil & Actions</h2>
         <p className="status-badge">{props.statusBadge}</p>
+        {props.pendingCategorizationCount > 0 ? <p className="subtle-text">À catégoriser (TWINT): {props.pendingCategorizationCount}</p> : null}
+
         <label className="switch-row">
           <input type="checkbox" checked={props.debugMode} onChange={(event) => props.setDebugMode(event.target.checked)} />
           Mode debug

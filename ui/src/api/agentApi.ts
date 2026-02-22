@@ -86,6 +86,27 @@ export type PendingMerchantAliasesCountResult = {
   pending_total_count: number
 }
 
+
+export type PendingCategorizationItem = {
+  id: string
+  date: string
+  montant: string | number
+  devise: string
+  libelle?: string | null
+  payee?: string | null
+  categorie?: string | null
+  meta?: {
+    category_key?: string | null
+    category_status?: string | null
+  } | null
+}
+
+export type PendingTransactionsResult = {
+  count_total: number
+  count_twint_p2p_pending: number
+  items: PendingCategorizationItem[]
+}
+
 export type ResolvePendingMerchantAliasesResult = {
   ok: boolean
   type: string
@@ -240,6 +261,22 @@ export async function resolvePendingMerchantAliases(
   return (await response.json()) as ResolvePendingMerchantAliasesResult
 }
 
+
+
+
+export async function fetchPendingTransactions(): Promise<PendingTransactionsResult> {
+  const response = await fetch(`${getBaseUrl()}/finance/transactions/pending`, {
+    method: 'GET',
+    headers: await buildAuthHeaders(),
+  })
+
+  if (!response.ok) {
+    const detail = await extractErrorDetail(response)
+    throw new Error(`Erreur API transactions pending (${response.status}): ${detail}`)
+  }
+
+  return (await response.json()) as PendingTransactionsResult
+}
 
 export async function openPdfFromUrl(url: string): Promise<void> {
   const accessToken = await getAccessToken()

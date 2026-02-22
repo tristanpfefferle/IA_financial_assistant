@@ -259,6 +259,7 @@ class RelevesFilters(BaseModel):
     merchant_id: UUID | None = None
     bank_account_id: UUID | None = None
     direction: RelevesDirection = RelevesDirection.ALL
+    include_internal_transfers: bool = False
     limit: int = Field(default=50, ge=1, le=500)
     offset: int = Field(default=0, ge=0)
 
@@ -302,6 +303,7 @@ class RelevesAggregateRequest(BaseModel):
     merchant_id: UUID | None = None
     bank_account_id: UUID | None = None
     direction: RelevesDirection = RelevesDirection.ALL
+    include_internal_transfers: bool = False
 
 
 class RelevesAggregateGroup(BaseModel):

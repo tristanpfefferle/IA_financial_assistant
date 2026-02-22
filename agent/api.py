@@ -260,6 +260,18 @@ def _build_open_pdf_ui_request(url: str) -> dict[str, str]:
     }
 
 
+
+
+def _is_internal_transfer_payload(row: dict[str, Any]) -> bool:
+    """Return True when row payload represents an internal transfer transaction."""
+
+    meta = row.get("meta")
+    if isinstance(meta, dict) and str(meta.get("tx_kind") or "").strip().lower() == "transfer_internal":
+        return True
+
+    category = row.get("categorie")
+    return isinstance(category, str) and category.strip().lower() in {"transferts internes", "transfert interne"}
+
 def _build_spending_pdf_url(*, month: str | None = None, start_date: str | None = None, end_date: str | None = None) -> str:
     """Build relative spending report endpoint URL with optional period filters."""
 
@@ -2790,7 +2802,7 @@ def _fetch_spending_transactions(
     """Fetch DEBIT_ONLY transactions for spending PDF detail page."""
 
     router = get_tool_router()
-    query_payload = {**payload, "limit": 500, "offset": 0}
+    query_payload = {**payload, "limit": 500, "offset": 0, "include_internal_transfers": False}
     result = router.call("finance_releves_search", query_payload, profile_id=profile_id)
 
     if isinstance(result, ToolError) and result.code == ToolErrorCode.UNKNOWN_TOOL:
@@ -2836,6 +2848,9 @@ def _fetch_spending_transactions(
             ]
         ) or "Inconnu"
         merchant = _clean_merchant_display_name(merchant_raw)
+        if _is_internal_transfer_payload(item):
+            continue
+
         category = _normalize_report_category(
             _pick_first_non_empty_string(
                 [
@@ -2911,6 +2926,7 @@ def get_spending_report_pdf(
             "end_date": period_end.isoformat(),
         },
         "direction": RelevesDirection.DEBIT_ONLY.value,
+        "include_internal_transfers": False,
     }
     sum_result = get_tool_router().call("finance_releves_sum", payload, profile_id=profile_id)
     if isinstance(sum_result, ToolError):
@@ -3405,6 +3421,50 @@ def resolve_merchant_alias_suggestions(
 
     return jsonable_encoder(stats)
 
+
+
+
+@app.get("/finance/transactions/pending")
+def get_pending_transactions(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    """List/count pending categorization transactions for authenticated profile."""
+
+    _, profile_id = _resolve_authenticated_profile(authorization)
+    releves_repository = get_tool_router().backend_client.tool_service.releves_repository
+    rows = releves_repository.list_pending_categorization_releves(profile_id=profile_id, limit=50)
+
+    items: list[dict[str, Any]] = []
+    twint_pending_count = 0
+    for row in rows:
+        meta = row.get("meta") if isinstance(row.get("meta"), dict) else {}
+        category_key = str(meta.get("category_key") or "").strip().lower()
+        category_status = str(meta.get("category_status") or "").strip().lower()
+        if category_status != "pending" and category_key != "twint_p2p_pending":
+            continue
+
+        item = {
+            "id": row.get("id"),
+            "date": row.get("date"),
+            "montant": row.get("montant"),
+            "devise": row.get("devise"),
+            "libelle": row.get("libelle"),
+            "payee": row.get("payee"),
+            "categorie": row.get("categorie"),
+            "meta": {
+                "category_key": meta.get("category_key"),
+                "category_status": meta.get("category_status"),
+            },
+        }
+        if _is_internal_transfer_payload(item):
+            continue
+        if category_key == "twint_p2p_pending":
+            twint_pending_count += 1
+        items.append(item)
+
+    return {
+        "count_total": len(items),
+        "count_twint_p2p_pending": twint_pending_count,
+        "items": items[:50],
+    }
 
 @app.get("/finance/merchants/aliases/pending-count")
 def get_pending_merchant_aliases_count(authorization: str | None = Header(default=None)) -> dict[str, int]:
