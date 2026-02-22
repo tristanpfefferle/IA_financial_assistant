@@ -1123,3 +1123,64 @@ def test_spending_report_pdf_normalizes_categories_and_transaction_rows(monkeypa
         ("2026-01-01", "Aucun", "Transport"),
         ("2026-01-11", "Marchand Long", "Alimentation"),
     ]
+
+
+def test_pending_transactions_endpoint_counts_twint_and_excludes_internal(monkeypatch) -> None:
+    _mock_authenticated(monkeypatch)
+
+    class _RelevesRepo:
+        def list_pending_categorization_releves(self, *, profile_id: UUID, limit: int = 50):
+            assert profile_id == PROFILE_ID
+            assert limit == 50
+            return [
+                {
+                    "id": "1",
+                    "date": "2025-01-02",
+                    "montant": "-10.00",
+                    "devise": "CHF",
+                    "libelle": "TWINT Luc",
+                    "payee": "Luc",
+                    "categorie": "À catégoriser (TWINT)",
+                    "meta": {"category_key": "twint_p2p_pending", "category_status": "pending"},
+                },
+                {
+                    "id": "2",
+                    "date": "2025-01-03",
+                    "montant": "-40.00",
+                    "devise": "CHF",
+                    "libelle": "Virement",
+                    "payee": "Épargne",
+                    "categorie": "Transferts internes",
+                    "meta": {"tx_kind": "transfer_internal", "category_status": "pending"},
+                },
+                {
+                    "id": "3",
+                    "date": "2025-01-04",
+                    "montant": "-8.00",
+                    "devise": "CHF",
+                    "libelle": "Café",
+                    "payee": "Café",
+                    "categorie": "Alimentation",
+                    "meta": {"category_key": "food", "category_status": "done"},
+                },
+            ]
+
+    class _ToolService:
+        releves_repository = _RelevesRepo()
+
+    class _BackendClient:
+        tool_service = _ToolService()
+
+    class _Router:
+        backend_client = _BackendClient()
+
+    monkeypatch.setattr(agent_api, "get_tool_router", lambda: _Router())
+
+    response = client.get("/finance/transactions/pending", headers=_auth_headers())
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["count_twint_p2p_pending"] == 1
+    assert payload["count_total"] == 1
+    assert len(payload["items"]) == 1
+    assert payload["items"][0]["id"] == "1"
