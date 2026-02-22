@@ -358,9 +358,6 @@ describe('ChatPage import intent rendering', () => {
       expect(container.querySelector('[aria-label="import-progress"]')).toBeTruthy()
       expect(container.textContent).toContain('Étape:')
 
-      await act(async () => {
-        vi.advanceTimersByTime(800)
-      })
 
       if (!resolveImport) {
         throw new Error('resolveImport not set')
