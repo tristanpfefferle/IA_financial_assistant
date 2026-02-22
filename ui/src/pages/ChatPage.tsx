@@ -85,7 +85,9 @@ ${importedCount} transactions détectées.`
 }
 
 function buildImportErrorText(message: string): string {
-  return `❌ Import impossible: ${message}. Vérifie que tu as bien exporté un CSV depuis ton e-banking.`
+  const trimmedMessage = message.trim()
+  const cleanMessage = /[.!?]$/.test(trimmedMessage) ? trimmedMessage.slice(0, -1) : trimmedMessage
+  return `❌ Import impossible: ${cleanMessage}. Vérifie que tu as bien exporté un CSV depuis ton e-banking.`
 }
 
 function readFileAsBase64(file: File): Promise<string> {
@@ -716,13 +718,14 @@ export function ChatPage({ email }: ChatPageProps) {
       try {
         const contentBase64 = await readFileAsBase64(file)
         updateProgressMessage(progressId, buildProgressToolResult(25, 1, steps), 'Import en cours… Je prépare ton relevé.')
-
-        updateProgressMessage(progressId, buildProgressToolResult(35, 1, steps), 'Import en cours… Je prépare ton relevé.')
+        updateProgressMessage(progressId, buildProgressToolResult(60, 2, steps), 'Import en cours… Je prépare ton relevé.')
         const result = await importReleves({
           files: [{ filename: file.name, content_base64: contentBase64 }],
           import_mode: 'commit',
           modified_action: 'replace',
         })
+
+        updateProgressMessage(progressId, buildProgressToolResult(90, 3, steps), 'Import en cours… Je prépare ton relevé.')
 
         if (isImportClarificationResult(result)) {
           updateProgressMessage(progressId, { ...buildProgressToolResult(100, steps.length - 1, steps), step_label: 'Terminé' })
@@ -739,7 +742,6 @@ export function ChatPage({ email }: ChatPageProps) {
           return
         }
 
-        updateProgressMessage(progressId, buildProgressToolResult(75, 2, steps), 'Import en cours… Je prépare ton relevé.')
         updateProgressMessage(progressId, { ...buildProgressToolResult(100, steps.length - 1, steps), step_label: 'Terminé' })
         replaceProgressWithAssistantMessage(
           progressId,
@@ -1209,7 +1211,11 @@ function MessageBubble({
   const matchedStepIndex = progressUiAction
     ? progressUiAction.steps.findIndex((step) => step === progressUiAction.step_label)
     : -1
-  const activeStepIndex = progressUiAction ? matchedStepIndex : -1
+  const activeStepIndex = progressUiAction
+    ? progressUiAction.step_label === 'Terminé'
+      ? progressUiAction.steps.length - 1
+      : Math.max(0, matchedStepIndex)
+    : -1
   const displayedStepIndex = progressUiAction
     ? progressUiAction.step_label === 'Terminé'
       ? progressUiAction.steps.length
