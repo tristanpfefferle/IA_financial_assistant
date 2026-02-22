@@ -229,12 +229,18 @@ function findPendingImportIntent(messages: ChatMessage[]): ImportIntent | null {
 }
 
 function sanitizeImportAcceptedTypes(acceptedTypes: string[] | undefined): string[] {
-  if (!acceptedTypes) {
-    return ['csv']
+  void acceptedTypes
+  // CSV-only
+  return ['csv']
+}
+
+function isImportErrorResult(x: unknown): x is { ok: false; type: 'error'; message?: string; error?: { message?: string } } {
+  if (!x || typeof x !== 'object') {
+    return false
   }
 
-  const hasCsv = acceptedTypes.some((type) => type.trim().replace(/^\./, '').toLowerCase() === 'csv')
-  return hasCsv ? ['csv'] : ['csv']
+  const candidate = x as { ok?: unknown; type?: unknown }
+  return candidate.ok === false && candidate.type === 'error'
 }
 
 function toProgressUiAction(toolResult: ChatMessage['toolResult']): ProgressUiAction | null {
@@ -729,6 +735,14 @@ export function ChatPage({ email }: ChatPageProps) {
           return
         }
 
+        if (isImportErrorResult(result)) {
+          window.clearInterval(progressInterval)
+          const message = result.message ?? result.error?.message ?? 'Erreur pendant l’import.'
+          replaceProgressWithAssistantMessage(progressId, message, result)
+          setToast({ type: 'error', message })
+          return
+        }
+
         window.clearInterval(progressInterval)
         updateProgressMessage(progressId, { ...buildProgressToolResult(100, steps), step_label: 'Terminé' })
         replaceProgressWithAssistantMessage(
@@ -752,7 +766,9 @@ export function ChatPage({ email }: ChatPageProps) {
         enqueueAssistantMessages(segments, response.tool_result, response.plan, response)
       } catch (caughtError) {
         window.clearInterval(progressInterval)
-        setToast({ type: 'error', message: caughtError instanceof Error ? caughtError.message : 'Erreur inconnue pendant l’import' })
+        const message = caughtError instanceof Error ? caughtError.message : 'Erreur inconnue pendant l’import'
+        replaceProgressWithAssistantMessage(progressId, message)
+        setToast({ type: 'error', message })
       } finally {
         setIsLoading(false)
       }

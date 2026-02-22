@@ -443,6 +443,92 @@ describe('ChatPage import intent rendering', () => {
     expect(container.textContent).toContain('Format invalide. Pour l’instant, seul le format CSV est supporté.')
   })
 
+  it('stops import flow when backend returns ok:false type:error and skips post-import follow-up', async () => {
+    vi.useFakeTimers()
+    try {
+      sendChatMessage.mockResolvedValueOnce({
+        reply: 'Importe ton fichier.',
+        tool_result: {
+          type: 'ui_request',
+          name: 'import_file',
+          accepted_types: ['csv'],
+        },
+        plan: null,
+      })
+      type ImportErrorResult = {
+        ok: false
+        type: 'error'
+        message: string
+      }
+
+      let resolveImport: ((value: ImportErrorResult) => void) | undefined
+      importReleves.mockImplementation(
+        () =>
+          new Promise<ImportErrorResult>((resolve) => {
+            resolveImport = resolve
+          }),
+      )
+
+      await act(async () => {
+        createRoot(container).render(<ChatPage email="user@example.com" />)
+      })
+      await act(async () => {
+        await Promise.resolve()
+      })
+
+      const startButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.includes('Commencer'))
+      await act(async () => {
+        startButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+
+      const inlineButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.includes('Importer maintenant'))
+      await act(async () => {
+        inlineButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      })
+
+      const fileInput = container.querySelector('#import-file-input') as HTMLInputElement
+      const file = new File(['date,montant\n2026-01-01,10'], 'transactions.csv', { type: 'text/csv' })
+      await act(async () => {
+        Object.defineProperty(fileInput, 'files', { value: [file] })
+        fileInput.dispatchEvent(new Event('change', { bubbles: true }))
+      })
+
+      const dialog = container.querySelector('[aria-label="Importer un relevé"]') as HTMLElement
+      const importButton = Array.from(dialog.querySelectorAll('button')).find((btn) => btn.textContent?.trim() === 'Importer')
+      await act(async () => {
+        importButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+        await Promise.resolve()
+      })
+
+      expect(container.querySelector('[aria-label="Importer un relevé"]')).toBeNull()
+      expect(container.querySelector('[aria-label="import-progress"]')).toBeTruthy()
+
+      if (!resolveImport) {
+        throw new Error('resolveImport not set')
+      }
+
+      resolveImport({
+        ok: false,
+        type: 'error',
+        message: 'Format invalide. Pour l’instant, seul le format CSV est supporté.',
+      })
+
+      await act(async () => {
+        vi.runOnlyPendingTimers()
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+
+      expect(container.textContent).toContain('Format invalide. Pour l’instant, seul le format CSV est supporté.')
+      expect(sendChatMessage).not.toHaveBeenNthCalledWith(2, '', { debug: false })
+      expect(sendChatMessage).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
 
   it('does not show quick replies before assistant typing is revealed', async () => {
     vi.useFakeTimers()
