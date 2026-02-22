@@ -12,15 +12,22 @@ from shared import config as _config
 logger = logging.getLogger(__name__)
 
 _CANONICAL_CATEGORY_LABELS: dict[str, str] = {
+    "income_salary": "Salaire",
+    "income_other": "Autres revenus",
+    "transfer_internal": "Transferts internes",
+    "twint_p2p_pending": "À catégoriser (TWINT)",
     "food": "Alimentation",
     "housing": "Logement",
     "transport": "Transport",
     "health": "Santé",
     "leisure": "Loisirs",
     "shopping": "Shopping",
-    "bills": "Factures",
+    "subscriptions": "Abonnements",
     "taxes": "Impôts",
     "insurance": "Assurance",
+    "banking_fees": "Frais bancaires",
+    "gifts": "Cadeaux & dons",
+    "savings": "Épargne & investissement",
     "other": "Autres",
 }
 _ALLOWED_CATEGORY_KEYS = set(_CANONICAL_CATEGORY_LABELS)
@@ -61,8 +68,8 @@ def _build_batch_prompt(*, items: list[dict[str, str]]) -> str:
         '{"resolutions":[{"suggestion_id":"uuid","action":"link_existing|create_entity",'
         '"merchant_entity_id":"uuid|null","canonical_name":"string|null",'
         '"canonical_name_norm":"string|null","country":"CH",'
-        '"suggested_category_norm":"food|housing|transport|health|leisure|shopping|bills|taxes|insurance|other",'
-        '"suggested_category_label":"Alimentation|Logement|Transport|Santé|Loisirs|Shopping|Factures|Impôts|Assurance|Autres",'
+        '"suggested_category_norm":"income_salary|income_other|transfer_internal|twint_p2p_pending|food|housing|transport|health|leisure|shopping|subscriptions|taxes|insurance|banking_fees|gifts|savings|other",'
+        '"suggested_category_label":"Salaire|Autres revenus|Transferts internes|À catégoriser (TWINT)|Alimentation|Logement|Transport|Santé|Loisirs|Shopping|Abonnements|Impôts|Assurance|Frais bancaires|Cadeaux & dons|Épargne & investissement|Autres",'
         '"confidence":0.0,"rationale":"short"}]}\n'
         "Règles: action=link_existing => merchant_entity_id obligatoire; canonical_name/canonical_name_norm peuvent être null.\n"
         "Règles: action=create_entity => merchant_entity_id doit être null; canonical_name et canonical_name_norm obligatoires (lowercase/trim).\n"
