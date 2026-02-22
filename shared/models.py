@@ -224,6 +224,27 @@ class ToolError(BaseModel):
     details: dict[str, object] | None = None
 
 
+
+
+class TransactionRow(BaseModel):
+    """Logical transaction row stored in `public.releves_bancaires`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: UUID
+    profile_id: UUID
+    bank_account_id: UUID | None = None
+    date: date
+    libelle: str | None = None
+    montant: Decimal
+    devise: str = Field(default="CHF", min_length=3, max_length=3)
+    merchant_entity_id: UUID | None = None
+    category_id: UUID | None = None
+    payee: str | None = None
+    moyen: str | None = None
+    created_at: datetime | None = None
+
+
 class RelevesDirection(str, Enum):
     """Direction selector for releves bank transactions."""
 
@@ -488,6 +509,13 @@ class ProfileDataResult(BaseModel):
 
 # Deprecated aliases kept for backwards compatibility.
 TransactionSumDirection = RelevesDirection
-TransactionFilters = RelevesFilters
+
+
+class TransactionFilters(RelevesFilters):
+    """Backward-compatible transactions filters (logical view over releves_bancaires)."""
+
+    search: str | None = None
+
+
 TransactionSearchResult = RelevesSearchResult
 TransactionSumResult = RelevesSumResult

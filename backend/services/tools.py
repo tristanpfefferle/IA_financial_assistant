@@ -98,16 +98,53 @@ class BackendToolService:
     def search_transactions(
         self, filters: TransactionFilters
     ) -> TransactionSearchResult | ToolError:
-        """Deprecated alias for releves_search kept for compatibility."""
+        """Transactions tool alias backed by `public.releves_bancaires`."""
 
-        return self.releves_search(filters)
+        try:
+            filters = self._apply_category_filter_resolution(filters)
+            rows = self.transactions_repository.search_transactions(filters)
+            items = [
+                {
+                    "id": row.id,
+                    "profile_id": row.profile_id,
+                    "date": row.date,
+                    "libelle": row.libelle,
+                    "montant": row.montant,
+                    "devise": row.devise,
+                    "category_id": row.category_id,
+                    "payee": row.payee,
+                    "merchant_id": row.merchant_entity_id,
+                    "bank_account_id": row.bank_account_id,
+                }
+                for row in rows
+            ]
+            return TransactionSearchResult(
+                items=items,
+                limit=filters.limit,
+                offset=filters.offset,
+                total=None,
+            )
+        except Exception as exc:
+            return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))
 
     def sum_transactions(
         self, filters: TransactionFilters
     ) -> TransactionSumResult | ToolError:
-        """Deprecated alias for releves_sum kept for compatibility."""
+        """Transactions tool alias backed by `public.releves_bancaires`."""
 
-        return self.releves_sum(filters)
+        try:
+            filters = self._apply_category_filter_resolution(filters)
+            total, count, currency = self.transactions_repository.sum_transactions(filters)
+            average = (total / count) if count > 0 else total
+            return TransactionSumResult(
+                total=total,
+                count=count,
+                average=average,
+                currency=currency,
+                filters=filters,
+            )
+        except Exception as exc:
+            return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))
 
     def releves_search(
         self, filters: RelevesFilters
