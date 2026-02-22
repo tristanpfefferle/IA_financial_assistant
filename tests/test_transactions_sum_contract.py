@@ -169,3 +169,25 @@ def test_backend_releves_sum_resolves_categorie_to_category_id() -> None:
     assert releves_repository.last_filters is not None
     assert releves_repository.last_filters.category_id == UUID("99999999-9999-9999-9999-999999999999")
     assert releves_repository.last_filters.categorie == "Alimentation"
+
+
+class _CurrencyNoneTransactionsRepository:
+    def sum_transactions(self, filters: RelevesFilters):
+        return Decimal("0"), 0, None
+
+
+class _UnusedRelevesRepository:
+    pass
+
+
+def test_backend_sum_transactions_defaults_currency_to_chf_when_missing() -> None:
+    service = BackendToolService(
+        transactions_repository=_CurrencyNoneTransactionsRepository(),
+        releves_repository=_UnusedRelevesRepository(),
+        categories_repository=object(),
+    )
+
+    result = service.sum_transactions(RelevesFilters(profile_id=PROFILE_ID))
+
+    assert isinstance(result, TransactionSumResult)
+    assert result.currency == "CHF"
