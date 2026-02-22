@@ -6,6 +6,7 @@ import logging
 import inspect
 import os
 import re
+import base64
 import unicodedata
 import calendar
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
@@ -32,6 +33,7 @@ from agent.merchant_cleanup import MerchantSuggestion, run_merchant_cleanup
 from agent.merchant_alias_resolver import resolve_pending_map_alias
 from agent.import_label_normalizer import extract_observed_alias_from_label
 from backend.factory import build_backend_tool_service
+from backend.services.releves_import.bank_detector import detect_bank_from_csv_bytes
 from backend.reporting import (
     SpendingCategoryRow,
     SpendingReportData,
@@ -997,9 +999,38 @@ def _match_bank_account_name(message: str, accounts: list[dict[str, Any]]) -> di
 def _detect_bank_account_for_import(
     *,
     filename: str,
+    file_bytes: bytes | None,
     existing_accounts: list[dict[str, Any]],
 ) -> dict[str, Any] | str | None:
-    """Detect target bank account from filename and available accounts."""
+    """Detect target bank account from CSV structure first, then fallback to filename."""
+
+    detected_bank_code = detect_bank_from_csv_bytes(file_bytes or b"") if file_bytes else None
+    if detected_bank_code:
+        matched_accounts: list[dict[str, Any]] = []
+        for account in existing_accounts:
+            account_name = str(account.get("name") or "").strip()
+            if not account_name:
+                continue
+            normalized_name = _normalize_text(account_name)
+            if detected_bank_code in normalized_name:
+                matched_accounts.append(account)
+
+        logger.info(
+            "bank_detection_result bank_code=%s matched_account_count=%s",
+            detected_bank_code,
+            len(matched_accounts),
+        )
+
+        if len(matched_accounts) == 1:
+            return matched_accounts[0]
+        if len(matched_accounts) > 1:
+            return "ambiguous"
+
+    logger.debug(
+        "bank_detection_result bank_code=%s matched_account_count=%s",
+        detected_bank_code,
+        0,
+    )
 
     normalized_filename = _normalize_text(filename)
     substring_matches: list[dict[str, Any]] = []
@@ -2967,7 +2998,17 @@ def import_releves(payload: ImportRequestPayload, authorization: str | None = He
         profiles_repository = get_profiles_repository()
         existing_accounts = profiles_repository.list_bank_accounts(profile_id=profile_id) if hasattr(profiles_repository, "list_bank_accounts") else []
         first_filename = payload.files[0].filename if payload.files else ""
-        detection_result = _detect_bank_account_for_import(filename=first_filename, existing_accounts=existing_accounts)
+        first_file_bytes: bytes | None = None
+        if payload.files:
+            try:
+                first_file_bytes = base64.b64decode(payload.files[0].content_base64)
+            except Exception:
+                logger.exception("import_bank_detection_decode_failed profile_id=%s", profile_id)
+        detection_result = _detect_bank_account_for_import(
+            filename=first_filename,
+            file_bytes=first_file_bytes,
+            existing_accounts=existing_accounts,
+        )
         if isinstance(detection_result, dict):
             selected_bank_account_id = str(detection_result.get("id") or "") or None
             selected_bank_account_name = str(detection_result.get("name") or "").strip() or None
