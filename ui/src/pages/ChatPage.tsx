@@ -44,6 +44,14 @@ type ImportIntent = {
 
 type ToastState = { type: 'error' | 'success'; message: string } | null
 
+type ProgressUiAction = {
+  type: 'ui_action'
+  action: 'progress'
+  percent: number
+  step_label: string
+  steps: string[]
+}
+
 function formatFileSize(fileSize: number): string {
   if (fileSize < 1024) {
     return `${fileSize} o`
@@ -218,6 +226,32 @@ function findPendingImportIntent(messages: ChatMessage[]): ImportIntent | null {
   }
 
   return null
+}
+
+function toProgressUiAction(toolResult: ChatMessage['toolResult']): ProgressUiAction | null {
+  if (!toolResult || typeof toolResult !== 'object') {
+    return null
+  }
+
+  const raw = toolResult as Record<string, unknown>
+  if (raw.type !== 'ui_action' || raw.action !== 'progress') {
+    return null
+  }
+
+  const percent = raw.percent
+  const stepLabel = raw.step_label
+  const steps = raw.steps
+  if (typeof percent !== 'number' || typeof stepLabel !== 'string' || !Array.isArray(steps) || !steps.every((step) => typeof step === 'string')) {
+    return null
+  }
+
+  return {
+    type: 'ui_action',
+    action: 'progress',
+    percent: Math.max(0, Math.min(100, Math.round(percent))),
+    step_label: stepLabel,
+    steps,
+  }
 }
 
 export function ChatPage({ email }: ChatPageProps) {
@@ -597,6 +631,125 @@ export function ChatPage({ email }: ChatPageProps) {
     }
   }
 
+  function computeProgressStepLabel(percent: number, steps: string[]): string {
+    if (percent < 20) return steps[0] ?? 'Téléversement'
+    if (percent < 35) return steps[1] ?? 'Détection de la banque'
+    if (percent < 60) return steps[2] ?? 'Extraction des transactions'
+    if (percent < 80) return steps[3] ?? 'Import en base'
+    return steps[4] ?? 'Finalisation'
+  }
+
+  function buildProgressToolResult(percent: number, steps: string[]): ProgressUiAction {
+    return {
+      type: 'ui_action',
+      action: 'progress',
+      percent,
+      step_label: computeProgressStepLabel(percent, steps),
+      steps,
+    }
+  }
+
+  function updateProgressMessage(progressId: string, progressToolResult: ProgressUiAction, content = 'Import en cours…') {
+    setMessages((previous) => previous.map((item) => (
+      item.id === progressId
+        ? { ...item, content, toolResult: progressToolResult }
+        : item
+    )))
+  }
+
+  function replaceProgressWithAssistantMessage(progressId: string, assistantMessage: string, debugPayload?: unknown) {
+    setMessages((previous) => previous.map((item) => (
+      item.id === progressId
+        ? { ...item, content: assistantMessage, toolResult: null, debugPayload: debugPayload ?? null }
+        : item
+    )))
+  }
+
+  function onConfirmImport(file: File, intent: ImportIntent | null) {
+    const acceptedTypes = intent?.acceptedTypes ?? ['csv', 'pdf']
+    const uploadFingerprint = `${file.name}-${file.size}-${file.lastModified}`
+    if (!uploadMessageGuardsRef.current.has(uploadFingerprint)) {
+      uploadMessageGuardsRef.current.add(uploadFingerprint)
+      setMessages((previous) => [
+        ...previous,
+        {
+          id: `upload-${uploadFingerprint}`,
+          role: 'user' as const,
+          content: `Fichier "${file.name}" envoyé.`,
+          createdAt: Date.now(),
+        },
+      ])
+    }
+
+    const progressId = crypto.randomUUID()
+    const steps = ['Téléversement', 'Détection de la banque', 'Extraction des transactions', 'Import en base', 'Finalisation']
+    setMessages((previous) => [
+      ...previous,
+      {
+        id: progressId,
+        role: 'assistant' as const,
+        content: 'Import en cours…',
+        createdAt: Date.now(),
+        toolResult: buildProgressToolResult(5, steps),
+      },
+    ])
+
+    let currentPercent = 5
+    const progressInterval = window.setInterval(() => {
+      currentPercent = Math.min(85, currentPercent + 3)
+      updateProgressMessage(progressId, buildProgressToolResult(currentPercent, steps))
+      if (currentPercent >= 85) {
+        window.clearInterval(progressInterval)
+      }
+    }, 250)
+
+    setError(null)
+    void (async () => {
+      try {
+        const contentBase64 = await readFileAsBase64(file)
+        const result = await importReleves({
+          files: [{ filename: file.name, content_base64: contentBase64 }],
+          import_mode: 'commit',
+          modified_action: 'replace',
+        })
+
+        if (isImportClarificationResult(result)) {
+          window.clearInterval(progressInterval)
+          replaceProgressWithAssistantMessage(progressId, result.message)
+          setToast({ type: 'success', message: 'Choix du compte requis.' })
+          return
+        }
+
+        window.clearInterval(progressInterval)
+        updateProgressMessage(progressId, { ...buildProgressToolResult(100, steps), step_label: 'Terminé' })
+        replaceProgressWithAssistantMessage(
+          progressId,
+          buildImportSuccessText(result, {
+            messageId: intent?.messageId ?? crypto.randomUUID(),
+            acceptedTypes,
+            source: intent?.source ?? 'ui_request',
+          }),
+          result,
+        )
+
+        if (intent?.messageId) {
+          setMessages((previous) => previous.map((item) => (item.id === intent.messageId ? { ...item, toolResult: null } : item)))
+        }
+
+        setToast({ type: 'success', message: 'Import terminé. Analyse automatique en cours…' })
+        setIsLoading(true)
+        const response = await sendChatMessage('', { debug: debugMode })
+        const segments = splitAssistantReply(response.reply)
+        enqueueAssistantMessages(segments, response.tool_result, response.plan, response)
+      } catch (caughtError) {
+        window.clearInterval(progressInterval)
+        setToast({ type: 'error', message: caughtError instanceof Error ? caughtError.message : 'Erreur inconnue pendant l’import' })
+      } finally {
+        setIsLoading(false)
+      }
+    })()
+  }
+
   return (
     <main className="chat-layout">
       <button type="button" className="mobile-menu-button secondary-button" onClick={() => setIsSidebarOpen((open) => !open)}>
@@ -710,47 +863,7 @@ export function ChatPage({ email }: ChatPageProps) {
         onAutoOpenHandled={() => setAutoOpenImportPicker(false)}
         onClose={() => setIsImportDialogOpen(false)}
         pendingImportIntent={pendingImportIntent}
-        onImportStart={(filename, fingerprint) => {
-          if (uploadMessageGuardsRef.current.has(fingerprint)) {
-            return
-          }
-          uploadMessageGuardsRef.current.add(fingerprint)
-          setMessages((previous) => [
-            ...previous,
-            {
-              id: `upload-${fingerprint}`,
-              role: 'user' as const,
-              content: `Fichier "${filename}" envoyé.`,
-              createdAt: Date.now(),
-            },
-          ])
-        }}
-        onImportSuccess={(resultMessage, debugPayload, sourceMessageId) => {
-          setMessages((previous) => {
-            const updated = sourceMessageId
-              ? previous.map((item) => (item.id === sourceMessageId ? { ...item, toolResult: null } : item))
-              : previous
-            return [...updated, { id: crypto.randomUUID(), role: 'assistant' as const, content: resultMessage, createdAt: Date.now(), debugPayload }]
-          })
-          setIsImportDialogOpen(false)
-          setToast({ type: 'success', message: 'Import terminé. Analyse automatique en cours…' })
-
-          setIsLoading(true)
-          setError(null)
-          void sendChatMessage('', { debug: debugMode }).then((response) => {
-            const segments = splitAssistantReply(response.reply)
-            enqueueAssistantMessages(segments, response.tool_result, response.plan, response)
-          }).catch((caughtError) => {
-            setError(caughtError instanceof Error ? caughtError.message : 'Erreur inconnue')
-          }).finally(() => {
-            setIsLoading(false)
-          })
-        }}
-        onImportClarification={(assistantMessage) => {
-          enqueueAssistantMessages(splitAssistantReply(assistantMessage), null, null, null)
-          setToast({ type: 'success', message: 'Choix du compte requis.' })
-        }}
-        onImportError={(messageText) => setToast({ type: 'error', message: messageText })}
+        onConfirmImport={onConfirmImport}
       />
 
       <Toast toast={toast} />
@@ -1071,6 +1184,16 @@ function MessageBubble({
         }
       : null
 
+  const progressUiAction = message.role === 'assistant' ? toProgressUiAction(message.toolResult) : null
+  const activeStepIndex = progressUiAction
+    ? Math.max(0, progressUiAction.steps.findIndex((step) => step === progressUiAction.step_label))
+    : -1
+  const displayedStepIndex = progressUiAction
+    ? progressUiAction.step_label === 'Terminé'
+      ? progressUiAction.steps.length
+      : activeStepIndex + 1
+    : 0
+
   return (
     <article className={`message message-${message.role}`}>
       <p className="message-role">{roleLabel(message.role)}</p>
@@ -1088,6 +1211,23 @@ function MessageBubble({
           renderContentWithLinks(message.content, apiBaseUrl)
         )}
       </p>
+      {message.role === 'assistant' && progressUiAction ? (
+        <div style={{ marginTop: '0.5rem' }} aria-label="import-progress">
+          <div style={{ height: '8px', borderRadius: '999px', background: 'rgba(255,255,255,0.12)', overflow: 'hidden' }}>
+            <div style={{ height: '8px', borderRadius: '999px', background: 'rgba(255,255,255,0.6)', width: `${progressUiAction.percent}%`, transition: 'width 200ms ease' }} />
+          </div>
+          <p className="subtle-text" style={{ marginTop: '0.35rem' }}>
+            Étape: {displayedStepIndex} / {progressUiAction.steps.length} — {progressUiAction.step_label}
+          </p>
+          <ul className="subtle-text" style={{ margin: '0.25rem 0 0', paddingLeft: '1.1rem' }}>
+            {progressUiAction.steps.map((step, index) => (
+              <li key={`${step}-${index}`} style={{ fontWeight: index === activeStepIndex ? 700 : 400 }}>
+                {step}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       <div className="message-meta-row">
         <span className="subtle-text">{dateLabel}</span>
         {hasPdfAction ? (
@@ -1212,10 +1352,7 @@ type ImportDialogProps = {
   onAutoOpenHandled: () => void
   onClose: () => void
   pendingImportIntent: ImportIntent | null
-  onImportStart: (filename: string, fingerprint: string) => void
-  onImportSuccess: (resultMessage: string, debugPayload: unknown, sourceMessageId: string | undefined) => void
-  onImportClarification: (assistantMessage: string) => void
-  onImportError: (messageText: string) => void
+  onConfirmImport: (file: File, intent: ImportIntent | null) => void
 }
 
 function ImportDialog({
@@ -1224,14 +1361,9 @@ function ImportDialog({
   onAutoOpenHandled,
   onClose,
   pendingImportIntent,
-  onImportStart,
-  onImportSuccess,
-  onImportClarification,
-  onImportError,
+  onConfirmImport,
 }: ImportDialogProps) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
-  const [isImporting, setIsImporting] = useState(false)
-  const [progress, setProgress] = useState(0)
   const inputRef = useRef<HTMLInputElement | null>(null)
 
   const acceptedTypes = pendingImportIntent?.acceptedTypes ?? ['csv', 'pdf']
@@ -1244,63 +1376,23 @@ function ImportDialog({
     }
   }, [autoOpenPicker, isOpen, onAutoOpenHandled])
 
-  useEffect(() => {
-    if (!isImporting) {
-      setProgress(0)
-      return
-    }
-
-    const interval = window.setInterval(() => {
-      setProgress((value) => (value >= 90 ? value : value + 10))
-    }, 180)
-
-    return () => window.clearInterval(interval)
-  }, [isImporting])
-
   if (!isOpen) {
     return null
   }
 
-  async function handleImport() {
-    if (!selectedFile || isImporting) {
+  function handleImport() {
+    if (!selectedFile) {
       return
     }
 
     const extension = selectedFile.name.split('.').pop()?.toLowerCase()
     if (!extension || !acceptedTypes.includes(extension)) {
-      onImportError('Format invalide. Sélectionne un fichier compatible.')
       return
     }
 
-    setIsImporting(true)
-    try {
-      const uploadFingerprint = `${selectedFile.name}-${selectedFile.size}-${selectedFile.lastModified}`
-      onImportStart(selectedFile.name, uploadFingerprint)
-      const contentBase64 = await readFileAsBase64(selectedFile)
-      const result = await importReleves({
-        files: [{ filename: selectedFile.name, content_base64: contentBase64 }],
-        import_mode: 'commit',
-        modified_action: 'replace',
-      })
-
-      if (isImportClarificationResult(result)) {
-        onClose()
-        onImportClarification(result.message)
-        return
-      }
-
-      setProgress(100)
-      onImportSuccess(buildImportSuccessText(result, {
-        messageId: pendingImportIntent?.messageId ?? crypto.randomUUID(),
-        acceptedTypes,
-        source: pendingImportIntent?.source ?? 'ui_request',
-      }), result, pendingImportIntent?.messageId)
-      setSelectedFile(null)
-    } catch (caughtError) {
-      onImportError(caughtError instanceof Error ? caughtError.message : 'Erreur inconnue pendant l’import')
-    } finally {
-      setIsImporting(false)
-    }
+    onConfirmImport(selectedFile, pendingImportIntent)
+    setSelectedFile(null)
+    onClose()
   }
 
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
@@ -1317,25 +1409,16 @@ function ImportDialog({
         <p className="subtle-text">Ajoute ton fichier pour continuer l’analyse.</p>
 
         <label className="dropzone" htmlFor="import-file-input">
-          <input id="import-file-input" ref={inputRef} type="file" accept={accept} onChange={handleFileChange} disabled={isImporting} />
+          <input id="import-file-input" ref={inputRef} type="file" accept={accept} onChange={handleFileChange} />
           <span>{selectedFile ? `Fichier: ${selectedFile.name}` : 'Dépose le fichier ici ou clique pour le choisir'}</span>
           <small>{selectedFile ? formatFileSize(selectedFile.size) : `Formats acceptés: ${acceptedTypes.join(', ')}`}</small>
         </label>
 
-
-
-        {isImporting ? (
-          <div>
-            <progress value={progress} max={100} aria-label="envoi" />
-            <p className="subtle-text">Envoi…</p>
-          </div>
-        ) : null}
-
         <div className="dialog-actions">
-          <button type="button" className="secondary-button" onClick={onClose} disabled={isImporting}>
+          <button type="button" className="secondary-button" onClick={onClose}>
             Annuler
           </button>
-          <button type="button" onClick={() => void handleImport()} disabled={!selectedFile || isImporting}>
+          <button type="button" onClick={handleImport} disabled={!selectedFile}>
             Importer
           </button>
         </div>
