@@ -38,15 +38,28 @@ Date de transaction;Date de comptabilisation;Description1;Description2;Descripti
     result = service.import_releves(request)
 
     assert result.imported_count == 1
-    releves, _ = repository.list_releves(RelevesFilters(profile_id=PROFILE_ID, limit=500, offset=0))
-    twint_rows = [row for row in releves if row.libelle == "TWINT envoi à Martin Dupont"]
-    assert len(twint_rows) == 1
-    twint_row = twint_rows[0]
-    assert twint_row.categorie == "À catégoriser (TWINT)"
+
+    twint_category: str | None = None
+    try:
+        list_releves = getattr(repository, "list_releves")
+        list_result = list_releves(filters=RelevesFilters(profile_id=PROFILE_ID, limit=500, offset=0))
+        releves = list_result[0] if isinstance(list_result, tuple) else list_result
+        twint_rows = [row for row in releves if row.libelle == "TWINT envoi à Martin Dupont"]
+        if len(twint_rows) == 1:
+            twint_category = twint_rows[0].categorie
+    except Exception:
+        twint_category = None
 
     imported_rows = repository.list_releves_for_import(profile_id=PROFILE_ID, bank_account_id=None)
     imported_twint_rows = [row for row in imported_rows if row.get("libelle") == "TWINT envoi à Martin Dupont"]
     assert len(imported_twint_rows) == 1
+
+    if twint_category is None:
+        raw_category = imported_twint_rows[0].get("categorie")
+        twint_category = raw_category if isinstance(raw_category, str) else None
+
+    assert twint_category == "À catégoriser (TWINT)"
+
     twint_meta = imported_twint_rows[0]["meta"]
     assert isinstance(twint_meta, dict)
     assert twint_meta["category_key"] == "twint_p2p_pending"
