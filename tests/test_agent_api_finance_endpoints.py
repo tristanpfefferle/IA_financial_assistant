@@ -1,5 +1,6 @@
 """Tests for finance import endpoints exposed by agent.api."""
 
+import base64
 import re
 from uuid import UUID
 
@@ -284,6 +285,73 @@ def test_import_releves_without_bank_account_returns_clarification_when_ambiguou
     assert repo.last_chat_state is not None
     pending_files = repo.last_chat_state["state"]["import_context"]["pending_files"]
     assert pending_files == [{"filename": "statement.csv", "content_base64": "YQ=="}]
+
+
+def test_import_releves_without_bank_account_auto_selects_from_csv_structure(monkeypatch) -> None:
+    _mock_authenticated(monkeypatch)
+
+    class _Repo:
+        def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None):
+            return PROFILE_ID
+
+        def list_bank_accounts(self, *, profile_id: UUID):
+            return [
+                {"id": str(UUID("dddddddd-dddd-dddd-dddd-dddddddddddd")), "name": "UBS"},
+                {"id": str(UUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee")), "name": "Revolut"},
+            ]
+
+        def get_chat_state(self, *, profile_id: UUID, user_id: UUID):
+            return {}
+
+        def update_chat_state(self, *, profile_id: UUID, user_id: UUID, chat_state: dict):
+            raise AssertionError("clarification path should not persist chat state")
+
+        def list_releves_without_merchant(self, *, profile_id: UUID, limit: int = 500):
+            return []
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: _Repo())
+
+    captured_import_payload: dict[str, object] = {}
+
+    class _Router:
+        def call(self, tool_name: str, payload: dict, *, profile_id: UUID | None = None):
+            if tool_name == "finance_releves_import_files":
+                captured_import_payload.update(payload)
+                return {"imported_count": 1}
+            if tool_name == "finance_bank_accounts_list":
+                return {
+                    "items": [
+                        {"id": str(UUID("dddddddd-dddd-dddd-dddd-dddddddddddd")), "name": "UBS"},
+                        {"id": str(UUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee")), "name": "Revolut"},
+                    ]
+                }
+            return {"items": []}
+
+    monkeypatch.setattr(agent_api, "get_tool_router", lambda: _Router())
+
+    revolut_csv = (
+        "Type,Product,Started Date,Completed Date,Description,Amount,Fee,Currency,State,Balance\n"
+        "CARD,CURRENT,2025-01-01,2025-01-01,Coffee,-4.20,0.00,CHF,COMPLETED,100.00\n"
+    )
+    response = client.post(
+        "/finance/releves/import",
+        headers=_auth_headers(),
+        json={
+            "files": [
+                {
+                    "filename": "statement.csv",
+                    "content_base64": base64.b64encode(revolut_csv.encode("utf-8")).decode("ascii"),
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload.get("type") != "clarification"
+    assert captured_import_payload["bank_account_id"] == str(UUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"))
+    assert payload["bank_account_name"] == "Revolut"
 
 
 def test_import_releves_updates_chat_state_after_success(monkeypatch) -> None:
