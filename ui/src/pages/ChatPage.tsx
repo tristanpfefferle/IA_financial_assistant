@@ -84,6 +84,10 @@ ${importedCount} transactions détectées entre le ${dateRange.start} et le ${da
 ${importedCount} transactions détectées.`
 }
 
+function buildImportErrorText(message: string): string {
+  return `❌ Import impossible: ${message}. Vérifie que tu as bien exporté un CSV depuis ton e-banking.`
+}
+
 function readFileAsBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -645,20 +649,19 @@ export function ChatPage({ email }: ChatPageProps) {
     }
   }
 
-  function computeProgressStepLabel(percent: number, steps: string[]): string {
-    if (percent < 20) return steps[0] ?? 'Téléversement'
-    if (percent < 35) return steps[1] ?? 'Détection de la banque'
-    if (percent < 60) return steps[2] ?? 'Extraction des transactions'
-    if (percent < 80) return steps[3] ?? 'Import en base'
-    return steps[4] ?? 'Finalisation'
+  function computeProgressStepLabel(stepIndex: number, steps: string[]): string {
+    if (stepIndex < 0 || stepIndex >= steps.length) {
+      return 'Terminé'
+    }
+    return steps[stepIndex] ?? 'Import en cours'
   }
 
-  function buildProgressToolResult(percent: number, steps: string[]): ProgressUiAction {
+  function buildProgressToolResult(percent: number, stepIndex: number, steps: string[]): ProgressUiAction {
     return {
       type: 'ui_action',
       action: 'progress',
       percent,
-      step_label: computeProgressStepLabel(percent, steps),
+      step_label: computeProgressStepLabel(stepIndex, steps),
       steps,
     }
   }
@@ -696,31 +699,25 @@ export function ChatPage({ email }: ChatPageProps) {
     }
 
     const progressId = crypto.randomUUID()
-    const steps = ['Téléversement', 'Détection de la banque', 'Extraction des transactions', 'Import en base', 'Finalisation']
+    const steps = ['Lecture du fichier', 'Envoi au serveur', 'Traitement des transactions', 'Finalisation']
     setMessages((previous) => [
       ...previous,
       {
         id: progressId,
         role: 'assistant' as const,
-        content: 'Import en cours…',
+        content: 'Import en cours… Je prépare ton relevé.',
         createdAt: Date.now(),
-        toolResult: buildProgressToolResult(5, steps),
+        toolResult: buildProgressToolResult(5, 0, steps),
       },
     ])
-
-    let currentPercent = 5
-    const progressInterval = window.setInterval(() => {
-      currentPercent = Math.min(85, currentPercent + 3)
-      updateProgressMessage(progressId, buildProgressToolResult(currentPercent, steps))
-      if (currentPercent >= 85) {
-        window.clearInterval(progressInterval)
-      }
-    }, 250)
 
     setError(null)
     void (async () => {
       try {
         const contentBase64 = await readFileAsBase64(file)
+        updateProgressMessage(progressId, buildProgressToolResult(25, 1, steps), 'Import en cours… Je prépare ton relevé.')
+
+        updateProgressMessage(progressId, buildProgressToolResult(35, 1, steps), 'Import en cours… Je prépare ton relevé.')
         const result = await importReleves({
           files: [{ filename: file.name, content_base64: contentBase64 }],
           import_mode: 'commit',
@@ -728,22 +725,22 @@ export function ChatPage({ email }: ChatPageProps) {
         })
 
         if (isImportClarificationResult(result)) {
-          window.clearInterval(progressInterval)
+          updateProgressMessage(progressId, { ...buildProgressToolResult(100, steps.length - 1, steps), step_label: 'Terminé' })
           replaceProgressWithAssistantMessage(progressId, result.message)
           setToast({ type: 'success', message: 'Choix du compte requis.' })
           return
         }
 
         if (isImportErrorResult(result)) {
-          window.clearInterval(progressInterval)
           const message = result.message ?? result.error?.message ?? 'Erreur pendant l’import.'
-          replaceProgressWithAssistantMessage(progressId, message, result)
+          updateProgressMessage(progressId, { ...buildProgressToolResult(100, steps.length - 1, steps), step_label: 'Terminé' })
+          replaceProgressWithAssistantMessage(progressId, buildImportErrorText(message), result)
           setToast({ type: 'error', message })
           return
         }
 
-        window.clearInterval(progressInterval)
-        updateProgressMessage(progressId, { ...buildProgressToolResult(100, steps), step_label: 'Terminé' })
+        updateProgressMessage(progressId, buildProgressToolResult(75, 2, steps), 'Import en cours… Je prépare ton relevé.')
+        updateProgressMessage(progressId, { ...buildProgressToolResult(100, steps.length - 1, steps), step_label: 'Terminé' })
         replaceProgressWithAssistantMessage(
           progressId,
           buildImportSuccessText(result, {
@@ -764,9 +761,8 @@ export function ChatPage({ email }: ChatPageProps) {
         const segments = splitAssistantReply(response.reply)
         enqueueAssistantMessages(segments, response.tool_result, response.plan, response)
       } catch (caughtError) {
-        window.clearInterval(progressInterval)
         const message = caughtError instanceof Error ? caughtError.message : 'Erreur inconnue pendant l’import'
-        replaceProgressWithAssistantMessage(progressId, message)
+        replaceProgressWithAssistantMessage(progressId, buildImportErrorText(message))
         setToast({ type: 'error', message })
       } finally {
         setIsLoading(false)
@@ -1210,13 +1206,16 @@ function MessageBubble({
       : null
 
   const progressUiAction = message.role === 'assistant' ? toProgressUiAction(message.toolResult) : null
-  const activeStepIndex = progressUiAction
-    ? Math.max(0, progressUiAction.steps.findIndex((step) => step === progressUiAction.step_label))
+  const matchedStepIndex = progressUiAction
+    ? progressUiAction.steps.findIndex((step) => step === progressUiAction.step_label)
     : -1
+  const activeStepIndex = progressUiAction ? matchedStepIndex : -1
   const displayedStepIndex = progressUiAction
     ? progressUiAction.step_label === 'Terminé'
       ? progressUiAction.steps.length
-      : activeStepIndex + 1
+      : matchedStepIndex >= 0
+        ? matchedStepIndex + 1
+        : 1
     : 0
 
   return (
