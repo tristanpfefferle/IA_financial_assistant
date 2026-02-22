@@ -311,6 +311,8 @@ export function ChatPage({ email }: ChatPageProps) {
   const shouldAutoScrollRef = useRef(true)
   const previousIntentMessageIdRef = useRef<string | null>(null)
   const uploadMessageGuardsRef = useRef<Set<string>>(new Set())
+  const hasPromptedPendingCategorizationRef = useRef(false)
+  const lastPromptedPendingCategorizationCountRef = useRef<number>(0)
 
   const pendingImportIntent = useMemo(() => findPendingImportIntent(messages), [messages])
   const isImportRequired = pendingImportIntent !== null
@@ -605,7 +607,14 @@ export function ChatPage({ email }: ChatPageProps) {
       const pending = await fetchPendingTransactions()
       const twintCount = Math.max(0, Number(pending.count_twint_p2p_pending || 0))
       setPendingCategorizationCount(twintCount)
-      if (options?.withPrompt && twintCount > 0) {
+      if (
+        options?.withPrompt
+        && twintCount > 0
+        && !awaitingPendingCategorizationReply
+        && (!hasPromptedPendingCategorizationRef.current || twintCount > lastPromptedPendingCategorizationCountRef.current)
+      ) {
+        hasPromptedPendingCategorizationRef.current = true
+        lastPromptedPendingCategorizationCountRef.current = twintCount
         setAwaitingPendingCategorizationReply(true)
         setMessages((previous) => [
           ...previous,
@@ -643,6 +652,7 @@ export function ChatPage({ email }: ChatPageProps) {
     try {
       if (awaitingPendingCategorizationReply) {
         setAwaitingPendingCategorizationReply(false)
+        lastPromptedPendingCategorizationCountRef.current = pendingCategorizationCount
         const followup = apiMessage === 'oui' ? 'OK, je t’affiche la liste (bientôt).' : 'OK, on fera ça plus tard.'
         setMessages((previous) => [...previous, { id: crypto.randomUUID(), role: 'assistant' as const, content: followup, createdAt: Date.now() }])
         return
