@@ -735,8 +735,8 @@ def test_create_pending_map_alias_suggestion_creates_on_first_call() -> None:
 
     created = repository.create_pending_map_alias_suggestion(
         profile_id=profile_id,
-        observed_alias="Scalp Coif",
-        observed_alias_norm="scalp coif",
+        observed_alias="Scalp Coif 1234 ZURICH",
+        observed_alias_norm="Scalp Coif 1234 ZURICH",
         merchant_key_norm="scalp",
         rationale=(
             "Alias inconnu lors de l'import; nécessite normalisation/"
@@ -746,8 +746,11 @@ def test_create_pending_map_alias_suggestion_creates_on_first_call() -> None:
     )
 
     assert created is True
+    assert len(client.calls) == 1
+    assert client.calls[0]["query"]["observed_alias_norm"] == "eq.scalp"
     assert len(client.post_calls) == 1
     assert client.post_calls[0]["table"] == "merchant_suggestions"
+    assert client.post_calls[0]["payload"]["observed_alias_norm"] == "scalp coif 1234 zurich"
     assert client.post_calls[0]["payload"]["merchant_key_norm"] == "scalp"
     assert client.patch_calls == []
 
@@ -764,7 +767,7 @@ def test_create_pending_map_alias_suggestion_updates_existing_and_does_not_inser
         profile_id=profile_id,
         observed_alias="Scalp Coif",
         observed_alias_norm="Scalp   Coif",
-        merchant_key_norm=None,
+        merchant_key_norm="scalp",
         rationale=(
             "Alias inconnu lors de l'import; nécessite normalisation/"
             "canonicalisation et catégorisation LLM."
@@ -773,6 +776,8 @@ def test_create_pending_map_alias_suggestion_updates_existing_and_does_not_inser
     )
 
     assert created is False
+    assert len(client.calls) == 1
+    assert client.calls[0]["query"]["observed_alias_norm"] == "eq.scalp"
     assert client.post_calls == []
     assert len(client.patch_calls) == 1
     assert client.patch_calls[0]["table"] == "merchant_suggestions"
@@ -796,9 +801,9 @@ def test_create_pending_map_alias_suggestion_handles_duplicate_insert_and_refetc
 
     created = repository.create_pending_map_alias_suggestion(
         profile_id=profile_id,
-        observed_alias="Scalp Coif",
-        observed_alias_norm="scalp coif",
-        merchant_key_norm="scalp coif",
+        observed_alias="Scalp Coif 1234 ZURICH",
+        observed_alias_norm="Scalp Coif 1234 ZURICH",
+        merchant_key_norm="scalp",
         rationale=(
             "Alias inconnu lors de l'import; nécessite normalisation/"
             "canonicalisation et catégorisation LLM."
@@ -808,7 +813,10 @@ def test_create_pending_map_alias_suggestion_handles_duplicate_insert_and_refetc
 
     assert created is False
     assert len(client.post_calls) == 1
+    assert client.post_calls[0]["payload"]["observed_alias_norm"] == "scalp coif 1234 zurich"
+    assert client.post_calls[0]["payload"]["merchant_key_norm"] == "scalp"
     assert len(client.calls) == 2
+    assert all(call["query"]["observed_alias_norm"] == "eq.scalp" for call in client.calls)
     assert len(client.patch_calls) == 1
     assert client.patch_calls[0]["table"] == "merchant_suggestions"
     assert client.patch_calls[0]["query"] == {"id": f"eq.{existing_id}"}

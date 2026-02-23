@@ -945,7 +945,7 @@ def _bootstrap_merchants_from_imported_releves(
                         profiles_repository.create_pending_map_alias_suggestion(
                             profile_id=profile_id,
                             observed_alias=observed_alias,
-                            observed_alias_norm=dedup_alias_norm,
+                            observed_alias_norm=observed_alias_norm,
                             merchant_key_norm=dedup_alias_norm,
                             rationale=(
                                 "Alias inconnu lors de l'import; nécessite normalisation/"
