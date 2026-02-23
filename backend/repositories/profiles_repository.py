@@ -1442,54 +1442,43 @@ class SupabaseProfilesRepository:
         if category_id is not None:
             payload["category_id"] = str(category_id)
 
-        quoted_alias = alias_raw.replace('"', "''")
+        escaped_alias = alias_raw.replace('"', '\\"')
+        or_filter = f'(payee.eq."{escaped_alias}",libelle.eq."{escaped_alias}")'
 
-        def _match_and_patch(*, filter_value: str, limit: int = 20) -> int:
-            try:
-                rows, total = self._client.get_rows(
-                    table="releves_bancaires",
-                    query={
-                        "select": "id",
-                        "profile_id": f"eq.{profile_id}",
-                        "merchant_entity_id": "is.null",
-                        "or": filter_value,
-                        "limit": limit,
-                    },
-                    with_count=True,
-                    use_anon_key=False,
-                )
-            except Exception:
-                return 0
-
-            matched_count = int(total or 0)
-            if matched_count <= 0 and not rows:
-                return 0
-
-            self._client.patch_rows(
+        try:
+            rows, total = self._client.get_rows(
                 table="releves_bancaires",
                 query={
+                    "select": "id",
                     "profile_id": f"eq.{profile_id}",
                     "merchant_entity_id": "is.null",
-                    "or": filter_value,
+                    "or": or_filter,
+                    "limit": 1,
                 },
-                payload=payload,
+                with_count=True,
                 use_anon_key=False,
             )
-            if matched_count > 0:
-                return matched_count
-            return len(rows)
-
-        exact_or_filter = f'payee.eq."{quoted_alias}",libelle.eq."{quoted_alias}"'
-        exact_matches = _match_and_patch(filter_value=exact_or_filter)
-        if exact_matches > 0:
-            return exact_matches
-
-        if len(alias_raw) < 6:
+        except Exception:
             return 0
 
-        ilike_value = f"*{quoted_alias}*"
-        ilike_or_filter = f'payee.ilike."{ilike_value}",libelle.ilike."{ilike_value}"'
-        return _match_and_patch(filter_value=ilike_or_filter)
+        matched_count = int(total or 0)
+        if matched_count <= 0 and not rows:
+            return 0
+
+        self._client.patch_rows(
+            table="releves_bancaires",
+            query={
+                "profile_id": f"eq.{profile_id}",
+                "merchant_entity_id": "is.null",
+                "or": or_filter,
+            },
+            payload=payload,
+            use_anon_key=False,
+        )
+
+        if matched_count > 0:
+            return matched_count
+        return 0
 
     def attach_merchant_entity_to_releve(
         self,
