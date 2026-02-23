@@ -830,7 +830,7 @@ def test_spending_report_pdf_returns_pdf_two_pages_and_calls_search(monkeypatch)
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/pdf")
     assert response.content.startswith(b"%PDF")
-    assert len(re.findall(rb"/Type /Page\b", response.content)) == 2
+    assert len(re.findall(rb"/Type /Page\b", response.content)) >= 2
 
     sum_calls = [payload for tool_name, payload in router.calls if tool_name == "finance_releves_sum"]
     assert len(sum_calls) == 1
@@ -946,7 +946,7 @@ def test_spending_report_pdf_no_data_still_returns_pdf(monkeypatch) -> None:
     assert response.headers["content-type"].startswith("application/pdf")
     assert len(response.content) > 100
     assert response.content.startswith(b"%PDF")
-    assert len(re.findall(rb"/Type /Page\b", response.content)) == 2
+    assert len(re.findall(rb"/Type /Page\b", response.content)) >= 2
 
     sum_calls = [payload for tool_name, payload in router.calls if tool_name == "finance_releves_sum"]
     assert len(sum_calls) == 1

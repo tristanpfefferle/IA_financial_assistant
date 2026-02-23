@@ -47,6 +47,10 @@ class SpendingReportData:
     cashflow_net_including_transfers: Decimal = Decimal("0")
     cashflow_transaction_count: int = 0
     cashflow_currency: str | None = None
+    effective_total: Decimal = Decimal("0")
+    shared_outgoing: Decimal = Decimal("0")
+    shared_incoming: Decimal = Decimal("0")
+    shared_net_balance: Decimal = Decimal("0")
 
 
 @dataclass(slots=True)
@@ -283,6 +287,29 @@ def _build_cashflow_summary_table(data: SpendingReportData) -> Table:
     return table
 
 
+def _build_shared_expenses_summary_table(data: SpendingReportData) -> Table:
+    table_data = [
+        ["Dépenses bancaires", _format_amount(data.total, data.currency)],
+        ["Part payée pour l'autre", _format_amount(data.shared_outgoing, data.currency)],
+        ["Part due par toi", _format_amount(data.shared_incoming, data.currency)],
+        ["Solde partage", _format_amount(data.shared_net_balance, data.currency)],
+        ["Dépenses nettes", _format_amount(data.effective_total, data.currency)],
+    ]
+    table = Table(table_data, colWidths=[90 * mm, 86 * mm])
+    table.setStyle(
+        TableStyle(
+            [
+                ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                ("FONTNAME", (0, 4), (-1, 4), "Helvetica-Bold"),
+            ]
+        )
+    )
+    return table
+
+
 def generate_spending_report_pdf(data: SpendingReportData) -> bytes:
     """Render a 2-page spending report with summary and transaction detail table."""
 
@@ -310,6 +337,10 @@ def generate_spending_report_pdf(data: SpendingReportData) -> bytes:
         Paragraph("<b>Résumé de trésorerie</b>", styles["BodyText"]),
         Spacer(1, 1 * mm),
         _build_cashflow_summary_table(data),
+        Spacer(1, 4 * mm),
+        Paragraph("<b>Dépenses nettes (partage)</b>", styles["BodyText"]),
+        Spacer(1, 1 * mm),
+        _build_shared_expenses_summary_table(data),
         Spacer(1, 6 * mm),
     ]
 

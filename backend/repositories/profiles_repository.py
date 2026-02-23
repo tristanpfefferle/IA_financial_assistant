@@ -611,7 +611,7 @@ class SupabaseProfilesRepository:
         rows, _ = self._client.get_rows(
             table="profile_categories",
             query={
-                "select": "id,name,name_norm,system_key,is_system,scope",
+                "select": "id,name,name_norm,system_key,is_system,scope,auto_share_enabled,auto_share_link_id,auto_share_to_profile_id,auto_share_split_ratio_other",
                 "profile_id": f"eq.{profile_id}",
                 "scope": "eq.personal",
                 "limit": 200,
