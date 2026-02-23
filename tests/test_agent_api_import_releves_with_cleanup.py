@@ -622,6 +622,46 @@ def test_bootstrap_merchants_from_imported_releves_prefers_observed_alias_key_no
     assert repo.create_calls == []
 
 
+def test_bootstrap_merchants_from_imported_releves_keeps_real_observed_alias_norm_with_key_norm_dedup() -> None:
+    releve_id = UUID("abababab-5555-5555-5555-555555555555")
+
+    class _Repo:
+        def __init__(self) -> None:
+            self.create_calls: list[dict] = []
+
+        def list_releves_without_merchant(self, *, profile_id: UUID, limit: int = 500):
+            return [
+                {
+                    "id": str(releve_id),
+                    "payee": "SBB CFF FFS",
+                    "libelle": None,
+                    "meta": '{"observed_alias_key_norm":"sbb"}',
+                }
+            ]
+
+        def list_profile_categories(self, *, profile_id: UUID):
+            return []
+
+        def find_merchant_entity_by_alias_norm(self, *, alias_norm: str):
+            return None
+
+        def create_pending_map_alias_suggestion(self, **kwargs) -> bool:
+            self.create_calls.append(kwargs)
+            return True
+
+    repo = _Repo()
+
+    summary = agent_api._bootstrap_merchants_from_imported_releves(
+        profiles_repository=repo,
+        profile_id=PROFILE_ID,
+        limit=50,
+    )
+
+    assert summary == {"processed_count": 1, "linked_count": 0, "skipped_count": 1, "suggestions_created_count": 1}
+    assert repo.create_calls[0]["observed_alias_norm"] == "sbb cff ffs"
+    assert repo.create_calls[0]["merchant_key_norm"] == "sbb"
+
+
 def test_bootstrap_merchants_from_imported_releves_parses_json_meta_key_norm_for_dedup() -> None:
     releve_id = UUID("abababab-4444-4444-4444-444444444444")
 

@@ -268,6 +268,9 @@ def resolve_pending_map_alias(*, profile_id: UUID, profiles_repository: Any, lim
         suggestion_id_raw = item.get("id")
         observed_alias = " ".join(str(item.get("observed_alias") or "").split())
         observed_alias_norm = _normalize_text(str(item.get("observed_alias_norm") or ""))
+        merchant_key_norm = _normalize_text(str(item.get("merchant_key_norm") or ""))
+        if merchant_key_norm == "twint_p2p":
+            continue
         if not observed_alias:
             observed_alias = " ".join(str(item.get("observed_alias_norm") or "").split())
         if not observed_alias or not observed_alias_norm:

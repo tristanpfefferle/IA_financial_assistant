@@ -747,7 +747,7 @@ def test_create_pending_map_alias_suggestion_creates_on_first_call() -> None:
 
     assert created is True
     assert len(client.calls) == 1
-    assert client.calls[0]["query"]["observed_alias_norm"] == "eq.scalp"
+    assert client.calls[0]["query"]["merchant_key_norm"] == "eq.scalp"
     assert len(client.post_calls) == 1
     assert client.post_calls[0]["table"] == "merchant_suggestions"
     assert client.post_calls[0]["payload"]["observed_alias_norm"] == "scalp coif 1234 zurich"
@@ -777,7 +777,7 @@ def test_create_pending_map_alias_suggestion_updates_existing_and_does_not_inser
 
     assert created is False
     assert len(client.calls) == 1
-    assert client.calls[0]["query"]["observed_alias_norm"] == "eq.scalp"
+    assert client.calls[0]["query"]["merchant_key_norm"] == "eq.scalp"
     assert client.post_calls == []
     assert len(client.patch_calls) == 1
     assert client.patch_calls[0]["table"] == "merchant_suggestions"
@@ -816,10 +816,31 @@ def test_create_pending_map_alias_suggestion_handles_duplicate_insert_and_refetc
     assert client.post_calls[0]["payload"]["observed_alias_norm"] == "scalp coif 1234 zurich"
     assert client.post_calls[0]["payload"]["merchant_key_norm"] == "scalp"
     assert len(client.calls) == 2
-    assert all(call["query"]["observed_alias_norm"] == "eq.scalp" for call in client.calls)
+    assert all(call["query"]["merchant_key_norm"] == "eq.scalp" for call in client.calls)
     assert len(client.patch_calls) == 1
     assert client.patch_calls[0]["table"] == "merchant_suggestions"
     assert client.patch_calls[0]["query"] == {"id": f"eq.{existing_id}"}
+
+def test_create_pending_map_alias_suggestion_dedups_on_observed_alias_norm_when_merchant_key_missing() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    existing_id = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+    client = _ClientStub(
+        responses=[[{"id": str(existing_id), "times_seen": 1, "last_seen": "2026-01-01T00:00:00+00:00", "status": "pending"}]]
+    )
+    repository = SupabaseProfilesRepository(client=client)
+
+    created = repository.create_pending_map_alias_suggestion(
+        profile_id=profile_id,
+        observed_alias="SBB CFF FFS",
+        observed_alias_norm="SBB CFF FFS",
+        merchant_key_norm="",
+        rationale="Alias inconnu",
+        confidence=0.0,
+    )
+
+    assert created is False
+    assert client.calls[0]["query"]["merchant_key_norm"] == "eq.sbb cff ffs"
+
 
 def test_create_map_alias_suggestions_uses_upsert_and_deduplicates_batch() -> None:
     profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
