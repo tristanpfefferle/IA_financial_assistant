@@ -41,6 +41,7 @@ class _ImportProfilesRepositoryStub:
         profile_id: UUID,
         observed_alias: str,
         observed_alias_norm: str,
+        merchant_key_norm: str | None = None,
         rationale: str,
         confidence: float,
     ) -> bool:
@@ -49,6 +50,7 @@ class _ImportProfilesRepositoryStub:
                 "profile_id": str(profile_id),
                 "observed_alias": observed_alias,
                 "observed_alias_norm": observed_alias_norm,
+                "merchant_key_norm": merchant_key_norm,
                 "rationale": rationale,
                 "confidence": str(confidence),
             }

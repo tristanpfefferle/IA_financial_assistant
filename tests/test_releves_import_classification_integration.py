@@ -77,11 +77,12 @@ class _ProfilesStub:
         profile_id: UUID,
         observed_alias: str,
         observed_alias_norm: str,
+        merchant_key_norm: str | None = None,
         rationale: str,
         confidence: float,
     ) -> bool:
         del profile_id, observed_alias, rationale, confidence
-        normalized = normalize_merchant_alias(observed_alias_norm)
+        normalized = normalize_merchant_alias(merchant_key_norm or observed_alias_norm)
         if not normalized or normalized in self.pending_alias_norms:
             return False
         self.pending_alias_norms.add(normalized)
