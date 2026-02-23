@@ -1221,7 +1221,7 @@ class SupabaseProfilesRepository:
             "suggested_category_norm": suggested_category_norm,
             "suggested_category_label": suggested_category_label,
             "suggested_confidence": suggested_confidence,
-            "suggested_source": suggested_source,
+            "suggested_source": suggested_source or "import",
         }
 
         try:

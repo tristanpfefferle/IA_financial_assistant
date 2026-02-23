@@ -968,3 +968,22 @@ def test_ensure_merchant_entity_from_alias_recovers_on_duplicate_entity_insert()
     assert len(client.post_calls) == 2
     assert client.post_calls[0]["table"] == "merchant_entities"
     assert client.post_calls[1]["table"] == "merchant_aliases"
+
+
+def test_create_merchant_entity_defaults_suggested_source_to_import_when_none() -> None:
+    created_entity_id = UUID("33333333-3333-3333-3333-333333333333")
+    client = _ClientStub(
+        responses=[[]],
+        post_responses=[[{"id": str(created_entity_id)}]],
+    )
+    repository = SupabaseProfilesRepository(client=client)
+
+    result = repository.create_merchant_entity(
+        canonical_name="Migros",
+        canonical_name_norm="migros",
+        suggested_source=None,
+    )
+
+    assert result == created_entity_id
+    assert client.post_calls[0]["table"] == "merchant_entities"
+    assert client.post_calls[0]["payload"]["suggested_source"] == "import"
