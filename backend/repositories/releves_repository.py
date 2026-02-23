@@ -398,6 +398,7 @@ class InMemoryRelevesRepository:
                     "categorie": item.categorie,
                     "bank_account_id": item.bank_account_id,
                     "category_id": item.category_id,
+                    "merchant_entity_id": item.merchant_id,
                     "meta": sidecar.get("meta"),
                     "source": sidecar.get("source"),
                     "contenu_brut": sidecar.get("contenu_brut"),

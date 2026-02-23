@@ -8,7 +8,7 @@ from uuid import UUID
 
 from backend.db.supabase_client import SupabaseClient, SupabaseSettings
 from backend.repositories.profiles_repository import SupabaseProfilesRepository
-from backend.services.classification.decision_engine import decide_releve_classification
+from backend.services.classification.decision_engine import decide_releve_classification, normalize_merchant_alias
 from backend.services.releves_import.importer import RelevesImportService
 from shared import config
 
@@ -44,7 +44,7 @@ def run() -> None:
         rows, _ = client.get_rows(
             table="releves_bancaires",
             query={
-                "select": "id,profile_id,bank_account_id,date,libelle,payee,montant,devise,metadonnees",
+                "select": "id,profile_id,bank_account_id,date,libelle,payee,montant,devise,metadonnees,merchant_entity_id",
                 "order": "created_at.asc",
                 "offset": offset,
                 "limit": BATCH_SIZE,
@@ -65,9 +65,22 @@ def run() -> None:
             releve_id = UUID(str(releve_id_raw))
             bank_account_id = row.get("bank_account_id")
             bank_account_uuid = UUID(str(bank_account_id)) if bank_account_id else None
+            merchant_entity_raw = row.get("merchant_entity_id")
+            if merchant_entity_raw:
+                merchant_entity_id = UUID(str(merchant_entity_raw))
+            else:
+                observed_alias = str(row.get("payee") or row.get("libelle") or "").strip()
+                normalized_alias = normalize_merchant_alias(observed_alias) or "inconnu"
+                merchant_entity_id = profiles_repository.ensure_merchant_entity_from_alias(
+                    profile_id=profile_id,
+                    observed_alias=observed_alias or normalized_alias,
+                    observed_alias_norm=normalized_alias,
+                    merchant_key_norm=normalized_alias,
+                )
 
             decision = decide_releve_classification(
                 profile_id=profile_id,
+                merchant_entity_id=merchant_entity_id,
                 bank_account_id=bank_account_uuid,
                 libelle=str(row.get("libelle") or "") or None,
                 payee=str(row.get("payee") or "") or None,

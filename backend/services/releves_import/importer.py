@@ -11,7 +11,7 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 
 from backend.repositories.profiles_repository import ProfilesRepository
 from backend.repositories.releves_repository import RelevesRepository
-from backend.services.classification.decision_engine import decide_releve_classification
+from backend.services.classification.decision_engine import decide_releve_classification, normalize_merchant_alias
 from backend.services.releves_import.classification import classify_and_categorize_transaction
 from backend.services.releves_import.dedup import compare_rows
 from backend.services.releves_import.routing import route_bank_parser
@@ -121,9 +121,24 @@ class RelevesImportService:
         meta_dict["tx_kind"] = classification.tx_kind
 
         decision = None
+        merchant_entity_id = None
         if self.profiles_repository is not None:
+            observed_alias = str(parsed_row.get("payee") or parsed_row.get("libelle") or "").strip()
+            observed_alias_norm = normalize_merchant_alias(observed_alias)
+            merchant_key_norm = observed_alias_norm or normalize_merchant_alias(str(parsed_row.get("libelle") or ""))
+            if not merchant_key_norm:
+                merchant_key_norm = "inconnu"
+
+            merchant_entity_id = self.profiles_repository.ensure_merchant_entity_from_alias(
+                profile_id=profile_id,
+                observed_alias=observed_alias or merchant_key_norm,
+                observed_alias_norm=observed_alias_norm or merchant_key_norm,
+                merchant_key_norm=merchant_key_norm,
+            )
+
             decision = decide_releve_classification(
                 profile_id=profile_id,
+                merchant_entity_id=merchant_entity_id,
                 bank_account_id=bank_account_id,
                 libelle=str(parsed_row.get("libelle") or "") or None,
                 payee=str(parsed_row.get("payee") or "") or None,
@@ -142,6 +157,12 @@ class RelevesImportService:
         if category_id is None:
             category_id = self._resolve_default_category_id(profile_id=profile_id)
 
+        if merchant_entity_id is None:
+            raise RuntimeError("merchant_entity_id manquant après normalisation d'import")
+
+        assert merchant_entity_id is not None
+        assert category_id is not None
+
         return {
             "profile_id": profile_id,
             "bank_account_id": bank_account_id,
@@ -151,7 +172,7 @@ class RelevesImportService:
             "libelle": parsed_row.get("libelle"),
             "payee": parsed_row.get("payee"),
             "categorie": None,
-            "merchant_entity_id": decision.merchant_entity_id if decision else None,
+            "merchant_entity_id": merchant_entity_id,
             "category_id": category_id,
             "meta": meta_dict,
             "contenu_brut": raw_dict,

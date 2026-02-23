@@ -100,6 +100,16 @@ class ProfilesRepository(Protocol):
     ) -> None:
         """Create or update one global merchant alias usage counters."""
 
+    def ensure_merchant_entity_from_alias(
+        self,
+        *,
+        profile_id: UUID,
+        observed_alias: str,
+        observed_alias_norm: str,
+        merchant_key_norm: str,
+    ) -> UUID:
+        """Resolve alias to merchant entity or create entity+alias and return merchant_entity_id."""
+
     def get_profile_merchant_override(
         self,
         *,
@@ -930,6 +940,45 @@ class SupabaseProfilesRepository:
             },
             use_anon_key=False,
         )
+
+    def ensure_merchant_entity_from_alias(
+        self,
+        *,
+        profile_id: UUID,
+        observed_alias: str,
+        observed_alias_norm: str,
+        merchant_key_norm: str,
+    ) -> UUID:
+        del profile_id
+
+        cleaned_alias = " ".join(observed_alias.strip().split())
+        cleaned_alias_norm = self._normalize_name_norm(observed_alias_norm)
+        cleaned_merchant_key_norm = self._normalize_name_norm(merchant_key_norm)
+        if not cleaned_alias_norm or not cleaned_merchant_key_norm:
+            raise ValueError("observed_alias_norm and merchant_key_norm must be non-empty")
+
+        existing = self.find_merchant_entity_by_alias_norm(alias_norm=cleaned_alias_norm)
+        if existing is not None and existing.get("id"):
+            return UUID(str(existing["id"]))
+
+        merchant_entity_id = self.create_merchant_entity(
+            canonical_name=cleaned_merchant_key_norm,
+            canonical_name_norm=cleaned_merchant_key_norm,
+            suggested_category_norm=None,
+        )
+
+        self.upsert_merchant_alias(
+            merchant_entity_id=merchant_entity_id,
+            alias=cleaned_alias or cleaned_merchant_key_norm,
+            alias_norm=cleaned_alias_norm,
+            source="import",
+        )
+
+        resolved = self.find_merchant_entity_by_alias_norm(alias_norm=cleaned_alias_norm)
+        if resolved is not None and resolved.get("id"):
+            return UUID(str(resolved["id"]))
+
+        return merchant_entity_id
 
     def get_profile_merchant_override(
         self,
