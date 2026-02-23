@@ -131,10 +131,6 @@ class RelevesImportService:
     def _build_observed_alias_key_norm(self, observed_alias: str) -> str:
         """Build a stable normalized key dedicated to map-alias suggestion deduplication."""
 
-        aggregator_kind = self._detect_aggregator_kind(observed_alias)
-        if aggregator_kind is not None:
-            return aggregator_kind
-
         normalized = normalize_merchant_alias(observed_alias.lower())
         if not normalized:
             return ""
@@ -187,29 +183,6 @@ class RelevesImportService:
             tokens.append(token)
 
         return " ".join(tokens).strip()
-
-    @staticmethod
-    def _detect_aggregator_kind(observed_alias: str | None) -> str | None:
-        """Detect known aggregator/P2P providers and return a stable norm key."""
-
-        normalized = normalize_merchant_alias(str(observed_alias or ""))
-        if not normalized:
-            return None
-
-        if "twint" in normalized:
-            if re.search(r"\btwint\b\s*(?:a|au|an|to)\s+", normalized) or re.search(
-                r"\bp2p\b|\bperson\b|\bpeer\b", normalized
-            ):
-                return "twint_p2p"
-            return "twint"
-
-        if "paypal" in normalized:
-            return "paypal"
-
-        if "sumup" in normalized:
-            return "sumup"
-
-        return None
 
     def _derive_clean_merchant_key_norm(self, observed_alias: str) -> str:
         """Derive a concise merchant key from the stable alias key."""
@@ -317,12 +290,9 @@ class RelevesImportService:
         devise = str(parsed_row.get("devise") or "CHF")
 
         observed_alias = str(payee or libelle or "").strip()
-        aggregator_kind = self._detect_aggregator_kind(observed_alias)
         observed_alias_norm = normalize_merchant_alias(observed_alias)
         observed_alias_key_norm = self._build_observed_alias_key_norm(observed_alias)
-        merchant_key_norm = (
-            aggregator_kind if aggregator_kind is not None else self._derive_clean_merchant_key_norm(observed_alias)
-        )
+        merchant_key_norm = self._derive_clean_merchant_key_norm(observed_alias)
         meta_dict["observed_alias_key_norm"] = observed_alias_key_norm
 
         decision = None
@@ -361,10 +331,9 @@ class RelevesImportService:
                         minimal_suggested_norm = observed_alias_norm
 
                     safe_suggested_entity_name = None
-                    if aggregator_kind is None:
-                        candidate_name = self._to_title_case_words(minimal_suggested_norm)
-                        if self._is_safe_canonical_candidate(candidate_name):
-                            safe_suggested_entity_name = candidate_name
+                    candidate_name = self._to_title_case_words(minimal_suggested_norm)
+                    if self._is_safe_canonical_candidate(candidate_name):
+                        safe_suggested_entity_name = candidate_name
 
                     meta_dict["merchant_resolution"] = "unresolved"
                     meta_dict["observed_alias_norm"] = observed_alias_norm
