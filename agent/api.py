@@ -2810,6 +2810,22 @@ def _normalize_report_category(value: str | None) -> str:
     return "Sans catégorie"
 
 
+def _determine_report_flow_type(*, item: dict[str, Any], category: str, amount: Decimal) -> str:
+    """Determine report flow type for transaction sectioning."""
+
+    metadata = item.get("metadonnees")
+    tx_kind = ""
+    if isinstance(metadata, dict):
+        tx_kind = str(metadata.get("tx_kind") or "").strip().lower()
+    if tx_kind == "transfer_internal":
+        return "transfer_internal"
+
+    if category.casefold() in {"transferts internes", "transfert interne"}:
+        return "transfer_internal"
+
+    return "income" if amount > 0 else "expense"
+
+
 def _fetch_spending_transactions(
     *,
     profile_id: UUID,
@@ -2888,7 +2904,8 @@ def _fetch_spending_transactions(
             )
         )
         merchant = _clean_merchant_display_name(merchant_raw)
-        if merchant.casefold() == "inconnu" and category.casefold() in {"transferts internes", "transfert interne"}:
+        flow_type = _determine_report_flow_type(item=item, category=category, amount=amount)
+        if merchant.casefold() == "inconnu" and flow_type == "transfer_internal":
             merchant = "Transfert interne"
 
         if category == "Sans catégorie":
@@ -2907,6 +2924,7 @@ def _fetch_spending_transactions(
                 merchant=merchant,
                 category=category,
                 amount=amount,
+                flow_type=flow_type,
             )
         )
 
@@ -2973,6 +2991,12 @@ def get_spending_report_pdf(
             bank_account_id=None,
         )
 
+    cashflow_income = Decimal(str(cashflow_summary.get("total_income") or "0"))
+    cashflow_expense = Decimal(str(cashflow_summary.get("total_expense") or "0"))
+    cashflow_net = Decimal(str(cashflow_summary.get("net_cashflow") or "0"))
+    cashflow_internal_transfers = Decimal(str(cashflow_summary.get("internal_transfers") or "0"))
+    cashflow_net_including_transfers = cashflow_net + cashflow_internal_transfers
+
     sum_result = tool_router.call("finance_releves_sum", payload, profile_id=profile_id)
     if isinstance(sum_result, ToolError):
         raise HTTPException(status_code=400, detail=sum_result.message)
@@ -3029,10 +3053,11 @@ def get_spending_report_pdf(
             total=total,
             count=count,
             currency=currency,
-            cashflow_income=Decimal(str(cashflow_summary.get("total_income") or "0")),
-            cashflow_expense=Decimal(str(cashflow_summary.get("total_expense") or "0")),
-            cashflow_net=Decimal(str(cashflow_summary.get("net_cashflow") or "0")),
-            cashflow_internal_transfers=Decimal(str(cashflow_summary.get("internal_transfers") or "0")),
+            cashflow_income=cashflow_income,
+            cashflow_expense=cashflow_expense,
+            cashflow_net=cashflow_net,
+            cashflow_internal_transfers=cashflow_internal_transfers,
+            cashflow_net_including_transfers=cashflow_net_including_transfers,
             cashflow_transaction_count=int(cashflow_summary.get("transaction_count") or 0),
             cashflow_currency=(
                 str(cashflow_summary.get("currency")) if cashflow_summary.get("currency") is not None else None

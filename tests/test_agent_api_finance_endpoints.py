@@ -1073,7 +1073,21 @@ def test_spending_report_pdf_normalizes_categories_and_transaction_rows(monkeypa
 
     def _fake_generate(data):
         captured["categories"] = [(row.name, str(row.amount)) for row in data.categories]
-        captured["transactions"] = [(row.date, row.merchant, row.category, str(row.amount)) for row in data.transactions]
+        captured["expenses"] = [
+            (row.date, row.merchant, row.category, str(row.amount))
+            for row in data.transactions
+            if row.flow_type == "expense"
+        ]
+        captured["incomes"] = [
+            (row.date, row.merchant, row.category, str(row.amount))
+            for row in data.transactions
+            if row.flow_type == "income"
+        ]
+        captured["transfers"] = [
+            (row.date, row.merchant, row.category, str(row.amount))
+            for row in data.transactions
+            if row.flow_type == "transfer_internal"
+        ]
         return b"%PDF-1.4\n%fake\n"
 
     monkeypatch.setattr(agent_api, "generate_spending_report_pdf", _fake_generate)
@@ -1117,6 +1131,12 @@ def test_spending_report_pdf_normalizes_categories_and_transaction_rows(monkeypa
                             "categorie": "Revenus",
                         },
                         {
+                            "date": "2026-01-04",
+                            "montant": "120",
+                            "merchant": "Inconnu",
+                            "categorie": "Transferts internes",
+                        },
+                        {
                             "date": "2026-01-03",
                             "montant": "-120",
                             "categorie": "Transferts internes",
@@ -1134,12 +1154,16 @@ def test_spending_report_pdf_normalizes_categories_and_transaction_rows(monkeypa
 
     assert response.status_code == 200
     assert captured["categories"] == [("Autres", "15"), ("Alimentation", "105")]
-    transactions = captured["transactions"]
-    assert transactions == [
+    assert captured["expenses"] == [
         ("2026-01-01", "Aucun", "Transport", "-5"),
-        ("2026-01-02", "Crédit TWINT", "Revenus", "500"),
-        ("2026-01-03", "Transfert interne", "Transferts internes", "-120"),
         ("2026-01-11", "Marchand Premium", "Alimentation", "-10"),
+    ]
+    assert captured["incomes"] == [
+        ("2026-01-02", "Crédit TWINT", "Revenus", "500"),
+    ]
+    assert captured["transfers"] == [
+        ("2026-01-03", "Transfert interne", "Transferts internes", "-120"),
+        ("2026-01-04", "Transfert interne", "Transferts internes", "120"),
     ]
 
 
@@ -1168,6 +1192,7 @@ def test_spending_report_pdf_cashflow_summary_counts_positive_internal_transfer(
         captured["cashflow_expense"] = str(data.cashflow_expense)
         captured["cashflow_internal_transfers"] = str(data.cashflow_internal_transfers)
         captured["cashflow_net"] = str(data.cashflow_net)
+        captured["cashflow_net_including_transfers"] = str(data.cashflow_net_including_transfers)
         return b"%PDF-1.4\n%fake\n"
 
     monkeypatch.setattr(agent_api, "generate_spending_report_pdf", _fake_generate)
@@ -1211,6 +1236,7 @@ def test_spending_report_pdf_cashflow_summary_counts_positive_internal_transfer(
         "cashflow_expense": "-30",
         "cashflow_internal_transfers": "5000",
         "cashflow_net": "70",
+        "cashflow_net_including_transfers": "5070",
     }
 
 def test_pending_transactions_endpoint_counts_twint_and_excludes_internal(monkeypatch) -> None:

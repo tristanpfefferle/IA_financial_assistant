@@ -15,7 +15,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.pdfgen.canvas import Canvas
-from reportlab.platypus import Image, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import Flowable, Image, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 
 @dataclass(slots=True)
@@ -44,6 +44,7 @@ class SpendingReportData:
     cashflow_expense: Decimal = Decimal("0")
     cashflow_net: Decimal = Decimal("0")
     cashflow_internal_transfers: Decimal = Decimal("0")
+    cashflow_net_including_transfers: Decimal = Decimal("0")
     cashflow_transaction_count: int = 0
     cashflow_currency: str | None = None
 
@@ -56,6 +57,7 @@ class SpendingTransactionRow:
     merchant: str
     category: str
     amount: Decimal
+    flow_type: str
 
 
 def _format_amount(value: Decimal, currency: str | None) -> str:
@@ -182,27 +184,52 @@ def _build_kpi_cards(data: SpendingReportData) -> Table:
     return table
 
 
-def _build_transactions_table(data: SpendingReportData) -> Table:
-    display_limit = 250
+def _split_transactions_by_flow_type(
+    transactions: list[SpendingTransactionRow],
+) -> dict[str, list[SpendingTransactionRow]]:
+    grouped: dict[str, list[SpendingTransactionRow]] = {
+        "expense": [],
+        "income": [],
+        "transfer_internal": [],
+    }
+
+    for row in transactions:
+        flow_type = row.flow_type
+        if flow_type not in grouped:
+            flow_type = "income" if row.amount > 0 else "expense"
+        grouped[flow_type].append(row)
+    return grouped
+
+
+def _build_transactions_table(
+    title: str,
+    rows: list[SpendingTransactionRow],
+    currency: str | None,
+    unavailable: bool,
+) -> list[Flowable]:
+    display_limit = 150
 
     def _truncate_text(value: str, max_length: int = 40) -> str:
         if len(value) <= max_length:
             return value
         return value[: max_length - 1].rstrip() + "…"
 
+    section_flowables: list[Flowable] = [Paragraph(f"<b>{title}</b>", getSampleStyleSheet()["BodyText"]), Spacer(1, 1 * mm)]
+
     table_data = [["Date", "Marchand", "Catégorie", "Montant"]]
-    if data.transactions_unavailable:
+    if unavailable:
         table_data.append(["-", "Détails indisponibles", "-", "-"])
-    elif not data.transactions:
-        table_data.append(["-", "Aucune transaction", "-", _format_amount(Decimal("0"), data.currency)])
+    elif not rows:
+        table_data.append(["-", "Aucune transaction", "-", _format_amount(Decimal("0"), currency)])
     else:
-        for row in data.transactions[:display_limit]:
+        ordered_rows = sorted(rows, key=lambda row: row.date)
+        for row in ordered_rows[:display_limit]:
             table_data.append(
                 [
                     row.date,
                     _truncate_text(row.merchant),
                     row.category,
-                    _format_amount(row.amount, data.currency),
+                    _format_amount(row.amount, currency),
                 ]
             )
 
@@ -220,7 +247,9 @@ def _build_transactions_table(data: SpendingReportData) -> Table:
         if row_index % 2 == 0:
             table_style.append(("BACKGROUND", (0, row_index), (-1, row_index), colors.HexColor("#FAFBFC")))
     table.setStyle(TableStyle(table_style))
-    return table
+    section_flowables.append(table)
+    section_flowables.append(Spacer(1, 3 * mm))
+    return section_flowables
 
 
 def _build_cashflow_summary_table(data: SpendingReportData) -> Table:
@@ -228,6 +257,10 @@ def _build_cashflow_summary_table(data: SpendingReportData) -> Table:
         ["Revenus", _format_amount(data.cashflow_income, data.cashflow_currency)],
         ["Dépenses", _format_amount(data.cashflow_expense, data.cashflow_currency)],
         ["Cashflow net", _format_amount(data.cashflow_net, data.cashflow_currency)],
+        [
+            "Variation nette (incl. transferts)",
+            _format_amount(data.cashflow_net_including_transfers, data.cashflow_currency),
+        ],
         ["", ""],
         ["Transferts internes", _format_amount(data.cashflow_internal_transfers, data.cashflow_currency)],
         ["Nombre de transactions", str(data.cashflow_transaction_count)],
@@ -241,8 +274,9 @@ def _build_cashflow_summary_table(data: SpendingReportData) -> Table:
                 ("TOPPADDING", (0, 0), (-1, -1), 3),
                 ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
                 ("FONTNAME", (0, 2), (-1, 2), "Helvetica-Bold"),
-                ("TOPPADDING", (0, 3), (-1, 3), 6),
-                ("BOTTOMPADDING", (0, 3), (-1, 3), 6),
+                ("FONTNAME", (0, 3), (-1, 3), "Helvetica-Bold"),
+                ("TOPPADDING", (0, 4), (-1, 4), 6),
+                ("BOTTOMPADDING", (0, 4), (-1, 4), 6),
             ]
         )
     )
@@ -322,13 +356,36 @@ def generate_spending_report_pdf(data: SpendingReportData) -> bytes:
     story.append(Spacer(1, 2 * mm))
     story.append(Paragraph(f"Période: {data.period_label}", styles["BodyText"]))
     story.append(Spacer(1, 4 * mm))
-    if data.transactions_truncated or len(data.transactions) > 250:
-        story.append(Paragraph("Liste tronquée à 250 transactions (max 500 récupérées).", styles["Italic"]))
+    split_rows = _split_transactions_by_flow_type(data.transactions)
+    sections_over_limit = any(len(rows) > 150 for rows in split_rows.values())
+    if data.transactions_truncated or sections_over_limit:
+        story.append(Paragraph("Liste tronquée.", styles["Italic"]))
         story.append(Spacer(1, 2 * mm))
-    if data.transactions_unavailable:
-        story.append(Paragraph("Les détails des transactions sont indisponibles pour cette période.", styles["Italic"]))
-        story.append(Spacer(1, 2 * mm))
-    story.append(_build_transactions_table(data))
+
+    story.extend(
+        _build_transactions_table(
+            title="Dépenses",
+            rows=split_rows["expense"],
+            currency=data.currency,
+            unavailable=data.transactions_unavailable,
+        )
+    )
+    story.extend(
+        _build_transactions_table(
+            title="Revenus",
+            rows=split_rows["income"],
+            currency=data.currency,
+            unavailable=data.transactions_unavailable,
+        )
+    )
+    story.extend(
+        _build_transactions_table(
+            title="Transferts internes",
+            rows=split_rows["transfer_internal"],
+            currency=data.currency,
+            unavailable=data.transactions_unavailable,
+        )
+    )
 
     generated_on = date.today().isoformat()
     doc.build(
