@@ -943,6 +943,7 @@ class SupabaseProfilesRepository:
             if not observed_alias_norm or observed_alias_norm in seen_in_batch:
                 continue
             seen_in_batch.add(observed_alias_norm)
+            now_iso = datetime.now(timezone.utc).isoformat()
 
             payload = {
                 "profile_id": str(profile_id),
@@ -953,31 +954,17 @@ class SupabaseProfilesRepository:
                 "suggested_entity_name": row.get("suggested_entity_name"),
                 "confidence": row.get("confidence"),
                 "rationale": row.get("rationale"),
+                "times_seen": 1,
+                "last_seen": now_iso,
+                "updated_at": now_iso,
             }
-            try:
-                self._client.post_rows(
-                    table="merchant_suggestions",
-                    payload=payload,
-                    use_anon_key=False,
-                )
-                inserted_count += 1
-            except Exception as exc:
-                error_code = (
-                    getattr(exc, "code", None)
-                    or getattr(exc, "pgcode", None)
-                    or getattr(exc, "sqlstate", None)
-                )
-                if str(error_code) == "23505":
-                    continue
-                error_message = str(exc).lower()
-                if "duplicate key value violates unique constraint" in error_message:
-                    continue
-                logger.warning(
-                    "create_map_alias_suggestions failed for observed_alias_norm=%s",
-                    observed_alias_norm,
-                    exc_info=True,
-                )
-                raise
+            self._client.upsert_row(
+                table="merchant_suggestions",
+                payload=payload,
+                on_conflict="profile_id,observed_alias_norm",
+                use_anon_key=False,
+            )
+            inserted_count += 1
 
         return inserted_count
 

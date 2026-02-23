@@ -28,17 +28,6 @@ class ClassificationDecisionRepositories(Protocol):
 
     def find_profile_category_id_by_name_norm(self, *, profile_id: UUID, name_norm: str) -> UUID | None: ...
 
-    def create_pending_map_alias_suggestion(
-        self,
-        *,
-        profile_id: UUID,
-        observed_alias: str,
-        observed_alias_norm: str,
-        rationale: str,
-        confidence: float,
-    ) -> bool: ...
-
-
 def normalize_merchant_alias(text: str | None) -> str:
     """Normalize merchant alias for deterministic matching and deduplication."""
 
@@ -151,15 +140,6 @@ def decide_releve_classification(
             confidence=0.7,
             source=ClassificationSource.SYSTEM,
             rationale="règle système import appliquée",
-        )
-
-    if normalized_alias:
-        repositories.create_pending_map_alias_suggestion(
-            profile_id=profile_id,
-            observed_alias=(payee or libelle or "").strip() or normalized_alias,
-            observed_alias_norm=normalized_alias,
-            rationale="alias marchand inconnu lors import",
-            confidence=0.2,
         )
 
     return _decision(
