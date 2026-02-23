@@ -526,11 +526,6 @@ class SupabaseRelevesRepository:
         if filters.bank_account_id is not None:
             query.append(("bank_account_id", f"eq.{filters.bank_account_id}"))
 
-        if filters.direction == RelevesDirection.DEBIT_ONLY:
-            query.append(("montant", "lt.0"))
-        elif filters.direction == RelevesDirection.CREDIT_ONLY:
-            query.append(("montant", "gt.0"))
-
         return query
 
     @classmethod
@@ -565,12 +560,27 @@ class SupabaseRelevesRepository:
         return None
 
     @staticmethod
+    def _row_effective_flow_type(row: dict[str, object]) -> str:
+        """Returns one of: "expense", "income", "transfer_internal"."""
+        tx_kind = SupabaseRelevesRepository._row_tx_kind(row)
+        if tx_kind == "transfer_internal":
+            return "transfer_internal"
+
+        try:
+            montant = Decimal(str(row.get("montant")))
+        except Exception:
+            return "expense"
+
+        if montant < 0:
+            return "expense"
+        if montant > 0:
+            return "income"
+
+        return "expense"
+
+    @staticmethod
     def _row_is_internal_transfer(row: dict[str, object]) -> bool:
-        if SupabaseRelevesRepository._row_tx_kind(row) == "transfer_internal":
-            return True
-        # TODO(v3): align backend filters on explicit tx_kind mapping for income/expense/transfer_internal.
-        category = row.get("categorie")
-        return isinstance(category, str) and normalize_category_name(category) in {"transferts internes", "transfert interne"}
+        return SupabaseRelevesRepository._row_effective_flow_type(row) == "transfer_internal"
 
     def list_releves(self, filters: RelevesFilters) -> tuple[list[ReleveBancaire], int | None]:
         select_with_category, _ = self._select_with_category_embed(
@@ -596,8 +606,13 @@ class SupabaseRelevesRepository:
         rows, _ = self._client.get_rows(table="releves_bancaires", query=query, with_count=False)
         self._hydrate_category_label(rows)
 
+        if filters.direction == RelevesDirection.DEBIT_ONLY:
+            rows = [row for row in rows if self._row_effective_flow_type(row) == "expense"]
+        elif filters.direction == RelevesDirection.CREDIT_ONLY:
+            rows = [row for row in rows if self._row_effective_flow_type(row) == "income"]
+
         if not filters.include_internal_transfers:
-            rows = [row for row in rows if not self._row_is_internal_transfer(row)]
+            rows = [row for row in rows if self._row_effective_flow_type(row) != "transfer_internal"]
 
         if filters.direction == RelevesDirection.DEBIT_ONLY:
             excluded_categories = self.get_excluded_category_names(filters.profile_id)
@@ -632,8 +647,13 @@ class SupabaseRelevesRepository:
         rows, _ = self._client.get_rows(table="releves_bancaires", query=query, with_count=False)
         self._hydrate_category_label(rows)
 
+        if request.direction == RelevesDirection.DEBIT_ONLY:
+            rows = [row for row in rows if self._row_effective_flow_type(row) == "expense"]
+        elif request.direction == RelevesDirection.CREDIT_ONLY:
+            rows = [row for row in rows if self._row_effective_flow_type(row) == "income"]
+
         if not request.include_internal_transfers:
-            rows = [row for row in rows if not self._row_is_internal_transfer(row)]
+            rows = [row for row in rows if self._row_effective_flow_type(row) != "transfer_internal"]
 
         if request.direction == RelevesDirection.DEBIT_ONLY:
             excluded_categories = self.get_excluded_category_names(request.profile_id)
