@@ -1404,6 +1404,19 @@ class ResolvePendingMerchantAliasesPayload(BaseModel):
     max_batches: int | None = None
 
 
+class SharedExpenseSuggestionDismissPayload(BaseModel):
+    """Payload for shared expense suggestion dismiss endpoint."""
+
+    reason: str | None = None
+
+
+class SharedExpenseSuggestionApplyPayload(BaseModel):
+    """Payload for shared expense suggestion apply endpoint."""
+
+    amount: str | None = None
+    force: bool = False
+
+
 @lru_cache(maxsize=1)
 def get_tool_router() -> ToolRouter:
     """Create and cache the tool router once per process."""
@@ -1462,6 +1475,24 @@ def _extract_bearer_token(authorization: str | None) -> str:
     if not token:
         raise HTTPException(status_code=401, detail="Missing bearer token")
     return token
+
+
+def _get_shared_expenses_repository_or_501() -> SupabaseSharedExpensesRepository:
+    """Return shared-expenses repository when Supabase config is available."""
+
+    supabase_url = _config.supabase_url()
+    supabase_key = _config.supabase_service_role_key()
+    if not supabase_url or not supabase_key:
+        raise HTTPException(status_code=501, detail="shared expenses disabled")
+
+    client = SupabaseClient(
+        settings=SupabaseSettings(
+            url=supabase_url,
+            service_role_key=supabase_key,
+            anon_key=_config.supabase_anon_key(),
+        )
+    )
+    return SupabaseSharedExpensesRepository(client=client)
 
 
 def _resolve_authenticated_profile(authorization: str | None) -> tuple[UUID, UUID]:
@@ -2611,6 +2642,121 @@ def debug_hard_reset(
     repo = get_profiles_repository()
     repo.hard_reset_profile(profile_id=profile_id, user_id=auth_user_id)
     return {"ok": True}
+
+
+@app.get("/finance/shared-expenses/suggestions")
+def list_shared_expense_suggestions(
+    status: str = "pending",
+    limit: int = 50,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """List shared expense suggestions for authenticated profile."""
+
+    _, profile_id = _resolve_authenticated_profile(authorization)
+    repository = _get_shared_expenses_repository_or_501()
+    items = repository.list_shared_expense_suggestions(profile_id=profile_id, status=status, limit=limit)
+    return {
+        "items": [
+            {
+                "id": str(item.id),
+                "transaction_id": str(item.transaction_id),
+                "suggested_to_profile_id": str(item.suggested_to_profile_id),
+                "suggested_split_ratio_other": str(item.suggested_split_ratio_other),
+                "status": item.status,
+                "confidence": item.confidence,
+                "rationale": item.rationale,
+                "link_id": str(item.link_id) if item.link_id else None,
+                "link_pair_id": str(item.link_pair_id) if item.link_pair_id else None,
+            }
+            for item in items
+        ]
+    }
+
+
+@app.post("/finance/shared-expenses/suggestions/{suggestion_id}/dismiss")
+def dismiss_shared_expense_suggestion(
+    suggestion_id: UUID,
+    payload: SharedExpenseSuggestionDismissPayload | None = None,
+    authorization: str | None = Header(default=None),
+) -> dict[str, bool]:
+    """Dismiss a shared expense suggestion."""
+
+    _, profile_id = _resolve_authenticated_profile(authorization)
+    repository = _get_shared_expenses_repository_or_501()
+    repository.mark_suggestion_status(
+        profile_id=profile_id,
+        suggestion_id=suggestion_id,
+        status="dismissed",
+        error=payload.reason if payload else None,
+    )
+    return {"ok": True}
+
+
+@app.post("/finance/shared-expenses/suggestions/{suggestion_id}/apply")
+def apply_shared_expense_suggestion(
+    suggestion_id: UUID,
+    payload: SharedExpenseSuggestionApplyPayload | None = None,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Apply one shared expense suggestion and create a shared expense row."""
+
+    _, profile_id = _resolve_authenticated_profile(authorization)
+    repository = _get_shared_expenses_repository_or_501()
+
+    amount: Decimal | None = None
+    if payload and payload.amount is not None:
+        try:
+            amount = Decimal(payload.amount)
+        except (InvalidOperation, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="amount required") from exc
+
+    if amount is None:
+        suggestion = repository.get_suggestion_by_id(profile_id=profile_id, suggestion_id=suggestion_id)
+        if suggestion is None:
+            raise HTTPException(status_code=404, detail="suggestion not found")
+
+        supabase_client = SupabaseClient(
+            settings=SupabaseSettings(
+                url=_config.supabase_url(),
+                service_role_key=_config.supabase_service_role_key(),
+                anon_key=_config.supabase_anon_key(),
+            )
+        )
+        try:
+            transaction_rows, _ = supabase_client.get_rows(
+                table="releves_bancaires",
+                query={
+                    "select": "id,montant",
+                    "id": f"eq.{suggestion.transaction_id}",
+                    "profile_id": f"eq.{profile_id}",
+                    "limit": 1,
+                },
+                with_count=False,
+                use_anon_key=False,
+            )
+        except RuntimeError:
+            transaction_rows = []
+
+        if transaction_rows:
+            montant_raw = transaction_rows[0].get("montant")
+            try:
+                montant = abs(Decimal(str(montant_raw or "0")))
+                amount = montant * suggestion.suggested_split_ratio_other
+            except (InvalidOperation, ValueError):
+                amount = None
+
+    if amount is None:
+        raise HTTPException(status_code=400, detail="amount required")
+
+    shared_expense_id = repository.create_shared_expense_from_suggestion(
+        profile_id=profile_id,
+        suggestion_id=suggestion_id,
+        amount=amount,
+    )
+    return {
+        "ok": True,
+        "shared_expense_id": str(shared_expense_id) if shared_expense_id is not None else None,
+    }
 
 
 @app.get("/finance/bank-accounts")

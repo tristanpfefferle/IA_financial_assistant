@@ -11,7 +11,7 @@ def test_compute_effective_spending_summary_with_incoming_and_outgoing() -> None
     other_profile_id = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
 
     repository = InMemorySharedExpensesRepository()
-    repository._shared_expenses.extend(
+    repository.seed_shared_expenses(
         [
             SharedExpenseRow(
                 from_profile_id=profile_id,
@@ -31,7 +31,7 @@ def test_compute_effective_spending_summary_with_incoming_and_outgoing() -> None
                 status="applied",
                 split_ratio_other=Decimal("0.5"),
             ),
-        ]
+        ],
     )
 
     summary = compute_effective_spending_summary(
