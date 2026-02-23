@@ -208,10 +208,7 @@ class RelevesImportService:
                 meta_dict["classify_confidence"] = decision.confidence
                 meta_dict["classify_at"] = datetime.now(timezone.utc).isoformat()
             else:
-                merchant_entity_id = self._fallback_merchant_entity_id(
-                    profile_id=profile_id,
-                    merchant_key_norm="unknown",
-                )
+                merchant_entity_id = None
                 if observed_alias_norm:
                     meta_dict["merchant_resolution"] = "unresolved"
                     meta_dict["observed_alias_norm"] = observed_alias_norm
@@ -249,7 +246,6 @@ class RelevesImportService:
         if category_id is None:
             category_id = self._resolve_default_category_id(profile_id=profile_id)
 
-        assert merchant_entity_id is not None
         assert category_id is not None
 
         return {

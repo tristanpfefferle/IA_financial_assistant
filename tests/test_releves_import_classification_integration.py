@@ -152,7 +152,7 @@ Date de transaction;Date de comptabilisation;Description1;Description2;Descripti
 """.encode("utf-8")
 
 
-def test_import_45_unknown_transactions_creates_pending_suggestions_and_non_null_links() -> None:
+def test_import_45_unknown_transactions_creates_pending_suggestions_with_null_merchant_links() -> None:
     repository = InMemoryRelevesRepository()
     profiles_repository = _ProfilesStub(with_autres=False)
     service = RelevesImportService(releves_repository=repository, profiles_repository=profiles_repository)
@@ -162,11 +162,12 @@ def test_import_45_unknown_transactions_creates_pending_suggestions_and_non_null
     assert result.imported_count == 45
     assert result.merchant_suggestions_created_count == 45
     assert profiles_repository.created_entity_count == 0
+    assert profiles_repository.created_alias_count == 0
 
     imported_rows = repository.list_releves_for_import(profile_id=PROFILE_ID, bank_account_id=None)
     rows = [row for row in imported_rows if str(row.get("libelle", "")).startswith("Paiement test")]
     assert len(rows) == 45
-    assert all(row.get("merchant_entity_id") is not None for row in rows)
+    assert all(row.get("merchant_entity_id") is None for row in rows)
     assert all(row.get("category_id") is not None for row in rows)
     assert all(row.get("categorie") is None for row in rows)
 
@@ -209,6 +210,7 @@ def test_import_with_empty_alias_does_not_create_pending_suggestion() -> None:
         and row["meta"].get("_external_id") == "TRX-EMPTY-001"
     ]
     assert len(empty_alias_rows) == 1
+    assert empty_alias_rows[0]["merchant_entity_id"] is None
     assert empty_alias_rows[0]["meta"]["merchant_resolution"] == "unresolved_empty_alias"
 
 
