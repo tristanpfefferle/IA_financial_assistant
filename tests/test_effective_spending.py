@@ -4,6 +4,7 @@ from uuid import UUID
 
 from backend.repositories.shared_expenses_repository import InMemorySharedExpensesRepository, SharedExpenseRow
 from backend.services.shared_expenses.effective_spending import compute_effective_spending_summary
+from backend.services.shared_expenses.effective_spending_adapter import compute_effective_spending_summary_safe
 
 
 def test_compute_effective_spending_summary_with_incoming_and_outgoing() -> None:
@@ -46,3 +47,43 @@ def test_compute_effective_spending_summary_with_incoming_and_outgoing() -> None
     assert summary["incoming"] == Decimal("60")
     assert summary["net_balance"] == Decimal("-40")
     assert summary["effective_total"] == Decimal("960")
+
+
+def test_compute_effective_spending_summary_safe_neutralizes_when_repository_none() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+
+    summary = compute_effective_spending_summary_safe(
+        profile_id=profile_id,
+        start_date=date(2026, 2, 1),
+        end_date=date(2026, 2, 28),
+        releves_total_expense=Decimal("-125.50"),
+        shared_expenses_repository=None,
+    )
+
+    assert summary == {
+        "outgoing": Decimal("0"),
+        "incoming": Decimal("0"),
+        "net_balance": Decimal("0"),
+        "effective_total": Decimal("125.50"),
+    }
+
+
+def test_compute_effective_spending_summary_safe_neutralizes_when_table_absent_error() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+
+    class _FailingRepository:
+        def list_shared_expenses_for_period(self, **_: object) -> list[SharedExpenseRow]:
+            raise RuntimeError('relation "shared_expenses" does not exist')
+
+    summary = compute_effective_spending_summary_safe(
+        profile_id=profile_id,
+        start_date=date(2026, 2, 1),
+        end_date=date(2026, 2, 28),
+        releves_total_expense=Decimal("50"),
+        shared_expenses_repository=_FailingRepository(),
+    )
+
+    assert summary["outgoing"] == Decimal("0")
+    assert summary["incoming"] == Decimal("0")
+    assert summary["net_balance"] == Decimal("0")
+    assert summary["effective_total"] == Decimal("50")
