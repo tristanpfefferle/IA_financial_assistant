@@ -2861,6 +2861,9 @@ def _fetch_spending_transactions(
 
         merchant_raw = _pick_first_non_empty_string(
             [
+                item.get("merchant_entity_name"),
+                item.get("merchant_entity_canonical_name"),
+                item.get("merchant_canonical_name"),
                 item.get("merchant_display_name"),
                 item.get("merchant"),
                 item.get("merchant_name"),
@@ -2868,7 +2871,6 @@ def _fetch_spending_transactions(
                 item.get("libelle"),
             ]
         ) or "Inconnu"
-        merchant = _clean_merchant_display_name(merchant_raw)
 
         category = _normalize_report_category(
             _pick_first_non_empty_string(
@@ -2885,6 +2887,10 @@ def _fetch_spending_transactions(
                 ]
             )
         )
+        merchant = _clean_merchant_display_name(merchant_raw)
+        if merchant.casefold() == "inconnu" and category.casefold() in {"transferts internes", "transfert interne"}:
+            merchant = "Transfert interne"
+
         if category == "Sans catégorie":
             logger.debug(
                 "finance_spending_report_transaction_missing_category",

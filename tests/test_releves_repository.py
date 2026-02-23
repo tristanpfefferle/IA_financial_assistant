@@ -364,9 +364,28 @@ def test_compute_cashflow_with_date_filter() -> None:
     assert ("date", "gte.2025-01-01") in query
     assert ("date", "lte.2025-01-31") in query
     assert ("bank_account_id", "eq.bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb") in query
-    assert ("select", "montant,devise,metadonnees") in query
+    assert ("select", "montant,devise,metadonnees,categorie,category_id,profile_categories(name)") in query
     assert summary["net_cashflow"] == Decimal("90")
 
+
+
+
+def test_compute_cashflow_summary_credit_transfer_internal_from_category() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    client = _ClientStub(
+        rows=[
+            {"montant": 5000, "devise": "CHF", "categorie": "Transferts internes", "metadonnees": {}},
+            {"montant": 100, "devise": "CHF", "metadonnees": {}},
+        ]
+    )
+    repository = SupabaseRelevesRepository(client=client)
+
+    summary = repository.compute_cashflow_summary(profile_id=profile_id)
+
+    assert summary["total_income"] == Decimal("100")
+    assert summary["total_expense"] == Decimal("0")
+    assert summary["internal_transfers"] == Decimal("5000")
+    assert summary["net_cashflow"] == Decimal("100")
 
 def test_compute_cashflow_empty_result() -> None:
     client = _ClientStub(rows=[])
