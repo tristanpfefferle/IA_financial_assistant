@@ -45,7 +45,7 @@ from backend.reporting import (
 from backend.auth.supabase_auth import UnauthorizedError, get_user_from_bearer_token
 from backend.db.supabase_client import SupabaseClient, SupabaseSettings
 from backend.repositories.profiles_repository import ProfilesRepository, SupabaseProfilesRepository
-from shared.models import RelevesDirection, ToolError, ToolErrorCode
+from shared.models import DateRange, RelevesDirection, ToolError, ToolErrorCode
 
 
 logger = logging.getLogger(__name__)
@@ -2944,11 +2944,31 @@ def get_spending_report_pdf(
         "direction": RelevesDirection.DEBIT_ONLY.value,
         "include_internal_transfers": False,
     }
-    sum_result = get_tool_router().call("finance_releves_sum", payload, profile_id=profile_id)
+    tool_router = get_tool_router()
+    backend_client = getattr(tool_router, "backend_client", None)
+    tool_service = getattr(backend_client, "tool_service", None)
+    releves_repository = getattr(tool_service, "releves_repository", None)
+
+    cashflow_summary: dict[str, Decimal | int | str | None] = {
+        "total_income": Decimal("0"),
+        "total_expense": Decimal("0"),
+        "net_cashflow": Decimal("0"),
+        "internal_transfers": Decimal("0"),
+        "transaction_count": 0,
+        "currency": None,
+    }
+    if releves_repository is not None:
+        cashflow_summary = releves_repository.compute_cashflow_summary(
+            profile_id=profile_id,
+            date_range=DateRange(start_date=period_start, end_date=period_end),
+            bank_account_id=None,
+        )
+
+    sum_result = tool_router.call("finance_releves_sum", payload, profile_id=profile_id)
     if isinstance(sum_result, ToolError):
         raise HTTPException(status_code=400, detail=sum_result.message)
 
-    categories_result = get_tool_router().call(
+    categories_result = tool_router.call(
         "finance_releves_aggregate",
         {
             **payload,
@@ -3000,6 +3020,14 @@ def get_spending_report_pdf(
             total=total,
             count=count,
             currency=currency,
+            cashflow_income=Decimal(str(cashflow_summary.get("total_income") or "0")),
+            cashflow_expense=Decimal(str(cashflow_summary.get("total_expense") or "0")),
+            cashflow_net=Decimal(str(cashflow_summary.get("net_cashflow") or "0")),
+            cashflow_internal_transfers=Decimal(str(cashflow_summary.get("internal_transfers") or "0")),
+            cashflow_transaction_count=int(cashflow_summary.get("transaction_count") or 0),
+            cashflow_currency=(
+                str(cashflow_summary.get("currency")) if cashflow_summary.get("currency") is not None else None
+            ),
             categories=category_rows,
             transactions=transactions,
             transactions_truncated=transactions_truncated,

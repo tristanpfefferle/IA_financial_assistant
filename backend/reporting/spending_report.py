@@ -35,11 +35,17 @@ class SpendingReportData:
     end_date: str
     total: Decimal
     count: int
-    currency: str
+    currency: str | None
     categories: list[SpendingCategoryRow]
     transactions: list["SpendingTransactionRow"]
     transactions_truncated: bool = False
     transactions_unavailable: bool = False
+    cashflow_income: Decimal = Decimal("0")
+    cashflow_expense: Decimal = Decimal("0")
+    cashflow_net: Decimal = Decimal("0")
+    cashflow_internal_transfers: Decimal = Decimal("0")
+    cashflow_transaction_count: int = 0
+    cashflow_currency: str | None = None
 
 
 @dataclass(slots=True)
@@ -52,8 +58,11 @@ class SpendingTransactionRow:
     amount: Decimal
 
 
-def _format_amount(value: Decimal, currency: str) -> str:
-    return f"{value.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP):,.2f} {currency}".replace(",", "'")
+def _format_amount(value: Decimal, currency: str | None) -> str:
+    amount_label = f"{value.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP):,.2f}".replace(",", "'")
+    if not currency:
+        return amount_label
+    return f"{amount_label} {currency}"
 
 
 def _autopct_threshold(pct: float) -> str:
@@ -214,6 +223,32 @@ def _build_transactions_table(data: SpendingReportData) -> Table:
     return table
 
 
+def _build_cashflow_summary_table(data: SpendingReportData) -> Table:
+    table_data = [
+        ["Revenus", _format_amount(data.cashflow_income, data.cashflow_currency)],
+        ["Dépenses", _format_amount(data.cashflow_expense, data.cashflow_currency)],
+        ["Cashflow net", _format_amount(data.cashflow_net, data.cashflow_currency)],
+        ["", ""],
+        ["Transferts internes", _format_amount(data.cashflow_internal_transfers, data.cashflow_currency)],
+        ["Nombre de transactions", str(data.cashflow_transaction_count)],
+    ]
+    table = Table(table_data, colWidths=[90 * mm, 86 * mm])
+    table.setStyle(
+        TableStyle(
+            [
+                ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                ("FONTNAME", (0, 2), (-1, 2), "Helvetica-Bold"),
+                ("TOPPADDING", (0, 3), (-1, 3), 6),
+                ("BOTTOMPADDING", (0, 3), (-1, 3), 6),
+            ]
+        )
+    )
+    return table
+
+
 def generate_spending_report_pdf(data: SpendingReportData) -> bytes:
     """Render a 2-page spending report with summary and transaction detail table."""
 
@@ -237,6 +272,10 @@ def generate_spending_report_pdf(data: SpendingReportData) -> bytes:
         Paragraph(f"Généré le {date.today().isoformat()}", subtitle_style),
         Spacer(1, 5 * mm),
         _build_kpi_cards(data),
+        Spacer(1, 6 * mm),
+        Paragraph("<b>Résumé de trésorerie</b>", styles["BodyText"]),
+        Spacer(1, 1 * mm),
+        _build_cashflow_summary_table(data),
         Spacer(1, 6 * mm),
     ]
 
