@@ -128,6 +128,85 @@ class RelevesImportService:
 
         return None
 
+    def _build_observed_alias_key_norm(self, observed_alias: str) -> str:
+        """Build a stable normalized key dedicated to map-alias suggestion deduplication."""
+
+        normalized = normalize_merchant_alias(observed_alias.lower())
+        if not normalized:
+            return ""
+
+        stopwords = {
+            "paiement",
+            "payment",
+            "carte",
+            "debit",
+            "credit",
+            "transaction",
+            "no",
+            "numero",
+            "sumup",
+            "twint",
+            "paypal",
+            "num",
+        }
+        has_aggregator = any(token in normalized.split() for token in ("sumup", "twint", "paypal"))
+
+        cleaned = re.sub(r"\b\d{1,2}[/.]\d{1,2}\b", " ", normalized)
+        cleaned = re.sub(r"\b\d{1,2}\s+\d{1,2}\b", " ", cleaned)
+        cleaned = re.sub(r"\[(?:num|numero)\]", " ", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\b\d{5,}\s+\d+\b", " ", cleaned)
+        cleaned = re.sub(r"\b\d{5,}\b", " ", cleaned)
+        cleaned = re.sub(r"\s-\s", " ", cleaned)
+
+        raw_tokens = [token.strip("*_-.") for token in cleaned.split()]
+
+        compacted_tokens: list[str] = []
+        idx = 0
+        while idx < len(raw_tokens):
+            current = raw_tokens[idx]
+            nxt = raw_tokens[idx + 1] if idx + 1 < len(raw_tokens) else ""
+            if current == "l" and nxt == "e":
+                compacted_tokens.append("le")
+                idx += 2
+                continue
+            compacted_tokens.append(current)
+            idx += 1
+
+        tokens: list[str] = []
+        for token in compacted_tokens:
+            if not token or token == "-":
+                continue
+            if token in stopwords:
+                continue
+            if token.isdigit() and (len(token) >= 4 or (has_aggregator and len(token) <= 2)):
+                continue
+            tokens.append(token)
+
+        return " ".join(tokens).strip()
+
+    def _derive_clean_merchant_key_norm(self, observed_alias: str) -> str:
+        """Derive a concise merchant key from the stable alias key."""
+
+        alias_key = self._build_observed_alias_key_norm(observed_alias)
+        if not alias_key:
+            return "unknown"
+
+        tokens = alias_key.split()
+        cleaned_tokens: list[str] = []
+        encountered_numeric_hint = False
+        for token in tokens:
+            if token.isdigit() and len(token) == 4:
+                encountered_numeric_hint = True
+                continue
+            if encountered_numeric_hint:
+                continue
+            cleaned_tokens.append(token)
+
+        if not cleaned_tokens:
+            return "unknown"
+
+        return " ".join(cleaned_tokens[:3]).strip() or "unknown"
+
     def _normalize_row(
         self,
         *,
@@ -178,7 +257,9 @@ class RelevesImportService:
 
         observed_alias = str(payee or libelle or "").strip()
         observed_alias_norm = normalize_merchant_alias(observed_alias)
-        merchant_key_norm = observed_alias_norm or "unknown"
+        observed_alias_key_norm = self._build_observed_alias_key_norm(observed_alias)
+        merchant_key_norm = self._derive_clean_merchant_key_norm(observed_alias)
+        meta_dict["observed_alias_key_norm"] = observed_alias_key_norm
 
         decision = None
         suggestion_created = False
@@ -212,6 +293,7 @@ class RelevesImportService:
                 if observed_alias_norm:
                     meta_dict["merchant_resolution"] = "unresolved"
                     meta_dict["observed_alias_norm"] = observed_alias_norm
+                    meta_dict["observed_alias_key_norm"] = observed_alias_key_norm
                     meta_dict["llm_context"] = self._build_non_sensitive_llm_context(
                         source=source,
                         parsed_date=parsed_date,
@@ -227,7 +309,7 @@ class RelevesImportService:
                     suggestion_created = self.profiles_repository.create_pending_map_alias_suggestion(
                         profile_id=profile_id,
                         observed_alias=observed_alias,
-                        observed_alias_norm=observed_alias_norm,
+                        observed_alias_norm=observed_alias_key_norm,
                         rationale=(
                             "Alias inconnu lors de l'import; nécessite normalisation/"
                             "canonicalisation et catégorisation LLM."

@@ -152,6 +152,18 @@ Date de transaction;Date de comptabilisation;Description1;Description2;Descripti
 """.encode("utf-8")
 
 
+
+
+def _build_sumup_alias_variants_csv() -> bytes:
+    return """Numéro de compte: CH00 0000 0000 0000 0000 0
+IBAN: CH00 0000 0000 0000 0000 0
+Du: 01.01.2025
+Au: 31.01.2025
+Date de transaction;Date de comptabilisation;Description1;Description2;Description3;No de transaction;Débit;Crédit;Monnaie
+10.01.2025;10.01.2025;SumUp *L e Scalp Coif 1897 Le Bouveret - 19168190-0 09/28 Paiement carte;;;TRX-SUMUP-001;45,00;;CHF
+11.01.2025;11.01.2025;SumUp *L e Scalp Coif 1897 Le Bouveret - [NUM]-0 09/28 Paiement carte;;;TRX-SUMUP-002;38,00;;CHF
+""".encode("utf-8")
+
 def test_import_45_unknown_transactions_creates_pending_suggestions_with_null_merchant_links() -> None:
     repository = InMemoryRelevesRepository()
     profiles_repository = _ProfilesStub(with_autres=False)
@@ -171,6 +183,31 @@ def test_import_45_unknown_transactions_creates_pending_suggestions_with_null_me
     assert all(row.get("category_id") is not None for row in rows)
     assert all(row.get("categorie") is None for row in rows)
 
+
+
+
+def test_import_sumup_alias_variants_creates_single_pending_suggestion_and_reimport_is_idempotent() -> None:
+    repository = InMemoryRelevesRepository()
+    profiles_repository = _ProfilesStub(with_autres=False)
+    service = RelevesImportService(releves_repository=repository, profiles_repository=profiles_repository)
+
+    csv_content = _build_sumup_alias_variants_csv()
+    first = service.import_releves(_build_request(csv_content))
+    second = service.import_releves(_build_request(csv_content))
+
+    assert first.imported_count == 2
+    assert first.merchant_suggestions_created_count == 1
+    assert second.imported_count == 0
+    assert second.merchant_suggestions_created_count == 0
+
+    imported_rows = repository.list_releves_for_import(profile_id=PROFILE_ID, bank_account_id=None)
+    sumup_rows = [
+        row
+        for row in imported_rows
+        if isinstance(row.get("libelle"), str) and str(row.get("libelle", "")).startswith("SumUp *L")
+    ]
+    assert len(sumup_rows) == 2
+    assert {row["meta"].get("observed_alias_key_norm") for row in sumup_rows} == {"le scalp coif le bouveret"}
 
 def test_reimport_same_45_unknown_transactions_creates_no_new_entities_or_aliases() -> None:
     repository = InMemoryRelevesRepository()
