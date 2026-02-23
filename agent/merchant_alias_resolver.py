@@ -375,7 +375,7 @@ def resolve_pending_map_alias(*, profile_id: UUID, profiles_repository: Any, lim
                         suggested_confidence=resolution["confidence"],
                         suggested_source="llm",
                     )
-                    merchant_entity_id = UUID(str(entity["id"]))
+                    merchant_entity_id = UUID(str(entity))
                     stats["created_entities"] += 1
 
                 if merchant_entity_id is None:

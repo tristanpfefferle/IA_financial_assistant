@@ -156,13 +156,13 @@ class ProfilesRepository(Protocol):
         *,
         canonical_name: str,
         canonical_name_norm: str,
-        country: str,
-        suggested_category_norm: str | None,
-        suggested_category_label: str | None,
-        suggested_confidence: float | None,
-        suggested_source: str | None,
-    ) -> dict[str, Any]:
-        """Create or upsert a global merchant entity and return it."""
+        country: str = "CH",
+        suggested_category_norm: str | None = None,
+        suggested_category_label: str | None = None,
+        suggested_confidence: float | None = None,
+        suggested_source: str | None = None,
+    ) -> UUID:
+        """Create or upsert a global merchant entity and return its UUID."""
 
     def update_merchant_suggestion_after_resolve(
         self,
@@ -1041,12 +1041,12 @@ class SupabaseProfilesRepository:
         *,
         canonical_name: str,
         canonical_name_norm: str,
-        country: str,
-        suggested_category_norm: str | None,
-        suggested_category_label: str | None,
-        suggested_confidence: float | None,
-        suggested_source: str | None,
-    ) -> dict[str, Any]:
+        country: str = "CH",
+        suggested_category_norm: str | None = None,
+        suggested_category_label: str | None = None,
+        suggested_confidence: float | None = None,
+        suggested_source: str | None = None,
+    ) -> UUID:
         cleaned_name = " ".join(canonical_name.strip().split())
         cleaned_name_norm = self._normalize_name_norm(canonical_name_norm)
         cleaned_country = country.strip().upper() or "CH"
@@ -1058,7 +1058,7 @@ class SupabaseProfilesRepository:
             canonical_name_norm=cleaned_name_norm,
         )
         if existing is not None:
-            return existing
+            return UUID(str(existing["id"]))
 
         payload = {
             "canonical_name": cleaned_name,
@@ -1077,7 +1077,7 @@ class SupabaseProfilesRepository:
                 use_anon_key=False,
             )
             if created_rows:
-                return created_rows[0]
+                return UUID(str(created_rows[0]["id"]))
         except RuntimeError as exc:
             error_message = str(exc).lower()
             if "duplicate key" not in error_message and "unique" not in error_message:
@@ -1088,7 +1088,7 @@ class SupabaseProfilesRepository:
             canonical_name_norm=cleaned_name_norm,
         )
         if existing is not None:
-            return existing
+            return UUID(str(existing["id"]))
         raise RuntimeError("unable to upsert merchant entity")
 
     def update_merchant_suggestion_after_resolve(

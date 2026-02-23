@@ -1,0 +1,1 @@
+"""Merchant suggestions application services."""

@@ -17,6 +17,7 @@ from backend.repositories.profiles_repository import ProfilesRepository
 from backend.repositories.releves_repository import RelevesRepository
 from backend.repositories.transactions_repository import TransactionsRepository
 from backend.services.releves_import import RelevesImportService
+from backend.services.merchant_suggestions.apply_map_alias import apply_map_alias_suggestion
 from shared.text_utils import normalize_category_name
 from shared.models import (
     BankAccount,
@@ -576,6 +577,28 @@ class BackendToolService:
         except ValueError as exc:
             code = ToolErrorCode.NOT_FOUND if "not found" in str(exc).lower() else ToolErrorCode.VALIDATION_ERROR
             return ToolError(code=code, message=str(exc))
+        except Exception as exc:
+            return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))
+
+
+    def apply_map_alias_suggestion(
+        self,
+        *,
+        profile_id: UUID,
+        suggestion_id: UUID,
+    ) -> dict[str, object] | ToolError:
+        if self.profiles_repository is None:
+            return ToolError(
+                code=ToolErrorCode.BACKEND_ERROR,
+                message="Profiles repository unavailable",
+            )
+
+        try:
+            return apply_map_alias_suggestion(
+                profile_id=profile_id,
+                suggestion_id=suggestion_id,
+                repositories=self.profiles_repository,
+            )
         except Exception as exc:
             return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))
 
