@@ -399,6 +399,36 @@ def test_list_releves_falls_back_to_payee_libelle_when_no_merchant_match() -> No
     assert ("or", "(payee.ilike.*Inconnu*,libelle.ilike.*Inconnu*)") in client.calls[1]["query"]
 
 
+def test_list_releves_fills_categorie_from_profile_categories_embed() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    category_id = UUID("11111111-1111-1111-1111-111111111111")
+    client = _ClientStub(
+        rows=[
+            {
+                "id": "11111111-1111-1111-1111-111111111111",
+                "profile_id": str(profile_id),
+                "date": "2025-01-01",
+                "libelle": "Courses",
+                "montant": "-12.00",
+                "devise": "EUR",
+                "categorie": None,
+                "category_id": str(category_id),
+                "payee": "Supermarché",
+                "merchant_id": None,
+                "bank_account_id": None,
+                "profile_categories": {"name": "Alimentation"},
+            }
+        ]
+    )
+    repository = SupabaseRelevesRepository(client=client)
+
+    rows, _ = repository.list_releves(RelevesFilters(profile_id=profile_id, limit=50, offset=0))
+
+    assert len(rows) == 1
+    assert rows[0].categorie == "Alimentation"
+    assert "profile_categories" not in client._rows[0]
+
+
 def test_aggregate_releves_uses_merchant_id_filter_when_match_found() -> None:
     profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
     merchant_id = UUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee")

@@ -540,11 +540,23 @@ class SupabaseRelevesRepository:
     def list_releves(self, filters: RelevesFilters) -> tuple[list[ReleveBancaire], int | None]:
         query = [
             *self._build_query(filters),
-            ("select", "id,profile_id,date,libelle,montant,devise,categorie,category_id,payee,merchant_id,bank_account_id"),
+            (
+                "select",
+                "id,profile_id,date,libelle,montant,devise,categorie,category_id,payee,merchant_id,bank_account_id,profile_categories(name)",
+            ),
             ("limit", filters.limit),
             ("offset", filters.offset),
         ]
         rows, total = self._client.get_rows(table="releves_bancaires", query=query, with_count=True)
+
+        for row in rows:
+            category_embed = row.get("profile_categories")
+            if not row.get("categorie") and isinstance(category_embed, dict):
+                embedded_name = category_embed.get("name")
+                if isinstance(embedded_name, str) and embedded_name.strip():
+                    row["categorie"] = embedded_name
+            row.pop("profile_categories", None)
+
         return [ReleveBancaire.model_validate(row) for row in rows], total
 
     def sum_releves(self, filters: RelevesFilters) -> tuple[Decimal, int, str | None]:
