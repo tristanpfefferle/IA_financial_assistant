@@ -397,6 +397,7 @@ class InMemoryRelevesRepository:
                     "payee": item.payee,
                     "categorie": item.categorie,
                     "bank_account_id": item.bank_account_id,
+                    "category_id": item.category_id,
                     "meta": sidecar.get("meta"),
                     "source": sidecar.get("source"),
                     "contenu_brut": sidecar.get("contenu_brut"),
@@ -772,7 +773,7 @@ class SupabaseRelevesRepository:
             ("profile_id", f"eq.{profile_id}"),
             (
                 "select",
-                "id,date,montant,devise,libelle,payee,categorie,bank_account_id,metadonnees,source",
+                "id,date,montant,devise,libelle,payee,categorie,category_id,bank_account_id,metadonnees,source",
             ),
             ("limit", 5000),
             ("offset", 0),
@@ -790,6 +791,7 @@ class SupabaseRelevesRepository:
                 "payee": row.get("payee"),
                 "categorie": row.get("categorie"),
                 "bank_account_id": UUID(str(row["bank_account_id"])) if row.get("bank_account_id") else None,
+                "category_id": UUID(str(row["category_id"])) if row.get("category_id") else None,
                 "meta": row.get("metadonnees"),
                 "source": row.get("source"),
             }

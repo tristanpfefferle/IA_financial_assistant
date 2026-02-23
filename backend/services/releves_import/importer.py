@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any
-from uuid import UUID
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from backend.repositories.profiles_repository import ProfilesRepository
 from backend.repositories.releves_repository import RelevesRepository
@@ -30,22 +30,29 @@ class RelevesImportService:
     releves_repository: RelevesRepository
     profiles_repository: ProfilesRepository | None = None
 
-    def _resolve_category_label(
-        self,
-        *,
-        profile_id: UUID,
-        category_id: UUID | None,
-        fallback_label: str,
-    ) -> str:
-        if category_id is None or self.profiles_repository is None:
-            return fallback_label
-        categories = self.profiles_repository.list_profile_categories(profile_id=profile_id)
-        for row in categories:
-            if str(row.get("id") or "") == str(category_id):
-                name = row.get("name")
-                if isinstance(name, str) and name.strip():
-                    return name.strip()
-        return fallback_label
+    @staticmethod
+    def _fallback_autres_category_id(*, profile_id: UUID) -> UUID:
+        """Build a deterministic fallback category id when no profiles repository is configured."""
+
+        return uuid5(NAMESPACE_URL, f"ia-financial-assistant:{profile_id}:category:autres")
+
+    def _resolve_default_category_id(self, *, profile_id: UUID) -> UUID:
+        """Resolve the mandatory fallback category id (`Autres`) for a profile."""
+
+        if self.profiles_repository is None:
+            return self._fallback_autres_category_id(profile_id=profile_id)
+
+        self.profiles_repository.ensure_system_categories(
+            profile_id=profile_id,
+            categories=[{"system_key": "other", "name": "Autres"}],
+        )
+        category_id = self.profiles_repository.find_profile_category_id_by_name_norm(
+            profile_id=profile_id,
+            name_norm="autres",
+        )
+        if category_id is None:
+            raise RuntimeError("Impossible de résoudre la catégorie système obligatoire 'Autres'.")
+        return category_id
 
     @staticmethod
     def _extract_external_id(parsed_row: dict[str, object]) -> str | None:
@@ -131,15 +138,9 @@ class RelevesImportService:
             meta_dict["classify_confidence"] = decision.confidence
             meta_dict["classify_at"] = datetime.now(timezone.utc).isoformat()
 
-        category_label = (
-            self._resolve_category_label(
-                profile_id=profile_id,
-                category_id=(decision.category_id if decision else None),
-                fallback_label=classification.category_label,
-            )
-            if decision is not None
-            else classification.category_label
-        )
+        category_id = decision.category_id if decision else None
+        if category_id is None:
+            category_id = self._resolve_default_category_id(profile_id=profile_id)
 
         return {
             "profile_id": profile_id,
@@ -149,9 +150,9 @@ class RelevesImportService:
             "devise": str(parsed_row.get("devise") or "CHF"),
             "libelle": parsed_row.get("libelle"),
             "payee": parsed_row.get("payee"),
-            "categorie": parsed_row.get("categorie") or category_label,
+            "categorie": None,
             "merchant_entity_id": decision.merchant_entity_id if decision else None,
-            "category_id": decision.category_id if decision else None,
+            "category_id": category_id,
             "meta": meta_dict,
             "contenu_brut": raw_dict,
             "source": source,
