@@ -303,7 +303,7 @@ def _build_shared_expenses_summary_table(data: SpendingReportData) -> Table:
                 ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
                 ("TOPPADDING", (0, 0), (-1, -1), 3),
                 ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-                ("FONTNAME", (0, 4), (-1, 4), "Helvetica-Bold"),
+                ("FONTNAME", (0, len(table_data) - 1), (-1, len(table_data) - 1), "Helvetica-Bold"),
             ]
         )
     )
