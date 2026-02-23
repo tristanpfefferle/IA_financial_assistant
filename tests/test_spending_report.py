@@ -1,6 +1,10 @@
 from decimal import Decimal
 
-from backend.reporting.spending_report import SpendingReportData, _build_cashflow_summary_table
+from backend.reporting.spending_report import (
+    SpendingReportData,
+    _build_cashflow_summary_table,
+    _build_shared_expenses_summary_table,
+)
 
 
 def test_build_cashflow_summary_table_includes_net_variation_with_transfers() -> None:
@@ -25,3 +29,28 @@ def test_build_cashflow_summary_table_includes_net_variation_with_transfers() ->
 
     assert table._cellvalues[3][0] == "Variation nette (incl. transferts)"
     assert table._cellvalues[3][1] == "90.00 CHF"
+
+
+def test_build_shared_expenses_summary_table_includes_effective_spending_block() -> None:
+    data = SpendingReportData(
+        period_label="2026-01-01 → 2026-01-31",
+        start_date="2026-01-01",
+        end_date="2026-01-31",
+        total=Decimal("320"),
+        count=4,
+        currency="CHF",
+        categories=[],
+        transactions=[],
+        effective_total=Decimal("280"),
+        shared_outgoing=Decimal("30"),
+        shared_incoming=Decimal("10"),
+        shared_net_balance=Decimal("20"),
+    )
+
+    table = _build_shared_expenses_summary_table(data)
+
+    assert table._cellvalues[0] == ["Total dépenses", "320.00 CHF"]
+    assert table._cellvalues[1] == ["Partage sortant", "30.00 CHF"]
+    assert table._cellvalues[2] == ["Partage entrant", "10.00 CHF"]
+    assert table._cellvalues[3] == ["Solde partage", "20.00 CHF"]
+    assert table._cellvalues[4] == ["Total effectif", "280.00 CHF"]

@@ -289,11 +289,11 @@ def _build_cashflow_summary_table(data: SpendingReportData) -> Table:
 
 def _build_shared_expenses_summary_table(data: SpendingReportData) -> Table:
     table_data = [
-        ["Dépenses bancaires", _format_amount(data.total, data.currency)],
-        ["Part payée pour l'autre", _format_amount(data.shared_outgoing, data.currency)],
-        ["Part due par toi", _format_amount(data.shared_incoming, data.currency)],
+        ["Total dépenses", _format_amount(data.total, data.currency)],
+        ["Partage sortant", _format_amount(data.shared_outgoing, data.currency)],
+        ["Partage entrant", _format_amount(data.shared_incoming, data.currency)],
         ["Solde partage", _format_amount(data.shared_net_balance, data.currency)],
-        ["Dépenses nettes", _format_amount(data.effective_total, data.currency)],
+        ["Total effectif", _format_amount(data.effective_total, data.currency)],
     ]
     table = Table(table_data, colWidths=[90 * mm, 86 * mm])
     table.setStyle(
@@ -338,7 +338,7 @@ def generate_spending_report_pdf(data: SpendingReportData) -> bytes:
         Spacer(1, 1 * mm),
         _build_cashflow_summary_table(data),
         Spacer(1, 4 * mm),
-        Paragraph("<b>Dépenses nettes (partage)</b>", styles["BodyText"]),
+        Paragraph("<b>Total effectif (dépenses partagées)</b>", styles["BodyText"]),
         Spacer(1, 1 * mm),
         _build_shared_expenses_summary_table(data),
         Spacer(1, 6 * mm),
