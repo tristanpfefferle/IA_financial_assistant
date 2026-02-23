@@ -223,4 +223,4 @@ def test_import_creates_pending_map_alias_suggestions_when_aliases_are_unknown()
     assert result.new_count > 0
     assert result.merchant_suggestions_created_count > 0
     assert profiles_repository.suggestions
-    assert all(len(entity["canonical_name"]) < 80 for entity in profiles_repository.created_entities)
+    assert profiles_repository.created_entities == []

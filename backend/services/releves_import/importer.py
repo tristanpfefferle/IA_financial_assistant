@@ -183,9 +183,12 @@ class RelevesImportService:
         decision = None
         suggestion_created = False
         if self.profiles_repository is not None:
-            resolved_entity = self.profiles_repository.find_merchant_entity_by_alias_norm(
-                alias_norm=observed_alias_norm,
-            )
+            resolved_entity = None
+            if observed_alias_norm:
+                resolved_entity = self.profiles_repository.find_merchant_entity_by_alias_norm(
+                    alias_norm=observed_alias_norm,
+                )
+
             if resolved_entity is not None and resolved_entity.get("id"):
                 merchant_entity_id = UUID(str(resolved_entity["id"]))
                 decision = decide_releve_classification(
@@ -209,30 +212,33 @@ class RelevesImportService:
                     profile_id=profile_id,
                     merchant_key_norm="unknown",
                 )
-                meta_dict["merchant_resolution"] = "unresolved"
-                meta_dict["observed_alias_norm"] = observed_alias_norm
-                meta_dict["llm_context"] = self._build_non_sensitive_llm_context(
-                    source=source,
-                    parsed_date=parsed_date,
-                    amount=amount,
-                    devise=devise,
-                    payee=payee,
-                    libelle=libelle,
-                    external_id=external_id,
-                    bank_account_id=bank_account_id,
-                )
-                # TODO(tristanpfefferle): Le batch job LLM transformera les suggestions
-                # map_alias en merchant_entity + alias + suggested_category_norm.
-                suggestion_created = self.profiles_repository.create_pending_map_alias_suggestion(
-                    profile_id=profile_id,
-                    observed_alias=observed_alias,
-                    observed_alias_norm=observed_alias_norm,
-                    rationale=(
-                        "Alias inconnu lors de l'import; nécessite normalisation/"
-                        "canonicalisation et catégorisation LLM."
-                    ),
-                    confidence=0.0,
-                )
+                if observed_alias_norm:
+                    meta_dict["merchant_resolution"] = "unresolved"
+                    meta_dict["observed_alias_norm"] = observed_alias_norm
+                    meta_dict["llm_context"] = self._build_non_sensitive_llm_context(
+                        source=source,
+                        parsed_date=parsed_date,
+                        amount=amount,
+                        devise=devise,
+                        payee=payee,
+                        libelle=libelle,
+                        external_id=external_id,
+                        bank_account_id=bank_account_id,
+                    )
+                    # TODO(tristanpfefferle): Le batch job LLM transformera les suggestions
+                    # map_alias en merchant_entity + alias + suggested_category_norm.
+                    suggestion_created = self.profiles_repository.create_pending_map_alias_suggestion(
+                        profile_id=profile_id,
+                        observed_alias=observed_alias,
+                        observed_alias_norm=observed_alias_norm,
+                        rationale=(
+                            "Alias inconnu lors de l'import; nécessite normalisation/"
+                            "canonicalisation et catégorisation LLM."
+                        ),
+                        confidence=0.0,
+                    )
+                else:
+                    meta_dict["merchant_resolution"] = "unresolved_empty_alias"
         else:
             merchant_entity_id = self._fallback_merchant_entity_id(
                 profile_id=profile_id,
@@ -302,6 +308,7 @@ class RelevesImportService:
                     continue
                 if bool(normalized.get("merchant_suggestion_created")):
                     merchant_suggestions_created_count += 1
+                normalized.pop("merchant_suggestion_created", None)
                 normalized_rows.append(normalized)
 
         existing_rows = self.releves_repository.list_releves_for_import(

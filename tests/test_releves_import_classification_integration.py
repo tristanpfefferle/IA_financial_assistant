@@ -142,6 +142,16 @@ Date de transaction;Date de comptabilisation;Description1;Description2;Descripti
 """.encode("utf-8")
 
 
+def _build_empty_alias_csv() -> bytes:
+    return """Numéro de compte: CH00 0000 0000 0000 0000 0
+IBAN: CH00 0000 0000 0000 0000 0
+Du: 01.01.2025
+Au: 31.01.2025
+Date de transaction;Date de comptabilisation;Description1;Description2;Description3;No de transaction;Débit;Crédit;Monnaie
+10.01.2025;10.01.2025;;;;TRX-EMPTY-001;12,50;;CHF
+""".encode("utf-8")
+
+
 def test_import_45_unknown_transactions_creates_pending_suggestions_and_non_null_links() -> None:
     repository = InMemoryRelevesRepository()
     profiles_repository = _ProfilesStub(with_autres=False)
@@ -172,11 +182,34 @@ def test_reimport_same_45_unknown_transactions_creates_no_new_entities_or_aliase
 
     assert first.imported_count == 45
     assert second.imported_count == 0
+    assert second.modified_count == 0
     assert first.merchant_suggestions_created_count == 45
     assert second.merchant_suggestions_created_count == 0
     assert profiles_repository.created_entity_count == 0
     assert profiles_repository.created_alias_count == 0
     assert len(profiles_repository.pending_alias_norms) == 45
+
+
+def test_import_with_empty_alias_does_not_create_pending_suggestion() -> None:
+    repository = InMemoryRelevesRepository()
+    profiles_repository = _ProfilesStub(with_autres=False)
+    service = RelevesImportService(releves_repository=repository, profiles_repository=profiles_repository)
+
+    result = service.import_releves(_build_request(_build_empty_alias_csv()))
+
+    assert result.imported_count == 1
+    assert result.failed_count == 0
+    assert result.merchant_suggestions_created_count == 0
+
+    imported_rows = repository.list_releves_for_import(profile_id=PROFILE_ID, bank_account_id=None)
+    empty_alias_rows = [
+        row
+        for row in imported_rows
+        if isinstance(row.get("meta"), dict)
+        and row["meta"].get("_external_id") == "TRX-EMPTY-001"
+    ]
+    assert len(empty_alias_rows) == 1
+    assert empty_alias_rows[0]["meta"]["merchant_resolution"] == "unresolved_empty_alias"
 
 
 def test_same_merchant_entity_has_profile_specific_override_categories() -> None:
