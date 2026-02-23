@@ -53,6 +53,14 @@ from shared.models import DateRange, RelevesDirection, ToolError, ToolErrorCode
 logger = logging.getLogger(__name__)
 
 
+def _normalize_chat_state(value: Any) -> dict[str, Any]:
+    """Return a safe chat state mapping."""
+
+    if not isinstance(value, dict):
+        return {}
+    return value
+
+
 _GLOBAL_STATE_MODES = {"onboarding", "guided_budget", "free_chat"}
 _GLOBAL_STATE_ONBOARDING_STEPS = {"profile", "bank_accounts", "import", "categories", "budget", "report", None}
 _GLOBAL_STATE_ONBOARDING_SUBSTEPS = {
@@ -1859,9 +1867,9 @@ def agent_chat(
         auth_user_id, profile_id = _resolve_authenticated_profile(authorization)
         profiles_repository = get_profiles_repository()
 
-        chat_state = profiles_repository.get_chat_state(profile_id=profile_id, user_id=auth_user_id) or {}
-        if not isinstance(chat_state, dict):
-            chat_state = {}
+        chat_state = _normalize_chat_state(
+            profiles_repository.get_chat_state(profile_id=profile_id, user_id=auth_user_id)
+        )
 
         active_task = chat_state.get("active_task")
         state = chat_state.get("state")
@@ -3596,6 +3604,9 @@ def import_releves(payload: ImportRequestPayload, authorization: str | None = He
             selected_bank_account_name = str(detection_result.get("name") or "").strip() or None
         elif detection_result == "ambiguous":
             chat_state = profiles_repository.get_chat_state(profile_id=profile_id, user_id=auth_user_id)
+            chat_state = chat_state or {}
+            if not isinstance(chat_state, dict):
+                chat_state = {}
             state = chat_state.get("state")
             state_dict = dict(state) if isinstance(state, dict) else {}
             import_context = state_dict.get("import_context") if isinstance(state_dict.get("import_context"), dict) else {}
@@ -3669,6 +3680,9 @@ def import_releves(payload: ImportRequestPayload, authorization: str | None = He
     try:
         profiles_repository = get_profiles_repository()
         chat_state = profiles_repository.get_chat_state(profile_id=profile_id, user_id=auth_user_id)
+        chat_state = chat_state or {}
+        if not isinstance(chat_state, dict):
+            chat_state = {}
         state = chat_state.get("state")
         state_dict = dict(state) if isinstance(state, dict) else {}
         global_state = state_dict.get("global_state") if isinstance(state_dict.get("global_state"), dict) else None
