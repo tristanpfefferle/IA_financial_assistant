@@ -30,6 +30,7 @@ class _ProfilesStub:
         self.created_entity_count = 0
         self.created_alias_count = 0
         self.pending_alias_norms: set[str] = set()
+        self.created_suggestions: list[dict[str, str | None]] = []
 
     def ensure_system_categories(self, *, profile_id: UUID, categories: list[dict[str, str]]) -> dict[str, int]:
         del profile_id
@@ -78,10 +79,19 @@ class _ProfilesStub:
         observed_alias: str,
         observed_alias_norm: str,
         merchant_key_norm: str | None = None,
+        suggested_entity_name: str | None = None,
+        suggested_entity_name_norm: str | None = None,
         rationale: str,
         confidence: float,
     ) -> bool:
-        del profile_id, observed_alias, rationale, confidence
+        del profile_id, rationale, confidence
+        self.created_suggestions.append({
+            "observed_alias": observed_alias,
+            "observed_alias_norm": observed_alias_norm,
+            "merchant_key_norm": merchant_key_norm,
+            "suggested_entity_name": suggested_entity_name,
+            "suggested_entity_name_norm": suggested_entity_name_norm,
+        })
         normalized = normalize_merchant_alias(merchant_key_norm or observed_alias_norm)
         if not normalized or normalized in self.pending_alias_norms:
             return False
@@ -285,3 +295,94 @@ def test_same_merchant_entity_has_profile_specific_override_categories() -> None
 
     assert coop_row_a["merchant_entity_id"] == coop_row_b["merchant_entity_id"]
     assert coop_row_a["category_id"] != coop_row_b["category_id"]
+
+
+def _build_single_transaction_csv(*, description1: str, trx_id: str = "TRX-001") -> bytes:
+    return f"""Numéro de compte: CH00 0000 0000 0000 0000 0
+IBAN: CH00 0000 0000 0000 0000 0
+Du: 01.01.2025
+Au: 31.01.2025
+Date de transaction;Date de comptabilisation;Description1;Description2;Description3;No de transaction;Débit;Crédit;Monnaie
+10.01.2025;10.01.2025;{description1};;;{trx_id};12,50;;CHF
+""".encode("utf-8")
+
+
+def _build_coop_migros_csv() -> bytes:
+    return """Numéro de compte: CH00 0000 0000 0000 0000 0
+IBAN: CH00 0000 0000 0000 0000 0
+Du: 01.01.2025
+Au: 31.01.2025
+Date de transaction;Date de comptabilisation;Description1;Description2;Description3;No de transaction;Débit;Crédit;Monnaie
+10.01.2025;10.01.2025;Coop;;;TRX-COOP-001;12,50;;CHF
+11.01.2025;11.01.2025;Migros;;;TRX-MIGROS-001;18,40;;CHF
+""".encode("utf-8")
+
+
+def test_import_ubs_very_long_label_creates_pending_suggestion_without_entity_creation() -> None:
+    repository = InMemoryRelevesRepository()
+    profiles_repository = _ProfilesStub(with_autres=False)
+    service = RelevesImportService(releves_repository=repository, profiles_repository=profiles_repository)
+
+    long_label = "Paiement UBS TWINT Motif du paiement: " + ("UBS REF 1234567890 " * 4)
+    result = service.import_releves(_build_request(_build_single_transaction_csv(description1=long_label, trx_id="TRX-UBS-LONG")))
+
+    assert result.imported_count == 1
+    assert result.merchant_suggestions_created_count == 1
+
+    imported_rows = repository.list_releves_for_import(profile_id=PROFILE_ID, bank_account_id=None)
+    row = [
+        item
+        for item in imported_rows
+        if isinstance(item.get("meta"), dict) and item["meta"].get("_external_id") == "TRX-UBS-LONG"
+    ][0]
+    assert row["merchant_entity_id"] is None
+    assert row["meta"]["merchant_resolution"] == "unresolved"
+
+
+def test_import_coop_and_migros_reuses_stable_entities_without_pending_suggestions() -> None:
+    repository = InMemoryRelevesRepository()
+    profiles_repository = _ProfilesStub(with_autres=False)
+    service = RelevesImportService(releves_repository=repository, profiles_repository=profiles_repository)
+
+    coop_entity = uuid4()
+    migros_entity = uuid4()
+    profiles_repository.alias_to_entity[normalize_merchant_alias("Coop")] = coop_entity
+    profiles_repository.alias_to_entity[normalize_merchant_alias("Migros")] = migros_entity
+
+    result = service.import_releves(_build_request(_build_coop_migros_csv()))
+
+    assert result.imported_count == 2
+    assert result.merchant_suggestions_created_count == 0
+
+    imported_rows = repository.list_releves_for_import(profile_id=PROFILE_ID, bank_account_id=None)
+    coop_row = [row for row in imported_rows if row.get("libelle") == "Coop"][0]
+    migros_row = [row for row in imported_rows if row.get("libelle") == "Migros"][0]
+    assert coop_row["merchant_entity_id"] == coop_entity
+    assert migros_row["merchant_entity_id"] == migros_entity
+
+
+def test_import_twint_p2p_does_not_create_person_entity_and_keeps_pending_category() -> None:
+    repository = InMemoryRelevesRepository()
+    profiles_repository = _ProfilesStub(with_autres=False)
+    service = RelevesImportService(releves_repository=repository, profiles_repository=profiles_repository)
+
+    result = service.import_releves(
+        _build_request(_build_single_transaction_csv(description1="TWINT A John Doe", trx_id="TRX-TWINT-JOHN"))
+    )
+
+    assert result.imported_count == 1
+    assert result.merchant_suggestions_created_count == 1
+
+    imported_rows = repository.list_releves_for_import(profile_id=PROFILE_ID, bank_account_id=None)
+    twint_row = [
+        item
+        for item in imported_rows
+        if isinstance(item.get("meta"), dict) and item["meta"].get("_external_id") == "TRX-TWINT-JOHN"
+    ][0]
+    assert twint_row["merchant_entity_id"] is None
+    assert twint_row["meta"]["category_key"] == "twint_p2p_pending"
+    assert twint_row["meta"]["category_status"] == "pending"
+
+    latest_suggestion = profiles_repository.created_suggestions[-1]
+    assert latest_suggestion["observed_alias"] == "TWINT A John Doe"
+    assert latest_suggestion["merchant_key_norm"] == "a john doe"
