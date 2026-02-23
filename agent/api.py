@@ -3603,10 +3603,9 @@ def import_releves(payload: ImportRequestPayload, authorization: str | None = He
             selected_bank_account_id = str(detection_result.get("id") or "") or None
             selected_bank_account_name = str(detection_result.get("name") or "").strip() or None
         elif detection_result == "ambiguous":
-            chat_state = profiles_repository.get_chat_state(profile_id=profile_id, user_id=auth_user_id)
-            chat_state = chat_state or {}
-            if not isinstance(chat_state, dict):
-                chat_state = {}
+            chat_state = _normalize_chat_state(
+                profiles_repository.get_chat_state(profile_id=profile_id, user_id=auth_user_id)
+            )
             state = chat_state.get("state")
             state_dict = dict(state) if isinstance(state, dict) else {}
             import_context = state_dict.get("import_context") if isinstance(state_dict.get("import_context"), dict) else {}
@@ -3617,7 +3616,7 @@ def import_releves(payload: ImportRequestPayload, authorization: str | None = He
                 if str(account.get("name") or "").strip()
             ]
             state_dict["import_context"] = import_context
-            updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+            updated_chat_state = dict(chat_state)
             updated_chat_state["state"] = state_dict
             profiles_repository.update_chat_state(
                 profile_id=profile_id,
@@ -3679,10 +3678,9 @@ def import_releves(payload: ImportRequestPayload, authorization: str | None = He
 
     try:
         profiles_repository = get_profiles_repository()
-        chat_state = profiles_repository.get_chat_state(profile_id=profile_id, user_id=auth_user_id)
-        chat_state = chat_state or {}
-        if not isinstance(chat_state, dict):
-            chat_state = {}
+        chat_state = _normalize_chat_state(
+            profiles_repository.get_chat_state(profile_id=profile_id, user_id=auth_user_id)
+        )
         state = chat_state.get("state")
         state_dict = dict(state) if isinstance(state, dict) else {}
         global_state = state_dict.get("global_state") if isinstance(state_dict.get("global_state"), dict) else None
@@ -3706,7 +3704,7 @@ def import_releves(payload: ImportRequestPayload, authorization: str | None = He
         state_dict["global_state"] = updated_global_state
         state_dict.pop("import_context", None)
 
-        updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+        updated_chat_state = dict(chat_state)
         updated_chat_state["state"] = state_dict
         profiles_repository.update_chat_state(
             profile_id=profile_id,
