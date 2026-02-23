@@ -54,6 +54,20 @@ def test_resolve_map_alias_endpoint_returns_stats(monkeypatch) -> None:
 
     monkeypatch.setattr(agent_api, "resolve_pending_map_alias", _resolver)
 
+    def _bootstrap(*, profiles_repository, profile_id: UUID, limit: int):
+        call_order.append("bootstrap_called")
+        assert isinstance(profiles_repository, _Repo)
+        assert profile_id == PROFILE_ID
+        assert limit == 2000
+        return {
+            "processed_count": 12,
+            "linked_count": 10,
+            "skipped_count": 2,
+            "suggestions_created_count": 1,
+        }
+
+    monkeypatch.setattr(agent_api, "_bootstrap_merchants_from_imported_releves", _bootstrap)
+
     response = client.post(
         "/finance/merchants/suggestions/resolve",
         headers=_auth_headers(),
@@ -64,7 +78,13 @@ def test_resolve_map_alias_endpoint_returns_stats(monkeypatch) -> None:
     payload = response.json()
     assert payload["processed"] == 2
     assert payload["llm_run_id"] == "run_abc"
-    assert call_order == ["resolver_called"]
+    assert payload["bootstrap_summary"] == {
+        "processed_count": 12,
+        "linked_count": 10,
+        "skipped_count": 2,
+        "suggestions_created_count": 1,
+    }
+    assert call_order == ["resolver_called", "bootstrap_called"]
 
 
 def test_resolve_map_alias_endpoint_fails_when_llm_disabled(monkeypatch) -> None:

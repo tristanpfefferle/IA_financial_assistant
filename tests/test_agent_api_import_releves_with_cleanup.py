@@ -451,6 +451,7 @@ def test_bootstrap_merchants_from_imported_releves_unknown_alias_uses_idempotent
             profile_id: UUID,
             observed_alias: str,
             observed_alias_norm: str,
+            merchant_key_norm: str | None = None,
             rationale: str,
             confidence: float,
         ) -> bool:
@@ -459,6 +460,7 @@ def test_bootstrap_merchants_from_imported_releves_unknown_alias_uses_idempotent
                     "profile_id": profile_id,
                     "observed_alias": observed_alias,
                     "observed_alias_norm": observed_alias_norm,
+                    "merchant_key_norm": merchant_key_norm,
                     "rationale": rationale,
                     "confidence": confidence,
                 }
@@ -480,6 +482,7 @@ def test_bootstrap_merchants_from_imported_releves_unknown_alias_uses_idempotent
     assert repo.attach_calls == 0
     assert len(repo.create_calls) == 2
     assert {call["observed_alias_norm"] for call in repo.create_calls} == {"unknown shop"}
+    assert {call["merchant_key_norm"] for call in repo.create_calls} == {"unknown shop"}
     assert all(call["confidence"] == 0.0 for call in repo.create_calls)
     assert all(
         call["rationale"]
@@ -516,6 +519,7 @@ def test_bootstrap_merchants_from_imported_releves_uses_short_observed_alias_fro
             profile_id: UUID,
             observed_alias: str,
             observed_alias_norm: str,
+            merchant_key_norm: str | None = None,
             rationale: str,
             confidence: float,
         ) -> bool:
@@ -524,6 +528,7 @@ def test_bootstrap_merchants_from_imported_releves_uses_short_observed_alias_fro
                     "profile_id": profile_id,
                     "observed_alias": observed_alias,
                     "observed_alias_norm": observed_alias_norm,
+                    "merchant_key_norm": merchant_key_norm,
                     "rationale": rationale,
                     "confidence": confidence,
                 }
@@ -542,6 +547,7 @@ def test_bootstrap_merchants_from_imported_releves_uses_short_observed_alias_fro
     assert len(repo.create_calls) == 1
     assert repo.create_calls[0]["observed_alias"] == "Paiement à une carte"
     assert repo.create_calls[0]["observed_alias_norm"] == "paiement a une carte"
+    assert repo.create_calls[0]["merchant_key_norm"] == "paiement a une carte"
     assert repo.create_calls[0]["confidence"] == 0.0
 
 
@@ -818,6 +824,7 @@ def test_bootstrap_merchants_reimport_links_existing_alias_and_only_suggests_unk
             profile_id: UUID,
             observed_alias: str,
             observed_alias_norm: str,
+            merchant_key_norm: str | None = None,
             rationale: str,
             confidence: float,
         ) -> bool:
@@ -826,6 +833,7 @@ def test_bootstrap_merchants_reimport_links_existing_alias_and_only_suggests_unk
                     "profile_id": profile_id,
                     "observed_alias": observed_alias,
                     "observed_alias_norm": observed_alias_norm,
+                    "merchant_key_norm": merchant_key_norm,
                     "rationale": rationale,
                     "confidence": confidence,
                 }
@@ -845,6 +853,7 @@ def test_bootstrap_merchants_reimport_links_existing_alias_and_only_suggests_unk
     assert repo.alias_upserts == [(known_entity_id, "COOP CITY", "coop city", "import")]
     assert len(repo.pending_calls) == 1
     assert repo.pending_calls[0]["observed_alias_norm"] == "brand new shop"
+    assert repo.pending_calls[0]["merchant_key_norm"] == "brand new shop"
     assert repo.pending_calls[0]["confidence"] == 0.0
 
 
@@ -893,6 +902,7 @@ def test_bootstrap_merchants_bulk_unknown_aliases_deduplicates_to_ten_suggestion
             profile_id: UUID,
             observed_alias: str,
             observed_alias_norm: str,
+            merchant_key_norm: str | None = None,
             rationale: str,
             confidence: float,
         ) -> bool:
@@ -901,6 +911,7 @@ def test_bootstrap_merchants_bulk_unknown_aliases_deduplicates_to_ten_suggestion
                     "profile_id": profile_id,
                     "observed_alias": observed_alias,
                     "observed_alias_norm": observed_alias_norm,
+                    "merchant_key_norm": merchant_key_norm,
                     "rationale": rationale,
                     "confidence": confidence,
                 }
@@ -919,6 +930,18 @@ def test_bootstrap_merchants_bulk_unknown_aliases_deduplicates_to_ten_suggestion
     assert summary == {"processed_count": 45, "linked_count": 0, "skipped_count": 45, "suggestions_created_count": 10}
     assert len(repo.pending_calls) == 45
     assert {call["observed_alias_norm"] for call in repo.pending_calls} == {
+        "amazon",
+        "coop city",
+        "migros",
+        "ikea",
+        "decathlon",
+        "shell",
+        "netflix",
+        "spotify",
+        "swisscom",
+        "uber eats",
+    }
+    assert {call["merchant_key_norm"] for call in repo.pending_calls} == {
         "amazon",
         "coop city",
         "migros",

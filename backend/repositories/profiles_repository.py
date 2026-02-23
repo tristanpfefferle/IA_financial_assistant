@@ -151,6 +151,7 @@ class ProfilesRepository(Protocol):
         profile_id: UUID,
         observed_alias: str,
         observed_alias_norm: str,
+        merchant_key_norm: str | None = None,
         rationale: str,
         confidence: float,
     ) -> bool:
@@ -789,12 +790,14 @@ class SupabaseProfilesRepository:
         profile_id: UUID,
         observed_alias: str,
         observed_alias_norm: str,
+        merchant_key_norm: str | None = None,
         rationale: str,
         confidence: float,
     ) -> bool:
         cleaned_observed_alias_norm = self._normalize_name_norm(observed_alias_norm)
         if not cleaned_observed_alias_norm:
             return False
+        cleaned_merchant_key_norm = self._normalize_name_norm(merchant_key_norm) if merchant_key_norm else None
 
         existing = self._find_existing_map_alias_suggestion(
             profile_id=profile_id,
@@ -811,6 +814,7 @@ class SupabaseProfilesRepository:
             "status": "pending",
             "observed_alias": observed_alias,
             "observed_alias_norm": cleaned_observed_alias_norm,
+            "merchant_key_norm": cleaned_merchant_key_norm,
             "rationale": rationale,
             "confidence": confidence,
             "times_seen": 1,

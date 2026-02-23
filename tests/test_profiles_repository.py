@@ -737,6 +737,7 @@ def test_create_pending_map_alias_suggestion_creates_on_first_call() -> None:
         profile_id=profile_id,
         observed_alias="Scalp Coif",
         observed_alias_norm="scalp coif",
+        merchant_key_norm="scalp",
         rationale=(
             "Alias inconnu lors de l'import; nécessite normalisation/"
             "canonicalisation et catégorisation LLM."
@@ -747,6 +748,7 @@ def test_create_pending_map_alias_suggestion_creates_on_first_call() -> None:
     assert created is True
     assert len(client.post_calls) == 1
     assert client.post_calls[0]["table"] == "merchant_suggestions"
+    assert client.post_calls[0]["payload"]["merchant_key_norm"] == "scalp"
     assert client.patch_calls == []
 
 
@@ -762,6 +764,7 @@ def test_create_pending_map_alias_suggestion_updates_existing_and_does_not_inser
         profile_id=profile_id,
         observed_alias="Scalp Coif",
         observed_alias_norm="Scalp   Coif",
+        merchant_key_norm=None,
         rationale=(
             "Alias inconnu lors de l'import; nécessite normalisation/"
             "canonicalisation et catégorisation LLM."
@@ -795,6 +798,7 @@ def test_create_pending_map_alias_suggestion_handles_duplicate_insert_and_refetc
         profile_id=profile_id,
         observed_alias="Scalp Coif",
         observed_alias_norm="scalp coif",
+        merchant_key_norm="scalp coif",
         rationale=(
             "Alias inconnu lors de l'import; nécessite normalisation/"
             "canonicalisation et catégorisation LLM."

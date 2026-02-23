@@ -946,6 +946,7 @@ def _bootstrap_merchants_from_imported_releves(
                             profile_id=profile_id,
                             observed_alias=observed_alias,
                             observed_alias_norm=dedup_alias_norm,
+                            merchant_key_norm=dedup_alias_norm,
                             rationale=(
                                 "Alias inconnu lors de l'import; nécessite normalisation/"
                                 "canonicalisation et catégorisation LLM."
@@ -3438,8 +3439,15 @@ def resolve_merchant_alias_suggestions(
     except Exception as exc:
         logger.exception("resolve_map_alias_suggestions_failed profile_id=%s", profile_id)
         raise HTTPException(status_code=500, detail="Failed to resolve map_alias suggestions") from exc
+    response_payload = dict(jsonable_encoder(stats))
+    bootstrap_summary = _bootstrap_merchants_from_imported_releves(
+        profiles_repository=profiles_repository,
+        profile_id=profile_id,
+        limit=2000,
+    )
+    response_payload["bootstrap_summary"] = bootstrap_summary
 
-    return jsonable_encoder(stats)
+    return response_payload
 
 
 
