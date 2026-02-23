@@ -726,7 +726,7 @@ def test_update_merchant_suggestion_after_resolve_falls_back_to_minimal_payload(
     assert client.patch_calls[1]["payload"] == {"status": "failed", "error": "invalid_item"}
 
 
-def test_create_map_alias_suggestions_uses_insert_and_deduplicates_batch() -> None:
+def test_create_map_alias_suggestions_uses_upsert_and_deduplicates_batch() -> None:
     profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
     client = _ClientStub(responses=[])
     repository = SupabaseProfilesRepository(client=client)
@@ -748,128 +748,35 @@ def test_create_map_alias_suggestions_uses_insert_and_deduplicates_batch() -> No
     )
 
     assert inserted == 1
-    assert client.post_calls == [
-        {
-            "table": "merchant_suggestions",
-            "payload": {
-                "profile_id": str(profile_id),
-                "action": "map_alias",
-                "status": "pending",
-                "observed_alias": "Unknown Shop",
-                "observed_alias_norm": "unknown shop",
-                "suggested_entity_name": None,
-                "confidence": None,
-                "rationale": None,
-            },
-            "use_anon_key": False,
-            "prefer": "return=representation",
-        }
-    ]
-    assert client.upsert_calls == []
+    assert client.post_calls == []
+    assert len(client.upsert_calls) == 1
+    assert client.upsert_calls[0]["table"] == "merchant_suggestions"
+    assert client.upsert_calls[0]["on_conflict"] == "profile_id,observed_alias_norm"
+    assert client.upsert_calls[0]["payload"]["profile_id"] == str(profile_id)
+    assert client.upsert_calls[0]["payload"]["action"] == "map_alias"
+    assert client.upsert_calls[0]["payload"]["observed_alias_norm"] == "unknown shop"
+    assert client.upsert_calls[0]["payload"]["times_seen"] == 1
+    assert client.upsert_calls[0]["payload"]["last_seen"]
+    assert client.upsert_calls[0]["payload"]["updated_at"]
 
 
-def test_create_map_alias_suggestions_ignores_duplicate_key_errors() -> None:
+def test_create_map_alias_suggestions_upserts_each_unique_alias_norm() -> None:
     profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
-    client = _ClientStub(
-        responses=[],
-        post_exceptions=[RuntimeError("duplicate key value violates unique constraint")],
-    )
+    client = _ClientStub(responses=[])
     repository = SupabaseProfilesRepository(client=client)
 
     inserted = repository.create_map_alias_suggestions(
         profile_id=profile_id,
         rows=[
-            {
-                "status": "pending",
-                "observed_alias": "Unknown Shop",
-                "observed_alias_norm": "unknown shop",
-            }
+            {"observed_alias": "Shop A", "observed_alias_norm": "shop a"},
+            {"observed_alias": "Shop B", "observed_alias_norm": "shop b"},
+            {"observed_alias": "SHOP B", "observed_alias_norm": "shop b"},
         ],
     )
 
-    assert inserted == 0
-    assert len(client.post_calls) == 1
-
-
-def test_create_map_alias_suggestions_never_upserts_and_ignores_pending_duplicates() -> None:
-    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
-
-    class _DuplicatePendingError(Exception):
-        code = "23505"
-
-    client = _ClientStub(
-        responses=[],
-        post_exceptions=[_DuplicatePendingError("duplicate key value violates unique constraint")],
-    )
-    repository = SupabaseProfilesRepository(client=client)
-
-    inserted = repository.create_map_alias_suggestions(
-        profile_id=profile_id,
-        rows=[
-            {
-                "status": "pending",
-                "observed_alias": "Resolved Shop",
-                "observed_alias_norm": "resolved shop",
-            }
-        ],
-    )
-
-    assert client.upsert_calls == []
-    assert len(client.post_calls) == 1
-    assert inserted == 0
-
-def test_create_map_alias_suggestions_ignores_duplicate_key_errors_with_pgcode() -> None:
-    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
-
-    class _DuplicatePendingError(Exception):
-        pgcode = 23505
-
-    client = _ClientStub(
-        responses=[],
-        post_exceptions=[_DuplicatePendingError("constraint violation")],
-    )
-    repository = SupabaseProfilesRepository(client=client)
-
-    inserted = repository.create_map_alias_suggestions(
-        profile_id=profile_id,
-        rows=[
-            {
-                "status": "pending",
-                "observed_alias": "Resolved Shop",
-                "observed_alias_norm": "resolved shop",
-            }
-        ],
-    )
-
-    assert len(client.post_calls) == 1
-    assert inserted == 0
-
-
-def test_create_map_alias_suggestions_ignores_duplicate_key_errors_with_sqlstate() -> None:
-    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
-
-    class _DuplicatePendingError(Exception):
-        sqlstate = "23505"
-
-    client = _ClientStub(
-        responses=[],
-        post_exceptions=[_DuplicatePendingError("constraint violation")],
-    )
-    repository = SupabaseProfilesRepository(client=client)
-
-    inserted = repository.create_map_alias_suggestions(
-        profile_id=profile_id,
-        rows=[
-            {
-                "status": "pending",
-                "observed_alias": "Resolved Shop",
-                "observed_alias_norm": "resolved shop",
-            }
-        ],
-    )
-
-    assert len(client.post_calls) == 1
-    assert inserted == 0
+    assert inserted == 2
+    assert len(client.upsert_calls) == 2
+    assert {call["payload"]["observed_alias_norm"] for call in client.upsert_calls} == {"shop a", "shop b"}
 
 
 def test_ensure_profile_for_auth_user_returns_existing_profile_when_found() -> None:

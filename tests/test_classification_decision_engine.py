@@ -21,8 +21,6 @@ class StubRepos:
     override_by_entity: dict[UUID, UUID] = field(default_factory=dict)
     entity_suggested: dict[UUID, str] = field(default_factory=dict)
     categories_by_name_norm: dict[str, UUID] = field(default_factory=dict)
-    created_suggestions: set[str] = field(default_factory=set)
-    suggestion_create_calls: int = 0
 
     def find_merchant_entity_by_alias_norm(self, *, alias_norm: str):
         entity_id = self.merchant_entity_by_alias.get(alias_norm)
@@ -43,22 +41,6 @@ class StubRepos:
     def find_profile_category_id_by_name_norm(self, *, profile_id: UUID, name_norm: str):
         del profile_id
         return self.categories_by_name_norm.get(name_norm)
-
-    def create_pending_map_alias_suggestion(
-        self,
-        *,
-        profile_id: UUID,
-        observed_alias: str,
-        observed_alias_norm: str,
-        rationale: str,
-        confidence: float,
-    ) -> bool:
-        del profile_id, observed_alias, rationale, confidence
-        if observed_alias_norm in self.created_suggestions:
-            return False
-        self.created_suggestions.add(observed_alias_norm)
-        self.suggestion_create_calls += 1
-        return True
 
 
 def _decide(repos: StubRepos, *, libelle: str, payee: str, montant: str = "-10"):
@@ -111,7 +93,7 @@ def test_system_applies_when_no_merchant() -> None:
     assert decision.source.value == "system"
 
 
-def test_fallback_creates_pending_suggestion_dedup() -> None:
+def test_fallback_stays_unclassified_without_side_effects() -> None:
     repos = StubRepos()
 
     first = _decide(repos, libelle="Paiement inconnu", payee="MYSTERY SHOP")
@@ -121,4 +103,3 @@ def test_fallback_creates_pending_suggestion_dedup() -> None:
     assert second.source.value == "fallback"
     assert first.category_id is None
     assert second.category_id is None
-    assert repos.suggestion_create_calls == 1

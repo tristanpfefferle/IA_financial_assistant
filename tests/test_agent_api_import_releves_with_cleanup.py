@@ -680,3 +680,70 @@ def test_bootstrap_merchants_reimport_links_existing_alias_and_only_suggests_unk
     assert len(repo.suggestion_rows) == 1
     assert repo.suggestion_rows[0]["status"] == "pending"
     assert repo.suggestion_rows[0]["observed_alias_norm"] == "brand new shop"
+
+
+def test_bootstrap_merchants_bulk_unknown_aliases_deduplicates_to_ten_suggestions() -> None:
+    aliases = [
+        ("Amazon", "AMAZON"),
+        ("Coop City", "COOP CITY"),
+        ("Migros", "MIGROS"),
+        ("Ikea", "IKEA"),
+        ("Decathlon", "DECATHLON"),
+        ("Shell", "SHELL"),
+        ("Netflix", "NETFLIX"),
+        ("Spotify", "SPOTIFY"),
+        ("Swisscom", "SWISSCOM"),
+        ("Uber Eats", "UBER EATS"),
+    ]
+
+    class _Repo:
+        def __init__(self) -> None:
+            self.suggestion_rows: list[dict[str, Any]] = []
+
+        def list_releves_without_merchant(self, *, profile_id: UUID, limit: int = 500):
+            rows: list[dict[str, Any]] = []
+            index = 0
+            for _ in range(4):
+                for alias_a, alias_b in aliases:
+                    index += 1
+                    rows.append({"id": str(UUID(int=index)), "payee": alias_a, "libelle": None})
+                    if len(rows) == 45:
+                        return rows
+                    index += 1
+                    rows.append({"id": str(UUID(int=index)), "payee": alias_b, "libelle": None})
+                    if len(rows) == 45:
+                        return rows
+            return rows[:45]
+
+        def list_profile_categories(self, *, profile_id: UUID):
+            return []
+
+        def find_merchant_entity_by_alias_norm(self, *, alias_norm: str):
+            return None
+
+        def create_map_alias_suggestions(self, *, profile_id: UUID, rows: list[dict]):
+            self.suggestion_rows = rows
+            return len(rows)
+
+    repo = _Repo()
+
+    summary = agent_api._bootstrap_merchants_from_imported_releves(
+        profiles_repository=repo,
+        profile_id=PROFILE_ID,
+        limit=100,
+    )
+
+    assert summary == {"processed_count": 45, "linked_count": 0, "skipped_count": 45, "suggestions_created_count": 10}
+    assert len(repo.suggestion_rows) == 10
+    assert {row["observed_alias_norm"] for row in repo.suggestion_rows} == {
+        "amazon",
+        "coop city",
+        "migros",
+        "ikea",
+        "decathlon",
+        "shell",
+        "netflix",
+        "spotify",
+        "swisscom",
+        "uber eats",
+    }
