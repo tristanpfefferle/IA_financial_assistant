@@ -792,18 +792,82 @@ class SupabaseProfilesRepository:
         rationale: str,
         confidence: float,
     ) -> bool:
-        created = self.create_map_alias_suggestions(
+        cleaned_observed_alias_norm = self._normalize_name_norm(observed_alias_norm)
+        if not cleaned_observed_alias_norm:
+            return False
+
+        existing = self._find_existing_map_alias_suggestion(
             profile_id=profile_id,
-            rows=[
-                {
-                    "observed_alias": observed_alias,
-                    "observed_alias_norm": observed_alias_norm,
-                    "rationale": rationale,
-                    "confidence": confidence,
-                }
-            ],
+            observed_alias_norm=cleaned_observed_alias_norm,
         )
-        return created > 0
+        if existing is not None:
+            self._increment_map_alias_suggestion_seen(existing_row=existing)
+            return False
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        payload = {
+            "profile_id": str(profile_id),
+            "action": "map_alias",
+            "status": "pending",
+            "observed_alias": observed_alias,
+            "observed_alias_norm": cleaned_observed_alias_norm,
+            "rationale": rationale,
+            "confidence": confidence,
+            "times_seen": 1,
+            "last_seen": now_iso,
+            "updated_at": now_iso,
+        }
+        try:
+            self._client.post_rows(table="merchant_suggestions", payload=payload, use_anon_key=False)
+            return True
+        except RuntimeError as exc:
+            error_message = str(exc).lower()
+            if "duplicate key" not in error_message and "unique" not in error_message:
+                raise
+
+        existing_after_duplicate = self._find_existing_map_alias_suggestion(
+            profile_id=profile_id,
+            observed_alias_norm=cleaned_observed_alias_norm,
+        )
+        if existing_after_duplicate is not None:
+            self._increment_map_alias_suggestion_seen(existing_row=existing_after_duplicate)
+        return False
+
+    def _find_existing_map_alias_suggestion(
+        self,
+        *,
+        profile_id: UUID,
+        observed_alias_norm: str,
+    ) -> dict[str, Any] | None:
+        rows, _ = self._client.get_rows(
+            table="merchant_suggestions",
+            query={
+                "select": "id,times_seen,last_seen,status",
+                "profile_id": f"eq.{profile_id}",
+                "action": "eq.map_alias",
+                "observed_alias_norm": f"eq.{observed_alias_norm}",
+                "status": "in.(pending,applied)",
+                "limit": 1,
+            },
+            with_count=False,
+            use_anon_key=False,
+        )
+        return rows[0] if rows else None
+
+    def _increment_map_alias_suggestion_seen(self, *, existing_row: dict[str, Any]) -> None:
+        suggestion_id = existing_row.get("id")
+        if suggestion_id is None:
+            return
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        times_seen_raw = existing_row.get("times_seen")
+        times_seen = int(times_seen_raw) if isinstance(times_seen_raw, (int, float)) else 0
+        self._client.patch_rows(
+            table="merchant_suggestions",
+            query={"id": f"eq.{suggestion_id}"},
+            payload={"times_seen": times_seen + 1, "last_seen": now_iso, "updated_at": now_iso},
+            use_anon_key=False,
+        )
 
     def create_merchant_suggestions(self, *, profile_id: UUID, suggestions: list[dict[str, Any]]) -> int:
         if not suggestions:

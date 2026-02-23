@@ -726,6 +726,58 @@ def test_update_merchant_suggestion_after_resolve_falls_back_to_minimal_payload(
     assert client.patch_calls[1]["payload"] == {"status": "failed", "error": "invalid_item"}
 
 
+
+
+def test_create_pending_map_alias_suggestion_creates_on_first_call() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    client = _ClientStub(responses=[[]])
+    repository = SupabaseProfilesRepository(client=client)
+
+    created = repository.create_pending_map_alias_suggestion(
+        profile_id=profile_id,
+        observed_alias="Scalp Coif",
+        observed_alias_norm="scalp coif",
+        rationale=(
+            "Alias inconnu lors de l'import; nécessite normalisation/"
+            "canonicalisation et catégorisation LLM."
+        ),
+        confidence=0.0,
+    )
+
+    assert created is True
+    assert len(client.post_calls) == 1
+    assert client.post_calls[0]["table"] == "merchant_suggestions"
+    assert client.patch_calls == []
+
+
+def test_create_pending_map_alias_suggestion_updates_existing_and_does_not_insert() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    existing_id = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+    client = _ClientStub(
+        responses=[[{"id": str(existing_id), "times_seen": 1, "last_seen": "2026-01-01T00:00:00+00:00", "status": "pending"}]]
+    )
+    repository = SupabaseProfilesRepository(client=client)
+
+    created = repository.create_pending_map_alias_suggestion(
+        profile_id=profile_id,
+        observed_alias="Scalp Coif",
+        observed_alias_norm="Scalp   Coif",
+        rationale=(
+            "Alias inconnu lors de l'import; nécessite normalisation/"
+            "canonicalisation et catégorisation LLM."
+        ),
+        confidence=0.0,
+    )
+
+    assert created is False
+    assert client.post_calls == []
+    assert len(client.patch_calls) == 1
+    assert client.patch_calls[0]["table"] == "merchant_suggestions"
+    assert client.patch_calls[0]["query"] == {"id": f"eq.{existing_id}"}
+    assert client.patch_calls[0]["payload"]["times_seen"] == 2
+    assert client.patch_calls[0]["payload"]["last_seen"]
+    assert client.patch_calls[0]["payload"]["updated_at"]
+
 def test_create_map_alias_suggestions_uses_upsert_and_deduplicates_batch() -> None:
     profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
     client = _ClientStub(responses=[])
