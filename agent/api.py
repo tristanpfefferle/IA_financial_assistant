@@ -2815,10 +2815,15 @@ def _fetch_spending_transactions(
     profile_id: UUID,
     payload: dict[str, Any],
 ) -> tuple[list[SpendingTransactionRow], bool, bool]:
-    """Fetch DEBIT_ONLY transactions for spending PDF detail page."""
+    """Fetch all period transactions for spending PDF detail page."""
 
     router = get_tool_router()
-    query_payload = {**payload, "limit": 500, "offset": 0, "include_internal_transfers": False}
+    query_payload = {
+        "date_range": payload.get("date_range"),
+        "limit": 500,
+        "offset": 0,
+        "include_internal_transfers": True,
+    }
     result = router.call("finance_releves_search", query_payload, profile_id=profile_id)
 
     if isinstance(result, ToolError) and result.code == ToolErrorCode.UNKNOWN_TOOL:
@@ -2847,7 +2852,7 @@ def _fetch_spending_transactions(
 
         raw_amount = item.get("montant")
         try:
-            amount = abs(Decimal(str(raw_amount)))
+            amount = Decimal(str(raw_amount))
         except (InvalidOperation, TypeError, ValueError):
             continue
 
@@ -2864,8 +2869,6 @@ def _fetch_spending_transactions(
             ]
         ) or "Inconnu"
         merchant = _clean_merchant_display_name(merchant_raw)
-        if _is_internal_transfer_payload(item):
-            continue
 
         category = _normalize_report_category(
             _pick_first_non_empty_string(

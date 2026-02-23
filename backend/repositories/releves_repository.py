@@ -614,6 +614,12 @@ class SupabaseRelevesRepository:
         if tx_kind == "transfer_internal":
             return "transfer_internal"
 
+        category = row.get("categorie")
+        if isinstance(category, str):
+            category_norm = normalize_category_name(category)
+            if category_norm in {"transferts internes", "transfert interne"}:
+                return "transfer_internal"
+
         try:
             montant = Decimal(str(row.get("montant")))
         except Exception:

@@ -202,7 +202,7 @@ def _build_transactions_table(data: SpendingReportData) -> Table:
                     row.date,
                     _truncate_text(row.merchant),
                     row.category,
-                    _format_amount(abs(row.amount), data.currency),
+                    _format_amount(row.amount, data.currency),
                 ]
             )
 
