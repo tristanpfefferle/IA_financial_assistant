@@ -745,3 +745,81 @@ def test_supabase_aggregate_category_normalization_merges_autre_autres() -> None
 
     assert sorted(groups.items()) == [("Autres", (Decimal("-17"), 3))]
     assert currency == "CHF"
+
+
+def test_effective_flow_type_expense() -> None:
+    row = {"montant": "-42.10", "metadonnees": {"tx_kind": "payment"}}
+
+    assert SupabaseRelevesRepository._row_effective_flow_type(row) == "expense"
+
+
+def test_effective_flow_type_income() -> None:
+    row = {"montant": "4200.00", "metadonnees": {"tx_kind": "salary"}}
+
+    assert SupabaseRelevesRepository._row_effective_flow_type(row) == "income"
+
+
+def test_effective_flow_type_transfer_internal() -> None:
+    negative_transfer = {"montant": "-150.00", "metadonnees": {"tx_kind": "transfer_internal"}}
+    positive_transfer = {"montant": "150.00", "metadonnees": {"tx_kind": "transfer_internal"}}
+
+    assert SupabaseRelevesRepository._row_effective_flow_type(negative_transfer) == "transfer_internal"
+    assert SupabaseRelevesRepository._row_effective_flow_type(positive_transfer) == "transfer_internal"
+
+
+def test_sum_releves_excludes_transfers_by_default() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    client = _ClientStub(
+        rows=[
+            {"montant": "-90", "devise": "CHF", "metadonnees": {"tx_kind": "transfer_internal"}},
+            {"montant": "90", "devise": "CHF", "metadonnees": {"tx_kind": "transfer_internal"}},
+            {"montant": "-30", "devise": "CHF", "metadonnees": {"tx_kind": "card_payment"}},
+            {"montant": "70", "devise": "CHF", "metadonnees": {"tx_kind": "salary"}},
+        ]
+    )
+    repository = SupabaseRelevesRepository(client=client)
+
+    total, count, currency = repository.sum_releves(
+        RelevesFilters(profile_id=profile_id, limit=50, offset=0)
+    )
+
+    assert total == Decimal("40")
+    assert count == 2
+    assert currency == "CHF"
+
+
+def test_direction_filters_use_flow_type_not_montant_only() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    client = _ClientStub(
+        rows=[
+            {"montant": "-100", "devise": "CHF", "payee": "Transfer out", "date": "2025-01-01", "metadonnees": {"tx_kind": "transfer_internal"}},
+            {"montant": "100", "devise": "CHF", "payee": "Transfer in", "date": "2025-01-02", "metadonnees": {"tx_kind": "transfer_internal"}},
+            {"montant": "-40", "devise": "CHF", "payee": "Groceries", "date": "2025-01-03", "metadonnees": {"tx_kind": "card_payment"}},
+            {"montant": "150", "devise": "CHF", "payee": "Salary", "date": "2025-01-04", "metadonnees": {"tx_kind": "salary"}},
+        ]
+    )
+    repository = SupabaseRelevesRepository(client=client)
+
+    debit_total, debit_count, _ = repository.sum_releves(
+        RelevesFilters(
+            profile_id=profile_id,
+            direction=RelevesDirection.DEBIT_ONLY,
+            include_internal_transfers=True,
+            limit=50,
+            offset=0,
+        )
+    )
+    credit_total, credit_count, _ = repository.sum_releves(
+        RelevesFilters(
+            profile_id=profile_id,
+            direction=RelevesDirection.CREDIT_ONLY,
+            include_internal_transfers=True,
+            limit=50,
+            offset=0,
+        )
+    )
+
+    assert debit_total == Decimal("-40")
+    assert debit_count == 1
+    assert credit_total == Decimal("150")
+    assert credit_count == 1
