@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 import agent.api as agent_api
 from agent.api import app
+from backend.repositories.releves_repository import SupabaseRelevesRepository
 from shared.models import ToolError, ToolErrorCode
 
 
@@ -1098,6 +1099,7 @@ def test_spending_report_pdf_normalizes_categories_and_transaction_rows(monkeypa
                         {
                             "date": "2026-01-11",
                             "montant": "-10",
+                            "merchant_entity_name": "Marchand Premium",
                             "libelle": "Marchand Long; Paiement UBS TWINT Motif 123",
                             "category_name": "Alimentation",
                         },
@@ -1117,7 +1119,6 @@ def test_spending_report_pdf_normalizes_categories_and_transaction_rows(monkeypa
                         {
                             "date": "2026-01-03",
                             "montant": "-120",
-                            "payee": "Virement vers épargne",
                             "categorie": "Transferts internes",
                         },
                     ],
@@ -1137,10 +1138,80 @@ def test_spending_report_pdf_normalizes_categories_and_transaction_rows(monkeypa
     assert transactions == [
         ("2026-01-01", "Aucun", "Transport", "-5"),
         ("2026-01-02", "Crédit TWINT", "Revenus", "500"),
-        ("2026-01-03", "Virement vers épargne", "Transferts internes", "-120"),
-        ("2026-01-11", "Marchand Long", "Alimentation", "-10"),
+        ("2026-01-03", "Transfert interne", "Transferts internes", "-120"),
+        ("2026-01-11", "Marchand Premium", "Alimentation", "-10"),
     ]
 
+
+
+
+def test_spending_report_pdf_cashflow_summary_counts_positive_internal_transfer(monkeypatch) -> None:
+    _mock_authenticated(monkeypatch)
+
+    class _Repo:
+        def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None):
+            assert auth_user_id == AUTH_USER_ID
+            assert email == "user@example.com"
+            return PROFILE_ID
+
+        def get_chat_state(self, *, profile_id: UUID, user_id: UUID):
+            assert profile_id == PROFILE_ID
+            assert user_id == AUTH_USER_ID
+            return {"state": {"last_query": {"month": "2026-01"}}}
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: _Repo())
+
+    captured: dict[str, object] = {}
+
+    def _fake_generate(data):
+        captured["cashflow_income"] = str(data.cashflow_income)
+        captured["cashflow_expense"] = str(data.cashflow_expense)
+        captured["cashflow_internal_transfers"] = str(data.cashflow_internal_transfers)
+        captured["cashflow_net"] = str(data.cashflow_net)
+        return b"%PDF-1.4\n%fake\n"
+
+    monkeypatch.setattr(agent_api, "generate_spending_report_pdf", _fake_generate)
+
+    class _RelevesClient:
+        def get_rows(self, *, table, query, with_count, use_anon_key=False):
+            assert table == "releves_bancaires"
+            return [
+                {"montant": 5000, "devise": "CHF", "categorie": "Transferts internes", "metadonnees": {}},
+                {"montant": 100, "devise": "CHF", "metadonnees": {}},
+                {"montant": -30, "devise": "CHF", "metadonnees": {}},
+            ], 0
+
+    releves_repository = SupabaseRelevesRepository(client=_RelevesClient())
+
+    class _Router:
+        def __init__(self) -> None:
+            self.backend_client = type(
+                "_BackendClientStub",
+                (),
+                {"tool_service": type("_ToolServiceStub", (), {"releves_repository": releves_repository})()},
+            )()
+
+        def call(self, tool_name: str, payload: dict, *, profile_id: UUID | None = None):
+            assert profile_id == PROFILE_ID
+            if tool_name == "finance_releves_sum":
+                return {"total": "-30", "count": 1, "average": "-30", "currency": "CHF"}
+            if tool_name == "finance_releves_aggregate":
+                return {"group_by": "categorie", "currency": "CHF", "groups": {"Transport": {"total": "-30", "count": 1}}}
+            if tool_name == "finance_releves_search":
+                return {"items": [], "limit": 500, "offset": 0, "total": 0}
+            raise AssertionError(tool_name)
+
+    monkeypatch.setattr(agent_api, "get_tool_router", lambda: _Router())
+
+    response = client.get("/finance/reports/spending.pdf?month=2026-01", headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert captured == {
+        "cashflow_income": "100",
+        "cashflow_expense": "-30",
+        "cashflow_internal_transfers": "5000",
+        "cashflow_net": "70",
+    }
 
 def test_pending_transactions_endpoint_counts_twint_and_excludes_internal(monkeypatch) -> None:
     _mock_authenticated(monkeypatch)

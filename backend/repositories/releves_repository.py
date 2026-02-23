@@ -705,11 +705,14 @@ class SupabaseRelevesRepository:
         page_size = 1000
         offset = 0
         all_rows: list[dict[str, object]] = []
+        select_with_category, _ = self._select_with_category_embed(
+            "montant,devise,metadonnees,categorie,category_id"
+        )
 
         while True:
             query = [
                 *self._build_query(filters),
-                ("select", "montant,devise,metadonnees"),
+                ("select", select_with_category),
                 ("limit", page_size),
                 ("offset", offset),
             ]
@@ -724,6 +727,8 @@ class SupabaseRelevesRepository:
                 break
 
             offset += page_size
+
+        self._hydrate_category_label(all_rows)
 
         total_income = Decimal("0")
         total_expense = Decimal("0")
