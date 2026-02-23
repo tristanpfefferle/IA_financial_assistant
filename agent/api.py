@@ -33,6 +33,7 @@ from agent.merchant_cleanup import MerchantSuggestion, run_merchant_cleanup
 from agent.merchant_alias_resolver import resolve_pending_map_alias
 from agent.import_label_normalizer import extract_observed_alias_from_label
 from backend.factory import build_backend_tool_service
+from backend.services.classification.decision_engine import normalize_merchant_alias
 from backend.services.releves_import.bank_detector import detect_bank_from_csv_bytes
 from backend.reporting import (
     SpendingCategoryRow,
@@ -889,8 +890,6 @@ def _bootstrap_merchants_from_imported_releves(
     processed_count = 0
     linked_count = 0
     skipped_count = 0
-    suggestion_rows: list[dict[str, Any]] = []
-    seen_pending_alias_norms: set[str] = set()
     suggestions_created_count = 0
 
     for row in rows:
@@ -913,23 +912,33 @@ def _bootstrap_merchants_from_imported_releves(
             skipped_count += 1
             continue
 
+        raw_meta = row.get("meta")
+        meta = raw_meta if isinstance(raw_meta, dict) else {}
+        observed_alias_key_norm = " ".join(str(meta.get("observed_alias_key_norm") or "").split())
+        dedup_alias_norm = normalize_merchant_alias(observed_alias_key_norm or observed_alias)
+        if not dedup_alias_norm:
+            skipped_count += 1
+            continue
+
         try:
             releve_id = UUID(str(releve_id_raw))
             entity = profiles_repository.find_merchant_entity_by_alias_norm(alias_norm=observed_alias_norm)
             if not entity:
-                if observed_alias_norm not in seen_pending_alias_norms:
-                    suggestion_rows.append(
-                        {
-                            "status": "pending",
-                            "action": "map_alias",
-                            "observed_alias": observed_alias,
-                            "observed_alias_norm": observed_alias_norm,
-                            "suggested_entity_name": None,
-                            "confidence": None,
-                            "rationale": "unknown alias from import",
-                        }
+                if hasattr(profiles_repository, "create_pending_map_alias_suggestion"):
+                    suggestion_created = bool(
+                        profiles_repository.create_pending_map_alias_suggestion(
+                            profile_id=profile_id,
+                            observed_alias=observed_alias,
+                            observed_alias_norm=dedup_alias_norm,
+                            rationale=(
+                                "Alias inconnu lors de l'import; nécessite normalisation/"
+                                "canonicalisation et catégorisation LLM."
+                            ),
+                            confidence=0.0,
+                        )
                     )
-                    seen_pending_alias_norms.add(observed_alias_norm)
+                    if suggestion_created:
+                        suggestions_created_count += 1
                 skipped_count += 1
                 continue
 
@@ -974,16 +983,6 @@ def _bootstrap_merchants_from_imported_releves(
                 profile_id,
                 releve_id_raw,
             )
-
-    if suggestion_rows:
-        try:
-            if hasattr(profiles_repository, "create_map_alias_suggestions"):
-                suggestions_created_count = int(
-                    profiles_repository.create_map_alias_suggestions(profile_id=profile_id, rows=suggestion_rows)
-                    or 0
-                )
-        except Exception:
-            logger.exception("import_releves_map_alias_suggestions_failed profile_id=%s", profile_id)
 
     logger.info(
         "import_releves_entity_link_summary profile_id=%s processed=%s linked=%s skipped=%s suggestions_created_count=%s",

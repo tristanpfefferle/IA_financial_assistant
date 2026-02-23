@@ -424,13 +424,13 @@ def test_bootstrap_merchants_from_imported_releves_matches_category_with_normali
 
     assert summary == {"processed_count": 1, "linked_count": 1, "skipped_count": 0, "suggestions_created_count": 0}
     assert repo.attach_calls == [(releve_id, entity_id, category_id)]
-def test_bootstrap_merchants_from_imported_releves_unknown_alias_creates_deduped_map_alias_suggestion() -> None:
+def test_bootstrap_merchants_from_imported_releves_unknown_alias_uses_idempotent_pending_suggestion() -> None:
     releve_id_1 = UUID("aaaaaaaa-1111-1111-1111-111111111111")
     releve_id_2 = UUID("aaaaaaaa-2222-2222-2222-222222222222")
 
     class _Repo:
         def __init__(self) -> None:
-            self.suggestion_rows: list[dict] = []
+            self.create_calls: list[dict] = []
             self.attach_calls = 0
 
         def list_releves_without_merchant(self, *, profile_id: UUID, limit: int = 500):
@@ -445,9 +445,25 @@ def test_bootstrap_merchants_from_imported_releves_unknown_alias_creates_deduped
         def find_merchant_entity_by_alias_norm(self, *, alias_norm: str):
             return None
 
-        def create_map_alias_suggestions(self, *, profile_id: UUID, rows: list[dict]):
-            self.suggestion_rows = rows
-            return 1
+        def create_pending_map_alias_suggestion(
+            self,
+            *,
+            profile_id: UUID,
+            observed_alias: str,
+            observed_alias_norm: str,
+            rationale: str,
+            confidence: float,
+        ) -> bool:
+            self.create_calls.append(
+                {
+                    "profile_id": profile_id,
+                    "observed_alias": observed_alias,
+                    "observed_alias_norm": observed_alias_norm,
+                    "rationale": rationale,
+                    "confidence": confidence,
+                }
+            )
+            return len(self.create_calls) == 1
 
         def attach_merchant_entity_to_releve(self, **kwargs) -> None:
             self.attach_calls += 1
@@ -462,8 +478,14 @@ def test_bootstrap_merchants_from_imported_releves_unknown_alias_creates_deduped
 
     assert summary == {"processed_count": 2, "linked_count": 0, "skipped_count": 2, "suggestions_created_count": 1}
     assert repo.attach_calls == 0
-    assert len(repo.suggestion_rows) == 1
-    assert {row["observed_alias_norm"] for row in repo.suggestion_rows} == {"unknown shop"}
+    assert len(repo.create_calls) == 2
+    assert {call["observed_alias_norm"] for call in repo.create_calls} == {"unknown shop"}
+    assert all(call["confidence"] == 0.0 for call in repo.create_calls)
+    assert all(
+        call["rationale"]
+        == "Alias inconnu lors de l'import; nécessite normalisation/canonicalisation et catégorisation LLM."
+        for call in repo.create_calls
+    )
 
 
 def test_bootstrap_merchants_from_imported_releves_uses_short_observed_alias_from_ubs_label() -> None:
@@ -471,7 +493,7 @@ def test_bootstrap_merchants_from_imported_releves_uses_short_observed_alias_fro
 
     class _Repo:
         def __init__(self) -> None:
-            self.suggestion_rows: list[dict] = []
+            self.create_calls: list[dict] = []
 
         def list_releves_without_merchant(self, *, profile_id: UUID, limit: int = 500):
             return [
@@ -488,9 +510,25 @@ def test_bootstrap_merchants_from_imported_releves_uses_short_observed_alias_fro
         def find_merchant_entity_by_alias_norm(self, *, alias_norm: str):
             return None
 
-        def create_map_alias_suggestions(self, *, profile_id: UUID, rows: list[dict]):
-            self.suggestion_rows = rows
-            return 1
+        def create_pending_map_alias_suggestion(
+            self,
+            *,
+            profile_id: UUID,
+            observed_alias: str,
+            observed_alias_norm: str,
+            rationale: str,
+            confidence: float,
+        ) -> bool:
+            self.create_calls.append(
+                {
+                    "profile_id": profile_id,
+                    "observed_alias": observed_alias,
+                    "observed_alias_norm": observed_alias_norm,
+                    "rationale": rationale,
+                    "confidence": confidence,
+                }
+            )
+            return True
 
     repo = _Repo()
 
@@ -501,10 +539,52 @@ def test_bootstrap_merchants_from_imported_releves_uses_short_observed_alias_fro
     )
 
     assert summary == {"processed_count": 1, "linked_count": 0, "skipped_count": 1, "suggestions_created_count": 1}
-    assert len(repo.suggestion_rows) == 1
-    assert repo.suggestion_rows[0]["observed_alias"] == "Paiement à une carte"
-    assert repo.suggestion_rows[0]["observed_alias_norm"] == "paiement a une carte"
+    assert len(repo.create_calls) == 1
+    assert repo.create_calls[0]["observed_alias"] == "Paiement à une carte"
+    assert repo.create_calls[0]["observed_alias_norm"] == "paiement a une carte"
+    assert repo.create_calls[0]["confidence"] == 0.0
 
+
+
+
+def test_bootstrap_merchants_from_imported_releves_prefers_observed_alias_key_norm_for_dedup() -> None:
+    releve_id = UUID("aaaaaaaa-4444-4444-4444-444444444444")
+
+    class _Repo:
+        def __init__(self) -> None:
+            self.create_calls: list[dict] = []
+
+        def list_releves_without_merchant(self, *, profile_id: UUID, limit: int = 500):
+            return [
+                {
+                    "id": str(releve_id),
+                    "payee": "Scalp Coif 1234",
+                    "libelle": None,
+                    "meta": {"observed_alias_key_norm": "scalp coif"},
+                }
+            ]
+
+        def list_profile_categories(self, *, profile_id: UUID):
+            return []
+
+        def find_merchant_entity_by_alias_norm(self, *, alias_norm: str):
+            return None
+
+        def create_pending_map_alias_suggestion(self, **kwargs) -> bool:
+            self.create_calls.append(kwargs)
+            return False
+
+    repo = _Repo()
+
+    summary = agent_api._bootstrap_merchants_from_imported_releves(
+        profiles_repository=repo,
+        profile_id=PROFILE_ID,
+        limit=50,
+    )
+
+    assert summary == {"processed_count": 1, "linked_count": 0, "skipped_count": 1, "suggestions_created_count": 0}
+    assert len(repo.create_calls) == 1
+    assert repo.create_calls[0]["observed_alias_norm"] == "scalp coif"
 
 def test_bootstrap_merchants_from_imported_releves_does_not_fallback_to_suggested_category_label() -> None:
     entity_id = UUID("44444444-4444-4444-4444-444444444444")
@@ -617,7 +697,7 @@ def test_bootstrap_merchants_reimport_links_existing_alias_and_only_suggests_unk
         def __init__(self) -> None:
             self.alias_upserts: list[tuple[UUID, str, str, str]] = []
             self.attach_calls: list[tuple[UUID, UUID, UUID | None]] = []
-            self.suggestion_rows: list[dict[str, Any]] = []
+            self.pending_calls: list[dict[str, Any]] = []
 
         def list_releves_without_merchant(self, *, profile_id: UUID, limit: int = 500):
             return [
@@ -662,9 +742,25 @@ def test_bootstrap_merchants_reimport_links_existing_alias_and_only_suggests_unk
         def upsert_profile_merchant_override(self, **kwargs) -> None:
             return None
 
-        def create_map_alias_suggestions(self, *, profile_id: UUID, rows: list[dict]):
-            self.suggestion_rows = rows
-            return len(rows)
+        def create_pending_map_alias_suggestion(
+            self,
+            *,
+            profile_id: UUID,
+            observed_alias: str,
+            observed_alias_norm: str,
+            rationale: str,
+            confidence: float,
+        ) -> bool:
+            self.pending_calls.append(
+                {
+                    "profile_id": profile_id,
+                    "observed_alias": observed_alias,
+                    "observed_alias_norm": observed_alias_norm,
+                    "rationale": rationale,
+                    "confidence": confidence,
+                }
+            )
+            return True
 
     repo = _Repo()
 
@@ -677,9 +773,9 @@ def test_bootstrap_merchants_reimport_links_existing_alias_and_only_suggests_unk
     assert summary == {"processed_count": 2, "linked_count": 1, "skipped_count": 1, "suggestions_created_count": 1}
     assert repo.attach_calls == [(known_releve_id, known_entity_id, None)]
     assert repo.alias_upserts == [(known_entity_id, "COOP CITY", "coop city", "import")]
-    assert len(repo.suggestion_rows) == 1
-    assert repo.suggestion_rows[0]["status"] == "pending"
-    assert repo.suggestion_rows[0]["observed_alias_norm"] == "brand new shop"
+    assert len(repo.pending_calls) == 1
+    assert repo.pending_calls[0]["observed_alias_norm"] == "brand new shop"
+    assert repo.pending_calls[0]["confidence"] == 0.0
 
 
 def test_bootstrap_merchants_bulk_unknown_aliases_deduplicates_to_ten_suggestions() -> None:
@@ -698,7 +794,7 @@ def test_bootstrap_merchants_bulk_unknown_aliases_deduplicates_to_ten_suggestion
 
     class _Repo:
         def __init__(self) -> None:
-            self.suggestion_rows: list[dict[str, Any]] = []
+            self.pending_calls: list[dict[str, Any]] = []
 
         def list_releves_without_merchant(self, *, profile_id: UUID, limit: int = 500):
             rows: list[dict[str, Any]] = []
@@ -721,9 +817,26 @@ def test_bootstrap_merchants_bulk_unknown_aliases_deduplicates_to_ten_suggestion
         def find_merchant_entity_by_alias_norm(self, *, alias_norm: str):
             return None
 
-        def create_map_alias_suggestions(self, *, profile_id: UUID, rows: list[dict]):
-            self.suggestion_rows = rows
-            return len(rows)
+        def create_pending_map_alias_suggestion(
+            self,
+            *,
+            profile_id: UUID,
+            observed_alias: str,
+            observed_alias_norm: str,
+            rationale: str,
+            confidence: float,
+        ) -> bool:
+            self.pending_calls.append(
+                {
+                    "profile_id": profile_id,
+                    "observed_alias": observed_alias,
+                    "observed_alias_norm": observed_alias_norm,
+                    "rationale": rationale,
+                    "confidence": confidence,
+                }
+            )
+            seen = {call["observed_alias_norm"] for call in self.pending_calls[:-1]}
+            return observed_alias_norm not in seen
 
     repo = _Repo()
 
@@ -734,8 +847,8 @@ def test_bootstrap_merchants_bulk_unknown_aliases_deduplicates_to_ten_suggestion
     )
 
     assert summary == {"processed_count": 45, "linked_count": 0, "skipped_count": 45, "suggestions_created_count": 10}
-    assert len(repo.suggestion_rows) == 10
-    assert {row["observed_alias_norm"] for row in repo.suggestion_rows} == {
+    assert len(repo.pending_calls) == 45
+    assert {call["observed_alias_norm"] for call in repo.pending_calls} == {
         "amazon",
         "coop city",
         "migros",
