@@ -384,7 +384,7 @@ class RelevesImportService:
                     suggestion_created = self.profiles_repository.create_pending_map_alias_suggestion(
                         profile_id=profile_id,
                         observed_alias=observed_alias,
-                        observed_alias_norm=observed_alias_norm,
+                        observed_alias_norm=observed_alias_key_norm,
                         merchant_key_norm=merchant_key_norm,
                         suggested_entity_name=safe_suggested_entity_name,
                         suggested_entity_name_norm=minimal_suggested_norm,
