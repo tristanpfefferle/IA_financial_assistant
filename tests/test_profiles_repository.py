@@ -369,7 +369,7 @@ def test_list_releves_without_merchant_filters_profile_and_null_merchant() -> No
     assert rows == [{"id": "1"}]
     assert client.calls[0]["table"] == "releves_bancaires"
     assert client.calls[0]["query"] == {
-        "select": "id,payee,libelle,created_at,date",
+        "select": "id,payee,libelle,created_at,date,meta",
         "profile_id": f"eq.{profile_id}",
         "merchant_entity_id": "is.null",
         "or": "(payee.not.is.null,libelle.not.is.null)",

@@ -969,7 +969,7 @@ class SupabaseProfilesRepository:
         rows, _ = self._client.get_rows(
             table="releves_bancaires",
             query={
-                "select": "id,payee,libelle,created_at,date",
+                "select": "id,payee,libelle,created_at,date,meta",
                 "profile_id": f"eq.{profile_id}",
                 "merchant_entity_id": "is.null",
                 "or": "(payee.not.is.null,libelle.not.is.null)",
