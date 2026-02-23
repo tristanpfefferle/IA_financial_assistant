@@ -49,7 +49,7 @@ class _RepoStub:
     def create_merchant_entity(self, **kwargs):
         self.events.append("create_merchant_entity")
         assert kwargs["canonical_name"] == "Coop City"
-        return {"id": str(ENTITY_ID)}
+        return ENTITY_ID
 
     def upsert_merchant_alias(self, **kwargs):
         self.events.append("upsert_merchant_alias")
