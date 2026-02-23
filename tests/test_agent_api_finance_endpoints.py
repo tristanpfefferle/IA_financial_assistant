@@ -806,7 +806,8 @@ def test_spending_report_pdf_returns_pdf_two_pages_and_calls_search(monkeypatch)
                 return {"group_by": "month", "currency": "CHF", "groups": {"2026-01": {"total": "-120.50", "count": 3}}}
             if tool_name == "finance_releves_search":
                 assert payload["date_range"] == {"start_date": "2026-01-01", "end_date": "2026-01-31"}
-                assert payload["direction"] == "DEBIT_ONLY"
+                assert "direction" not in payload
+                assert payload["include_internal_transfers"] is True
                 assert payload["limit"] == 500
                 assert payload["offset"] == 0
                 return {
@@ -842,6 +843,8 @@ def test_spending_report_pdf_returns_pdf_two_pages_and_calls_search(monkeypatch)
     search_calls = [payload for tool_name, payload in router.calls if tool_name == "finance_releves_search"]
     assert len(search_calls) == 1
     assert search_calls[0]["date_range"] == {"start_date": "2026-01-01", "end_date": "2026-01-31"}
+    assert search_calls[0]["include_internal_transfers"] is True
+    assert "direction" not in search_calls[0]
 
 
 def test_spending_report_pdf_uses_last_query_filters_date_range(monkeypatch) -> None:
@@ -1069,7 +1072,7 @@ def test_spending_report_pdf_normalizes_categories_and_transaction_rows(monkeypa
 
     def _fake_generate(data):
         captured["categories"] = [(row.name, str(row.amount)) for row in data.categories]
-        captured["transactions"] = [(row.date, row.merchant, row.category) for row in data.transactions]
+        captured["transactions"] = [(row.date, row.merchant, row.category, str(row.amount)) for row in data.transactions]
         return b"%PDF-1.4\n%fake\n"
 
     monkeypatch.setattr(agent_api, "generate_spending_report_pdf", _fake_generate)
@@ -1105,6 +1108,18 @@ def test_spending_report_pdf_normalizes_categories_and_transaction_rows(monkeypa
                             "categorie": "",
                             "category_name": "Transport",
                         },
+                        {
+                            "date": "2026-01-02",
+                            "montant": "500",
+                            "payee": "Crédit TWINT",
+                            "categorie": "Revenus",
+                        },
+                        {
+                            "date": "2026-01-03",
+                            "montant": "-120",
+                            "payee": "Virement vers épargne",
+                            "categorie": "Transferts internes",
+                        },
                     ],
                     "limit": 500,
                     "offset": 0,
@@ -1120,8 +1135,10 @@ def test_spending_report_pdf_normalizes_categories_and_transaction_rows(monkeypa
     assert captured["categories"] == [("Autres", "15"), ("Alimentation", "105")]
     transactions = captured["transactions"]
     assert transactions == [
-        ("2026-01-01", "Aucun", "Transport"),
-        ("2026-01-11", "Marchand Long", "Alimentation"),
+        ("2026-01-01", "Aucun", "Transport", "-5"),
+        ("2026-01-02", "Crédit TWINT", "Revenus", "500"),
+        ("2026-01-03", "Virement vers épargne", "Transferts internes", "-120"),
+        ("2026-01-11", "Marchand Long", "Alimentation", "-10"),
     ]
 
 

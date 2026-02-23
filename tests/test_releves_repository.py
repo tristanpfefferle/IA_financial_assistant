@@ -896,6 +896,38 @@ def test_effective_flow_type_transfer_internal() -> None:
     assert SupabaseRelevesRepository._row_effective_flow_type(positive_transfer) == "transfer_internal"
 
 
+
+def test_effective_flow_type_transfer_internal_from_category_fallback() -> None:
+    row = {"montant": "-150.00", "categorie": "Transferts internes", "metadonnees": {}}
+
+    assert SupabaseRelevesRepository._row_effective_flow_type(row) == "transfer_internal"
+
+
+def test_sum_releves_debit_only_excludes_transfer_from_category_without_tx_kind() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    client = _ClientStub(
+        rows=[
+            {"montant": "-90", "devise": "CHF", "categorie": "Transferts internes", "metadonnees": {}},
+            {"montant": "-30", "devise": "CHF", "categorie": "Courses", "metadonnees": {}},
+        ]
+    )
+    repository = SupabaseRelevesRepository(client=client)
+
+    total, count, currency = repository.sum_releves(
+        RelevesFilters(
+            profile_id=profile_id,
+            direction=RelevesDirection.DEBIT_ONLY,
+            include_internal_transfers=False,
+            limit=50,
+            offset=0,
+        )
+    )
+
+    assert total == Decimal("-30")
+    assert count == 1
+    assert currency == "CHF"
+
+
 def test_sum_releves_excludes_transfers_by_default() -> None:
     profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
     client = _ClientStub(
