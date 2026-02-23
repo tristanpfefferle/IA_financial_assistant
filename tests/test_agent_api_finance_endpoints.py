@@ -2,6 +2,8 @@
 
 import base64
 import re
+from datetime import datetime, timezone
+from decimal import Decimal
 from uuid import UUID
 
 from fastapi.testclient import TestClient
@@ -9,6 +11,7 @@ from fastapi.testclient import TestClient
 import agent.api as agent_api
 from agent.api import app
 from backend.repositories.releves_repository import SupabaseRelevesRepository
+from backend.repositories.shared_expenses_repository import InMemorySharedExpensesRepository, SharedExpenseRow
 from shared.models import ToolError, ToolErrorCode
 
 
@@ -1298,3 +1301,145 @@ def test_pending_transactions_endpoint_counts_twint_and_excludes_internal(monkey
     assert payload["count_total"] == 1
     assert len(payload["items"]) == 1
     assert payload["items"][0]["id"] == "1"
+
+
+def test_spending_report_json_includes_effective_spending_when_repository_available(monkeypatch) -> None:
+    _mock_authenticated(monkeypatch)
+
+    class _Repo:
+        def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None):
+            assert auth_user_id == AUTH_USER_ID
+            assert email == "user@example.com"
+            return PROFILE_ID
+
+        def get_chat_state(self, *, profile_id: UUID, user_id: UUID):
+            assert profile_id == PROFILE_ID
+            assert user_id == AUTH_USER_ID
+            return {"state": {"last_query": {"month": "2026-01"}}}
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: _Repo())
+
+    repository = InMemorySharedExpensesRepository()
+    repository.seed_shared_expenses(
+        [
+            SharedExpenseRow(
+                from_profile_id=PROFILE_ID,
+                to_profile_id=UUID("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+                transaction_id=None,
+                amount=Decimal("30"),
+                created_at=datetime(2026, 1, 10, tzinfo=timezone.utc),
+                status="applied",
+                split_ratio_other=Decimal("0.5"),
+            ),
+            SharedExpenseRow(
+                from_profile_id=UUID("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+                to_profile_id=PROFILE_ID,
+                transaction_id=None,
+                amount=Decimal("10"),
+                created_at=datetime(2026, 1, 15, tzinfo=timezone.utc),
+                status="applied",
+                split_ratio_other=Decimal("0.5"),
+            ),
+        ]
+    )
+    monkeypatch.setattr(agent_api, "_try_get_shared_expenses_repository", lambda: repository)
+
+    class _Router:
+        def call(self, tool_name: str, payload: dict, *, profile_id: UUID | None = None):
+            assert profile_id == PROFILE_ID
+            if tool_name == "finance_releves_sum":
+                return {"total": "-120", "count": 2, "currency": "CHF"}
+            if tool_name == "finance_releves_aggregate":
+                return {"group_by": "categorie", "currency": "CHF", "groups": {"Courses": {"total": "-120", "count": 2}}}
+            if tool_name == "finance_releves_search":
+                return {"items": [], "total": 0}
+            raise AssertionError(tool_name)
+
+    monkeypatch.setattr(agent_api, "get_tool_router", lambda: _Router())
+
+    response = client.get("/finance/reports/spending?month=2026-01", headers=_auth_headers())
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["effective_spending"] == {
+        "outgoing": "30",
+        "incoming": "10",
+        "net_balance": "-20",
+        "effective_total": "100",
+    }
+
+
+def test_spending_report_json_neutralizes_effective_spending_when_repository_none(monkeypatch) -> None:
+    _mock_authenticated(monkeypatch)
+
+    class _Repo:
+        def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None):
+            return PROFILE_ID
+
+        def get_chat_state(self, *, profile_id: UUID, user_id: UUID):
+            return {"state": {"last_query": {"month": "2026-01"}}}
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: _Repo())
+    monkeypatch.setattr(agent_api, "_try_get_shared_expenses_repository", lambda: None)
+
+    class _Router:
+        def call(self, tool_name: str, payload: dict, *, profile_id: UUID | None = None):
+            if tool_name == "finance_releves_sum":
+                return {"total": "-50", "count": 1, "currency": "CHF"}
+            if tool_name == "finance_releves_aggregate":
+                return {"group_by": "categorie", "currency": "CHF", "groups": {}}
+            if tool_name == "finance_releves_search":
+                return {"items": [], "total": 0}
+            raise AssertionError(tool_name)
+
+    monkeypatch.setattr(agent_api, "get_tool_router", lambda: _Router())
+
+    response = client.get("/finance/reports/spending?month=2026-01", headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert response.json()["effective_spending"] == {
+        "outgoing": "0",
+        "incoming": "0",
+        "net_balance": "0",
+        "effective_total": "50",
+    }
+
+
+def test_spending_report_json_neutralizes_when_shared_expenses_table_missing(monkeypatch) -> None:
+    _mock_authenticated(monkeypatch)
+
+    class _Repo:
+        def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None):
+            return PROFILE_ID
+
+        def get_chat_state(self, *, profile_id: UUID, user_id: UUID):
+            return {"state": {"last_query": {"month": "2026-01"}}}
+
+    class _FailingRepository:
+        def list_shared_expenses_for_period(self, **_: object) -> list[SharedExpenseRow]:
+            raise RuntimeError('relation "shared_expenses" does not exist')
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: _Repo())
+    monkeypatch.setattr(agent_api, "_try_get_shared_expenses_repository", lambda: _FailingRepository())
+
+    class _Router:
+        def call(self, tool_name: str, payload: dict, *, profile_id: UUID | None = None):
+            if tool_name == "finance_releves_sum":
+                return {"total": "-80", "count": 1, "currency": "CHF"}
+            if tool_name == "finance_releves_aggregate":
+                return {"group_by": "categorie", "currency": "CHF", "groups": {}}
+            if tool_name == "finance_releves_search":
+                return {"items": [], "total": 0}
+            raise AssertionError(tool_name)
+
+    monkeypatch.setattr(agent_api, "get_tool_router", lambda: _Router())
+
+    response = client.get("/finance/reports/spending?month=2026-01", headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert response.json()["effective_spending"] == {
+        "outgoing": "0",
+        "incoming": "0",
+        "net_balance": "0",
+        "effective_total": "80",
+    }

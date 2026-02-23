@@ -45,8 +45,8 @@ from backend.reporting import (
 from backend.auth.supabase_auth import UnauthorizedError, get_user_from_bearer_token
 from backend.db.supabase_client import SupabaseClient, SupabaseSettings
 from backend.repositories.profiles_repository import ProfilesRepository, SupabaseProfilesRepository
-from backend.repositories.shared_expenses_repository import SupabaseSharedExpensesRepository
-from backend.services.shared_expenses.effective_spending import compute_effective_spending_summary
+from backend.repositories.shared_expenses_repository import SharedExpensesRepository, SupabaseSharedExpensesRepository
+from backend.services.shared_expenses.effective_spending_adapter import compute_effective_spending_summary_safe
 from shared.models import DateRange, RelevesDirection, ToolError, ToolErrorCode
 
 
@@ -1730,10 +1730,19 @@ def _extract_bearer_token(authorization: str | None) -> str:
 def _get_shared_expenses_repository_or_501() -> SupabaseSharedExpensesRepository:
     """Return shared-expenses repository when Supabase config is available."""
 
+    repository = _try_get_shared_expenses_repository()
+    if repository is None:
+        raise HTTPException(status_code=501, detail="shared expenses disabled")
+    return repository
+
+
+def _try_get_shared_expenses_repository() -> SharedExpensesRepository | None:
+    """Return shared-expenses repository when Supabase config is available, else ``None``."""
+
     supabase_url = _config.supabase_url()
     supabase_key = _config.supabase_service_role_key()
     if not supabase_url or not supabase_key:
-        raise HTTPException(status_code=501, detail="shared expenses disabled")
+        return None
 
     client = SupabaseClient(
         settings=SupabaseSettings(
@@ -3369,33 +3378,24 @@ def _fetch_spending_transactions(
     return rows, truncated, False
 
 
-@app.get("/finance/reports/spending.pdf")
-def get_spending_report_pdf(
-    authorization: str | None = Header(default=None),
-    start_date: str | None = None,
-    end_date: str | None = None,
-    month: str | None = None,
-) -> Response:
-    auth_user_id, profile_id = _resolve_authenticated_profile(authorization)
-    profiles_repository = get_profiles_repository()
-    chat_state = profiles_repository.get_chat_state(profile_id=profile_id, user_id=auth_user_id)
-    state_dict = chat_state.get("state") if isinstance(chat_state, dict) else None
+def _serialize_effective_spending_summary(summary: dict[str, Decimal]) -> dict[str, str]:
+    """Serialize effective spending summary for JSON responses."""
 
-    period_start, period_end = _resolve_report_date_range(
-        month=month,
-        start_date=start_date,
-        end_date=end_date,
-        state_dict=state_dict if isinstance(state_dict, dict) else None,
-        profile_id=profile_id,
-    )
-    logger.info(
-        "finance_spending_report_requested",
-        extra={
-            "profile_id": str(profile_id),
-            "start_date": period_start.isoformat(),
-            "end_date": period_end.isoformat(),
-        },
-    )
+    return {
+        "outgoing": str(summary["outgoing"]),
+        "incoming": str(summary["incoming"]),
+        "net_balance": str(summary["net_balance"]),
+        "effective_total": str(summary["effective_total"]),
+    }
+
+
+def _build_spending_report_payload(
+    *,
+    profile_id: UUID,
+    period_start: date,
+    period_end: date,
+) -> dict[str, Any]:
+    """Build spending report payload shared by JSON and PDF endpoints."""
 
     payload = {
         "date_range": {
@@ -3424,12 +3424,6 @@ def get_spending_report_pdf(
             date_range=DateRange(start_date=period_start, end_date=period_end),
             bank_account_id=None,
         )
-
-    cashflow_income = Decimal(str(cashflow_summary.get("total_income") or "0"))
-    cashflow_expense = Decimal(str(cashflow_summary.get("total_expense") or "0"))
-    cashflow_net = Decimal(str(cashflow_summary.get("net_cashflow") or "0"))
-    cashflow_internal_transfers = Decimal(str(cashflow_summary.get("internal_transfers") or "0"))
-    cashflow_net_including_transfers = cashflow_net + cashflow_internal_transfers
 
     sum_result = tool_router.call("finance_releves_sum", payload, profile_id=profile_id)
     if isinstance(sum_result, ToolError):
@@ -3467,79 +3461,171 @@ def get_spending_report_pdf(
             normalized_name = "Autres" if name.casefold() in {"autres", "sans catégorie", "sans categorie"} else name
             category_totals[normalized_name] = category_totals.get(normalized_name, Decimal("0")) + amount
 
-    category_rows = [SpendingCategoryRow(name=name, amount=amount) for name, amount in category_totals.items()]
+    total = abs(Decimal(str(sum_payload.get("total") or "0")))
+    shared_repository = _try_get_shared_expenses_repository()
+    effective_spending_summary = compute_effective_spending_summary_safe(
+        profile_id=profile_id,
+        start_date=period_start,
+        end_date=period_end,
+        releves_total_expense=total,
+        shared_expenses_repository=shared_repository,
+    )
 
     transactions, transactions_truncated, transactions_unavailable = _fetch_spending_transactions(
         profile_id=profile_id,
         payload=payload,
     )
 
-    total = abs(Decimal(str(sum_payload.get("total") or "0")))
-    effective_spending_summary = {
-        "outgoing": Decimal("0"),
-        "incoming": Decimal("0"),
-        "net_balance": Decimal("0"),
-        "effective_total": total,
-    }
-    try:
-        supabase_url = _config.supabase_url()
-        supabase_key = _config.supabase_service_role_key()
-        if supabase_url and supabase_key:
-            shared_repository = SupabaseSharedExpensesRepository(
-                client=SupabaseClient(
-                    settings=SupabaseSettings(
-                        url=supabase_url,
-                        service_role_key=supabase_key,
-                        anon_key=_config.supabase_anon_key(),
-                    )
-                )
-            )
-            effective_spending_summary = compute_effective_spending_summary(
-                profile_id=profile_id,
-                start_date=period_start,
-                end_date=period_end,
-                releves_total_expense=total,
-                shared_expenses_repository=shared_repository,
-            )
-    except Exception:
-        effective_spending_summary = {
-            "outgoing": Decimal("0"),
-            "incoming": Decimal("0"),
-            "net_balance": Decimal("0"),
-            "effective_total": total,
-        }
-
-    count = int(sum_payload.get("count") or 0)
-    period_label = f"{period_start.isoformat()} → {period_end.isoformat()}"
-    filename_period = period_start.strftime("%Y-%m") if period_start.day == 1 else f"{period_start.isoformat()}_{period_end.isoformat()}"
-
-    pdf_bytes = generate_spending_report_pdf(
-        SpendingReportData(
-            period_label=period_label,
-            start_date=period_start.isoformat(),
-            end_date=period_end.isoformat(),
-            total=total,
-            count=count,
-            currency=currency,
-            cashflow_income=cashflow_income,
-            cashflow_expense=cashflow_expense,
-            cashflow_net=cashflow_net,
-            cashflow_internal_transfers=cashflow_internal_transfers,
-            cashflow_net_including_transfers=cashflow_net_including_transfers,
-            cashflow_transaction_count=int(cashflow_summary.get("transaction_count") or 0),
-            cashflow_currency=(
-                str(cashflow_summary.get("currency")) if cashflow_summary.get("currency") is not None else None
+    return {
+        "period": {
+            "start_date": period_start.isoformat(),
+            "end_date": period_end.isoformat(),
+            "label": f"{period_start.isoformat()} → {period_end.isoformat()}",
+        },
+        "currency": currency,
+        "total": str(total),
+        "count": int(sum_payload.get("count") or 0),
+        "cashflow": {
+            "total_income": str(Decimal(str(cashflow_summary.get("total_income") or "0"))),
+            "total_expense": str(Decimal(str(cashflow_summary.get("total_expense") or "0"))),
+            "net_cashflow": str(Decimal(str(cashflow_summary.get("net_cashflow") or "0"))),
+            "internal_transfers": str(Decimal(str(cashflow_summary.get("internal_transfers") or "0"))),
+            "net_including_transfers": str(
+                Decimal(str(cashflow_summary.get("net_cashflow") or "0"))
+                + Decimal(str(cashflow_summary.get("internal_transfers") or "0"))
             ),
-            effective_total=Decimal(str(effective_spending_summary["effective_total"])),
-            shared_outgoing=Decimal(str(effective_spending_summary["outgoing"])),
-            shared_incoming=Decimal(str(effective_spending_summary["incoming"])),
-            shared_net_balance=Decimal(str(effective_spending_summary["net_balance"])),
-            categories=category_rows,
-            transactions=transactions,
-            transactions_truncated=transactions_truncated,
-            transactions_unavailable=transactions_unavailable,
-        )
+            "transaction_count": int(cashflow_summary.get("transaction_count") or 0),
+            "currency": str(cashflow_summary.get("currency")) if cashflow_summary.get("currency") is not None else None,
+        },
+        "categories": [{"name": name, "amount": str(amount)} for name, amount in category_totals.items()],
+        "transactions": [
+            {
+                "date": row.date,
+                "merchant": row.merchant,
+                "category": row.category,
+                "amount": str(row.amount),
+                "flow_type": row.flow_type,
+            }
+            for row in transactions
+        ],
+        "transactions_truncated": transactions_truncated,
+        "transactions_unavailable": transactions_unavailable,
+        "effective_spending": _serialize_effective_spending_summary(effective_spending_summary),
+    }
+
+
+def _build_spending_report_pdf_data(payload: dict[str, Any]) -> SpendingReportData:
+    """Convert report payload to PDF rendering dataclass."""
+
+    categories_payload = payload.get("categories") if isinstance(payload.get("categories"), list) else []
+    transactions_payload = payload.get("transactions") if isinstance(payload.get("transactions"), list) else []
+    cashflow = payload.get("cashflow") if isinstance(payload.get("cashflow"), dict) else {}
+    period = payload.get("period") if isinstance(payload.get("period"), dict) else {}
+    effective_spending = payload.get("effective_spending") if isinstance(payload.get("effective_spending"), dict) else {}
+
+    return SpendingReportData(
+        period_label=str(period.get("label") or ""),
+        start_date=str(period.get("start_date") or ""),
+        end_date=str(period.get("end_date") or ""),
+        total=Decimal(str(payload.get("total") or "0")),
+        count=int(payload.get("count") or 0),
+        currency=str(payload.get("currency") or "CHF"),
+        cashflow_income=Decimal(str(cashflow.get("total_income") or "0")),
+        cashflow_expense=Decimal(str(cashflow.get("total_expense") or "0")),
+        cashflow_net=Decimal(str(cashflow.get("net_cashflow") or "0")),
+        cashflow_internal_transfers=Decimal(str(cashflow.get("internal_transfers") or "0")),
+        cashflow_net_including_transfers=Decimal(str(cashflow.get("net_including_transfers") or "0")),
+        cashflow_transaction_count=int(cashflow.get("transaction_count") or 0),
+        cashflow_currency=str(cashflow.get("currency")) if cashflow.get("currency") is not None else None,
+        effective_total=Decimal(str(effective_spending.get("effective_total") or "0")),
+        shared_outgoing=Decimal(str(effective_spending.get("outgoing") or "0")),
+        shared_incoming=Decimal(str(effective_spending.get("incoming") or "0")),
+        shared_net_balance=Decimal(str(effective_spending.get("net_balance") or "0")),
+        categories=[
+            SpendingCategoryRow(name=str(row.get("name") or "Autres"), amount=Decimal(str(row.get("amount") or "0")))
+            for row in categories_payload
+            if isinstance(row, dict)
+        ],
+        transactions=[
+            SpendingTransactionRow(
+                date=str(row.get("date") or ""),
+                merchant=str(row.get("merchant") or "Inconnu"),
+                category=str(row.get("category") or "Sans catégorie"),
+                amount=Decimal(str(row.get("amount") or "0")),
+                flow_type=str(row.get("flow_type") or "expense"),
+            )
+            for row in transactions_payload
+            if isinstance(row, dict)
+        ],
+        transactions_truncated=bool(payload.get("transactions_truncated")),
+        transactions_unavailable=bool(payload.get("transactions_unavailable")),
     )
+
+
+@app.get("/finance/reports/spending")
+def get_spending_report_json(
+    authorization: str | None = Header(default=None),
+    start_date: str | None = None,
+    end_date: str | None = None,
+    month: str | None = None,
+) -> dict[str, Any]:
+    auth_user_id, profile_id = _resolve_authenticated_profile(authorization)
+    profiles_repository = get_profiles_repository()
+    chat_state = profiles_repository.get_chat_state(profile_id=profile_id, user_id=auth_user_id)
+    state_dict = chat_state.get("state") if isinstance(chat_state, dict) else None
+
+    period_start, period_end = _resolve_report_date_range(
+        month=month,
+        start_date=start_date,
+        end_date=end_date,
+        state_dict=state_dict if isinstance(state_dict, dict) else None,
+        profile_id=profile_id,
+    )
+    logger.info(
+        "finance_spending_report_requested",
+        extra={
+            "profile_id": str(profile_id),
+            "start_date": period_start.isoformat(),
+            "end_date": period_end.isoformat(),
+            "format": "json",
+        },
+    )
+    return _build_spending_report_payload(profile_id=profile_id, period_start=period_start, period_end=period_end)
+
+
+@app.get("/finance/reports/spending.pdf")
+def get_spending_report_pdf(
+    authorization: str | None = Header(default=None),
+    start_date: str | None = None,
+    end_date: str | None = None,
+    month: str | None = None,
+) -> Response:
+    auth_user_id, profile_id = _resolve_authenticated_profile(authorization)
+    profiles_repository = get_profiles_repository()
+    chat_state = profiles_repository.get_chat_state(profile_id=profile_id, user_id=auth_user_id)
+    state_dict = chat_state.get("state") if isinstance(chat_state, dict) else None
+
+    period_start, period_end = _resolve_report_date_range(
+        month=month,
+        start_date=start_date,
+        end_date=end_date,
+        state_dict=state_dict if isinstance(state_dict, dict) else None,
+        profile_id=profile_id,
+    )
+    logger.info(
+        "finance_spending_report_requested",
+        extra={
+            "profile_id": str(profile_id),
+            "start_date": period_start.isoformat(),
+            "end_date": period_end.isoformat(),
+            "format": "pdf",
+        },
+    )
+
+    report_payload = _build_spending_report_payload(profile_id=profile_id, period_start=period_start, period_end=period_end)
+
+    filename_period = period_start.strftime("%Y-%m") if period_start.day == 1 else f"{period_start.isoformat()}_{period_end.isoformat()}"
+    pdf_bytes = generate_spending_report_pdf(_build_spending_report_pdf_data(report_payload))
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
