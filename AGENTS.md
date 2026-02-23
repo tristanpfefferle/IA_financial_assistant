@@ -44,3 +44,5 @@ Construire un assistant financier IA orienté **agent + tools** avec séparation
 - `POST /finance/shared-expenses/suggestions/{suggestion_id}/dismiss` body optionnel `{ "reason": "..." }`
 - `POST /finance/shared-expenses/suggestions/{suggestion_id}/apply` body optionnel `{ "amount": "12.34", "force": false }`
 - Si Supabase n'est pas configuré (`supabase_url`/`service_role_key` absents): l'API retourne `501` avec `detail="shared expenses disabled"`.
+
+- Commandes chat partage (MVP): `oui tout`, `non tout`, `oui 1 et 3`, `non 2`, `split 2 60/40`.

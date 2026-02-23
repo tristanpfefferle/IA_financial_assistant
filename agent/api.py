@@ -162,6 +162,17 @@ BANK_CODE_KEYWORDS: dict[str, tuple[str, ...]] = {
     "raiffeisen": ("raiffeisen",),
     "revolut": ("revolut",),
 }
+_SHARED_EXPENSE_INTENT_KEYWORDS = (
+    "partage",
+    "partagée",
+    "partagees",
+    "partagées",
+    "depenses partagees",
+    "dépenses partagées",
+    "valider partage",
+    "partager ces depenses",
+    "partager ces dépenses",
+)
 
 
 def _build_system_categories_payload() -> list[dict[str, str]]:
@@ -262,6 +273,238 @@ def _build_open_pdf_ui_request(url: str) -> dict[str, str]:
         "name": "open_pdf_report",
         "url": url,
     }
+
+
+def _normalize_user_text_for_matching(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", value)
+    ascii_only = "".join(char for char in normalized if not unicodedata.combining(char))
+    return re.sub(r"\s+", " ", ascii_only.lower()).strip()
+
+
+def _is_shared_expense_validation_intent(message: str) -> bool:
+    normalized = _normalize_user_text_for_matching(message)
+    return any(keyword in normalized for keyword in _SHARED_EXPENSE_INTENT_KEYWORDS)
+
+
+def fetch_transactions_snapshot(profile_id: UUID, transaction_ids: list[UUID]) -> dict[UUID, dict[str, str | None]]:
+    """Return transaction details keyed by transaction id for shared-expense confirmation."""
+
+    if not transaction_ids:
+        return {}
+
+    supabase_client = SupabaseClient(
+        settings=SupabaseSettings(
+            url=_config.supabase_url(),
+            service_role_key=_config.supabase_service_role_key(),
+            anon_key=_config.supabase_anon_key(),
+        )
+    )
+    in_values = ",".join(str(transaction_id) for transaction_id in transaction_ids)
+    try:
+        rows, _ = supabase_client.get_rows(
+            table="releves_bancaires",
+            query={
+                "select": "id,date,montant,devise,payee,libelle",
+                "profile_id": f"eq.{profile_id}",
+                "id": f"in.({in_values})",
+                "limit": max(1, len(transaction_ids)),
+            },
+            with_count=False,
+            use_anon_key=False,
+        )
+    except RuntimeError:
+        logger.exception("shared_expense_transaction_snapshot_failed profile_id=%s", profile_id)
+        return {}
+
+    snapshot: dict[UUID, dict[str, str | None]] = {}
+    for row in rows:
+        raw_id = row.get("id")
+        try:
+            row_id = raw_id if isinstance(raw_id, UUID) else UUID(str(raw_id))
+        except (TypeError, ValueError):
+            continue
+        snapshot[row_id] = {
+            "date": str(row.get("date") or ""),
+            "montant": str(row.get("montant") or ""),
+            "devise": str(row.get("devise") or "") if row.get("devise") is not None else None,
+            "payee": str(row.get("payee") or "") if row.get("payee") is not None else None,
+            "libelle": str(row.get("libelle") or "") if row.get("libelle") is not None else None,
+        }
+    return snapshot
+
+
+def _build_shared_expense_confirmation_reply(suggestions: list[dict[str, Any]]) -> str:
+    lines = [f"J’ai {len(suggestions)} dépenses à valider pour le partage :"]
+    for row in suggestions:
+        merchant = str(row.get("merchant") or f"transaction {row.get('transaction_id')}")
+        date_value = str(row.get("date") or "?")
+        amount_value = str(row.get("amount") or "?")
+        currency = str(row.get("currency") or "CHF")
+        split_value = Decimal(str(row.get("suggested_split_ratio_other") or "0.5")) * Decimal("100")
+        split_text = f"split {int(Decimal('100') - split_value)}/{int(split_value)}"
+        lines.append(f"{row['index']}) {date_value} — {merchant} — {amount_value} {currency} — {split_text}")
+    lines.append(
+        "Réponds: ‘oui tout’, ‘non tout’, ‘oui 1 et 2’, ‘non 2’, ‘split 2 60/40’ (règle split: toi/autre)."
+    )
+    return "\n".join(lines)
+
+
+def handle_shared_expenses_validation_request(*, profile_id: UUID) -> tuple[str, dict[str, Any] | None]:
+    """Return assistant message and active confirmation task snapshot for shared expenses."""
+
+    repository = _get_shared_expenses_repository_or_501()
+    suggestions = repository.list_shared_expense_suggestions(profile_id=profile_id, status="pending", limit=50)
+    if not suggestions:
+        return "Il n’y a rien à valider pour le partage pour le moment.", None
+
+    transaction_ids = [row.transaction_id for row in suggestions]
+    transactions_snapshot = fetch_transactions_snapshot(profile_id, transaction_ids)
+
+    snapshot_rows: list[dict[str, Any]] = []
+    for index, suggestion in enumerate(suggestions, start=1):
+        transaction_row = transactions_snapshot.get(suggestion.transaction_id, {})
+        raw_amount = transaction_row.get("montant") if isinstance(transaction_row, dict) else None
+        try:
+            amount = abs(Decimal(str(raw_amount or "0"))).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        except (InvalidOperation, ValueError):
+            amount = Decimal("0.00")
+        merchant = ""
+        if isinstance(transaction_row, dict):
+            merchant = str(transaction_row.get("payee") or transaction_row.get("libelle") or "").strip()
+        snapshot_rows.append(
+            {
+                "index": index,
+                "suggestion_id": str(suggestion.id),
+                "transaction_id": str(suggestion.transaction_id),
+                "date": str((transaction_row or {}).get("date") or ""),
+                "merchant": merchant,
+                "amount": f"{amount:.2f}",
+                "currency": str((transaction_row or {}).get("devise") or "CHF"),
+                "suggested_split_ratio_other": str(suggestion.suggested_split_ratio_other),
+                "suggested_to_profile_id": str(suggestion.suggested_to_profile_id),
+            }
+        )
+
+    active_task = {
+        "type": "shared_expense_confirm",
+        "created_at": datetime.now().isoformat(),
+        "suggestions": snapshot_rows,
+    }
+    return _build_shared_expense_confirmation_reply(snapshot_rows), active_task
+
+
+def _extract_indices_from_message(message: str) -> list[int]:
+    return [int(token) for token in re.findall(r"\d+", message)]
+
+
+def parse_shared_expense_confirmation(user_message: str, suggestions_snapshot: list[dict[str, Any]]) -> dict[str, Any]:
+    """Parse deterministic shared-expense confirmation commands into executable actions."""
+
+    normalized = _normalize_user_text_for_matching(user_message)
+    available = {int(row["index"]) for row in suggestions_snapshot if isinstance(row.get("index"), int)}
+
+    split_match = re.search(r"(?:split\s+)?(\d+)\s+(\d{1,3})\s*/\s*(\d{1,3})", normalized)
+    if split_match:
+        index_value = int(split_match.group(1))
+        left = int(split_match.group(2))
+        right = int(split_match.group(3))
+        if index_value not in available or left + right == 0:
+            return {"kind": "invalid"}
+        ratio_other = (Decimal(str(right)) / Decimal(str(left + right))).quantize(Decimal("0.0001"))
+        return {"kind": "split_apply", "indices": [index_value], "ratio_other": ratio_other}
+
+    if any(phrase in normalized for phrase in ("oui tout", "ok tout", "confirme tout", "applique tout")):
+        return {"kind": "apply_all", "indices": sorted(available)}
+    if any(phrase in normalized for phrase in ("non tout", "rejette tout", "refuse tout")):
+        return {"kind": "dismiss_all", "indices": sorted(available)}
+
+    indices = [index for index in _extract_indices_from_message(normalized) if index in available]
+    if not indices:
+        return {"kind": "invalid"}
+
+    if any(keyword in normalized for keyword in ("oui", "ok", "applique", "confirme")):
+        return {"kind": "apply_subset", "indices": sorted(set(indices))}
+    if any(keyword in normalized for keyword in ("non", "rejette", "refuse")):
+        return {"kind": "dismiss_subset", "indices": sorted(set(indices))}
+    return {"kind": "invalid"}
+
+
+def _execute_shared_expense_confirmation_actions(
+    *,
+    profile_id: UUID,
+    active_task: dict[str, Any],
+    user_message: str,
+) -> tuple[str, dict[str, Any] | None]:
+    suggestions_snapshot = active_task.get("suggestions") if isinstance(active_task, dict) else None
+    if not isinstance(suggestions_snapshot, list) or not suggestions_snapshot:
+        return "Je n’ai plus de suggestion active à valider.", None
+
+    parsed = parse_shared_expense_confirmation(user_message, suggestions_snapshot)
+    if parsed.get("kind") == "invalid":
+        return (
+            "Je n’ai pas compris. Réponds avec ‘oui tout’, ‘non tout’, ‘oui 1 et 3’, ‘non 2’ ou ‘split 2 60/40’.",
+            active_task,
+        )
+
+    by_index = {
+        int(item["index"]): item
+        for item in suggestions_snapshot
+        if isinstance(item, dict) and isinstance(item.get("index"), int)
+    }
+    repository = _get_shared_expenses_repository_or_501()
+    applied: list[int] = []
+    dismissed: list[int] = []
+    errors: list[int] = []
+    ratio_other = parsed.get("ratio_other")
+
+    for index in parsed.get("indices", []):
+        row = by_index.get(index)
+        if row is None:
+            continue
+        try:
+            suggestion_id = UUID(str(row["suggestion_id"]))
+        except (TypeError, ValueError, KeyError):
+            errors.append(index)
+            continue
+
+        should_apply = parsed["kind"] in {"apply_all", "apply_subset", "split_apply"}
+        if should_apply:
+            try:
+                amount = Decimal(str(row.get("amount") or "0"))
+                effective_ratio_other = Decimal(str(ratio_other or row.get("suggested_split_ratio_other") or "0.5"))
+                amount_to_apply = (abs(amount) * effective_ratio_other).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                repository.create_shared_expense_from_suggestion(
+                    profile_id=profile_id,
+                    suggestion_id=suggestion_id,
+                    amount=amount_to_apply,
+                )
+                applied.append(index)
+            except Exception:
+                logger.exception("shared_expense_apply_from_chat_failed profile_id=%s suggestion_id=%s", profile_id, suggestion_id)
+                errors.append(index)
+            continue
+
+        try:
+            repository.mark_suggestion_status(
+                profile_id=profile_id,
+                suggestion_id=suggestion_id,
+                status="dismissed",
+                error="dismissed via chat",
+            )
+            dismissed.append(index)
+        except Exception:
+            logger.exception("shared_expense_dismiss_from_chat_failed profile_id=%s suggestion_id=%s", profile_id, suggestion_id)
+            errors.append(index)
+
+    treated = set(applied + dismissed)
+    remaining = [row for row in suggestions_snapshot if int(row.get("index", -1)) not in treated]
+    if not remaining:
+        return f"Terminé. Appliqué: {len(applied)}, Rejeté: {len(dismissed)}, Erreurs: {len(errors)}", None
+
+    updated_task = dict(active_task)
+    updated_task["suggestions"] = remaining
+    summary = f"Appliqué: {len(applied)}, Rejeté: {len(dismissed)}, Erreurs: {len(errors)}."
+    return f"{summary}\n\n{_build_shared_expense_confirmation_reply(remaining)}", updated_task
 
 
 
@@ -1620,6 +1863,7 @@ def agent_chat(
         active_task = chat_state.get("active_task") if isinstance(chat_state, dict) else None
         state = chat_state.get("state") if isinstance(chat_state, dict) else None
         state_dict = dict(state) if isinstance(state, dict) else None
+        shared_expense_active_task = state_dict.get("active_task") if isinstance(state_dict, dict) else None
         existing_global_state = state_dict.get("global_state") if isinstance(state_dict, dict) else None
         global_state = existing_global_state if _is_valid_global_state(existing_global_state) else None
         should_persist_global_state = False
@@ -2431,6 +2675,42 @@ def agent_chat(
                         tool_result=serialized_pending_result,
                         plan=jsonable_encoder({"tool_name": tool_name, "payload": tool_payload}),
                     )
+
+        if isinstance(shared_expense_active_task, dict) and shared_expense_active_task.get("type") == "shared_expense_confirm":
+            reply_text, updated_shared_task = _execute_shared_expense_confirmation_actions(
+                profile_id=profile_id,
+                active_task=shared_expense_active_task,
+                user_message=payload.message,
+            )
+            updated_state = dict(state_dict) if isinstance(state_dict, dict) else {}
+            updated_state["active_task"] = updated_shared_task
+            updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+            if updated_state:
+                updated_chat_state["state"] = updated_state
+            else:
+                updated_chat_state.pop("state", None)
+            profiles_repository.update_chat_state(
+                profile_id=profile_id,
+                user_id=auth_user_id,
+                chat_state=updated_chat_state,
+            )
+            return ChatResponse(reply=reply_text, tool_result=None, plan=None)
+
+        if _is_shared_expense_validation_intent(payload.message):
+            reply_text, updated_shared_task = handle_shared_expenses_validation_request(profile_id=profile_id)
+            updated_state = dict(state_dict) if isinstance(state_dict, dict) else {}
+            updated_state["active_task"] = updated_shared_task
+            updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+            if updated_state:
+                updated_chat_state["state"] = updated_state
+            else:
+                updated_chat_state.pop("state", None)
+            profiles_repository.update_chat_state(
+                profile_id=profile_id,
+                user_id=auth_user_id,
+                chat_state=updated_chat_state,
+            )
+            return ChatResponse(reply=reply_text, tool_result=None, plan=None)
 
         if mode == "free_chat" and _is_pdf_report_request(payload.message):
             month_value, start_date_value, end_date_value = _resolve_report_period_from_message(
