@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 import logging
+import re
 from typing import Any, Protocol
 import unicodedata
 from uuid import UUID
@@ -526,6 +527,46 @@ class SupabaseProfilesRepository:
         normalized = unicodedata.normalize("NFKD", value.strip().lower()).encode("ascii", "ignore").decode("ascii")
         return " ".join(normalized.split())
 
+    @classmethod
+    def _derive_merchant_key_norm(cls, value: str) -> str:
+        normalized = cls._normalize_name_norm(value)
+        if not normalized:
+            return ""
+
+        cutoff_markers = (
+            ";",
+            " - ",
+            " paiement ",
+            " debit ",
+            " credit ",
+            " ordre e-banking",
+            " motif du paiement",
+        )
+        cut_at = len(normalized)
+        for marker in cutoff_markers:
+            marker_index = normalized.find(marker)
+            if marker_index >= 0:
+                cut_at = min(cut_at, marker_index)
+        key = normalized[:cut_at].strip(" -;:")
+        if not key:
+            return ""
+
+        key = re.sub(r"\b(?:qrr|iban|twint-?acc)\b[\w\s-]*", " ", key)
+        key = re.sub(r"\b(?:no|numero|num|n)\s*(?:de\s*)?(?:transaction|reference|ref)\b[\w\s-]*", " ", key)
+        key = re.sub(r"\+\d{8,15}\b", " ", key)
+        key = re.sub(r"\b\d{2}[./-]\d{2}[./-]\d{2,4}\b", " ", key)
+        key = re.sub(r"\b\d{4}\b\s+[a-z]{3,}$", " ", key)
+        key = re.sub(r"[- ]\d{3,6}\b.*$", "", key)
+        key = " ".join(key.split())
+
+        key = key.strip(" -;:")
+        tokens = key.split()
+        chain_heads = {"coop", "migros", "aldi", "lidl", "denner", "manor"}
+        keep_second_token = {"city", "market", "pronto", "express", "shop", "store"}
+        if len(tokens) == 2 and tokens[0] in chain_heads and tokens[1] not in keep_second_token:
+            tokens = tokens[:1]
+        return " ".join(tokens)
+
     def list_profile_categories(self, *, profile_id: UUID) -> list[dict[str, Any]]:
         rows, _ = self._client.get_rows(
             table="profile_categories",
@@ -940,9 +981,12 @@ class SupabaseProfilesRepository:
         seen_in_batch: set[str] = set()
         for row in rows:
             observed_alias_norm = self._normalize_name_norm(str(row.get("observed_alias_norm") or ""))
-            if not observed_alias_norm or observed_alias_norm in seen_in_batch:
+            merchant_key_norm = self._derive_merchant_key_norm(
+                str(row.get("observed_alias") or "") or observed_alias_norm,
+            )
+            if not observed_alias_norm or not merchant_key_norm or merchant_key_norm in seen_in_batch:
                 continue
-            seen_in_batch.add(observed_alias_norm)
+            seen_in_batch.add(merchant_key_norm)
             now_iso = datetime.now(timezone.utc).isoformat()
 
             payload = {
@@ -951,6 +995,7 @@ class SupabaseProfilesRepository:
                 "status": "pending",
                 "observed_alias": row.get("observed_alias"),
                 "observed_alias_norm": observed_alias_norm,
+                "merchant_key_norm": merchant_key_norm,
                 "suggested_entity_name": row.get("suggested_entity_name"),
                 "confidence": row.get("confidence"),
                 "rationale": row.get("rationale"),
@@ -961,7 +1006,7 @@ class SupabaseProfilesRepository:
             self._client.upsert_row(
                 table="merchant_suggestions",
                 payload=payload,
-                on_conflict="profile_id,observed_alias_norm",
+                on_conflict="profile_id,merchant_key_norm",
                 use_anon_key=False,
             )
             inserted_count += 1

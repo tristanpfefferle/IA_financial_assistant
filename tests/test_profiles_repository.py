@@ -751,16 +751,17 @@ def test_create_map_alias_suggestions_uses_upsert_and_deduplicates_batch() -> No
     assert client.post_calls == []
     assert len(client.upsert_calls) == 1
     assert client.upsert_calls[0]["table"] == "merchant_suggestions"
-    assert client.upsert_calls[0]["on_conflict"] == "profile_id,observed_alias_norm"
+    assert client.upsert_calls[0]["on_conflict"] == "profile_id,merchant_key_norm"
     assert client.upsert_calls[0]["payload"]["profile_id"] == str(profile_id)
     assert client.upsert_calls[0]["payload"]["action"] == "map_alias"
     assert client.upsert_calls[0]["payload"]["observed_alias_norm"] == "unknown shop"
+    assert client.upsert_calls[0]["payload"]["merchant_key_norm"] == "unknown shop"
     assert client.upsert_calls[0]["payload"]["times_seen"] == 1
     assert client.upsert_calls[0]["payload"]["last_seen"]
     assert client.upsert_calls[0]["payload"]["updated_at"]
 
 
-def test_create_map_alias_suggestions_upserts_each_unique_alias_norm() -> None:
+def test_create_map_alias_suggestions_upserts_each_unique_merchant_key_norm() -> None:
     profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
     client = _ClientStub(responses=[])
     repository = SupabaseProfilesRepository(client=client)
@@ -768,15 +769,66 @@ def test_create_map_alias_suggestions_upserts_each_unique_alias_norm() -> None:
     inserted = repository.create_map_alias_suggestions(
         profile_id=profile_id,
         rows=[
-            {"observed_alias": "Shop A", "observed_alias_norm": "shop a"},
-            {"observed_alias": "Shop B", "observed_alias_norm": "shop b"},
-            {"observed_alias": "SHOP B", "observed_alias_norm": "shop b"},
+            {
+                "observed_alias": "COOP-4815 MONTHEY; Paiement UBS TWINT Motif du paiement: 123",
+                "observed_alias_norm": "coop-4815 monthey paiement ubs twint motif du paiement 123",
+            },
+            {
+                "observed_alias": "MIGROS MONTHEY Paiement UBS TWINT no de transaction 987",
+                "observed_alias_norm": "migros monthey paiement ubs twint no de transaction 987",
+            },
+            {
+                "observed_alias": "Tamoil Station Services;1868 Collombey no transaction 456",
+                "observed_alias_norm": "tamoil station services 1868 collombey no transaction 456",
+            },
         ],
     )
 
-    assert inserted == 2
-    assert len(client.upsert_calls) == 2
-    assert {call["payload"]["observed_alias_norm"] for call in client.upsert_calls} == {"shop a", "shop b"}
+    assert inserted == 3
+    assert len(client.upsert_calls) == 3
+    assert {call["payload"]["merchant_key_norm"] for call in client.upsert_calls} == {
+        "coop",
+        "migros",
+        "tamoil station services",
+    }
+
+
+def test_create_map_alias_suggestions_bulk_twint_variants_deduplicates_to_ten_keys() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    client = _ClientStub(responses=[])
+    repository = SupabaseProfilesRepository(client=client)
+
+    merchant_variants = [
+        ("COOP-4815 MONTHEY; Paiement UBS TWINT Motif du paiement: 123", "COOP MONTHEY; no de transaction 432"),
+        ("MIGROS MONTHEY Paiement UBS TWINT ref 777", "MIGROS-1870 MONTHEY; Débit UBS TWINT"),
+        ("Tamoil Station Services;1868 Collombey", "Tamoil Station Services;1880 Bex"),
+        ("SBB Mobile; Paiement UBS TWINT", "SBB MOBILE; no de transaction 123"),
+        ("UBER EATS Lausanne - Paiement UBS TWINT", "UBER EATS Lausanne - no de transaction 123"),
+        ("NETFLIX; Paiement UBS TWINT", "Netflix; no de transaction 8181"),
+        ("SPOTIFY; Paiement UBS TWINT", "Spotify; no de transaction 999"),
+        ("SWISSCOM; Paiement UBS TWINT", "Swisscom; no de transaction 777"),
+        ("IKEA; Paiement UBS TWINT", "IKEA; no de transaction 111"),
+        ("DECATHLON; Paiement UBS TWINT", "Decathlon; no de transaction 222"),
+    ]
+
+    rows: list[dict[str, str]] = []
+    for _ in range(4):
+        for left, right in merchant_variants:
+            rows.append({"observed_alias": left, "observed_alias_norm": left.lower()})
+            if len(rows) == 45:
+                break
+            rows.append({"observed_alias": right, "observed_alias_norm": right.lower()})
+            if len(rows) == 45:
+                break
+        if len(rows) == 45:
+            break
+
+    inserted = repository.create_map_alias_suggestions(profile_id=profile_id, rows=rows)
+
+    assert len(rows) == 45
+    assert inserted == 10
+    assert len(client.upsert_calls) == 10
+    assert len({call["payload"]["merchant_key_norm"] for call in client.upsert_calls}) == 10
 
 
 def test_ensure_profile_for_auth_user_returns_existing_profile_when_found() -> None:
