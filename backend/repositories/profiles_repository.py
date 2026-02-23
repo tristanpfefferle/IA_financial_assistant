@@ -152,8 +152,6 @@ class ProfilesRepository(Protocol):
         observed_alias: str,
         observed_alias_norm: str,
         merchant_key_norm: str | None = None,
-        suggested_entity_name: str | None = None,
-        suggested_entity_name_norm: str | None = None,
         rationale: str,
         confidence: float,
     ) -> bool:
@@ -793,8 +791,6 @@ class SupabaseProfilesRepository:
         observed_alias: str,
         observed_alias_norm: str,
         merchant_key_norm: str | None = None,
-        suggested_entity_name: str | None = None,
-        suggested_entity_name_norm: str | None = None,
         rationale: str,
         confidence: float,
     ) -> bool:
@@ -802,9 +798,6 @@ class SupabaseProfilesRepository:
         if not cleaned_observed_alias_norm:
             return False
         cleaned_merchant_key_norm = self._normalize_name_norm(merchant_key_norm) if merchant_key_norm else None
-        cleaned_suggested_entity_name_norm = (
-            self._normalize_name_norm(suggested_entity_name_norm) if suggested_entity_name_norm else None
-        )
         cleaned_dedup_key = cleaned_merchant_key_norm or cleaned_observed_alias_norm
 
         existing = self._find_existing_map_alias_suggestion(
@@ -823,8 +816,6 @@ class SupabaseProfilesRepository:
             "observed_alias": observed_alias,
             "observed_alias_norm": cleaned_observed_alias_norm,
             "merchant_key_norm": cleaned_merchant_key_norm,
-            "suggested_entity_name": suggested_entity_name,
-            "suggested_entity_name_norm": cleaned_suggested_entity_name_norm,
             "rationale": rationale,
             "confidence": confidence,
             "times_seen": 1,

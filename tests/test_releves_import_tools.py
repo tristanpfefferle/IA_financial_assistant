@@ -42,8 +42,6 @@ class _ImportProfilesRepositoryStub:
         observed_alias: str,
         observed_alias_norm: str,
         merchant_key_norm: str | None = None,
-        suggested_entity_name: str | None = None,
-        suggested_entity_name_norm: str | None = None,
         rationale: str,
         confidence: float,
     ) -> bool:
@@ -53,8 +51,6 @@ class _ImportProfilesRepositoryStub:
                 "observed_alias": observed_alias,
                 "observed_alias_norm": observed_alias_norm,
                 "merchant_key_norm": merchant_key_norm,
-                "suggested_entity_name": suggested_entity_name,
-                "suggested_entity_name_norm": suggested_entity_name_norm,
                 "rationale": rationale,
                 "confidence": str(confidence),
             }

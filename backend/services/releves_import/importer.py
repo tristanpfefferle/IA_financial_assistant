@@ -207,40 +207,6 @@ class RelevesImportService:
 
         return " ".join(cleaned_tokens[:3]).strip() or "unknown"
 
-    @staticmethod
-    def _is_safe_canonical_candidate(name: str) -> bool:
-        """Return whether a candidate canonical merchant name is safe to suggest directly."""
-
-        cleaned = " ".join(str(name).split()).strip()
-        if not cleaned:
-            return False
-        if len(cleaned) > 40:
-            return False
-        if sum(char.isdigit() for char in cleaned) >= 5:
-            return False
-
-        lowered = cleaned.lower()
-        if re.search(r"\bCH\d{2}[0-9A-Z ]{10,}\b", cleaned, flags=re.IGNORECASE):
-            return False
-        if re.search(r"(?:\+41|0041)\s?(?:\(?0\)?\s?)?(?:\d[\s.-]?){8,12}", cleaned):
-            return False
-
-        raw_line_markers = (
-            "paiement carte",
-            "paiement ubs twint",
-            "transaction",
-            "motif du paiement",
-            "no de transaction",
-            "date de transaction",
-            "sumup",
-            "paypal",
-        )
-        return not any(marker in lowered for marker in raw_line_markers)
-
-    @staticmethod
-    def _to_title_case_words(value: str) -> str:
-        return " ".join(word.capitalize() for word in value.split())
-
     def _normalize_row(
         self,
         *,
@@ -325,20 +291,9 @@ class RelevesImportService:
             else:
                 merchant_entity_id = None
                 if observed_alias_norm:
-                    minimal_suggested_norm = merchant_key_norm if merchant_key_norm != "unknown" else observed_alias_key_norm
-                    minimal_suggested_norm = normalize_merchant_alias(minimal_suggested_norm)
-                    if not minimal_suggested_norm:
-                        minimal_suggested_norm = observed_alias_norm
-
-                    safe_suggested_entity_name = None
-                    candidate_name = self._to_title_case_words(minimal_suggested_norm)
-                    if self._is_safe_canonical_candidate(candidate_name):
-                        safe_suggested_entity_name = candidate_name
-
                     meta_dict["merchant_resolution"] = "unresolved"
                     meta_dict["observed_alias_norm"] = observed_alias_norm
                     meta_dict["observed_alias_key_norm"] = observed_alias_key_norm
-                    meta_dict["suggested_entity_name_norm"] = minimal_suggested_norm
                     meta_dict["llm_context"] = self._build_non_sensitive_llm_context(
                         source=source,
                         parsed_date=parsed_date,
@@ -355,9 +310,6 @@ class RelevesImportService:
                         profile_id=profile_id,
                         observed_alias=observed_alias,
                         observed_alias_norm=observed_alias_key_norm,
-                        merchant_key_norm=merchant_key_norm,
-                        suggested_entity_name=safe_suggested_entity_name,
-                        suggested_entity_name_norm=minimal_suggested_norm,
                         rationale=(
                             "Alias inconnu lors de l'import; nécessite normalisation/"
                             "canonicalisation et catégorisation LLM."
