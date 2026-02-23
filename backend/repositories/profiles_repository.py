@@ -1438,15 +1438,14 @@ class SupabaseProfilesRepository:
         if not alias_raw:
             return 0
 
-        def _pg_quote(value: str) -> str:
-            escaped = value.replace('"', '\\"')
-            return f'"{escaped}"'
-
         payload: dict[str, Any] = {"merchant_entity_id": str(merchant_entity_id)}
         if category_id is not None:
             payload["category_id"] = str(category_id)
 
-        def _count_and_patch(or_filter: str) -> int:
+        escaped_alias = alias_raw.replace('"', '\\"')
+        or_filter = f'(payee.eq."{escaped_alias}",libelle.eq."{escaped_alias}")'
+
+        try:
             rows, total = self._client.get_rows(
                 table="releves_bancaires",
                 query={
@@ -1459,31 +1458,27 @@ class SupabaseProfilesRepository:
                 with_count=True,
                 use_anon_key=False,
             )
-            matched_count = int(total or 0)
-            if matched_count <= 0 and not rows:
-                return 0
-            self._client.patch_rows(
-                table="releves_bancaires",
-                query={
-                    "profile_id": f"eq.{profile_id}",
-                    "merchant_entity_id": "is.null",
-                    "or": or_filter,
-                },
-                payload=payload,
-                use_anon_key=False,
-            )
-            if matched_count > 0:
-                return matched_count
-            return len(rows)
+        except Exception:
+            return 0
 
-        exact_filter = f"(payee.eq.{_pg_quote(alias_raw)},libelle.eq.{_pg_quote(alias_raw)})"
-        updated_exact = _count_and_patch(exact_filter)
-        if updated_exact > 0:
-            return updated_exact
+        matched_count = int(total or 0)
+        if matched_count <= 0 and not rows:
+            return 0
 
-        ilike_value = f"*{alias_raw}*"
-        ilike_filter = f"(payee.ilike.{_pg_quote(ilike_value)},libelle.ilike.{_pg_quote(ilike_value)})"
-        return _count_and_patch(ilike_filter)
+        self._client.patch_rows(
+            table="releves_bancaires",
+            query={
+                "profile_id": f"eq.{profile_id}",
+                "merchant_entity_id": "is.null",
+                "or": or_filter,
+            },
+            payload=payload,
+            use_anon_key=False,
+        )
+
+        if matched_count > 0:
+            return matched_count
+        return 0
 
     def attach_merchant_entity_to_releve(
         self,
