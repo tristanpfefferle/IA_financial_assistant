@@ -907,7 +907,7 @@ def _bootstrap_merchants_from_imported_releves(
         if not observed_alias or not releve_id_raw:
             skipped_count += 1
             continue
-        observed_alias_norm = _normalize_text(observed_alias)
+        observed_alias_norm = normalize_merchant_alias(observed_alias)
         if not observed_alias_norm:
             skipped_count += 1
             continue
@@ -915,7 +915,11 @@ def _bootstrap_merchants_from_imported_releves(
         raw_meta = row.get("meta")
         meta = raw_meta if isinstance(raw_meta, dict) else {}
         observed_alias_key_norm = " ".join(str(meta.get("observed_alias_key_norm") or "").split())
-        dedup_alias_norm = normalize_merchant_alias(observed_alias_key_norm or observed_alias)
+        dedup_alias_norm = (
+            normalize_merchant_alias(observed_alias_key_norm)
+            if observed_alias_key_norm
+            else observed_alias_norm
+        )
         if not dedup_alias_norm:
             skipped_count += 1
             continue
