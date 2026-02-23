@@ -682,6 +682,68 @@ def test_count_map_alias_suggestions_returns_none_when_count_missing() -> None:
     assert count is None
 
 
+def test_apply_entity_to_profile_transactions_builds_postgrest_or_filter_without_outer_parentheses() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    entity_id = UUID("11111111-1111-1111-1111-111111111111")
+    alias = "Migros Monthey"
+    client = _ClientStub(responses=[[{"id": "row-1"}]], counts=[1])
+    repository = SupabaseProfilesRepository(client=client)
+
+    updated = repository.apply_entity_to_profile_transactions(
+        profile_id=profile_id,
+        observed_alias=alias,
+        merchant_entity_id=entity_id,
+        category_id=None,
+    )
+
+    assert updated == 1
+    assert client.calls[0]["query"]["or"] == 'payee.eq."Migros Monthey",libelle.eq."Migros Monthey"'
+    assert not str(client.calls[0]["query"]["or"]).startswith("(")
+    assert not str(client.calls[0]["query"]["or"]).endswith(")")
+    assert client.patch_calls[0]["query"]["or"] == 'payee.eq."Migros Monthey",libelle.eq."Migros Monthey"'
+
+
+def test_apply_entity_to_profile_transactions_uses_ilike_fallback_only_for_long_alias() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    entity_id = UUID("11111111-1111-1111-1111-111111111111")
+
+    long_alias_client = _ClientStub(
+        responses=[[], [{"id": "row-1"}]],
+        counts=[0, None],
+    )
+    repository = SupabaseProfilesRepository(client=long_alias_client)
+
+    updated_long_alias = repository.apply_entity_to_profile_transactions(
+        profile_id=profile_id,
+        observed_alias="Starbucks Sion",
+        merchant_entity_id=entity_id,
+        category_id=None,
+    )
+
+    assert updated_long_alias == 1
+    assert len(long_alias_client.calls) == 2
+    assert long_alias_client.calls[0]["query"]["or"] == 'payee.eq."Starbucks Sion",libelle.eq."Starbucks Sion"'
+    assert (
+        long_alias_client.calls[1]["query"]["or"]
+        == 'payee.ilike."*Starbucks Sion*",libelle.ilike."*Starbucks Sion*"'
+    )
+    assert len(long_alias_client.patch_calls) == 1
+
+    short_alias_client = _ClientStub(responses=[[]], counts=[0])
+    short_alias_repository = SupabaseProfilesRepository(client=short_alias_client)
+
+    updated_short_alias = short_alias_repository.apply_entity_to_profile_transactions(
+        profile_id=profile_id,
+        observed_alias="Coop",
+        merchant_entity_id=entity_id,
+        category_id=None,
+    )
+
+    assert updated_short_alias == 0
+    assert len(short_alias_client.calls) == 1
+    assert len(short_alias_client.patch_calls) == 0
+
+
 def test_update_merchant_suggestion_after_resolve_falls_back_to_minimal_payload() -> None:
     profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
     suggestion_id = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
