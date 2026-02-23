@@ -8,6 +8,7 @@ from io import BytesIO
 from datetime import date
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from reportlab.lib import colors
@@ -15,7 +16,16 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.pdfgen.canvas import Canvas
-from reportlab.platypus import Flowable, Image, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import (
+    Flowable,
+    Image,
+    PageBreak,
+    Paragraph,
+    SimpleDocTemplate,
+    Spacer,
+    Table,
+    TableStyle,
+)
 
 
 @dataclass(slots=True)
@@ -65,7 +75,11 @@ class SpendingTransactionRow:
 
 
 def _format_amount(value: Decimal, currency: str | None) -> str:
-    amount_label = f"{value.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP):,.2f}".replace(",", "'")
+    amount_label = (
+        f"{value.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP):,.2f}".replace(
+            ",", "'"
+        )
+    )
     if not currency:
         return amount_label
     return f"{amount_label} {currency}"
@@ -75,7 +89,9 @@ def _autopct_threshold(pct: float) -> str:
     return f"{pct:.1f}%" if pct >= 3 else ""
 
 
-def _summarize_categories(categories: list[SpendingCategoryRow]) -> list[SpendingCategoryRow]:
+def _summarize_categories(
+    categories: list[SpendingCategoryRow],
+) -> list[SpendingCategoryRow]:
     ordered = sorted(categories, key=lambda row: row.amount, reverse=True)
     top_rows = ordered[:8]
     other_total = sum((row.amount for row in ordered[8:]), Decimal("0"))
@@ -84,18 +100,28 @@ def _summarize_categories(categories: list[SpendingCategoryRow]) -> list[Spendin
     return top_rows
 
 
-def _dedupe_category_rows(categories: list[SpendingCategoryRow]) -> list[SpendingCategoryRow]:
+def _dedupe_category_rows(
+    categories: list[SpendingCategoryRow],
+) -> list[SpendingCategoryRow]:
     deduped: dict[str, Decimal] = {}
     canonical_names: dict[str, str] = {}
     for row in categories:
         label = row.name.strip() or "Autres"
         normalized = label.lower()
-        canonical = "Autres" if normalized in {"autres", "sans catégorie", "sans categorie"} else label
+        canonical = (
+            "Autres"
+            if normalized in {"autres", "sans catégorie", "sans categorie"}
+            else label
+        )
         key = canonical.lower()
         deduped[key] = deduped.get(key, Decimal("0")) + row.amount
         canonical_names.setdefault(key, canonical)
 
-    return [SpendingCategoryRow(name=canonical_names[key], amount=amount) for key, amount in deduped.items() if amount > 0]
+    return [
+        SpendingCategoryRow(name=canonical_names[key], amount=amount)
+        for key, amount in deduped.items()
+        if amount > 0
+    ]
 
 
 def _build_pie_chart(categories: list[SpendingCategoryRow]) -> bytes:
@@ -167,7 +193,11 @@ def _build_kpi_cards(data: SpendingReportData) -> Table:
     )
     cells = [
         [
-            Paragraph("<b>Total dépenses</b><br/>" + _format_amount(data.total, data.currency), card_style),
+            Paragraph(
+                "<b>Total dépenses</b><br/>"
+                + _format_amount(data.total, data.currency),
+                card_style,
+            ),
             Paragraph("<b>Nb opérations</b><br/>" + str(data.count), card_style),
         ]
     ]
@@ -218,13 +248,18 @@ def _build_transactions_table(
             return value
         return value[: max_length - 1].rstrip() + "…"
 
-    section_flowables: list[Flowable] = [Paragraph(f"<b>{title}</b>", getSampleStyleSheet()["BodyText"]), Spacer(1, 1 * mm)]
+    section_flowables: list[Flowable] = [
+        Paragraph(f"<b>{title}</b>", getSampleStyleSheet()["BodyText"]),
+        Spacer(1, 1 * mm),
+    ]
 
     table_data = [["Date", "Marchand", "Catégorie", "Montant"]]
     if unavailable:
         table_data.append(["-", "Détails indisponibles", "-", "-"])
     elif not rows:
-        table_data.append(["-", "Aucune transaction", "-", _format_amount(Decimal("0"), currency)])
+        table_data.append(
+            ["-", "Aucune transaction", "-", _format_amount(Decimal("0"), currency)]
+        )
     else:
         ordered_rows = sorted(rows, key=lambda row: row.date)
         for row in ordered_rows[:display_limit]:
@@ -237,7 +272,9 @@ def _build_transactions_table(
                 ]
             )
 
-    table = Table(table_data, colWidths=[30 * mm, 78 * mm, 46 * mm, 24 * mm], repeatRows=1)
+    table = Table(
+        table_data, colWidths=[30 * mm, 78 * mm, 46 * mm, 24 * mm], repeatRows=1
+    )
     table_style: list[tuple] = [
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#EEF1F4")),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
@@ -249,7 +286,14 @@ def _build_transactions_table(
     ]
     for row_index in range(1, len(table_data)):
         if row_index % 2 == 0:
-            table_style.append(("BACKGROUND", (0, row_index), (-1, row_index), colors.HexColor("#FAFBFC")))
+            table_style.append(
+                (
+                    "BACKGROUND",
+                    (0, row_index),
+                    (-1, row_index),
+                    colors.HexColor("#FAFBFC"),
+                )
+            )
     table.setStyle(TableStyle(table_style))
     section_flowables.append(table)
     section_flowables.append(Spacer(1, 3 * mm))
@@ -263,10 +307,15 @@ def _build_cashflow_summary_table(data: SpendingReportData) -> Table:
         ["Cashflow net", _format_amount(data.cashflow_net, data.cashflow_currency)],
         [
             "Variation nette (incl. transferts)",
-            _format_amount(data.cashflow_net_including_transfers, data.cashflow_currency),
+            _format_amount(
+                data.cashflow_net_including_transfers, data.cashflow_currency
+            ),
         ],
         ["", ""],
-        ["Transferts internes", _format_amount(data.cashflow_internal_transfers, data.cashflow_currency)],
+        [
+            "Transferts internes",
+            _format_amount(data.cashflow_internal_transfers, data.cashflow_currency),
+        ],
         ["Nombre de transactions", str(data.cashflow_transaction_count)],
     ]
     table = Table(table_data, colWidths=[90 * mm, 86 * mm])
@@ -295,6 +344,7 @@ def _build_shared_expenses_summary_table(data: SpendingReportData) -> Table:
         ["Solde partage", _format_amount(data.shared_net_balance, data.currency)],
         ["Total effectif", _format_amount(data.effective_total, data.currency)],
     ]
+    last_row = max(0, len(table_data) - 1)
     table = Table(table_data, colWidths=[90 * mm, 86 * mm])
     table.setStyle(
         TableStyle(
@@ -303,7 +353,7 @@ def _build_shared_expenses_summary_table(data: SpendingReportData) -> Table:
                 ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
                 ("TOPPADDING", (0, 0), (-1, -1), 3),
                 ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-                ("FONTNAME", (0, len(table_data) - 1), (-1, len(table_data) - 1), "Helvetica-Bold"),
+                ("FONTNAME", (0, last_row), (-1, last_row), "Helvetica-Bold"),
             ]
         )
     )
@@ -323,8 +373,15 @@ def generate_spending_report_pdf(data: SpendingReportData) -> bytes:
         bottomMargin=14 * mm,
     )
     styles = getSampleStyleSheet()
-    section_title_style = ParagraphStyle(name="SectionTitle", parent=styles["Heading2"], spaceAfter=4, fontSize=12)
-    subtitle_style = ParagraphStyle(name="Subtitle", parent=styles["BodyText"], fontSize=9, textColor=colors.HexColor("#6B7280"))
+    section_title_style = ParagraphStyle(
+        name="SectionTitle", parent=styles["Heading2"], spaceAfter=4, fontSize=12
+    )
+    subtitle_style = ParagraphStyle(
+        name="Subtitle",
+        parent=styles["BodyText"],
+        fontSize=9,
+        textColor=colors.HexColor("#6B7280"),
+    )
 
     story = [
         Paragraph("Rapport de dépenses", styles["Title"]),
@@ -347,7 +404,9 @@ def generate_spending_report_pdf(data: SpendingReportData) -> bytes:
     story.append(Paragraph("Répartition des dépenses", section_title_style))
     story.append(Spacer(1, 1 * mm))
     if not data.categories:
-        story.append(Paragraph("Aucune transaction sur la période.", styles["BodyText"]))
+        story.append(
+            Paragraph("Aucune transaction sur la période.", styles["BodyText"])
+        )
     else:
         pie_bytes = _build_pie_chart(data.categories)
         story.append(Image(BytesIO(pie_bytes), width=166 * mm, height=92 * mm))
@@ -355,16 +414,24 @@ def generate_spending_report_pdf(data: SpendingReportData) -> bytes:
 
         deduped_categories = _dedupe_category_rows(data.categories)
         total_categories = sum((row.amount for row in deduped_categories), Decimal("0"))
-        top10 = sorted(deduped_categories, key=lambda row: row.amount, reverse=True)[:10]
+        top10 = sorted(deduped_categories, key=lambda row: row.amount, reverse=True)[
+            :10
+        ]
         story.append(Paragraph("Top catégories", section_title_style))
         table_data = [["Catégorie", "Montant", "Part (%)"]]
         for row in top10:
-            ratio = (row.amount / total_categories * Decimal("100")) if total_categories > 0 else Decimal("0")
-            table_data.append([
-                row.name,
-                _format_amount(row.amount, data.currency),
-                f"{ratio.quantize(Decimal('0.1'), rounding=ROUND_HALF_UP)}%",
-            ])
+            ratio = (
+                (row.amount / total_categories * Decimal("100"))
+                if total_categories > 0
+                else Decimal("0")
+            )
+            table_data.append(
+                [
+                    row.name,
+                    _format_amount(row.amount, data.currency),
+                    f"{ratio.quantize(Decimal('0.1'), rounding=ROUND_HALF_UP)}%",
+                ]
+            )
 
         table = Table(table_data, colWidths=[90 * mm, 50 * mm, 20 * mm], repeatRows=1)
         table_style: list[tuple] = [
@@ -378,7 +445,14 @@ def generate_spending_report_pdf(data: SpendingReportData) -> bytes:
         ]
         for row_index in range(1, len(table_data)):
             if row_index % 2 == 0:
-                table_style.append(("BACKGROUND", (0, row_index), (-1, row_index), colors.HexColor("#FAFBFC")))
+                table_style.append(
+                    (
+                        "BACKGROUND",
+                        (0, row_index),
+                        (-1, row_index),
+                        colors.HexColor("#FAFBFC"),
+                    )
+                )
         table.setStyle(TableStyle(table_style))
         story.append(table)
 
@@ -421,7 +495,9 @@ def generate_spending_report_pdf(data: SpendingReportData) -> bytes:
     generated_on = date.today().isoformat()
     doc.build(
         story,
-        canvasmaker=lambda *args, **kwargs: _FooterCanvas(*args, generated_on=generated_on, **kwargs),
+        canvasmaker=lambda *args, **kwargs: _FooterCanvas(
+            *args, generated_on=generated_on, **kwargs
+        ),
     )
     buffer.seek(0)
     return buffer.read()

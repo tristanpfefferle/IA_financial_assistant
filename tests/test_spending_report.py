@@ -31,7 +31,9 @@ def test_build_cashflow_summary_table_includes_net_variation_with_transfers() ->
     assert table._cellvalues[3][1] == "90.00 CHF"
 
 
-def test_build_shared_expenses_summary_table_includes_effective_spending_block() -> None:
+def test_build_shared_expenses_summary_table_includes_effective_spending_block() -> (
+    None
+):
     data = SpendingReportData(
         period_label="2026-01-01 → 2026-01-31",
         start_date="2026-01-01",
@@ -54,3 +56,43 @@ def test_build_shared_expenses_summary_table_includes_effective_spending_block()
     assert table._cellvalues[2] == ["Partage entrant", "10.00 CHF"]
     assert table._cellvalues[3] == ["Solde partage", "-20.00 CHF"]
     assert table._cellvalues[4] == ["Total effectif", "280.00 CHF"]
+
+
+def test_build_shared_expenses_summary_table_bolds_only_last_row_without_breaking_base_style() -> (
+    None
+):
+    data = SpendingReportData(
+        period_label="2026-01-01 → 2026-01-31",
+        start_date="2026-01-01",
+        end_date="2026-01-31",
+        total=Decimal("320"),
+        count=4,
+        currency="CHF",
+        categories=[],
+        transactions=[],
+    )
+
+    table = _build_shared_expenses_summary_table(data)
+
+    for row in table._cellStyles[:-1]:
+        assert row[0].fontname == "Helvetica"
+        assert row[1].fontname == "Helvetica"
+        assert row[0].alignment == "LEFT"
+        assert row[1].alignment == "RIGHT"
+        assert row[0].valign == "MIDDLE"
+        assert row[1].valign == "MIDDLE"
+        assert row[0].topPadding == 3
+        assert row[1].topPadding == 3
+        assert row[0].bottomPadding == 3
+        assert row[1].bottomPadding == 3
+
+    assert table._cellStyles[-1][0].fontname == "Helvetica-Bold"
+    assert table._cellStyles[-1][1].fontname == "Helvetica-Bold"
+    assert table._cellStyles[-1][0].alignment == "LEFT"
+    assert table._cellStyles[-1][1].alignment == "RIGHT"
+    assert table._cellStyles[-1][0].valign == "MIDDLE"
+    assert table._cellStyles[-1][1].valign == "MIDDLE"
+    assert table._cellStyles[-1][0].topPadding == 3
+    assert table._cellStyles[-1][1].topPadding == 3
+    assert table._cellStyles[-1][0].bottomPadding == 3
+    assert table._cellStyles[-1][1].bottomPadding == 3
