@@ -180,6 +180,73 @@ def test_resolver_marks_invalid_item_failed(monkeypatch) -> None:
     assert repo.updates[-1]["status"] == "failed"
 
 
+def test_resolver_skips_twint_p2p_suggestions(monkeypatch) -> None:
+    class _TwintRepo(_RepoStub):
+        def list_map_alias_suggestions(self, *, profile_id: UUID, limit: int):
+            assert profile_id == PROFILE_ID
+            assert limit == 10
+            return [
+                {
+                    "id": str(SUGGESTION_ID),
+                    "observed_alias": "TWINT A John Doe",
+                    "observed_alias_norm": "twint_p2p",
+                }
+            ]
+
+    repo = _TwintRepo()
+    monkeypatch.setattr(resolver, "_call_llm_json", lambda _prompt: (_ for _ in ()).throw(AssertionError("should not call llm")))
+
+    stats = resolver.resolve_pending_map_alias(profile_id=PROFILE_ID, profiles_repository=repo, limit=10)
+
+    assert stats["processed"] == 0
+    assert stats["applied"] == 0
+    assert repo.updates == []
+
+
+def test_resolver_uses_safe_fallback_when_llm_returns_raw_label(monkeypatch) -> None:
+    repo = _RepoStub()
+
+    monkeypatch.setattr(
+        resolver,
+        "_call_llm_json",
+        lambda _prompt: (
+            {
+                "resolutions": [
+                    {
+                        "suggestion_id": str(SUGGESTION_ID),
+                        "action": "create_entity",
+                        "merchant_entity_id": None,
+                        "canonical_name": "Paiement UBS TWINT No de transaction 123456",
+                        "canonical_name_norm": "paiement ubs twint no de transaction 123456",
+                        "country": "CH",
+                        "suggested_category_norm": "food",
+                        "suggested_category_label": "Alimentation",
+                        "confidence": 0.9,
+                        "rationale": "fallback expected",
+                    }
+                ]
+            },
+            "run_unsafe",
+            {},
+        ),
+    )
+
+    captured: dict[str, str] = {}
+
+    def _capture_create_merchant_entity(**kwargs):
+        captured["canonical_name"] = kwargs["canonical_name"]
+        captured["canonical_name_norm"] = kwargs["canonical_name_norm"]
+        return ENTITY_ID
+
+    monkeypatch.setattr(repo, "create_merchant_entity", _capture_create_merchant_entity)
+
+    stats = resolver.resolve_pending_map_alias(profile_id=PROFILE_ID, profiles_repository=repo, limit=10)
+
+    assert stats["applied"] == 1
+    assert captured["canonical_name"] == "Coop City"
+    assert captured["canonical_name_norm"] == "coop city"
+
+
 
 def test_batching_limit_25_calls_llm_twice(monkeypatch) -> None:
     class _BatchRepo(_RepoStub):

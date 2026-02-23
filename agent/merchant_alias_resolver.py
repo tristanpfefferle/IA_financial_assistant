@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 from uuid import UUID
 
@@ -41,6 +42,39 @@ _PROMPT_COMPACT_REPLACEMENTS = (
     ("Motif du paiement", " "),
     ("Paiement UBS", " "),
 )
+
+
+def _is_safe_canonical_candidate(name: str) -> bool:
+    cleaned = " ".join(str(name).split()).strip()
+    if not cleaned:
+        return False
+    if len(cleaned) > 40:
+        return False
+    if sum(char.isdigit() for char in cleaned) >= 5:
+        return False
+
+    lowered = cleaned.lower()
+    if re.search(r"\bCH\d{2}[0-9A-Z ]{10,}\b", cleaned, flags=re.IGNORECASE):
+        return False
+    if re.search(r"(?:\+41|0041)\s?(?:\(?0\)?\s?)?(?:\d[\s.-]?){8,12}", cleaned):
+        return False
+
+    raw_line_markers = (
+        "paiement carte",
+        "paiement ubs twint",
+        "transaction",
+        "motif du paiement",
+        "no de transaction",
+        "date de transaction",
+        "sumup",
+        "paypal",
+    )
+    return not any(marker in lowered for marker in raw_line_markers)
+
+
+def _safe_title_case(name_norm: str) -> str:
+    compact = " ".join(str(name_norm or "").split())
+    return " ".join(word.capitalize() for word in compact.split())[:40]
 
 
 def _normalize_text(value: str) -> str:
@@ -268,6 +302,8 @@ def resolve_pending_map_alias(*, profile_id: UUID, profiles_repository: Any, lim
         suggestion_id_raw = item.get("id")
         observed_alias = " ".join(str(item.get("observed_alias") or "").split())
         observed_alias_norm = _normalize_text(str(item.get("observed_alias_norm") or ""))
+        if observed_alias_norm == "twint_p2p":
+            continue
         if not observed_alias:
             observed_alias = " ".join(str(item.get("observed_alias_norm") or "").split())
         if not observed_alias or not observed_alias_norm:
@@ -366,9 +402,18 @@ def resolve_pending_map_alias(*, profile_id: UUID, profiles_repository: Any, lim
             merchant_entity_id: UUID | None = resolution["merchant_entity_id"]
             try:
                 if resolution["action"] == "create_entity":
+                    canonical_name = " ".join(str(resolution["canonical_name"] or "").split())
+                    canonical_name_norm = _normalize_text(str(resolution["canonical_name_norm"] or ""))
+                    if not _is_safe_canonical_candidate(canonical_name):
+                        fallback_name = _safe_title_case(suggestion["observed_alias_norm"])
+                        if not _is_safe_canonical_candidate(fallback_name):
+                            raise ValueError("unsafe_canonical_name")
+                        canonical_name = fallback_name
+                        canonical_name_norm = _normalize_text(fallback_name)
+
                     entity = profiles_repository.create_merchant_entity(
-                        canonical_name=resolution["canonical_name"],
-                        canonical_name_norm=resolution["canonical_name_norm"],
+                        canonical_name=canonical_name,
+                        canonical_name_norm=canonical_name_norm,
                         country=resolution["country"],
                         suggested_category_norm=resolution["suggested_category_norm"],
                         suggested_category_label=resolution["suggested_category_label"],

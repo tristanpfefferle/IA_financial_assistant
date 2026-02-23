@@ -113,6 +113,84 @@ class _ProfilesStub:
         return suggested if suggested else None
 
 
+class _ProfilesStubImmediateEnrich(_ProfilesStub):
+    def __init__(self, *, repository: InMemoryRelevesRepository, with_autres: bool = True) -> None:
+        super().__init__(with_autres=with_autres)
+        self._repository = repository
+        self._suggestions: list[dict[str, str]] = []
+
+    def create_pending_map_alias_suggestion(self, **kwargs):
+        created = super().create_pending_map_alias_suggestion(**kwargs)
+        if created:
+            self._suggestions.append(
+                {
+                    "observed_alias": kwargs["observed_alias"],
+                    "observed_alias_norm": kwargs["observed_alias_norm"],
+                }
+            )
+        return created
+
+    def list_map_alias_suggestions(self, *, profile_id: UUID, limit: int = 100):
+        del profile_id
+        return [
+            {
+                "id": str(uuid4()),
+                "observed_alias": item["observed_alias"],
+                "observed_alias_norm": item["observed_alias_norm"],
+            }
+            for item in self._suggestions[:limit]
+        ]
+
+    def create_merchant_entity(self, *, canonical_name: str, canonical_name_norm: str, **kwargs) -> UUID:
+        del canonical_name, kwargs
+        entity_id = uuid4()
+        self.entity_suggested[entity_id] = canonical_name_norm
+        return entity_id
+
+    def upsert_merchant_alias(self, *, merchant_entity_id: UUID, alias: str, alias_norm: str, source: str = "import"):
+        del alias, source
+        self.alias_to_entity[normalize_merchant_alias(alias_norm)] = merchant_entity_id
+
+    def list_profile_categories(self, *, profile_id: UUID):
+        del profile_id
+        return [
+            {"id": str(category_id), "name_norm": key, "system_key": key}
+            for key, category_id in self._categories_by_norm.items()
+        ]
+
+    def upsert_profile_merchant_override(
+        self,
+        *,
+        profile_id: UUID,
+        merchant_entity_id: UUID,
+        category_id: UUID | None,
+        status: str = "auto",
+    ) -> None:
+        del status
+        if category_id is not None:
+            self.profile_entity_overrides[(profile_id, merchant_entity_id)] = category_id
+
+    def apply_entity_to_profile_transactions(
+        self,
+        *,
+        profile_id: UUID,
+        observed_alias: str,
+        merchant_entity_id: UUID,
+        category_id: UUID | None,
+    ) -> int:
+        updated = 0
+        for item in self._repository._seed:  # noqa: SLF001 - in-memory test fixture
+            if item.profile_id != profile_id:
+                continue
+            if (item.payee or item.libelle) != observed_alias:
+                continue
+            item.merchant_id = merchant_entity_id
+            if category_id is not None:
+                item.category_id = category_id
+            updated += 1
+        return updated
+
+
 def _build_request(csv_content: bytes, *, profile_id: UUID = PROFILE_ID) -> RelevesImportRequest:
     return RelevesImportRequest(
         profile_id=profile_id,
@@ -418,3 +496,90 @@ def test_import_paypal_aggregator_keeps_stable_key_and_null_canonical_name() -> 
     latest_suggestion = profiles_repository.created_suggestions[-1]
     assert latest_suggestion["merchant_key_norm"] == "paypal"
     assert latest_suggestion["suggested_entity_name"] is None
+
+
+def test_import_non_p2p_unknown_alias_is_enriched_immediately() -> None:
+    repository = InMemoryRelevesRepository()
+    profiles_repository = _ProfilesStubImmediateEnrich(repository=repository, with_autres=False)
+
+    def _resolver(*, profile_id: UUID, profiles_repository: _ProfilesStubImmediateEnrich, limit: int):
+        suggestions = profiles_repository.list_map_alias_suggestions(profile_id=profile_id, limit=limit)
+        category_id = profiles_repository.find_profile_category_id_by_name_norm(profile_id=profile_id, name_norm="transport")
+        assert category_id is not None
+        for suggestion in suggestions:
+            entity_id = profiles_repository.create_merchant_entity(
+                canonical_name="Sbb",
+                canonical_name_norm="sbb",
+                suggested_category_norm="transport",
+            )
+            profiles_repository.upsert_merchant_alias(
+                merchant_entity_id=entity_id,
+                alias=str(suggestion["observed_alias"]),
+                alias_norm=str(suggestion["observed_alias_norm"]),
+                source="llm",
+            )
+            profiles_repository.upsert_profile_merchant_override(
+                profile_id=profile_id,
+                merchant_entity_id=entity_id,
+                category_id=category_id,
+                status="auto",
+            )
+            profiles_repository.apply_entity_to_profile_transactions(
+                profile_id=profile_id,
+                observed_alias=str(suggestion["observed_alias"]),
+                merchant_entity_id=entity_id,
+                category_id=category_id,
+            )
+        return {"applied": len(suggestions)}
+
+    service = RelevesImportService(
+        releves_repository=repository,
+        profiles_repository=profiles_repository,
+        resolve_pending_map_alias_fn=_resolver,
+    )
+
+    result = service.import_releves(
+        _build_request(_build_single_transaction_csv(description1="SBB CFF FFS", trx_id="TRX-SBB-001"))
+    )
+
+    assert result.imported_count == 1
+    imported_rows = repository.list_releves_for_import(profile_id=PROFILE_ID, bank_account_id=None)
+    sbb_row = [
+        item
+        for item in imported_rows
+        if isinstance(item.get("meta"), dict) and item["meta"].get("_external_id") == "TRX-SBB-001"
+    ][0]
+    assert sbb_row["merchant_entity_id"] is not None
+    assert sbb_row["category_id"] is not None
+
+
+def test_import_twint_p2p_keeps_pending_even_with_immediate_enrichment_enabled() -> None:
+    repository = InMemoryRelevesRepository()
+    profiles_repository = _ProfilesStub(with_autres=False)
+
+    resolver_called = {"value": False}
+
+    def _resolver(**kwargs):
+        resolver_called["value"] = True
+        return kwargs
+
+    service = RelevesImportService(
+        releves_repository=repository,
+        profiles_repository=profiles_repository,
+        resolve_pending_map_alias_fn=_resolver,
+    )
+
+    result = service.import_releves(
+        _build_request(_build_single_transaction_csv(description1="TWINT A John Doe", trx_id="TRX-TWINT-PENDING"))
+    )
+
+    assert result.imported_count == 1
+    assert resolver_called["value"] is True
+    imported_rows = repository.list_releves_for_import(profile_id=PROFILE_ID, bank_account_id=None)
+    twint_row = [
+        item
+        for item in imported_rows
+        if isinstance(item.get("meta"), dict) and item["meta"].get("_external_id") == "TRX-TWINT-PENDING"
+    ][0]
+    assert twint_row["merchant_entity_id"] is None
+    assert twint_row["meta"]["category_key"] == "twint_p2p_pending"

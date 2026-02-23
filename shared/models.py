@@ -391,6 +391,7 @@ class RelevesImportRequest(BaseModel):
     bank_account_id: UUID | None = None
     import_mode: RelevesImportMode = RelevesImportMode.ANALYZE
     modified_action: RelevesImportModifiedAction = RelevesImportModifiedAction.KEEP
+    enrich_immediately: bool = True
 
 
 class RelevesImportError(BaseModel):
