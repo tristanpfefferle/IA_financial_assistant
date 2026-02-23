@@ -45,6 +45,8 @@ from backend.reporting import (
 from backend.auth.supabase_auth import UnauthorizedError, get_user_from_bearer_token
 from backend.db.supabase_client import SupabaseClient, SupabaseSettings
 from backend.repositories.profiles_repository import ProfilesRepository, SupabaseProfilesRepository
+from backend.repositories.shared_expenses_repository import SupabaseSharedExpensesRepository
+from backend.services.shared_expenses.effective_spending import compute_effective_spending_summary
 from shared.models import DateRange, RelevesDirection, ToolError, ToolErrorCode
 
 
@@ -3041,6 +3043,40 @@ def get_spending_report_pdf(
     )
 
     total = abs(Decimal(str(sum_payload.get("total") or "0")))
+    effective_spending_summary = {
+        "outgoing": Decimal("0"),
+        "incoming": Decimal("0"),
+        "net_balance": Decimal("0"),
+        "effective_total": total,
+    }
+    try:
+        supabase_url = _config.supabase_url()
+        supabase_key = _config.supabase_service_role_key()
+        if supabase_url and supabase_key:
+            shared_repository = SupabaseSharedExpensesRepository(
+                client=SupabaseClient(
+                    settings=SupabaseSettings(
+                        url=supabase_url,
+                        service_role_key=supabase_key,
+                        anon_key=_config.supabase_anon_key(),
+                    )
+                )
+            )
+            effective_spending_summary = compute_effective_spending_summary(
+                profile_id=profile_id,
+                start_date=period_start,
+                end_date=period_end,
+                releves_total_expense=total,
+                shared_expenses_repository=shared_repository,
+            )
+    except Exception:
+        effective_spending_summary = {
+            "outgoing": Decimal("0"),
+            "incoming": Decimal("0"),
+            "net_balance": Decimal("0"),
+            "effective_total": total,
+        }
+
     count = int(sum_payload.get("count") or 0)
     period_label = f"{period_start.isoformat()} → {period_end.isoformat()}"
     filename_period = period_start.strftime("%Y-%m") if period_start.day == 1 else f"{period_start.isoformat()}_{period_end.isoformat()}"
@@ -3062,6 +3098,10 @@ def get_spending_report_pdf(
             cashflow_currency=(
                 str(cashflow_summary.get("currency")) if cashflow_summary.get("currency") is not None else None
             ),
+            effective_total=Decimal(str(effective_spending_summary["effective_total"])),
+            shared_outgoing=Decimal(str(effective_spending_summary["outgoing"])),
+            shared_incoming=Decimal(str(effective_spending_summary["incoming"])),
+            shared_net_balance=Decimal(str(effective_spending_summary["net_balance"])),
             categories=category_rows,
             transactions=transactions,
             transactions_truncated=transactions_truncated,

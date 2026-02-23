@@ -12,10 +12,14 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 
 from backend.repositories.profiles_repository import ProfilesRepository
 from backend.repositories.releves_repository import RelevesRepository
+from backend.repositories.shared_expenses_repository import SupabaseSharedExpensesRepository
 from backend.services.classification.decision_engine import decide_releve_classification, normalize_merchant_alias
 from backend.services.releves_import.classification import classify_and_categorize_transaction
 from backend.services.releves_import.dedup import compare_rows
 from backend.services.releves_import.routing import route_bank_parser
+from backend.services.shared_expenses.auto_share import apply_auto_share_suggestions_for_period
+from shared import config
+from backend.db.supabase_client import SupabaseClient, SupabaseSettings
 from shared.models import (
     RelevesImportError,
     RelevesImportMode,
@@ -422,6 +426,37 @@ class RelevesImportService:
                 profile_id=request.profile_id,
                 rows=rows_to_insert,
             ) if rows_to_insert else 0
+
+            if rows_to_insert and self.profiles_repository is not None:
+                try:
+                    imported_dates = [
+                        row["date"]
+                        for row in rows_to_insert
+                        if isinstance(row.get("date"), date)
+                    ]
+                    if imported_dates:
+                        supabase_url = config.supabase_url()
+                        supabase_key = config.supabase_service_role_key()
+                        if supabase_url and supabase_key:
+                            shared_repository = SupabaseSharedExpensesRepository(
+                                client=SupabaseClient(
+                                    settings=SupabaseSettings(
+                                        url=supabase_url,
+                                        service_role_key=supabase_key,
+                                        anon_key=config.supabase_anon_key(),
+                                    )
+                                )
+                            )
+                            apply_auto_share_suggestions_for_period(
+                                profile_id=request.profile_id,
+                                start_date=min(imported_dates),
+                                end_date=max(imported_dates),
+                                releves_repository=self.releves_repository,
+                                profiles_repository=self.profiles_repository,
+                                shared_expenses_repository=shared_repository,
+                            )
+                except Exception:
+                    pass
         else:
             imported_count = 0
 
