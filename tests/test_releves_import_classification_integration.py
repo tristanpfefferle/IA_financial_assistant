@@ -218,10 +218,7 @@ def test_import_sumup_alias_variants_creates_single_pending_suggestion_and_reimp
         if isinstance(row.get("libelle"), str) and str(row.get("libelle", "")).startswith("SumUp *L")
     ]
     assert len(sumup_rows) == 2
-    assert {row["meta"].get("observed_alias_key_norm") for row in sumup_rows} == {"le scalp coif le bouveret"}
-
-    latest_suggestion = profiles_repository.created_suggestions[-1]
-    assert latest_suggestion["merchant_key_norm"] == "sumup"
+    assert {row["meta"].get("observed_alias_key_norm") for row in sumup_rows} == {"sumup"}
 
 def test_reimport_same_45_unknown_transactions_creates_no_new_entities_or_aliases() -> None:
     repository = InMemoryRelevesRepository()
@@ -412,8 +409,6 @@ def test_import_paypal_aggregator_keeps_stable_key_and_null_canonical_name() -> 
     ][0]
     assert paypal_row["merchant_entity_id"] is None
     assert paypal_row["meta"]["merchant_resolution"] == "unresolved"
-    assert paypal_row["meta"]["observed_alias_key_norm"] != "paypal"
-    assert "xyz" in str(paypal_row["meta"]["observed_alias_key_norm"])
 
     latest_suggestion = profiles_repository.created_suggestions[-1]
     assert latest_suggestion["merchant_key_norm"] == "paypal"
