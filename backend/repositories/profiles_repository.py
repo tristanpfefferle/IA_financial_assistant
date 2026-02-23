@@ -124,6 +124,17 @@ class ProfilesRepository(Protocol):
     def get_merchant_entity_suggested_category_norm(self, *, merchant_entity_id: UUID) -> str | None:
         """Return suggested_category_norm for one merchant entity."""
 
+    def list_merchant_entities_missing_suggested_category(self, *, limit: int = 200) -> list[dict[str, Any]]:
+        """List merchant entities that still need suggested category enrichment."""
+
+    def update_merchant_entity_suggested_category_norm(
+        self,
+        *,
+        merchant_entity_id: UUID,
+        suggested_category_norm: str,
+    ) -> None:
+        """Update suggested_category_norm for one merchant entity."""
+
     def create_pending_map_alias_suggestion(
         self,
         *,
@@ -153,6 +164,9 @@ class ProfilesRepository(Protocol):
 
     def count_map_alias_suggestions(self, *, profile_id: UUID) -> int | None:
         """Count pending/failed map_alias suggestions for one profile when supported."""
+
+    def find_merchant_entity_by_canonical_norm(self, *, canonical_name_norm: str) -> dict[str, Any] | None:
+        """Find merchant entity by canonical normalized name within default country."""
 
     def get_merchant_entity_by_canonical_name_norm(
         self,
@@ -322,7 +336,12 @@ class SupabaseProfilesRepository:
         if str(error_code) == "23505":
             return True
         error_message = str(exc).lower()
-        return "duplicate key" in error_message or "unique" in error_message
+        return (
+            "duplicate key" in error_message
+            or "unique" in error_message
+            or "status 409" in error_message
+            or "conflict" in error_message
+        )
 
     def _ensure_initial_chat_state(self, *, profile_id: UUID, user_id: UUID) -> None:
         conversation_id = str(profile_id)
@@ -724,6 +743,36 @@ class SupabaseProfilesRepository:
         cleaned = self._normalize_name_norm(suggested)
         return cleaned or None
 
+    def list_merchant_entities_missing_suggested_category(self, *, limit: int = 200) -> list[dict[str, Any]]:
+        rows, _ = self._client.get_rows(
+            table="merchant_entities",
+            query={
+                "select": "id,canonical_name,canonical_name_norm,country",
+                "or": "(suggested_category_norm.is.null,suggested_category_norm.eq.)",
+                "limit": max(1, limit),
+            },
+            with_count=False,
+            use_anon_key=False,
+        )
+        return rows
+
+    def update_merchant_entity_suggested_category_norm(
+        self,
+        *,
+        merchant_entity_id: UUID,
+        suggested_category_norm: str,
+    ) -> None:
+        cleaned_norm = self._normalize_name_norm(suggested_category_norm)
+        if not cleaned_norm:
+            return
+
+        self._client.patch_rows(
+            table="merchant_entities",
+            query={"id": f"eq.{merchant_entity_id}"},
+            payload={"suggested_category_norm": cleaned_norm},
+            use_anon_key=False,
+        )
+
     def create_pending_map_alias_suggestion(
         self,
         *,
@@ -957,15 +1006,31 @@ class SupabaseProfilesRepository:
         if not cleaned_alias_norm or not cleaned_merchant_key_norm:
             raise ValueError("observed_alias_norm and merchant_key_norm must be non-empty")
 
-        existing = self.find_merchant_entity_by_alias_norm(alias_norm=cleaned_alias_norm)
-        if existing is not None and existing.get("id"):
-            return UUID(str(existing["id"]))
+        existing_by_alias = self.find_merchant_entity_by_alias_norm(alias_norm=cleaned_alias_norm)
+        if existing_by_alias is not None and existing_by_alias.get("id"):
+            return UUID(str(existing_by_alias["id"]))
 
-        merchant_entity_id = self.create_merchant_entity(
-            canonical_name=cleaned_merchant_key_norm,
+        existing_by_canonical = self.find_merchant_entity_by_canonical_norm(
             canonical_name_norm=cleaned_merchant_key_norm,
-            suggested_category_norm=None,
         )
+        if existing_by_canonical is not None and existing_by_canonical.get("id"):
+            merchant_entity_id = UUID(str(existing_by_canonical["id"]))
+        else:
+            try:
+                merchant_entity_id = self.create_merchant_entity(
+                    canonical_name=cleaned_merchant_key_norm,
+                    canonical_name_norm=cleaned_merchant_key_norm,
+                    suggested_category_norm=None,
+                )
+            except Exception as exc:
+                if not self._is_duplicate_key_error(exc):
+                    raise
+                resolved_canonical = self.find_merchant_entity_by_canonical_norm(
+                    canonical_name_norm=cleaned_merchant_key_norm,
+                )
+                if resolved_canonical is None or not resolved_canonical.get("id"):
+                    raise
+                merchant_entity_id = UUID(str(resolved_canonical["id"]))
 
         self.upsert_merchant_alias(
             merchant_entity_id=merchant_entity_id,
@@ -1092,6 +1157,14 @@ class SupabaseProfilesRepository:
             use_anon_key=False,
         )
         return total
+
+    def find_merchant_entity_by_canonical_norm(self, *, canonical_name_norm: str) -> dict[str, Any] | None:
+        """Find merchant entity by canonical normalized name within default country."""
+
+        return self.get_merchant_entity_by_canonical_name_norm(
+            country="CH",
+            canonical_name_norm=canonical_name_norm,
+        )
 
     def get_merchant_entity_by_canonical_name_norm(
         self,

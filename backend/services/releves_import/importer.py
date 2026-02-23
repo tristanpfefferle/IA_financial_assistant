@@ -55,6 +55,49 @@ class RelevesImportService:
         return category_id
 
     @staticmethod
+    def _derive_merchant_key_norm(*, libelle: str | None, payee: str | None) -> str:
+        """Build a stable normalized merchant key from observed labels."""
+
+        noise_tokens = {
+            "paiement",
+            "payment",
+            "carte",
+            "card",
+            "debit",
+            "credit",
+            "transaction",
+            "trx",
+            "twint",
+            "virement",
+            "transfert",
+            "internal",
+            "transfer",
+            "ref",
+            "no",
+            "numero",
+        }
+
+        base_norm = normalize_merchant_alias(payee or libelle or "")
+        if not base_norm:
+            base_norm = normalize_merchant_alias(libelle or "")
+        if not base_norm:
+            return "inconnu"
+
+        tokens = [token for token in base_norm.split() if token and token not in noise_tokens]
+        if tokens:
+            return " ".join(tokens)
+        return base_norm or "inconnu"
+
+    @staticmethod
+    def _fallback_merchant_entity_id(*, profile_id: UUID, merchant_key_norm: str) -> UUID:
+        """Build a deterministic merchant entity id fallback when repository is unavailable."""
+
+        return uuid5(
+            NAMESPACE_URL,
+            f"ia-financial-assistant:{profile_id}:merchant:{merchant_key_norm}",
+        )
+
+    @staticmethod
     def _extract_external_id(parsed_row: dict[str, object]) -> str | None:
         raw_meta = parsed_row.get("meta")
         if isinstance(raw_meta, dict):
@@ -120,15 +163,15 @@ class RelevesImportService:
         meta_dict["category_status"] = classification.category_status
         meta_dict["tx_kind"] = classification.tx_kind
 
-        decision = None
-        merchant_entity_id = None
-        if self.profiles_repository is not None:
-            observed_alias = str(parsed_row.get("payee") or parsed_row.get("libelle") or "").strip()
-            observed_alias_norm = normalize_merchant_alias(observed_alias)
-            merchant_key_norm = observed_alias_norm or normalize_merchant_alias(str(parsed_row.get("libelle") or ""))
-            if not merchant_key_norm:
-                merchant_key_norm = "inconnu"
+        observed_alias = str(parsed_row.get("payee") or parsed_row.get("libelle") or "").strip()
+        observed_alias_norm = normalize_merchant_alias(observed_alias)
+        merchant_key_norm = self._derive_merchant_key_norm(
+            libelle=str(parsed_row.get("libelle") or "") or None,
+            payee=str(parsed_row.get("payee") or "") or None,
+        )
 
+        decision = None
+        if self.profiles_repository is not None:
             merchant_entity_id = self.profiles_repository.ensure_merchant_entity_from_alias(
                 profile_id=profile_id,
                 observed_alias=observed_alias or merchant_key_norm,
@@ -152,13 +195,15 @@ class RelevesImportService:
             meta_dict["classification_rationale"] = decision.rationale
             meta_dict["classify_confidence"] = decision.confidence
             meta_dict["classify_at"] = datetime.now(timezone.utc).isoformat()
+        else:
+            merchant_entity_id = self._fallback_merchant_entity_id(
+                profile_id=profile_id,
+                merchant_key_norm=merchant_key_norm,
+            )
 
         category_id = decision.category_id if decision else None
         if category_id is None:
             category_id = self._resolve_default_category_id(profile_id=profile_id)
-
-        if merchant_entity_id is None:
-            raise RuntimeError("merchant_entity_id manquant après normalisation d'import")
 
         assert merchant_entity_id is not None
         assert category_id is not None

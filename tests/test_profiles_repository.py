@@ -910,3 +910,61 @@ def test_ensure_profile_for_auth_user_ignores_duplicate_chat_state_insert() -> N
     assert len(client.post_calls) == 2
     assert client.post_calls[0]["table"] == "profils"
     assert client.post_calls[1]["table"] == "chat_state"
+
+
+def test_ensure_merchant_entity_from_alias_reuses_existing_canonical_entity() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    entity_id = UUID("11111111-1111-1111-1111-111111111111")
+    client = _ClientStub(
+        responses=[
+            [],  # find alias -> none
+            [{"id": str(entity_id)}],  # find canonical -> reuse
+            [],  # upsert alias existence check
+            [],  # re-resolve alias after upsert (eventual consistency)
+        ]
+    )
+    repository = SupabaseProfilesRepository(client=client)
+
+    resolved_id = repository.ensure_merchant_entity_from_alias(
+        profile_id=profile_id,
+        observed_alias="Paiement carte COOP",
+        observed_alias_norm="paiement carte coop",
+        merchant_key_norm="coop",
+    )
+
+    assert resolved_id == entity_id
+    assert len(client.post_calls) == 1
+    assert client.post_calls[0]["table"] == "merchant_aliases"
+    assert client.post_calls[0]["payload"]["merchant_entity_id"] == str(entity_id)
+
+
+def test_ensure_merchant_entity_from_alias_recovers_on_duplicate_entity_insert() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    entity_id = UUID("22222222-2222-2222-2222-222222222222")
+    client = _ClientStub(
+        responses=[
+            [],  # ensure: alias lookup -> none
+            [],  # ensure: canonical lookup -> none
+            [],  # create_merchant_entity: canonical pre-check -> none
+            [{"id": str(entity_id)}],  # create_merchant_entity: canonical refetch after duplicate
+            [],  # upsert alias existence check
+            [],  # final alias refetch
+        ],
+        post_exceptions=[
+            RuntimeError("Supabase request failed with status 409: duplicate key value violates unique constraint"),
+            None,
+        ],
+    )
+    repository = SupabaseProfilesRepository(client=client)
+
+    resolved_id = repository.ensure_merchant_entity_from_alias(
+        profile_id=profile_id,
+        observed_alias="TWINT Migros",
+        observed_alias_norm="twint migros",
+        merchant_key_norm="migros",
+    )
+
+    assert resolved_id == entity_id
+    assert len(client.post_calls) == 2
+    assert client.post_calls[0]["table"] == "merchant_entities"
+    assert client.post_calls[1]["table"] == "merchant_aliases"
