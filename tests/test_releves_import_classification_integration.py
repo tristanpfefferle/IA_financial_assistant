@@ -218,7 +218,7 @@ def test_import_sumup_alias_variants_creates_single_pending_suggestion_and_reimp
         if isinstance(row.get("libelle"), str) and str(row.get("libelle", "")).startswith("SumUp *L")
     ]
     assert len(sumup_rows) == 2
-    assert {row["meta"].get("observed_alias_key_norm") for row in sumup_rows} == {"le scalp coif le bouveret"}
+    assert {row["meta"].get("observed_alias_key_norm") for row in sumup_rows} == {"sumup"}
 
 def test_reimport_same_45_unknown_transactions_creates_no_new_entities_or_aliases() -> None:
     repository = InMemoryRelevesRepository()
@@ -385,4 +385,31 @@ def test_import_twint_p2p_does_not_create_person_entity_and_keeps_pending_catego
 
     latest_suggestion = profiles_repository.created_suggestions[-1]
     assert latest_suggestion["observed_alias"] == "TWINT A John Doe"
-    assert latest_suggestion["merchant_key_norm"] == "a john doe"
+    assert latest_suggestion["merchant_key_norm"] == "twint_p2p"
+    assert latest_suggestion["suggested_entity_name"] is None
+
+
+def test_import_paypal_aggregator_keeps_stable_key_and_null_canonical_name() -> None:
+    repository = InMemoryRelevesRepository()
+    profiles_repository = _ProfilesStub(with_autres=False)
+    service = RelevesImportService(releves_repository=repository, profiles_repository=profiles_repository)
+
+    result = service.import_releves(
+        _build_request(_build_single_transaction_csv(description1="PAYPAL *XYZ", trx_id="TRX-PAYPAL-XYZ"))
+    )
+
+    assert result.imported_count == 1
+    assert result.merchant_suggestions_created_count == 1
+
+    imported_rows = repository.list_releves_for_import(profile_id=PROFILE_ID, bank_account_id=None)
+    paypal_row = [
+        item
+        for item in imported_rows
+        if isinstance(item.get("meta"), dict) and item["meta"].get("_external_id") == "TRX-PAYPAL-XYZ"
+    ][0]
+    assert paypal_row["merchant_entity_id"] is None
+    assert paypal_row["meta"]["merchant_resolution"] == "unresolved"
+
+    latest_suggestion = profiles_repository.created_suggestions[-1]
+    assert latest_suggestion["merchant_key_norm"] == "paypal"
+    assert latest_suggestion["suggested_entity_name"] is None
