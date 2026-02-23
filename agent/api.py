@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import json
 import inspect
 import os
 import re
@@ -913,7 +914,16 @@ def _bootstrap_merchants_from_imported_releves(
             continue
 
         raw_meta = row.get("meta")
-        meta = raw_meta if isinstance(raw_meta, dict) else {}
+        if isinstance(raw_meta, dict):
+            meta: dict[str, Any] = raw_meta
+        elif isinstance(raw_meta, str):
+            try:
+                parsed_meta = json.loads(raw_meta)
+            except Exception:
+                parsed_meta = {}
+            meta = parsed_meta if isinstance(parsed_meta, dict) else {}
+        else:
+            meta = {}
         observed_alias_key_norm = " ".join(str(meta.get("observed_alias_key_norm") or "").split())
         dedup_alias_norm = (
             normalize_merchant_alias(observed_alias_key_norm)
