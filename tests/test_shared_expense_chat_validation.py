@@ -164,10 +164,10 @@ def test_agent_chat_shared_expense_intent_lists_pending_and_persists_active_task
     payload = response.json()
     assert "1) 2026-02-05" in payload["reply"]
     assert "Réponds:" in payload["reply"]
-    state = repo.chat_state.get("state")
-    assert isinstance(state, dict)
-    assert state["active_task"]["type"] == "shared_expense_confirm"
-    assert len(state["active_task"]["suggestions"]) == 2
+    active_task = repo.chat_state.get("active_task")
+    assert isinstance(active_task, dict)
+    assert active_task["type"] == "shared_expense_confirm"
+    assert len(active_task["suggestions"]) == 2
 
 
 def test_agent_chat_shared_expense_active_task_applies_selected_index(monkeypatch) -> None:
@@ -178,24 +178,22 @@ def test_agent_chat_shared_expense_active_task_applies_selected_index(monkeypatc
     )
     repo = _Repo(
         chat_state={
-            "state": {
-                "active_task": {
-                    "type": "shared_expense_confirm",
-                    "created_at": "2026-01-01T10:00:00",
-                    "suggestions": [
-                        {
-                            "index": 1,
-                            "suggestion_id": str(SUGGESTION_ID_1),
-                            "transaction_id": str(TX_ID_1),
-                            "date": "2026-02-05",
-                            "merchant": "Migros",
-                            "amount": "80.00",
-                            "currency": "CHF",
-                            "suggested_split_ratio_other": "0.5",
-                            "suggested_to_profile_id": str(OTHER_PROFILE_ID),
-                        }
-                    ],
-                }
+            "active_task": {
+                "type": "shared_expense_confirm",
+                "created_at": "2026-01-01T10:00:00",
+                "suggestions": [
+                    {
+                        "index": 1,
+                        "suggestion_id": str(SUGGESTION_ID_1),
+                        "transaction_id": str(TX_ID_1),
+                        "date": "2026-02-05",
+                        "merchant": "Migros",
+                        "amount": "80.00",
+                        "currency": "CHF",
+                        "suggested_split_ratio_other": "0.5",
+                        "suggested_to_profile_id": str(OTHER_PROFILE_ID),
+                    }
+                ],
             }
         }
     )
@@ -215,5 +213,4 @@ def test_agent_chat_shared_expense_active_task_applies_selected_index(monkeypatc
             "amount": Decimal("40.00"),
         }
     ]
-    assert isinstance(repo.chat_state.get("state"), dict)
-    assert repo.chat_state["state"].get("active_task") is None
+    assert repo.chat_state.get("active_task") is None

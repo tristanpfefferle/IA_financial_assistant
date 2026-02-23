@@ -341,7 +341,7 @@ def _build_shared_expense_confirmation_reply(suggestions: list[dict[str, Any]]) 
         amount_value = str(row.get("amount") or "?")
         currency = str(row.get("currency") or "CHF")
         split_value = Decimal(str(row.get("suggested_split_ratio_other") or "0.5")) * Decimal("100")
-        split_text = f"split {int(Decimal('100') - split_value)}/{int(split_value)}"
+        split_text = f"autre: {int(split_value)}%"
         lines.append(f"{row['index']}) {date_value} — {merchant} — {amount_value} {currency} — {split_text}")
     lines.append(
         "Réponds: ‘oui tout’, ‘non tout’, ‘oui 1 et 2’, ‘non 2’, ‘split 2 60/40’ (règle split: toi/autre)."
@@ -1863,7 +1863,7 @@ def agent_chat(
         active_task = chat_state.get("active_task") if isinstance(chat_state, dict) else None
         state = chat_state.get("state") if isinstance(chat_state, dict) else None
         state_dict = dict(state) if isinstance(state, dict) else None
-        shared_expense_active_task = state_dict.get("active_task") if isinstance(state_dict, dict) else None
+        shared_expense_active_task = chat_state.get("active_task") if isinstance(chat_state, dict) else None
         existing_global_state = state_dict.get("global_state") if isinstance(state_dict, dict) else None
         global_state = existing_global_state if _is_valid_global_state(existing_global_state) else None
         should_persist_global_state = False
@@ -2682,13 +2682,11 @@ def agent_chat(
                 active_task=shared_expense_active_task,
                 user_message=payload.message,
             )
-            updated_state = dict(state_dict) if isinstance(state_dict, dict) else {}
-            updated_state["active_task"] = updated_shared_task
             updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
-            if updated_state:
-                updated_chat_state["state"] = updated_state
+            if updated_shared_task is None:
+                updated_chat_state.pop("active_task", None)
             else:
-                updated_chat_state.pop("state", None)
+                updated_chat_state["active_task"] = updated_shared_task
             profiles_repository.update_chat_state(
                 profile_id=profile_id,
                 user_id=auth_user_id,
@@ -2698,13 +2696,11 @@ def agent_chat(
 
         if _is_shared_expense_validation_intent(payload.message):
             reply_text, updated_shared_task = handle_shared_expenses_validation_request(profile_id=profile_id)
-            updated_state = dict(state_dict) if isinstance(state_dict, dict) else {}
-            updated_state["active_task"] = updated_shared_task
             updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
-            if updated_state:
-                updated_chat_state["state"] = updated_state
+            if updated_shared_task is None:
+                updated_chat_state.pop("active_task", None)
             else:
-                updated_chat_state.pop("state", None)
+                updated_chat_state["active_task"] = updated_shared_task
             profiles_repository.update_chat_state(
                 profile_id=profile_id,
                 user_id=auth_user_id,
