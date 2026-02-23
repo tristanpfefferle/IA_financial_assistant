@@ -429,6 +429,47 @@ def test_list_releves_fills_categorie_from_profile_categories_embed() -> None:
     assert "profile_categories" not in client._rows[0]
 
 
+def test_sum_releves_hydrates_category_label_before_excluded_categories(monkeypatch) -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    client = _ClientStub(
+        rows=[
+            {
+                "montant": "-50",
+                "devise": "CHF",
+                "categorie": None,
+                "category_id": "11111111-1111-1111-1111-111111111111",
+                "metadonnees": {},
+                "profile_categories": {"name": "Transferts internes"},
+            },
+            {
+                "montant": "-20",
+                "devise": "CHF",
+                "categorie": None,
+                "category_id": "22222222-2222-2222-2222-222222222222",
+                "metadonnees": {},
+                "profile_categories": {"name": "Transport"},
+            },
+        ]
+    )
+    repository = SupabaseRelevesRepository(client=client)
+    monkeypatch.setattr(repository, "get_excluded_category_names", lambda _profile_id: {"transferts internes"})
+
+    total, count, currency = repository.sum_releves(
+        RelevesFilters(
+            profile_id=profile_id,
+            direction=RelevesDirection.DEBIT_ONLY,
+            limit=50,
+            offset=0,
+        )
+    )
+
+    assert total == Decimal("-20")
+    assert count == 1
+    assert currency == "CHF"
+    assert "profile_categories" not in client._rows[0]
+    assert client._rows[0]["categorie"] == "Transferts internes"
+
+
 def test_aggregate_releves_uses_merchant_id_filter_when_match_found() -> None:
     profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
     merchant_id = UUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee")

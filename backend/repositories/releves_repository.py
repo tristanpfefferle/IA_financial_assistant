@@ -448,6 +448,10 @@ class SupabaseRelevesRepository:
     def __init__(self, client: SupabaseClient) -> None:
         self._client = client
 
+    # Keep embed wiring centralized: some PostgREST setups require explicit FK syntax.
+    _CATEGORY_EMBED_DEFAULT = "profile_categories(name)"
+    _CATEGORY_EMBED_EXPLICIT_FK = "profile_categories!releves_bancaires_category_id_fkey(name)"
+
     @staticmethod
     def _normalize_text(value: str) -> str:
         normalized = unicodedata.normalize("NFKD", value.strip().lower()).encode("ascii", "ignore").decode("ascii")
@@ -529,26 +533,19 @@ class SupabaseRelevesRepository:
 
         return query
 
+    @classmethod
+    def _select_with_category_embed(cls, base_select: str) -> tuple[str, bool]:
+        """Return select clause augmented with profile_categories embed when missing."""
+        if "profile_categories" in base_select:
+            return base_select, False
+
+        # Default keeps current behavior; switch to _CATEGORY_EMBED_EXPLICIT_FK if required.
+        embed = cls._CATEGORY_EMBED_DEFAULT
+        return f"{base_select},{embed}", True
+
     @staticmethod
-    def _row_is_internal_transfer(row: dict[str, object]) -> bool:
-        meta = row.get("metadonnees")
-        if isinstance(meta, dict) and str(meta.get("tx_kind") or "").strip().lower() == "transfer_internal":
-            return True
-        category = row.get("categorie")
-        return isinstance(category, str) and normalize_category_name(category) in {"transferts internes", "transfert interne"}
-
-    def list_releves(self, filters: RelevesFilters) -> tuple[list[ReleveBancaire], int | None]:
-        query = [
-            *self._build_query(filters),
-            (
-                "select",
-                "id,profile_id,date,libelle,montant,devise,categorie,category_id,payee,merchant_id,bank_account_id,profile_categories(name)",
-            ),
-            ("limit", filters.limit),
-            ("offset", filters.offset),
-        ]
-        rows, total = self._client.get_rows(table="releves_bancaires", query=query, with_count=True)
-
+    def _hydrate_category_label(rows: list[dict[str, object]]) -> None:
+        """Backfill legacy `categorie` label from category_id embed for compatibility."""
         for row in rows:
             category_embed = row.get("profile_categories")
             if not row.get("categorie") and isinstance(category_embed, dict):
@@ -557,11 +554,47 @@ class SupabaseRelevesRepository:
                     row["categorie"] = embedded_name
             row.pop("profile_categories", None)
 
+    @staticmethod
+    def _row_tx_kind(row: dict[str, object]) -> str | None:
+        meta = row.get("metadonnees")
+        if not isinstance(meta, dict):
+            return None
+        tx_kind = meta.get("tx_kind")
+        if isinstance(tx_kind, str) and tx_kind.strip():
+            return tx_kind.strip().lower()
+        return None
+
+    @staticmethod
+    def _row_is_internal_transfer(row: dict[str, object]) -> bool:
+        if SupabaseRelevesRepository._row_tx_kind(row) == "transfer_internal":
+            return True
+        # TODO(v3): align backend filters on explicit tx_kind mapping for income/expense/transfer_internal.
+        category = row.get("categorie")
+        return isinstance(category, str) and normalize_category_name(category) in {"transferts internes", "transfert interne"}
+
+    def list_releves(self, filters: RelevesFilters) -> tuple[list[ReleveBancaire], int | None]:
+        select_with_category, _ = self._select_with_category_embed(
+            "id,profile_id,date,libelle,montant,devise,categorie,category_id,payee,merchant_id,bank_account_id"
+        )
+        query = [
+            *self._build_query(filters),
+            ("select", select_with_category),
+            ("limit", filters.limit),
+            ("offset", filters.offset),
+        ]
+        rows, total = self._client.get_rows(table="releves_bancaires", query=query, with_count=True)
+
+        self._hydrate_category_label(rows)
+
         return [ReleveBancaire.model_validate(row) for row in rows], total
 
     def sum_releves(self, filters: RelevesFilters) -> tuple[Decimal, int, str | None]:
-        query = [*self._build_query(filters), ("select", "montant,devise,categorie,bank_account_id,metadonnees")]
+        select_with_category, _ = self._select_with_category_embed(
+            "montant,devise,categorie,category_id,bank_account_id,metadonnees"
+        )
+        query = [*self._build_query(filters), ("select", select_with_category)]
         rows, _ = self._client.get_rows(table="releves_bancaires", query=query, with_count=False)
+        self._hydrate_category_label(rows)
 
         if not filters.include_internal_transfers:
             rows = [row for row in rows if not self._row_is_internal_transfer(row)]
@@ -589,11 +622,15 @@ class SupabaseRelevesRepository:
     def aggregate_releves(
         self, request: RelevesAggregateRequest
     ) -> tuple[dict[str, tuple[Decimal, int]], str | None]:
+        select_with_category, _ = self._select_with_category_embed(
+            "montant,devise,date,categorie,category_id,payee,bank_account_id,metadonnees"
+        )
         query = [
             *self._build_query(request),
-            ("select", "montant,devise,date,categorie,category_id,payee,bank_account_id,metadonnees"),
+            ("select", select_with_category),
         ]
         rows, _ = self._client.get_rows(table="releves_bancaires", query=query, with_count=False)
+        self._hydrate_category_label(rows)
 
         if not request.include_internal_transfers:
             rows = [row for row in rows if not self._row_is_internal_transfer(row)]
