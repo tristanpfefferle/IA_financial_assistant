@@ -100,6 +100,16 @@ class ProfilesRepository(Protocol):
     ) -> None:
         """Create or update one global merchant alias usage counters."""
 
+    def ensure_merchant_entity_and_alias(
+        self,
+        *,
+        profile_id: UUID,
+        observed_alias: str,
+        observed_alias_norm: str,
+        merchant_key_norm: str,
+    ) -> UUID:
+        """Resolve alias to merchant entity or create entity+alias for LLM-approved canonicalization only."""
+
     def ensure_merchant_entity_from_alias(
         self,
         *,
@@ -108,7 +118,7 @@ class ProfilesRepository(Protocol):
         observed_alias_norm: str,
         merchant_key_norm: str,
     ) -> UUID:
-        """Resolve alias to merchant entity or create entity+alias and return merchant_entity_id."""
+        """Backward-compatible alias of `ensure_merchant_entity_and_alias`."""
 
     def get_profile_merchant_override(
         self,
@@ -990,7 +1000,7 @@ class SupabaseProfilesRepository:
             use_anon_key=False,
         )
 
-    def ensure_merchant_entity_from_alias(
+    def ensure_merchant_entity_and_alias(
         self,
         *,
         profile_id: UUID,
@@ -998,6 +1008,8 @@ class SupabaseProfilesRepository:
         observed_alias_norm: str,
         merchant_key_norm: str,
     ) -> UUID:
+        """Ensure a canonical merchant entity and alias mapping after deterministic/LLM canonicalization."""
+
         del profile_id
 
         cleaned_alias = " ".join(observed_alias.strip().split())
@@ -1044,6 +1056,23 @@ class SupabaseProfilesRepository:
             return UUID(str(resolved["id"]))
 
         return merchant_entity_id
+
+    def ensure_merchant_entity_from_alias(
+        self,
+        *,
+        profile_id: UUID,
+        observed_alias: str,
+        observed_alias_norm: str,
+        merchant_key_norm: str,
+    ) -> UUID:
+        """Backward-compatible alias for ensure_merchant_entity_and_alias."""
+
+        return self.ensure_merchant_entity_and_alias(
+            profile_id=profile_id,
+            observed_alias=observed_alias,
+            observed_alias_norm=observed_alias_norm,
+            merchant_key_norm=merchant_key_norm,
+        )
 
     def get_profile_merchant_override(
         self,

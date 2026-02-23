@@ -425,6 +425,7 @@ class RelevesImportResult(BaseModel):
     modified_count: int
     new_count: int
     requires_confirmation: bool
+    merchant_suggestions_created_count: int = 0
     errors: list[RelevesImportError]
     preview: list[RelevesImportPreviewItem]
 

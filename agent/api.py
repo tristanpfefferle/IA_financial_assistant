@@ -3181,7 +3181,10 @@ def import_releves(payload: ImportRequestPayload, authorization: str | None = He
         response_payload["merchant_linked_count"] = merchant_link_summary["linked_count"]
         response_payload["merchant_skipped_count"] = merchant_link_summary["skipped_count"]
         response_payload["merchant_processed_count"] = merchant_link_summary["processed_count"]
-        response_payload["merchant_suggestions_created_count"] = merchant_link_summary["suggestions_created_count"]
+        response_payload["merchant_suggestions_created_count"] = max(
+            int(response_payload.get("merchant_suggestions_created_count") or 0),
+            int(merchant_link_summary["suggestions_created_count"]),
+        )
     except Exception:
         logger.exception("import_releves_merchant_linking_failed profile_id=%s", profile_id)
         warnings = response_payload.get("warnings")
@@ -3223,6 +3226,8 @@ def import_releves(payload: ImportRequestPayload, authorization: str | None = He
 
                 if not pending_map_alias_suggestions:
                     merchant_alias_auto_resolve_payload["skipped_reason"] = "merchant_alias_auto_resolve_no_suggestions"
+                elif payload.import_mode == "analyze":
+                    merchant_alias_auto_resolve_payload["skipped_reason"] = "merchant_alias_auto_resolve_analyze_mode"
                 elif len(pending_map_alias_suggestions) > auto_resolve_limit:
                     merchant_alias_auto_resolve_payload["attempted"] = True
                     merchant_alias_auto_resolve_payload["skipped_reason"] = "merchant_alias_auto_resolve_partial"

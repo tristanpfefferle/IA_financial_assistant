@@ -95,7 +95,7 @@ def test_import_releves_auto_resolve_runs_when_pending_within_limit(monkeypatch)
     response = client.post(
         "/finance/releves/import",
         headers=_headers(),
-        json={"files": [{"filename": "x.csv", "content_base64": "YQ=="}]},
+        json={"files": [{"filename": "x.csv", "content_base64": "YQ=="}], "import_mode": "commit"},
     )
 
     assert response.status_code == 200
@@ -138,7 +138,7 @@ def test_import_releves_auto_resolve_partial_when_too_many_suggestions(monkeypat
     response = client.post(
         "/finance/releves/import",
         headers=_headers(),
-        json={"files": [{"filename": "x.csv", "content_base64": "YQ=="}]},
+        json={"files": [{"filename": "x.csv", "content_base64": "YQ=="}], "import_mode": "commit"},
     )
 
     assert response.status_code == 200
@@ -175,7 +175,7 @@ def test_import_releves_auto_resolve_skips_when_llm_disabled(monkeypatch) -> Non
     response = client.post(
         "/finance/releves/import",
         headers=_headers(),
-        json={"files": [{"filename": "x.csv", "content_base64": "YQ=="}]},
+        json={"files": [{"filename": "x.csv", "content_base64": "YQ=="}], "import_mode": "commit"},
     )
 
     assert response.status_code == 200
@@ -207,7 +207,7 @@ def test_import_releves_auto_resolve_failure_keeps_import_success(monkeypatch) -
     response = client.post(
         "/finance/releves/import",
         headers=_headers(),
-        json={"files": [{"filename": "x.csv", "content_base64": "YQ=="}]},
+        json={"files": [{"filename": "x.csv", "content_base64": "YQ=="}], "import_mode": "commit"},
     )
 
     assert response.status_code == 200
@@ -261,4 +261,46 @@ def test_import_releves_auto_resolve_skips_when_no_pending_suggestions(monkeypat
         "skipped_reason": "merchant_alias_auto_resolve_no_suggestions",
         "stats": None,
         "pending_total_count": 0,
+    }
+
+
+def test_import_releves_auto_resolve_skips_in_analyze_mode(monkeypatch) -> None:
+    class _Repo(_BaseRepo):
+        def list_map_alias_suggestions(self, *, profile_id: UUID, limit: int = 100):
+            assert profile_id == PROFILE_ID
+            assert limit == 3
+            return [{"id": "1"}]
+
+        def count_map_alias_suggestions(self, *, profile_id: UUID):
+            assert profile_id == PROFILE_ID
+            return 1
+
+    repo = _Repo()
+    _mock_common(monkeypatch, repo)
+    monkeypatch.setattr(agent_api._config, "llm_enabled", lambda: True)
+    monkeypatch.setattr(agent_api._config, "auto_resolve_merchant_aliases_enabled", lambda: True)
+    monkeypatch.setattr(agent_api._config, "auto_resolve_merchant_aliases_limit", lambda: 2)
+
+    resolver_call_count = {"count": 0}
+
+    def _resolve(**_kwargs):
+        resolver_call_count["count"] += 1
+        return {}
+
+    monkeypatch.setattr(agent_api, "resolve_pending_map_alias", _resolve)
+
+    response = client.post(
+        "/finance/releves/import",
+        headers=_headers(),
+        json={"files": [{"filename": "x.csv", "content_base64": "YQ=="}], "import_mode": "analyze"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert resolver_call_count["count"] == 0
+    assert payload["merchant_alias_auto_resolve"] == {
+        "attempted": False,
+        "skipped_reason": "merchant_alias_auto_resolve_analyze_mode",
+        "stats": None,
+        "pending_total_count": 1,
     }
