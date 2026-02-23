@@ -805,13 +805,11 @@ class SupabaseProfilesRepository:
         cleaned_suggested_entity_name_norm = (
             self._normalize_name_norm(suggested_entity_name_norm) if suggested_entity_name_norm else None
         )
-        use_merchant_key = bool(cleaned_merchant_key_norm)
-        dedup_key = cleaned_merchant_key_norm if use_merchant_key else cleaned_observed_alias_norm
+        cleaned_dedup_key = cleaned_merchant_key_norm or cleaned_observed_alias_norm
 
         existing = self._find_existing_map_alias_suggestion(
             profile_id=profile_id,
-            dedup_key=dedup_key,
-            use_merchant_key=use_merchant_key,
+            dedup_key=cleaned_dedup_key,
         )
         if existing is not None:
             self._increment_map_alias_suggestion_seen(existing_row=existing)
@@ -843,8 +841,7 @@ class SupabaseProfilesRepository:
 
         existing_after_duplicate = self._find_existing_map_alias_suggestion(
             profile_id=profile_id,
-            dedup_key=dedup_key,
-            use_merchant_key=use_merchant_key,
+            dedup_key=cleaned_dedup_key,
         )
         if existing_after_duplicate is not None:
             self._increment_map_alias_suggestion_seen(existing_row=existing_after_duplicate)
@@ -855,13 +852,10 @@ class SupabaseProfilesRepository:
         *,
         profile_id: UUID,
         dedup_key: str,
-        use_merchant_key: bool,
     ) -> dict[str, Any] | None:
         cleaned_dedup_key = self._normalize_name_norm(dedup_key)
         if not cleaned_dedup_key:
             return None
-
-        dedup_field = "merchant_key_norm" if use_merchant_key else "observed_alias_norm"
 
         rows, _ = self._client.get_rows(
             table="merchant_suggestions",
@@ -869,7 +863,7 @@ class SupabaseProfilesRepository:
                 "select": "id,times_seen,last_seen,status",
                 "profile_id": f"eq.{profile_id}",
                 "action": "eq.map_alias",
-                dedup_field: f"eq.{cleaned_dedup_key}",
+                "merchant_key_norm": f"eq.{cleaned_dedup_key}",
                 "status": "in.(pending,applied)",
                 "limit": 1,
             },
