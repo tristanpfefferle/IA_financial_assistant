@@ -146,6 +146,61 @@ def test_resolver_link_existing_path_skips_create(monkeypatch) -> None:
     assert stats["created_entities"] == 0
 
 
+def test_resolver_applies_backfill_with_expected_params(monkeypatch) -> None:
+    class _RepoCaptureApply(_RepoStub):
+        def __init__(self) -> None:
+            super().__init__()
+            self.apply_calls: list[dict] = []
+
+        def upsert_profile_merchant_override(self, **kwargs):
+            raise AssertionError("category override must not be called when category is unresolved")
+
+        def apply_entity_to_profile_transactions(self, **kwargs):
+            self.apply_calls.append(kwargs)
+            return 5
+
+    repo = _RepoCaptureApply()
+
+    monkeypatch.setattr(repo, "create_merchant_entity", lambda **_kwargs: (_ for _ in ()).throw(AssertionError("should not create")))
+    monkeypatch.setattr(
+        resolver,
+        "_call_llm_json",
+        lambda _prompt: (
+            {
+                "resolutions": [
+                    {
+                        "suggestion_id": str(SUGGESTION_ID),
+                        "action": "link_existing",
+                        "merchant_entity_id": str(ENTITY_ID),
+                        "canonical_name": None,
+                        "canonical_name_norm": None,
+                        "country": "CH",
+                        "suggested_category_norm": "other",
+                        "suggested_category_label": "Autres",
+                        "confidence": 0.9,
+                        "rationale": "already known",
+                    }
+                ]
+            },
+            "run_backfill",
+            {},
+        ),
+    )
+
+    stats = resolver.resolve_pending_map_alias(profile_id=PROFILE_ID, profiles_repository=repo, limit=10)
+
+    assert repo.apply_calls == [
+        {
+            "profile_id": PROFILE_ID,
+            "observed_alias": "COOP CITY",
+            "merchant_entity_id": ENTITY_ID,
+            "category_id": None,
+        }
+    ]
+    assert stats["updated_transactions"] == 5
+    assert stats["applied"] == 1
+
+
 def test_resolver_marks_invalid_item_failed(monkeypatch) -> None:
     repo = _RepoStub()
 
