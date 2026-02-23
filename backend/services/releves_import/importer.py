@@ -132,8 +132,8 @@ class RelevesImportService:
         """Build a stable normalized key dedicated to map-alias suggestion deduplication."""
 
         aggregator_kind = self._detect_aggregator_kind(observed_alias)
-        if aggregator_kind is not None:
-            return aggregator_kind
+        if aggregator_kind == "twint_p2p":
+            return "twint_p2p"
 
         normalized = normalize_merchant_alias(observed_alias.lower())
         if not normalized:
@@ -149,7 +149,6 @@ class RelevesImportService:
             "no",
             "numero",
             "sumup",
-            "twint",
             "paypal",
             "num",
         }
