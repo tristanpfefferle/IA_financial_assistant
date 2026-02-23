@@ -778,6 +778,37 @@ def test_create_pending_map_alias_suggestion_updates_existing_and_does_not_inser
     assert client.patch_calls[0]["payload"]["last_seen"]
     assert client.patch_calls[0]["payload"]["updated_at"]
 
+
+def test_create_pending_map_alias_suggestion_handles_duplicate_insert_and_refetches() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    existing_id = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+    client = _ClientStub(
+        responses=[
+            [],
+            [{"id": str(existing_id), "times_seen": 3, "last_seen": "2026-01-01T00:00:00+00:00", "status": "pending"}],
+        ],
+        post_exceptions=[RuntimeError("duplicate key value violates unique constraint")],
+    )
+    repository = SupabaseProfilesRepository(client=client)
+
+    created = repository.create_pending_map_alias_suggestion(
+        profile_id=profile_id,
+        observed_alias="Scalp Coif",
+        observed_alias_norm="scalp coif",
+        rationale=(
+            "Alias inconnu lors de l'import; nécessite normalisation/"
+            "canonicalisation et catégorisation LLM."
+        ),
+        confidence=0.0,
+    )
+
+    assert created is False
+    assert len(client.post_calls) == 1
+    assert len(client.calls) == 2
+    assert len(client.patch_calls) == 1
+    assert client.patch_calls[0]["table"] == "merchant_suggestions"
+    assert client.patch_calls[0]["query"] == {"id": f"eq.{existing_id}"}
+
 def test_create_map_alias_suggestions_uses_upsert_and_deduplicates_batch() -> None:
     profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
     client = _ClientStub(responses=[])
