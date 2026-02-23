@@ -30,6 +30,7 @@ from shared.models import (
 class RelevesImportService:
     releves_repository: RelevesRepository
     profiles_repository: ProfilesRepository | None = None
+    resolve_pending_map_alias_fn: Any | None = None
 
     @staticmethod
     def _fallback_autres_category_id(*, profile_id: UUID) -> UUID:
@@ -500,6 +501,25 @@ class RelevesImportService:
                 profile_id=request.profile_id,
                 rows=rows_to_insert,
             ) if rows_to_insert else 0
+
+            if (
+                request.enrich_immediately
+                and self.profiles_repository is not None
+                and merchant_suggestions_created_count > 0
+            ):
+                try:
+                    resolver = self.resolve_pending_map_alias_fn
+                    if resolver is None:
+                        from agent.merchant_alias_resolver import resolve_pending_map_alias as resolver
+
+                    resolver(
+                        profile_id=request.profile_id,
+                        profiles_repository=self.profiles_repository,
+                        limit=max(merchant_suggestions_created_count, 1),
+                    )
+                except Exception:
+                    # L'enrichissement immédiat est best-effort: l'import doit rester réussi.
+                    pass
         else:
             imported_count = 0
 
