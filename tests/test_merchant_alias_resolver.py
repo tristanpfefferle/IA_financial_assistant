@@ -25,6 +25,7 @@ class _RepoStub:
                 "id": str(SUGGESTION_ID),
                 "observed_alias": "COOP CITY",
                 "observed_alias_norm": "coop city",
+                "merchant_key_norm": "coop city",
                 "created_at": "2026-01-01T00:00:00Z",
             }
         ]
@@ -191,6 +192,7 @@ def test_batching_limit_25_calls_llm_twice(monkeypatch) -> None:
                     "id": f"00000000-0000-0000-0000-{i:012d}",
                     "observed_alias": f"ALIAS {i}",
                     "observed_alias_norm": f"alias {i}",
+                    "merchant_key_norm": f"alias {i}",
                 }
                 for i in range(1, 26)
             ]
@@ -223,6 +225,7 @@ def test_truncation_observed_alias_compact_in_prompt(monkeypatch) -> None:
                     "id": str(SUGGESTION_ID),
                     "observed_alias": "Paiement UBS TWINT Motif du paiement " + ("X" * 220),
                     "observed_alias_norm": "paiement ubs twint motif du paiement " + ("x" * 220),
+                    "merchant_key_norm": "twint",
                 }
             ]
 
@@ -247,6 +250,35 @@ def test_truncation_observed_alias_compact_in_prompt(monkeypatch) -> None:
     assert "Motif du paiement" not in compact
     assert "TWINT" in compact
 
+
+
+
+def test_resolver_skips_twint_p2p_suggestions_without_calling_llm(monkeypatch) -> None:
+    class _TwintRepo(_RepoStub):
+        def list_map_alias_suggestions(self, *, profile_id: UUID, limit: int):
+            assert profile_id == PROFILE_ID
+            assert limit == 1
+            return [
+                {
+                    "id": str(SUGGESTION_ID),
+                    "observed_alias": "TWINT A John Doe",
+                    "observed_alias_norm": "twint a john doe",
+                    "merchant_key_norm": "twint_p2p",
+                }
+            ]
+
+    repo = _TwintRepo()
+
+    def _should_not_call(_prompt: str):
+        raise AssertionError("LLM should not be called for twint_p2p suggestions")
+
+    monkeypatch.setattr(resolver, "_call_llm_json", _should_not_call)
+
+    stats = resolver.resolve_pending_map_alias(profile_id=PROFILE_ID, profiles_repository=repo, limit=1)
+
+    assert stats["processed"] == 0
+    assert stats["applied"] == 0
+    assert stats["failed"] == 0
 
 def test_fallback_response_format(monkeypatch) -> None:
     class _Response:
