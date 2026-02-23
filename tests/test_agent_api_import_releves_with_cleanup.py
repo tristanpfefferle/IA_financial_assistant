@@ -633,9 +633,9 @@ def test_bootstrap_merchants_from_imported_releves_parses_json_meta_key_norm_for
             return [
                 {
                     "id": str(releve_id),
-                    "payee": "Scalp Coif 1234 ZURICH",
+                    "payee": "Brand New Shop Monthey 123",
                     "libelle": None,
-                    "meta": '{"observed_alias_key_norm":"scalp coif"}',
+                    "meta": '{"observed_alias_key_norm":"brand new shop"}',
                 }
             ]
 
@@ -659,7 +659,11 @@ def test_bootstrap_merchants_from_imported_releves_parses_json_meta_key_norm_for
 
     assert summary == {"processed_count": 1, "linked_count": 0, "skipped_count": 1, "suggestions_created_count": 0}
     assert len(repo.create_calls) == 1
-    assert repo.create_calls[0]["observed_alias_norm"] == "scalp coif"
+    assert (
+        repo.create_calls[0]["observed_alias_norm"]
+        == "brand new shop monthey 123"
+    )
+    assert repo.create_calls[0]["merchant_key_norm"] == "brand new shop"
 
 
 def test_bootstrap_merchants_from_imported_releves_does_not_fallback_to_suggested_category_label() -> None:

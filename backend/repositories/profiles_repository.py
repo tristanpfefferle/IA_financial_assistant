@@ -798,10 +798,11 @@ class SupabaseProfilesRepository:
         if not cleaned_observed_alias_norm:
             return False
         cleaned_merchant_key_norm = self._normalize_name_norm(merchant_key_norm) if merchant_key_norm else None
+        cleaned_dedup_key = cleaned_merchant_key_norm or cleaned_observed_alias_norm
 
         existing = self._find_existing_map_alias_suggestion(
             profile_id=profile_id,
-            observed_alias_norm=cleaned_observed_alias_norm,
+            observed_alias_norm=cleaned_dedup_key,
         )
         if existing is not None:
             self._increment_map_alias_suggestion_seen(existing_row=existing)
@@ -831,7 +832,7 @@ class SupabaseProfilesRepository:
 
         existing_after_duplicate = self._find_existing_map_alias_suggestion(
             profile_id=profile_id,
-            observed_alias_norm=cleaned_observed_alias_norm,
+            observed_alias_norm=cleaned_dedup_key,
         )
         if existing_after_duplicate is not None:
             self._increment_map_alias_suggestion_seen(existing_row=existing_after_duplicate)
