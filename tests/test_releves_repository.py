@@ -282,6 +282,85 @@ def test_build_query_includes_bank_account_filter() -> None:
     assert ("bank_account_id", "eq.bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb") in query
 
 
+def test_compute_cashflow_summary_basic() -> None:
+    client = _ClientStub(
+        rows=[
+            {"montant": 100, "devise": "EUR", "metadonnees": {}},
+            {"montant": -40, "devise": "EUR", "metadonnees": {}},
+            {"montant": -10, "devise": "EUR", "metadonnees": {"tx_kind": "transfer_internal"}},
+        ]
+    )
+    repository = SupabaseRelevesRepository(client=client)
+
+    summary = repository.compute_cashflow_summary(
+        profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+    )
+
+    assert summary["total_income"] == Decimal("100")
+    assert summary["total_expense"] == Decimal("-40")
+    assert summary["internal_transfers"] == Decimal("-10")
+    assert summary["net_cashflow"] == Decimal("60")
+    assert summary["transaction_count"] == 3
+    assert summary["currency"] == "EUR"
+
+
+def test_compute_cashflow_excludes_transfers_from_net() -> None:
+    client = _ClientStub(
+        rows=[
+            {"montant": 200, "devise": "EUR", "metadonnees": {}},
+            {"montant": -50, "devise": "EUR", "metadonnees": {}},
+            {"montant": -150, "devise": "EUR", "metadonnees": {"tx_kind": "transfer_internal"}},
+            {"montant": 25, "devise": "EUR", "metadonnees": {"tx_kind": "transfer_internal"}},
+        ]
+    )
+    repository = SupabaseRelevesRepository(client=client)
+
+    summary = repository.compute_cashflow_summary(
+        profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+    )
+
+    assert summary["total_income"] == Decimal("200")
+    assert summary["total_expense"] == Decimal("-50")
+    assert summary["internal_transfers"] == Decimal("-125")
+    assert summary["net_cashflow"] == Decimal("150")
+
+
+def test_compute_cashflow_with_date_filter() -> None:
+    client = _ClientStub(rows=[{"montant": 90, "devise": "EUR", "metadonnees": {}}])
+    repository = SupabaseRelevesRepository(client=client)
+
+    summary = repository.compute_cashflow_summary(
+        profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+        date_range=DateRange(start_date=date(2025, 1, 1), end_date=date(2025, 1, 31)),
+        bank_account_id=UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+    )
+
+    query = client.calls[0]["query"]
+    assert ("date", "gte.2025-01-01") in query
+    assert ("date", "lte.2025-01-31") in query
+    assert ("bank_account_id", "eq.bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb") in query
+    assert ("select", "montant,devise,metadonnees") in query
+    assert summary["net_cashflow"] == Decimal("90")
+
+
+def test_compute_cashflow_empty_result() -> None:
+    client = _ClientStub(rows=[])
+    repository = SupabaseRelevesRepository(client=client)
+
+    summary = repository.compute_cashflow_summary(
+        profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+    )
+
+    assert summary == {
+        "total_income": Decimal("0"),
+        "total_expense": Decimal("0"),
+        "net_cashflow": Decimal("0"),
+        "internal_transfers": Decimal("0"),
+        "transaction_count": 0,
+        "currency": None,
+    }
+
+
 def test_update_bank_account_id_by_ids_uses_patch_rows() -> None:
     client = _ClientStub(patch_rows=[{"id": "1"}, {"id": "2"}])
     repository = SupabaseRelevesRepository(client=client)

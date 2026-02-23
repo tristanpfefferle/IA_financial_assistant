@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 from backend.db.supabase_client import SupabaseClient
 from shared.text_utils import normalize_category_name
 from shared.models import (
+    DateRange,
     ReleveBancaire,
     RelevesAggregateRequest,
     RelevesDirection,
@@ -39,6 +40,15 @@ class RelevesRepository(Protocol):
 
     def sum_releves(self, filters: RelevesFilters) -> tuple[Decimal, int, str | None]:
         """Return total, count and currency for releves matching filters."""
+
+    def compute_cashflow_summary(
+        self,
+        *,
+        profile_id: UUID,
+        date_range: DateRange | None = None,
+        bank_account_id: UUID | None = None,
+    ) -> dict[str, Decimal | int | str | None]:
+        """Return structured cashflow totals split by effective flow_type."""
 
     def aggregate_releves(
         self, request: RelevesAggregateRequest
@@ -229,6 +239,44 @@ class InMemoryRelevesRepository:
         total = sum((item.montant for item in filtered), Decimal("0"))
         currency = filtered[0].devise if filtered else None
         return total, len(filtered), currency
+
+    def compute_cashflow_summary(
+        self,
+        *,
+        profile_id: UUID,
+        date_range: DateRange | None = None,
+        bank_account_id: UUID | None = None,
+    ) -> dict[str, Decimal | int | str | None]:
+        filters = RelevesFilters(
+            profile_id=profile_id,
+            date_range=date_range,
+            bank_account_id=bank_account_id,
+            limit=len(self._seed),
+            offset=0,
+        )
+        rows = self._apply_filters(filters)
+
+        total_income = Decimal("0")
+        total_expense = Decimal("0")
+        total_transfers = Decimal("0")
+        currency = rows[0].devise if rows else None
+
+        for row in rows:
+            if self._is_internal_transfer(row):
+                total_transfers += row.montant
+            elif row.montant > 0:
+                total_income += row.montant
+            else:
+                total_expense += row.montant
+
+        return {
+            "total_income": total_income,
+            "total_expense": total_expense,
+            "net_cashflow": total_income + total_expense,
+            "internal_transfers": total_transfers,
+            "transaction_count": len(rows),
+            "currency": currency,
+        }
 
     def aggregate_releves(
         self, request: RelevesAggregateRequest
@@ -633,6 +681,56 @@ class SupabaseRelevesRepository:
                 currency = row.get("devise")
 
         return total, len(rows), currency
+
+    def compute_cashflow_summary(
+        self,
+        *,
+        profile_id: UUID,
+        date_range: DateRange | None = None,
+        bank_account_id: UUID | None = None,
+    ) -> dict[str, Decimal | int | str | None]:
+        filters = RelevesFilters(
+            profile_id=profile_id,
+            date_range=date_range,
+            bank_account_id=bank_account_id,
+            limit=1,
+            offset=0,
+        )
+        query = [
+            *self._build_query(filters),
+            ("select", "montant,devise,metadonnees"),
+        ]
+        rows, _ = self._client.get_rows(table="releves_bancaires", query=query, with_count=False)
+
+        total_income = Decimal("0")
+        total_expense = Decimal("0")
+        total_transfers = Decimal("0")
+        currency: str | None = None
+
+        for row in rows:
+            montant = Decimal(str(row.get("montant") or "0"))
+            flow_type = self._row_effective_flow_type(row)
+
+            if flow_type == "transfer_internal":
+                total_transfers += montant
+            elif flow_type == "income":
+                total_income += montant
+            elif flow_type == "expense":
+                total_expense += montant
+
+            if currency is None:
+                row_currency = row.get("devise")
+                if isinstance(row_currency, str):
+                    currency = row_currency
+
+        return {
+            "total_income": total_income,
+            "total_expense": total_expense,
+            "net_cashflow": total_income + total_expense,
+            "internal_transfers": total_transfers,
+            "transaction_count": len(rows),
+            "currency": currency,
+        }
 
     def aggregate_releves(
         self, request: RelevesAggregateRequest
