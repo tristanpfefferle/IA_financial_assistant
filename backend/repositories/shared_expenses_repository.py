@@ -323,6 +323,7 @@ class SupabaseSharedExpensesRepository:
                     ("select", "from_profile_id,to_profile_id,transaction_id,amount,created_at,status,split_ratio_other"),
                     ("or", f"(from_profile_id.eq.{profile_id},to_profile_id.eq.{profile_id})"),
                     ("status", "in.(applied,active,pending)"),
+                    # TODO(MVP): created_at is only a proxy; ideally filter by underlying transaction date.
                     ("created_at", f"gte.{start_date.isoformat()}T00:00:00+00:00"),
                     ("created_at", f"lte.{end_date.isoformat()}T23:59:59+00:00"),
                     ("limit", 2000),

@@ -17,7 +17,10 @@ def compute_effective_spending_summary(
     releves_total_expense: Decimal,
     shared_expenses_repository: SharedExpensesRepository,
 ) -> dict[str, Decimal]:
-    """Compute outgoing/incoming share adjustments and effective spending total."""
+    """Compute outgoing/incoming share adjustments and effective spending total.
+
+    Period filtering currently relies on shared expense ``created_at`` timestamps (MVP behavior).
+    """
 
     rows = shared_expenses_repository.list_shared_expenses_for_period(
         profile_id=profile_id,
