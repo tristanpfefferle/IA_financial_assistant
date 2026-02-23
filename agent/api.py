@@ -936,7 +936,9 @@ def _bootstrap_merchants_from_imported_releves(
 
         try:
             releve_id = UUID(str(releve_id_raw))
-            entity = profiles_repository.find_merchant_entity_by_alias_norm(alias_norm=observed_alias_norm)
+            entity = profiles_repository.find_merchant_entity_by_alias_norm(alias_norm=dedup_alias_norm)
+            if not entity and dedup_alias_norm != observed_alias_norm:
+                entity = profiles_repository.find_merchant_entity_by_alias_norm(alias_norm=observed_alias_norm)
             if not entity:
                 if hasattr(profiles_repository, "create_pending_map_alias_suggestion"):
                     suggestion_created = bool(

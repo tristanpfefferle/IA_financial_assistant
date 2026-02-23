@@ -547,20 +547,23 @@ def test_bootstrap_merchants_from_imported_releves_uses_short_observed_alias_fro
 
 
 
-def test_bootstrap_merchants_from_imported_releves_prefers_observed_alias_key_norm_for_dedup() -> None:
+def test_bootstrap_merchants_from_imported_releves_prefers_observed_alias_key_norm_for_deterministic_match() -> None:
+    entity_id = UUID("aaaaaaaa-1111-1111-1111-111111111111")
     releve_id = UUID("aaaaaaaa-4444-4444-4444-444444444444")
 
     class _Repo:
         def __init__(self) -> None:
             self.create_calls: list[dict] = []
+            self.find_calls: list[str] = []
+            self.attach_calls: list[tuple[UUID, UUID, UUID | None]] = []
 
         def list_releves_without_merchant(self, *, profile_id: UUID, limit: int = 500):
             return [
                 {
                     "id": str(releve_id),
-                    "payee": "Scalp Coif 1234",
+                    "payee": "COOP-4815 MONTHEY ... No de transaction ...",
                     "libelle": None,
-                    "meta": {"observed_alias_key_norm": "scalp coif"},
+                    "meta": {"observed_alias_key_norm": "coop"},
                 }
             ]
 
@@ -568,6 +571,31 @@ def test_bootstrap_merchants_from_imported_releves_prefers_observed_alias_key_no
             return []
 
         def find_merchant_entity_by_alias_norm(self, *, alias_norm: str):
+            self.find_calls.append(alias_norm)
+            if alias_norm == "coop":
+                return {"id": str(entity_id), "suggested_category_norm": ""}
+            return None
+
+        def get_profile_merchant_override(self, *, profile_id: UUID, merchant_entity_id: UUID):
+            return None
+
+        def attach_merchant_entity_to_releve(
+            self,
+            *,
+            releve_id: UUID,
+            merchant_entity_id: UUID,
+            category_id: UUID | None,
+        ) -> None:
+            self.attach_calls.append((releve_id, merchant_entity_id, category_id))
+
+        def upsert_merchant_alias(
+            self,
+            *,
+            merchant_entity_id: UUID,
+            alias: str,
+            alias_norm: str,
+            source: str,
+        ):
             return None
 
         def create_pending_map_alias_suggestion(self, **kwargs) -> bool:
@@ -582,9 +610,10 @@ def test_bootstrap_merchants_from_imported_releves_prefers_observed_alias_key_no
         limit=50,
     )
 
-    assert summary == {"processed_count": 1, "linked_count": 0, "skipped_count": 1, "suggestions_created_count": 0}
-    assert len(repo.create_calls) == 1
-    assert repo.create_calls[0]["observed_alias_norm"] == "scalp coif"
+    assert summary == {"processed_count": 1, "linked_count": 1, "skipped_count": 0, "suggestions_created_count": 0}
+    assert repo.find_calls == ["coop"]
+    assert repo.attach_calls == [(releve_id, entity_id, None)]
+    assert repo.create_calls == []
 
 
 def test_bootstrap_merchants_from_imported_releves_parses_json_meta_key_norm_for_dedup() -> None:
