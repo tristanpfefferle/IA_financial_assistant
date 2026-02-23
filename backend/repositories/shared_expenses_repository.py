@@ -75,6 +75,14 @@ class SharedExpensesRepository(Protocol):
     ) -> UUID | None:
         """Create one shared expense from a suggestion and mark suggestion as applied/failed."""
 
+    def get_suggestion_by_id(
+        self,
+        *,
+        profile_id: UUID,
+        suggestion_id: UUID,
+    ) -> SharedExpenseSuggestionRow | None:
+        """Return one suggestion row for the given profile and suggestion id."""
+
     def list_shared_expenses_for_period(
         self,
         *,
@@ -277,6 +285,30 @@ class SupabaseSharedExpensesRepository:
 
         return created_id
 
+    def get_suggestion_by_id(
+        self,
+        *,
+        profile_id: UUID,
+        suggestion_id: UUID,
+    ) -> SharedExpenseSuggestionRow | None:
+        rows, _ = self._client.get_rows(
+            table="shared_expense_suggestions",
+            query={
+                "select": (
+                    "id,profile_id,transaction_id,suggested_to_profile_id,"
+                    "suggested_split_ratio_other,status,confidence,rationale,link_id,link_pair_id"
+                ),
+                "profile_id": f"eq.{profile_id}",
+                "id": f"eq.{suggestion_id}",
+                "limit": 1,
+            },
+            with_count=False,
+            use_anon_key=False,
+        )
+        if not rows:
+            return None
+        return self._map_suggestion_row(rows[0])
+
     def list_shared_expenses_for_period(
         self,
         *,
@@ -290,7 +322,7 @@ class SupabaseSharedExpensesRepository:
                 query=[
                     ("select", "from_profile_id,to_profile_id,transaction_id,amount,created_at,status,split_ratio_other"),
                     ("or", f"(from_profile_id.eq.{profile_id},to_profile_id.eq.{profile_id})"),
-                    ("status", "eq.applied"),
+                    ("status", "in.(applied,active,pending)"),
                     ("created_at", f"gte.{start_date.isoformat()}T00:00:00+00:00"),
                     ("created_at", f"lte.{end_date.isoformat()}T23:59:59+00:00"),
                     ("limit", 2000),
@@ -486,3 +518,31 @@ class InMemorySharedExpensesRepository:
                 continue
             filtered.append(row)
         return filtered
+
+    def get_suggestion_by_id(
+        self,
+        *,
+        profile_id: UUID,
+        suggestion_id: UUID,
+    ) -> SharedExpenseSuggestionRow | None:
+        for row in self._suggestions:
+            if row["profile_id"] != profile_id or row["id"] != suggestion_id:
+                continue
+            return SharedExpenseSuggestionRow(
+                id=row["id"],
+                profile_id=row["profile_id"],
+                transaction_id=row["transaction_id"],
+                suggested_to_profile_id=row["suggested_to_profile_id"],
+                suggested_split_ratio_other=row["suggested_split_ratio_other"],
+                status=row["status"],
+                confidence=row["confidence"],
+                rationale=row.get("rationale"),
+                link_id=row.get("link_id"),
+                link_pair_id=row.get("link_pair_id"),
+            )
+        return None
+
+    def seed_shared_expenses(self, rows: list[SharedExpenseRow]) -> None:
+        """Seed shared expenses rows for tests."""
+
+        self._shared_expenses.extend(rows)

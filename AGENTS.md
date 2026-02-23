@@ -38,3 +38,9 @@ Construire un assistant financier IA orienté **agent + tools** avec séparation
 - UI dev: `cd ui && npm run dev`
 - UI build: `cd ui && npm run build`
 - CI local rapide: `pytest && (cd ui && npm ci && npm run build)`
+
+## Debug endpoints partagés (shared expenses suggestions)
+- `GET /finance/shared-expenses/suggestions?status=pending&limit=50`
+- `POST /finance/shared-expenses/suggestions/{suggestion_id}/dismiss` body optionnel `{ "reason": "..." }`
+- `POST /finance/shared-expenses/suggestions/{suggestion_id}/apply` body optionnel `{ "amount": "12.34", "force": false }`
+- Si Supabase n'est pas configuré (`supabase_url`/`service_role_key` absents): l'API retourne `501` avec `detail="shared expenses disabled"`.
