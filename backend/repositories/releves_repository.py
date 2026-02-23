@@ -693,21 +693,38 @@ class SupabaseRelevesRepository:
             profile_id=profile_id,
             date_range=date_range,
             bank_account_id=bank_account_id,
-            limit=1,
+            limit=50,
             offset=0,
         )
-        query = [
-            *self._build_query(filters),
-            ("select", "montant,devise,metadonnees"),
-        ]
-        rows, _ = self._client.get_rows(table="releves_bancaires", query=query, with_count=False)
+        page_size = 1000
+        offset = 0
+        all_rows: list[dict[str, object]] = []
+
+        while True:
+            query = [
+                *self._build_query(filters),
+                ("select", "montant,devise,metadonnees"),
+                ("limit", page_size),
+                ("offset", offset),
+            ]
+            page_rows, _ = self._client.get_rows(table="releves_bancaires", query=query, with_count=False)
+
+            if not page_rows:
+                break
+
+            all_rows.extend(page_rows)
+
+            if len(page_rows) < page_size:
+                break
+
+            offset += page_size
 
         total_income = Decimal("0")
         total_expense = Decimal("0")
         total_transfers = Decimal("0")
         currency: str | None = None
 
-        for row in rows:
+        for row in all_rows:
             montant = Decimal(str(row.get("montant") or "0"))
             flow_type = self._row_effective_flow_type(row)
 
@@ -728,7 +745,7 @@ class SupabaseRelevesRepository:
             "total_expense": total_expense,
             "net_cashflow": total_income + total_expense,
             "internal_transfers": total_transfers,
-            "transaction_count": len(rows),
+            "transaction_count": len(all_rows),
             "currency": currency,
         }
 

@@ -48,6 +48,31 @@ class _ClientStub:
         return self._patch_rows
 
 
+class _PaginationClientStub(_ClientStub):
+    def get_rows(self, *, table, query, with_count, use_anon_key=False):
+        self.calls.append(
+            {
+                "table": table,
+                "query": query,
+                "with_count": with_count,
+                "use_anon_key": use_anon_key,
+            }
+        )
+
+        limit: int | None = None
+        offset = 0
+        for key, value in query:
+            if key == "limit":
+                limit = int(value)
+            elif key == "offset":
+                offset = int(value)
+
+        if limit is None:
+            return self._rows, 0
+
+        return self._rows[offset : offset + limit], 0
+
+
 def test_build_query_repeats_date_key_for_date_range() -> None:
     client = _ClientStub()
     repository = SupabaseRelevesRepository(client=client)
@@ -359,6 +384,31 @@ def test_compute_cashflow_empty_result() -> None:
         "transaction_count": 0,
         "currency": None,
     }
+
+
+def test_compute_cashflow_summary_paginates_all_rows() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    rows = [
+        *[{"montant": -1, "devise": "CHF", "metadonnees": {}} for _ in range(2000)],
+        *[{"montant": 2, "devise": "CHF", "metadonnees": {}} for _ in range(500)],
+        *[
+            {"montant": -50, "devise": "CHF", "metadonnees": {"tx_kind": "transfer_internal"}},
+            {"montant": 25, "devise": "CHF", "metadonnees": {"tx_kind": "transfer_internal"}},
+            {"montant": -10, "devise": "CHF", "metadonnees": {"tx_kind": "transfer_internal"}},
+        ],
+    ]
+    client = _PaginationClientStub(rows=rows)
+    repository = SupabaseRelevesRepository(client=client)
+
+    summary = repository.compute_cashflow_summary(profile_id=profile_id)
+
+    assert summary["total_income"] == Decimal("1000")
+    assert summary["total_expense"] == Decimal("-2000")
+    assert summary["internal_transfers"] == Decimal("-35")
+    assert summary["net_cashflow"] == Decimal("-1000")
+    assert summary["transaction_count"] == 2503
+    assert summary["currency"] == "CHF"
+    assert len(client.calls) > 1
 
 
 def test_update_bank_account_id_by_ids_uses_patch_rows() -> None:
