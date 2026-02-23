@@ -75,7 +75,7 @@ def test_list_shared_expense_suggestions_returns_items(monkeypatch) -> None:
             ]
 
     fake_repo = _FakeRepository()
-    monkeypatch.setattr(agent_api, "SupabaseSharedExpensesRepository", lambda client: fake_repo)
+    monkeypatch.setattr(agent_api, "_get_shared_expenses_repository_or_501", lambda: fake_repo)
 
     response = client.get("/finance/shared-expenses/suggestions", headers=_auth_headers())
 
@@ -98,7 +98,7 @@ def test_dismiss_shared_expense_suggestion_marks_status(monkeypatch) -> None:
             called["status"] = status
             called["error"] = error
 
-    monkeypatch.setattr(agent_api, "SupabaseSharedExpensesRepository", lambda client: _FakeRepository())
+    monkeypatch.setattr(agent_api, "_get_shared_expenses_repository_or_501", lambda: _FakeRepository())
 
     response = client.post(
         f"/finance/shared-expenses/suggestions/{SUGGESTION_ID}/dismiss",
@@ -132,7 +132,7 @@ def test_apply_shared_expense_suggestion_with_amount(monkeypatch) -> None:
             called["amount"] = amount
             return created_shared_expense_id
 
-    monkeypatch.setattr(agent_api, "SupabaseSharedExpensesRepository", lambda client: _FakeRepository())
+    monkeypatch.setattr(agent_api, "_get_shared_expenses_repository_or_501", lambda: _FakeRepository())
 
     response = client.post(
         f"/finance/shared-expenses/suggestions/{SUGGESTION_ID}/apply",

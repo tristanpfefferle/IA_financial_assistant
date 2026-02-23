@@ -1414,7 +1414,6 @@ class SharedExpenseSuggestionApplyPayload(BaseModel):
     """Payload for shared expense suggestion apply endpoint."""
 
     amount: str | None = None
-    force: bool = False
 
 
 @lru_cache(maxsize=1)
@@ -2708,7 +2707,7 @@ def apply_shared_expense_suggestion(
         try:
             amount = Decimal(payload.amount)
         except (InvalidOperation, ValueError) as exc:
-            raise HTTPException(status_code=400, detail="amount required") from exc
+            raise HTTPException(status_code=400, detail="invalid amount format") from exc
 
     if amount is None:
         suggestion = repository.get_suggestion_by_id(profile_id=profile_id, suggestion_id=suggestion_id)
