@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import re
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal
@@ -55,38 +56,46 @@ class RelevesImportService:
         return category_id
 
     @staticmethod
-    def _derive_merchant_key_norm(*, libelle: str | None, payee: str | None) -> str:
-        """Build a stable normalized merchant key from observed labels."""
+    def _redact_llm_context_value(value: str | None, *, max_len: int = 200) -> str | None:
+        if value is None:
+            return None
 
-        noise_tokens = {
-            "paiement",
-            "payment",
-            "carte",
-            "card",
-            "debit",
-            "credit",
-            "transaction",
-            "trx",
-            "twint",
-            "virement",
-            "transfert",
-            "internal",
-            "transfer",
-            "ref",
-            "no",
-            "numero",
+        cleaned = " ".join(str(value).split())
+        if not cleaned:
+            return None
+
+        cleaned = re.sub(r"\bCH\d{2}[0-9A-Z ]{10,}\b", "[REDACTED_IBAN]", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"(?:\+41|0041)\s?(?:\(?0\)?\s?)?(?:\d[\s.-]?){8,12}", "[REDACTED_PHONE]", cleaned)
+        return cleaned[:max_len]
+
+    def _build_non_sensitive_llm_context(
+        self,
+        *,
+        source: str,
+        parsed_date: date,
+        amount: Decimal,
+        devise: str,
+        payee: str | None,
+        libelle: str | None,
+        external_id: str | None,
+        bank_account_id: UUID | None,
+    ) -> dict[str, str]:
+        llm_context: dict[str, str] = {
+            "source": source,
+            "date": parsed_date.isoformat(),
+            "amount": str(amount),
+            "currency": devise,
         }
-
-        base_norm = normalize_merchant_alias(payee or libelle or "")
-        if not base_norm:
-            base_norm = normalize_merchant_alias(libelle or "")
-        if not base_norm:
-            return "inconnu"
-
-        tokens = [token for token in base_norm.split() if token and token not in noise_tokens]
-        if tokens:
-            return " ".join(tokens)
-        return base_norm or "inconnu"
+        optional_fields = {
+            "payee": self._redact_llm_context_value(payee),
+            "libelle": self._redact_llm_context_value(libelle),
+            "external_id": self._redact_llm_context_value(external_id),
+            "bank_account_id": str(bank_account_id) if bank_account_id is not None else None,
+        }
+        for key, value in optional_fields.items():
+            if value:
+                llm_context[key] = value
+        return llm_context
 
     @staticmethod
     def _fallback_merchant_entity_id(*, profile_id: UUID, merchant_key_norm: str) -> UUID:
@@ -163,38 +172,67 @@ class RelevesImportService:
         meta_dict["category_status"] = classification.category_status
         meta_dict["tx_kind"] = classification.tx_kind
 
-        observed_alias = str(parsed_row.get("payee") or parsed_row.get("libelle") or "").strip()
+        payee = str(parsed_row.get("payee") or "").strip() or None
+        libelle = str(parsed_row.get("libelle") or "").strip() or None
+        devise = str(parsed_row.get("devise") or "CHF")
+
+        observed_alias = str(payee or libelle or "").strip()
         observed_alias_norm = normalize_merchant_alias(observed_alias)
-        merchant_key_norm = self._derive_merchant_key_norm(
-            libelle=str(parsed_row.get("libelle") or "") or None,
-            payee=str(parsed_row.get("payee") or "") or None,
-        )
+        merchant_key_norm = observed_alias_norm or "unknown"
 
         decision = None
+        suggestion_created = False
         if self.profiles_repository is not None:
-            merchant_entity_id = self.profiles_repository.ensure_merchant_entity_from_alias(
-                profile_id=profile_id,
-                observed_alias=observed_alias or merchant_key_norm,
-                observed_alias_norm=observed_alias_norm or merchant_key_norm,
-                merchant_key_norm=merchant_key_norm,
+            resolved_entity = self.profiles_repository.find_merchant_entity_by_alias_norm(
+                alias_norm=observed_alias_norm,
             )
-
-            decision = decide_releve_classification(
-                profile_id=profile_id,
-                merchant_entity_id=merchant_entity_id,
-                bank_account_id=bank_account_id,
-                libelle=str(parsed_row.get("libelle") or "") or None,
-                payee=str(parsed_row.get("payee") or "") or None,
-                montant=amount,
-                devise=str(parsed_row.get("devise") or "CHF"),
-                date=parsed_date,
-                metadata=meta_dict,
-                repositories=self.profiles_repository,
-            )
-            meta_dict["classification_source"] = decision.source.value
-            meta_dict["classification_rationale"] = decision.rationale
-            meta_dict["classify_confidence"] = decision.confidence
-            meta_dict["classify_at"] = datetime.now(timezone.utc).isoformat()
+            if resolved_entity is not None and resolved_entity.get("id"):
+                merchant_entity_id = UUID(str(resolved_entity["id"]))
+                decision = decide_releve_classification(
+                    profile_id=profile_id,
+                    merchant_entity_id=merchant_entity_id,
+                    bank_account_id=bank_account_id,
+                    libelle=libelle,
+                    payee=payee,
+                    montant=amount,
+                    devise=devise,
+                    date=parsed_date,
+                    metadata=meta_dict,
+                    repositories=self.profiles_repository,
+                )
+                meta_dict["classification_source"] = decision.source.value
+                meta_dict["classification_rationale"] = decision.rationale
+                meta_dict["classify_confidence"] = decision.confidence
+                meta_dict["classify_at"] = datetime.now(timezone.utc).isoformat()
+            else:
+                merchant_entity_id = self._fallback_merchant_entity_id(
+                    profile_id=profile_id,
+                    merchant_key_norm="unknown",
+                )
+                meta_dict["merchant_resolution"] = "unresolved"
+                meta_dict["observed_alias_norm"] = observed_alias_norm
+                meta_dict["llm_context"] = self._build_non_sensitive_llm_context(
+                    source=source,
+                    parsed_date=parsed_date,
+                    amount=amount,
+                    devise=devise,
+                    payee=payee,
+                    libelle=libelle,
+                    external_id=external_id,
+                    bank_account_id=bank_account_id,
+                )
+                # TODO(tristanpfefferle): Le batch job LLM transformera les suggestions
+                # map_alias en merchant_entity + alias + suggested_category_norm.
+                suggestion_created = self.profiles_repository.create_pending_map_alias_suggestion(
+                    profile_id=profile_id,
+                    observed_alias=observed_alias,
+                    observed_alias_norm=observed_alias_norm,
+                    rationale=(
+                        "Alias inconnu lors de l'import; nécessite normalisation/"
+                        "canonicalisation et catégorisation LLM."
+                    ),
+                    confidence=0.0,
+                )
         else:
             merchant_entity_id = self._fallback_merchant_entity_id(
                 profile_id=profile_id,
@@ -220,6 +258,7 @@ class RelevesImportService:
             "merchant_entity_id": merchant_entity_id,
             "category_id": category_id,
             "meta": meta_dict,
+            "merchant_suggestion_created": suggestion_created,
             "contenu_brut": raw_dict,
             "source": source,
         }
@@ -227,6 +266,8 @@ class RelevesImportService:
     def import_releves(self, request: RelevesImportRequest) -> RelevesImportResult:
         errors: list[RelevesImportError] = []
         normalized_rows: list[dict[str, object]] = []
+
+        merchant_suggestions_created_count = 0
 
         for file in request.files:
             try:
@@ -259,6 +300,8 @@ class RelevesImportService:
                         )
                     )
                     continue
+                if bool(normalized.get("merchant_suggestion_created")):
+                    merchant_suggestions_created_count += 1
                 normalized_rows.append(normalized)
 
         existing_rows = self.releves_repository.list_releves_for_import(
@@ -324,4 +367,5 @@ class RelevesImportService:
             ),
             errors=errors,
             preview=preview,
+            merchant_suggestions_created_count=merchant_suggestions_created_count,
         )

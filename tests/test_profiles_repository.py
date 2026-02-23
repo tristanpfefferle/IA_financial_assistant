@@ -912,7 +912,7 @@ def test_ensure_profile_for_auth_user_ignores_duplicate_chat_state_insert() -> N
     assert client.post_calls[1]["table"] == "chat_state"
 
 
-def test_ensure_merchant_entity_from_alias_reuses_existing_canonical_entity() -> None:
+def test_ensure_merchant_entity_and_alias_reuses_existing_canonical_entity() -> None:
     profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
     entity_id = UUID("11111111-1111-1111-1111-111111111111")
     client = _ClientStub(
@@ -925,7 +925,7 @@ def test_ensure_merchant_entity_from_alias_reuses_existing_canonical_entity() ->
     )
     repository = SupabaseProfilesRepository(client=client)
 
-    resolved_id = repository.ensure_merchant_entity_from_alias(
+    resolved_id = repository.ensure_merchant_entity_and_alias(
         profile_id=profile_id,
         observed_alias="Paiement carte COOP",
         observed_alias_norm="paiement carte coop",
@@ -938,7 +938,7 @@ def test_ensure_merchant_entity_from_alias_reuses_existing_canonical_entity() ->
     assert client.post_calls[0]["payload"]["merchant_entity_id"] == str(entity_id)
 
 
-def test_ensure_merchant_entity_from_alias_recovers_on_duplicate_entity_insert() -> None:
+def test_ensure_merchant_entity_and_alias_recovers_on_duplicate_entity_insert() -> None:
     profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
     entity_id = UUID("22222222-2222-2222-2222-222222222222")
     client = _ClientStub(
@@ -957,7 +957,7 @@ def test_ensure_merchant_entity_from_alias_recovers_on_duplicate_entity_insert()
     )
     repository = SupabaseProfilesRepository(client=client)
 
-    resolved_id = repository.ensure_merchant_entity_from_alias(
+    resolved_id = repository.ensure_merchant_entity_and_alias(
         profile_id=profile_id,
         observed_alias="TWINT Migros",
         observed_alias_norm="twint migros",

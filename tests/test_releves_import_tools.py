@@ -18,6 +18,44 @@ PROFILE_ID = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 ACCOUNT_ID = UUID("99999999-9999-9999-9999-999999999999")
 
 
+class _ImportProfilesRepositoryStub:
+    def __init__(self) -> None:
+        self.suggestions: list[dict[str, str]] = []
+        self.created_entities: list[dict[str, str]] = []
+
+    def ensure_system_categories(self, *, profile_id: UUID, categories: list[dict[str, str]]) -> dict[str, int]:
+        del profile_id, categories
+        return {"created_count": 0, "system_total_count": 1}
+
+    def find_profile_category_id_by_name_norm(self, *, profile_id: UUID, name_norm: str) -> UUID | None:
+        del name_norm
+        return UUID("00000000-0000-0000-0000-000000000099") if profile_id else None
+
+    def find_merchant_entity_by_alias_norm(self, *, alias_norm: str):
+        del alias_norm
+        return None
+
+    def create_pending_map_alias_suggestion(
+        self,
+        *,
+        profile_id: UUID,
+        observed_alias: str,
+        observed_alias_norm: str,
+        rationale: str,
+        confidence: float,
+    ) -> bool:
+        self.suggestions.append(
+            {
+                "profile_id": str(profile_id),
+                "observed_alias": observed_alias,
+                "observed_alias_norm": observed_alias_norm,
+                "rationale": rationale,
+                "confidence": str(confidence),
+            }
+        )
+        return True
+
+
 def _build_router() -> ToolRouter:
     service = BackendToolService(
         transactions_repository=GestionFinanciereTransactionsRepository(),
@@ -164,3 +202,25 @@ Date de transaction;Date de comptabilisation;Description1;Description2;Descripti
     assert first_result.imported_count == 1
     assert second_result.new_count == 0
     assert (second_result.identical_count + second_result.modified_count) > 0
+
+
+def test_import_creates_pending_map_alias_suggestions_when_aliases_are_unknown() -> None:
+    profiles_repository = _ImportProfilesRepositoryStub()
+    service = BackendToolService(
+        transactions_repository=GestionFinanciereTransactionsRepository(),
+        releves_repository=InMemoryRelevesRepository(),
+        categories_repository=InMemoryCategoriesRepository(),
+        profiles_repository=profiles_repository,
+    )
+    router = ToolRouter(backend_client=BackendClient(tool_service=service))
+
+    payload = _fixture_payload(filename="ubs_unknown_aliases.csv")
+    payload["import_mode"] = "commit"
+
+    result = router.call("finance_releves_import_files", payload, profile_id=PROFILE_ID)
+
+    assert isinstance(result, RelevesImportResult)
+    assert result.new_count > 0
+    assert result.merchant_suggestions_created_count > 0
+    assert profiles_repository.suggestions
+    assert all(len(entity["canonical_name"]) < 80 for entity in profiles_repository.created_entities)

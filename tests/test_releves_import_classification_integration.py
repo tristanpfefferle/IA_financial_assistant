@@ -29,6 +29,7 @@ class _ProfilesStub:
         self.profile_entity_overrides: dict[tuple[UUID, UUID], UUID] = {}
         self.created_entity_count = 0
         self.created_alias_count = 0
+        self.pending_alias_norms: set[str] = set()
 
     def ensure_system_categories(self, *, profile_id: UUID, categories: list[dict[str, str]]) -> dict[str, int]:
         del profile_id
@@ -62,6 +63,29 @@ class _ProfilesStub:
         self.created_entity_count += 1
         self.created_alias_count += 1
         return entity_id
+
+    def find_merchant_entity_by_alias_norm(self, *, alias_norm: str):
+        normalized = normalize_merchant_alias(alias_norm)
+        entity_id = self.alias_to_entity.get(normalized)
+        if entity_id is None:
+            return None
+        return {"id": str(entity_id)}
+
+    def create_pending_map_alias_suggestion(
+        self,
+        *,
+        profile_id: UUID,
+        observed_alias: str,
+        observed_alias_norm: str,
+        rationale: str,
+        confidence: float,
+    ) -> bool:
+        del profile_id, observed_alias, rationale, confidence
+        normalized = normalize_merchant_alias(observed_alias_norm)
+        if not normalized or normalized in self.pending_alias_norms:
+            return False
+        self.pending_alias_norms.add(normalized)
+        return True
 
     def find_profile_category_id_by_name_norm(self, *, profile_id: UUID, name_norm: str) -> UUID | None:
         del profile_id
@@ -118,7 +142,7 @@ Date de transaction;Date de comptabilisation;Description1;Description2;Descripti
 """.encode("utf-8")
 
 
-def test_import_45_unknown_transactions_creates_entities_and_non_null_links() -> None:
+def test_import_45_unknown_transactions_creates_pending_suggestions_and_non_null_links() -> None:
     repository = InMemoryRelevesRepository()
     profiles_repository = _ProfilesStub(with_autres=False)
     service = RelevesImportService(releves_repository=repository, profiles_repository=profiles_repository)
@@ -126,7 +150,8 @@ def test_import_45_unknown_transactions_creates_entities_and_non_null_links() ->
     result = service.import_releves(_build_request(_build_unknown_transactions_csv()))
 
     assert result.imported_count == 45
-    assert profiles_repository.created_entity_count == 45
+    assert result.merchant_suggestions_created_count == 45
+    assert profiles_repository.created_entity_count == 0
 
     imported_rows = repository.list_releves_for_import(profile_id=PROFILE_ID, bank_account_id=None)
     rows = [row for row in imported_rows if str(row.get("libelle", "")).startswith("Paiement test")]
@@ -147,9 +172,11 @@ def test_reimport_same_45_unknown_transactions_creates_no_new_entities_or_aliase
 
     assert first.imported_count == 45
     assert second.imported_count == 0
-    assert profiles_repository.created_entity_count == 45
-    assert profiles_repository.created_alias_count == 45
-    assert len(profiles_repository.alias_to_entity) == 45
+    assert first.merchant_suggestions_created_count == 45
+    assert second.merchant_suggestions_created_count == 0
+    assert profiles_repository.created_entity_count == 0
+    assert profiles_repository.created_alias_count == 0
+    assert len(profiles_repository.pending_alias_norms) == 45
 
 
 def test_same_merchant_entity_has_profile_specific_override_categories() -> None:
