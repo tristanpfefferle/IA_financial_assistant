@@ -809,7 +809,7 @@ class SupabaseProfilesRepository:
 
         existing = self._find_existing_map_alias_suggestion(
             profile_id=profile_id,
-            dedup_key=cleaned_dedup_key,
+            observed_alias_norm=cleaned_dedup_key,
         )
         if existing is not None:
             self._increment_map_alias_suggestion_seen(existing_row=existing)
@@ -841,7 +841,7 @@ class SupabaseProfilesRepository:
 
         existing_after_duplicate = self._find_existing_map_alias_suggestion(
             profile_id=profile_id,
-            dedup_key=cleaned_dedup_key,
+            observed_alias_norm=cleaned_dedup_key,
         )
         if existing_after_duplicate is not None:
             self._increment_map_alias_suggestion_seen(existing_row=existing_after_duplicate)
@@ -851,19 +851,15 @@ class SupabaseProfilesRepository:
         self,
         *,
         profile_id: UUID,
-        dedup_key: str,
+        observed_alias_norm: str,
     ) -> dict[str, Any] | None:
-        cleaned_dedup_key = self._normalize_name_norm(dedup_key)
-        if not cleaned_dedup_key:
-            return None
-
         rows, _ = self._client.get_rows(
             table="merchant_suggestions",
             query={
                 "select": "id,times_seen,last_seen,status",
                 "profile_id": f"eq.{profile_id}",
                 "action": "eq.map_alias",
-                "merchant_key_norm": f"eq.{cleaned_dedup_key}",
+                "observed_alias_norm": f"eq.{observed_alias_norm}",
                 "status": "in.(pending,applied)",
                 "limit": 1,
             },
@@ -1242,7 +1238,7 @@ class SupabaseProfilesRepository:
         rows, _ = self._client.get_rows(
             table="merchant_suggestions",
             query={
-                "select": "id,observed_alias,observed_alias_norm,merchant_key_norm,created_at",
+                "select": "id,observed_alias,observed_alias_norm,created_at",
                 "profile_id": f"eq.{profile_id}",
                 "action": "eq.map_alias",
                 "status": "in.(pending,failed)",
