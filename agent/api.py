@@ -1859,11 +1859,14 @@ def agent_chat(
         auth_user_id, profile_id = _resolve_authenticated_profile(authorization)
         profiles_repository = get_profiles_repository()
 
-        chat_state = profiles_repository.get_chat_state(profile_id=profile_id, user_id=auth_user_id)
-        active_task = chat_state.get("active_task") if isinstance(chat_state, dict) else None
-        state = chat_state.get("state") if isinstance(chat_state, dict) else None
+        chat_state = profiles_repository.get_chat_state(profile_id=profile_id, user_id=auth_user_id) or {}
+        if not isinstance(chat_state, dict):
+            chat_state = {}
+
+        active_task = chat_state.get("active_task")
+        state = chat_state.get("state")
         state_dict = dict(state) if isinstance(state, dict) else None
-        shared_expense_active_task = chat_state.get("active_task") if isinstance(chat_state, dict) else None
+        shared_expense_active_task = chat_state.get("active_task")
         existing_global_state = state_dict.get("global_state") if isinstance(state_dict, dict) else None
         global_state = existing_global_state if _is_valid_global_state(existing_global_state) else None
         should_persist_global_state = False
@@ -3593,7 +3596,7 @@ def import_releves(payload: ImportRequestPayload, authorization: str | None = He
             selected_bank_account_name = str(detection_result.get("name") or "").strip() or None
         elif detection_result == "ambiguous":
             chat_state = profiles_repository.get_chat_state(profile_id=profile_id, user_id=auth_user_id)
-            state = chat_state.get("state") if isinstance(chat_state, dict) else None
+            state = chat_state.get("state")
             state_dict = dict(state) if isinstance(state, dict) else {}
             import_context = state_dict.get("import_context") if isinstance(state_dict.get("import_context"), dict) else {}
             import_context["pending_files"] = files_payload
@@ -3666,7 +3669,7 @@ def import_releves(payload: ImportRequestPayload, authorization: str | None = He
     try:
         profiles_repository = get_profiles_repository()
         chat_state = profiles_repository.get_chat_state(profile_id=profile_id, user_id=auth_user_id)
-        state = chat_state.get("state") if isinstance(chat_state, dict) else None
+        state = chat_state.get("state")
         state_dict = dict(state) if isinstance(state, dict) else {}
         global_state = state_dict.get("global_state") if isinstance(state_dict.get("global_state"), dict) else None
 
