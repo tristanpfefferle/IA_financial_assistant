@@ -8,6 +8,7 @@ import {
   importReleves,
   isImportClarificationResult,
   openPdfFromUrl,
+  resolveApiBaseUrl,
   resolvePendingMerchantAliases,
   resetSession,
   sendChatMessage,
@@ -24,6 +25,7 @@ import {
   toPdfUiRequest,
   toQuickReplyYesNoUiAction,
 } from './chatUiRequests'
+import { resolvePdfReportUrl } from './pdfUrl'
 
 type ChatMessage = {
   id: string
@@ -166,6 +168,7 @@ function resolveHref(href: string, apiBaseUrl: string): string {
   }
   return href
 }
+
 
 function renderContentWithLinks(content: string, apiBaseUrl: string): ReactNode[] {
   const linksRegex = /(\[([^\]]+)\]\(([^)]+)\)|https?:\/\/[^\s]+)/g
@@ -319,7 +322,7 @@ export function ChatPage({ email }: ChatPageProps) {
   const [awaitingPendingCategorizationReply, setAwaitingPendingCategorizationReply] = useState(false)
   const [typingCursor, setTypingCursor] = useState(0)
   const envDebugEnabled = import.meta.env.VITE_UI_DEBUG === 'true'
-  const apiBaseUrl = useMemo(() => (import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:8000').replace(/\/+$/, ''), [])
+  const apiBaseUrl = useMemo(() => resolveApiBaseUrl(import.meta.env.VITE_API_URL), [])
   const messagesRef = useRef<HTMLDivElement | null>(null)
   const executedPdfMessageIdsRef = useRef<Set<string>>(new Set())
   const revealedMessageIdsRef = useRef<Set<string>>(new Set())
@@ -464,11 +467,12 @@ export function ChatPage({ email }: ChatPageProps) {
       if (!pdfUiRequest) {
         continue
       }
-      openPdfFromUrl(pdfUiRequest.url).catch((caughtError) => {
+      const finalUrl = resolvePdfReportUrl(pdfUiRequest.url, apiBaseUrl)
+      openPdfFromUrl(finalUrl).catch((caughtError) => {
         setError(caughtError instanceof Error ? caughtError.message : 'Impossible d’ouvrir le rapport PDF')
       })
     }
-  }, [messages])
+  }, [apiBaseUrl, messages])
 
   const scrollToBottom = () => {
     const element = messagesRef.current
@@ -1281,6 +1285,7 @@ function MessageBubble({
 }) {
   const dateLabel = new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   const pdfUiRequest = toPdfUiRequest(message.toolResult)
+  const resolvedPdfUrl = pdfUiRequest ? resolvePdfReportUrl(pdfUiRequest.url, apiBaseUrl) : null
   const hasPdfAction = pdfUiRequest !== null
   const spendingReportParams = pdfUiRequest ? parseSpendingReportParams(pdfUiRequest.url) : null
   const [spendingReport, setSpendingReport] = useState<SpendingReport | null>(null)
@@ -1392,13 +1397,13 @@ function MessageBubble({
             style={{ cursor: 'pointer' }}
             onClick={() => {
               if (pdfUiRequest) {
-                void openPdfFromUrl(pdfUiRequest.url)
+                void openPdfFromUrl(resolvePdfReportUrl(pdfUiRequest.url, apiBaseUrl))
               }
             }}
             onKeyDown={(event) => {
               if ((event.key === 'Enter' || event.key === ' ') && pdfUiRequest) {
                 event.preventDefault()
-                void openPdfFromUrl(pdfUiRequest.url)
+                void openPdfFromUrl(resolvePdfReportUrl(pdfUiRequest.url, apiBaseUrl))
               }
             }}
           >
@@ -1419,18 +1424,28 @@ function MessageBubble({
             <p><strong>Total effectif: {formatMoney(spendingReport.effective_spending.effective_total, spendingReport.currency)}</strong></p>
           </div>
           {pdfUiRequest ? (
-            <button type="button" className="secondary-button" onClick={() => void openPdfFromUrl(pdfUiRequest.url)}>
+            <a className="secondary-button" href={resolvedPdfUrl ?? undefined} target="_blank" rel="noreferrer" onClick={(event) => {
+              event.preventDefault()
+              if (resolvedPdfUrl) {
+                void openPdfFromUrl(resolvedPdfUrl)
+              }
+            }}>
               Ouvrir PDF
-            </button>
+            </a>
           ) : null}
         </section>
       ) : null}
       {spendingReportError && hasPdfAction ? (
         <section className="report-summary" aria-label="Erreur rapport dépenses">
           <p className="subtle-text">Impossible de charger le rapport détaillé. Utilise le PDF.</p>
-          <button type="button" className="secondary-button" onClick={() => pdfUiRequest && void openPdfFromUrl(pdfUiRequest.url)}>
+          <a className="secondary-button" href={resolvedPdfUrl ?? undefined} target="_blank" rel="noreferrer" onClick={(event) => {
+            event.preventDefault()
+            if (resolvedPdfUrl) {
+              void openPdfFromUrl(resolvedPdfUrl)
+            }
+          }}>
             Ouvrir PDF
-          </button>
+          </a>
         </section>
       ) : null}
       {message.role === 'assistant' && importIntent ? (
