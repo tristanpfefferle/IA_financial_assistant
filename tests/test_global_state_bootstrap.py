@@ -1690,6 +1690,133 @@ def test_profile_collect_refusal_last_name_does_not_set_last_name(monkeypatch) -
     assert persisted["onboarding_substep"] == "profile_collect"
 
 
+def test_profile_collect_refusal_first_name_does_not_set_first_name(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "onboarding",
+                    "onboarding_step": "profile",
+                    "onboarding_substep": "profile_collect",
+                }
+            }
+        },
+        profile_fields={"first_name": "", "last_name": "", "birth_date": ""},
+    )
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
+
+    response = client.post("/agent/chat", json={"message": "J'ai pas de prénom"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert repo.profile_update_calls == []
+    assert "quel est ton prénom" in response.json()["reply"].lower()
+
+
+def test_profile_collect_toxic_message_does_not_call_llm_and_reasks(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "onboarding",
+                    "onboarding_step": "profile",
+                    "onboarding_substep": "profile_collect",
+                }
+            }
+        },
+        profile_fields={"first_name": "", "last_name": "", "birth_date": ""},
+    )
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
+
+    def _fail_if_called(_message: str):
+        raise AssertionError("LLM fallback should not be called for toxic input")
+
+    monkeypatch.setattr(agent_api, "_extract_profile_fields_with_llm", _fail_if_called)
+
+    response = client.post("/agent/chat", json={"message": "Ta gueule"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert "restons respectueux" in response.json()["reply"].lower()
+    assert "prénom" in response.json()["reply"].lower()
+
+
+def test_profile_collect_invalid_first_name_triggers_llm_fallback(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "onboarding",
+                    "onboarding_step": "profile",
+                    "onboarding_substep": "profile_collect",
+                }
+            }
+        },
+        profile_fields={"first_name": "", "last_name": "", "birth_date": ""},
+    )
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
+    monkeypatch.setattr(
+        agent_api,
+        "_extract_profile_fields_with_llm",
+        lambda _message: {
+            "first_name": "Tristan",
+            "last_name": "Jadre",
+            "birth_date": None,
+            "confidence": 0.9,
+            "reason": "llm_fallback",
+            "needs_clarification": False,
+            "clarification_question": None,
+        },
+    )
+
+    response = client.post("/agent/chat", json={"message": "J'ai pas de prénom mais bref"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert {"first_name": "Tristan", "last_name": "Jadre"} in repo.profile_update_calls
+    assert "date de naissance" in response.json()["reply"].lower()
+
+
+def test_profile_collect_llm_returns_needs_clarification_when_refusal(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "onboarding",
+                    "onboarding_step": "profile",
+                    "onboarding_substep": "profile_collect",
+                }
+            }
+        },
+        profile_fields={"first_name": "", "last_name": "", "birth_date": ""},
+    )
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
+    monkeypatch.setattr(
+        agent_api,
+        "_extract_profile_fields_with_llm",
+        lambda _message: {
+            "first_name": None,
+            "last_name": None,
+            "birth_date": None,
+            "confidence": 0.1,
+            "reason": "llm_fallback",
+            "needs_clarification": True,
+            "clarification_question": "Quel est ton prénom ?",
+        },
+    )
+
+    response = client.post("/agent/chat", json={"message": "Je suis pas né"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert "quel est ton prénom" in response.json()["reply"].lower()
+    assert repo.profile_update_calls == []
+
+
 def test_profile_collect_absurd_birth_date_requires_confirmation(monkeypatch) -> None:
     _mock_auth(monkeypatch)
     repo = _Repo(
