@@ -117,6 +117,44 @@ _ONBOARDING_NAME_PATTERN = re.compile(
 _ONBOARDING_NAME_PREFIX_PATTERN = re.compile(
     r"^\s*([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'\-]+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'\-]+)\b"
 )
+_ONBOARDING_PROFILE_FIRST_NAME_HINT_PATTERN = re.compile(
+    r"\b(?:je\s+m[’']?appelle|moi\s+c[’']?est|c[’']?est|pr[ée]nom\s*:?)\s+([^,.;!?\n]+)",
+    flags=re.IGNORECASE,
+)
+_ONBOARDING_PROFILE_LAST_NAME_HINT_PATTERN = re.compile(
+    r"\b(?:mon\s+nom(?:\s+de\s+famille)?|nom(?:\s+de\s+famille)?\s*:?)\s+([^,.;!?\n]+)",
+    flags=re.IGNORECASE,
+)
+_ONBOARDING_PROFILE_TOKEN_PATTERN = re.compile(r"[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'\-]*")
+_ONBOARDING_PROFILE_STOP_WORDS = {
+    "je",
+    "m",
+    "me",
+    "moi",
+    "appelle",
+    "est",
+    "et",
+    "c",
+    "ce",
+    "mon",
+    "ma",
+    "prenom",
+    "prénom",
+    "nom",
+    "de",
+    "famille",
+    "suis",
+}
+_ONBOARDING_PROFILE_NON_NAME_HINTS = {
+    "liste",
+    "catégorie",
+    "catégories",
+    "transactions",
+    "dépenses",
+    "depenses",
+    "revenus",
+    "budget",
+}
 _ONBOARDING_BIRTH_DATE_PATTERN = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
 _ONBOARDING_BIRTH_DATE_DOT_PATTERN = re.compile(r"^(\d{1,2})\.(\d{1,2})\.(\d{4})$")
 _ONBOARDING_BIRTH_DATE_SLASH_PATTERN = re.compile(r"^(\d{1,2})/(\d{1,2})/(\d{4})$")
@@ -150,6 +188,16 @@ _FRENCH_MONTH_TO_NUMBER = {
     "decembre": 12,
     "dec": 12,
 }
+
+
+class _ProfileFieldExtractionLlmResponse(BaseModel):
+    first_name: str | None = None
+    last_name: str | None = None
+    birth_date: str | None = None
+    confidence: float = 0.0
+    needs_clarification: bool = False
+    clarification_question: str | None = None
+
 _BANK_ACCOUNTS_REQUEST_HINTS = ("liste", "catégor", "depens", "dépens", "recett", "transaction", "relev")
 _YES_VALUES = {
     "oui",
@@ -1836,12 +1884,169 @@ def _build_onboarding_reminder(global_state: dict[str, Any] | None) -> str | Non
     return None
 
 
+def _missing_profile_field_question(profile_fields: dict[str, Any]) -> str:
+    first_name = str(profile_fields.get("first_name") or "").strip()
+    has_first_name = _is_profile_field_completed(first_name)
+    has_last_name = _is_profile_field_completed(profile_fields.get("last_name"))
+    has_birth_date = _is_profile_field_completed(profile_fields.get("birth_date"))
+
+    if not has_first_name and not has_last_name:
+        return "Quel est ton prénom et ton nom ?"
+    if not has_first_name:
+        return "Quel est ton prénom ?"
+    if not has_last_name:
+        return f"Ok {first_name} 🙂 Et ton nom de famille ?"
+    if not has_birth_date:
+        return f"Merci {first_name} 🙂\n\nQuelle est ta date de naissance ?"
+    return ""
+
+
 def _extract_name_from_message(message: str) -> tuple[str, str] | None:
     match = _ONBOARDING_NAME_PATTERN.match(message)
     if not match:
         return None
     first_name, last_name = match.groups()
     return first_name, last_name
+
+
+def _normalize_name_token(token: str) -> str:
+    return token.strip(" '\"-_").strip()
+
+
+def _tokenize_profile_name_fragment(fragment: str) -> list[str]:
+    normalized_fragment = re.sub(r"[\U00010000-\U0010ffff]", " ", fragment)
+    tokens = [_normalize_name_token(item) for item in _ONBOARDING_PROFILE_TOKEN_PATTERN.findall(normalized_fragment)]
+    cleaned_tokens: list[str] = []
+    for token in tokens:
+        if not token:
+            continue
+        lowered = token.lower()
+        if lowered in _ONBOARDING_PROFILE_STOP_WORDS:
+            continue
+        cleaned_tokens.append(token)
+    return cleaned_tokens
+
+
+def extract_profile_fields_from_message(message: str) -> dict[str, Any]:
+    """Extract profile fields from a free-form onboarding message."""
+
+    extracted: dict[str, Any] = {
+        "first_name": None,
+        "last_name": None,
+        "birth_date": None,
+        "confidence": 0.0,
+        "reason": "no_match",
+    }
+    raw_message = str(message or "").strip()
+    if not raw_message:
+        return extracted
+
+    birth_date = _extract_birth_date_from_text(raw_message) or _extract_birth_date_from_message(raw_message)
+    if birth_date is not None:
+        extracted["birth_date"] = birth_date
+        extracted["confidence"] = 0.95
+        extracted["reason"] = "birth_date_detected"
+
+    explicit_last_name = False
+    last_name_match = _ONBOARDING_PROFILE_LAST_NAME_HINT_PATTERN.search(raw_message)
+    if last_name_match:
+        last_tokens = _tokenize_profile_name_fragment(last_name_match.group(1))
+        if last_tokens:
+            extracted["last_name"] = " ".join(last_tokens)
+            extracted["confidence"] = max(float(extracted["confidence"]), 0.9)
+            extracted["reason"] = "explicit_last_name"
+            explicit_last_name = True
+
+    first_name_match = _ONBOARDING_PROFILE_FIRST_NAME_HINT_PATTERN.search(raw_message)
+    if first_name_match:
+        first_tokens = _tokenize_profile_name_fragment(first_name_match.group(1))
+        if first_tokens:
+            extracted["first_name"] = first_tokens[0]
+            if len(first_tokens) > 1 and not explicit_last_name:
+                extracted["last_name"] = " ".join(first_tokens[1:])
+            confidence = 0.85 if len(first_tokens) == 1 else 0.9
+            extracted["confidence"] = max(float(extracted["confidence"]), confidence)
+            extracted["reason"] = "explicit_first_name"
+
+    if extracted["first_name"] is None and extracted["last_name"] is None:
+        extracted_name = _extract_name_from_text_prefix(raw_message) or _extract_name_from_message(raw_message)
+        if extracted_name is not None:
+            extracted["first_name"], extracted["last_name"] = extracted_name
+            extracted["confidence"] = max(float(extracted["confidence"]), 0.9)
+            extracted["reason"] = "full_name_pattern"
+
+    normalized_message = raw_message.lower()
+    contains_non_name_hint = any(keyword in normalized_message for keyword in _ONBOARDING_PROFILE_NON_NAME_HINTS)
+
+    if extracted["first_name"] is None and extracted["last_name"] is None and not contains_non_name_hint:
+        generic_tokens = _tokenize_profile_name_fragment(raw_message)
+        if 2 <= len(generic_tokens) <= 3:
+            extracted["first_name"] = generic_tokens[0]
+            extracted["last_name"] = " ".join(generic_tokens[1:])
+            extracted["confidence"] = max(float(extracted["confidence"]), 0.85)
+            extracted["reason"] = "generic_multi_token_name"
+        elif len(generic_tokens) == 1:
+            extracted["first_name"] = generic_tokens[0]
+            extracted["confidence"] = max(float(extracted["confidence"]), 0.6)
+            extracted["reason"] = "generic_single_token_name"
+
+    return extracted
+
+
+def _extract_profile_fields_with_llm(message: str) -> dict[str, Any] | None:
+    if not _config.llm_enabled():
+        return None
+
+    api_key = _config.openai_api_key()
+    if not api_key:
+        return None
+
+    from openai import OpenAI
+
+    prompt = (
+        "Extrait les informations de profil utilisateur depuis un message d'onboarding. "
+        "Réponds strictement avec un objet JSON valide qui respecte le schéma donné.\n"
+        "Schéma:\n"
+        "{\n"
+        '  "first_name": string|null,\n'
+        '  "last_name": string|null,\n'
+        '  "birth_date": string|null,\n'
+        '  "confidence": number,\n'
+        '  "needs_clarification": boolean,\n'
+        '  "clarification_question": string|null\n'
+        "}\n"
+        "Règles: pas d'invention; si incertain, needs_clarification=true et une question brève utile. "
+        "birth_date doit être normalisée en YYYY-MM-DD si possible.\n"
+        f"Message utilisateur: {message}"
+    )
+    client = OpenAI(api_key=api_key, timeout=10.0)
+    response = client.chat.completions.create(
+        model=_config.llm_model(),
+        temperature=0.1,
+        messages=[
+            {"role": "system", "content": "Tu réponds uniquement avec un JSON strict valide."},
+            {"role": "user", "content": prompt},
+        ],
+        response_format={"type": "json_object"},
+    )
+    content = response.choices[0].message.content if response.choices else None
+    if not content:
+        return None
+    raw_payload = json.loads(content)
+    parsed = _ProfileFieldExtractionLlmResponse.model_validate(raw_payload)
+    birth_date = parsed.birth_date
+    if isinstance(birth_date, str) and birth_date.strip():
+        parsed_birth_date = _extract_birth_date_from_message(birth_date.strip())
+        birth_date = parsed_birth_date
+    return {
+        "first_name": parsed.first_name.strip() if isinstance(parsed.first_name, str) and parsed.first_name.strip() else None,
+        "last_name": parsed.last_name.strip() if isinstance(parsed.last_name, str) and parsed.last_name.strip() else None,
+        "birth_date": birth_date,
+        "confidence": max(0.0, min(1.0, float(parsed.confidence))),
+        "reason": "llm_fallback",
+        "needs_clarification": parsed.needs_clarification,
+        "clarification_question": parsed.clarification_question,
+    }
 
 
 def _extract_name_from_text_prefix(message: str) -> tuple[str, str] | None:
@@ -2521,9 +2726,10 @@ def agent_chat(
                 chat_state=updated_chat_state,
             )
             if payload.request_greeting:
+                greeting_question = _missing_profile_field_question({})
                 return _chat_response(
                     reply=(
-"Salut 👋\n\nJe suis ton assistant financier. Je t’aide à analyser tes dépenses et à construire un budget clair, automatiquement.\n\nOn va faire ça en 3 étapes :\n1) créer ton profil\n2) ajouter ta banque\n3) importer un relevé récent pour générer ton premier rapport.\n\nCommençons 🙂\n\nQuel est ton prénom et ton nom ?"
+f"Salut 👋\n\nJe suis ton assistant financier. Je t’aide à analyser tes dépenses et à construire un budget clair, automatiquement.\n\nOn va faire ça en 3 étapes :\n1) créer ton profil\n2) ajouter ta banque\n3) importer un relevé récent pour générer ton premier rapport.\n\nCommençons 🙂\n\n{greeting_question}"
                     ),
                     tool_result=None,
                     plan=None,
@@ -2544,9 +2750,18 @@ def agent_chat(
             and global_state.get("onboarding_substep") == "profile_collect"
         )
         if payload.request_greeting and is_onboarding_profile_collect:
+            try:
+                existing_profile_fields = profiles_repository.get_profile_fields(
+                    profile_id=profile_id,
+                    fields=list(_PROFILE_COMPLETION_FIELDS),
+                )
+            except Exception:
+                existing_profile_fields = {}
+            greeting_question = _missing_profile_field_question(existing_profile_fields)
             return _chat_response(
                 reply=(
-                    "Salut 👋\n\nJe suis ton assistant financier. Je t’aide à analyser tes dépenses et à construire un budget clair, automatiquement.\n\nOn va faire ça en 3 étapes :\n1) créer ton profil\n2) ajouter ta banque\n3) importer un relevé récent pour générer ton premier rapport.\n\nCommençons 🙂\n\nQuel est ton prénom et ton nom ?"
+                    "Salut 👋\n\nJe suis ton assistant financier. Je t’aide à analyser tes dépenses et à construire un budget clair, automatiquement.\n\nOn va faire ça en 3 étapes :\n1) créer ton profil\n2) ajouter ta banque\n3) importer un relevé récent pour générer ton premier rapport.\n\n"
+                    f"{greeting_question}"
                 ),
                 tool_result=None,
                 plan=None,
@@ -2573,33 +2788,67 @@ def agent_chat(
                 if substep == "profile_collect":
                     message = payload.message.strip()
                     if hasattr(profiles_repository, "update_profile_fields"):
-                        extracted_name = _extract_name_from_text_prefix(message) or _extract_name_from_message(message)
-                        if extracted_name is not None:
-                            first_name, last_name = extracted_name
-                            profiles_repository.update_profile_fields(
-                                profile_id=profile_id,
-                                set_dict={"first_name": first_name, "last_name": last_name},
-                            )
-                            try:
-                                profile_fields = profiles_repository.get_profile_fields(
-                                    profile_id=profile_id,
-                                    fields=list(_PROFILE_COMPLETION_FIELDS),
-                                )
-                            except Exception:
-                                logger.exception(
-                                    "onboarding_profile_refetch_after_name_update_failed profile_id=%s",
-                                    profile_id,
-                                )
-                                profile_fields = {}
-
-                        extracted_birth_date = _extract_birth_date_from_text(message) or _extract_birth_date_from_message(
-                            message
+                        existing_first_name = str(profile_fields.get("first_name") or "").strip()
+                        existing_last_name = str(profile_fields.get("last_name") or "").strip()
+                        extraction = extract_profile_fields_from_message(message)
+                        extracted_any = any(
+                            extraction.get(field_name)
+                            for field_name in ("first_name", "last_name", "birth_date")
                         )
-                        if extracted_birth_date is not None:
+                        ambiguous_message = bool(
+                            extraction.get("first_name")
+                            and extraction.get("last_name") is None
+                            and "nom" in message.lower()
+                        )
+                        extraction_source = "heuristic"
+                        if message and (not extracted_any or ambiguous_message):
+                            try:
+                                llm_extraction = _extract_profile_fields_with_llm(message)
+                            except Exception:
+                                logger.exception("profile_collect_llm_extraction_failed profile_id=%s", profile_id)
+                                llm_extraction = None
+                            if llm_extraction is not None:
+                                extraction = llm_extraction
+                                extraction_source = "llm"
+
+                        logger.info(
+                            "profile_collect_extraction source=%s confidence=%.3f fields=%s",
+                            extraction_source,
+                            float(extraction.get("confidence") or 0.0),
+                            {
+                                "first_name": extraction.get("first_name"),
+                                "last_name": extraction.get("last_name"),
+                                "birth_date": extraction.get("birth_date"),
+                            },
+                        )
+
+                        name_update_payload: dict[str, str] = {}
+                        extracted_first_name = extraction.get("first_name")
+                        if isinstance(extracted_first_name, str) and extracted_first_name.strip() and not existing_first_name:
+                            name_update_payload["first_name"] = extracted_first_name.strip()
+
+                        extracted_last_name = extraction.get("last_name")
+                        if isinstance(extracted_last_name, str) and extracted_last_name.strip() and not existing_last_name:
+                            name_update_payload["last_name"] = extracted_last_name.strip()
+
+                        birth_date_update_payload: dict[str, str] = {}
+                        extracted_birth_date = extraction.get("birth_date")
+                        if isinstance(extracted_birth_date, str) and extracted_birth_date.strip():
+                            birth_date_update_payload["birth_date"] = extracted_birth_date.strip()
+
+                        if name_update_payload:
                             profiles_repository.update_profile_fields(
                                 profile_id=profile_id,
-                                set_dict={"birth_date": extracted_birth_date},
+                                set_dict=name_update_payload,
                             )
+
+                        if birth_date_update_payload:
+                            profiles_repository.update_profile_fields(
+                                profile_id=profile_id,
+                                set_dict=birth_date_update_payload,
+                            )
+
+                        if name_update_payload or birth_date_update_payload:
                             try:
                                 profile_fields = profiles_repository.get_profile_fields(
                                     profile_id=profile_id,
@@ -2607,7 +2856,7 @@ def agent_chat(
                                 )
                             except Exception:
                                 logger.exception(
-                                    "onboarding_profile_refetch_after_birth_date_update_failed profile_id=%s",
+                                    "onboarding_profile_refetch_after_profile_update_failed profile_id=%s",
                                     profile_id,
                                 )
                                 profile_fields = {}
@@ -2644,10 +2893,7 @@ def agent_chat(
                             plan=None,
                         )
 
-                    if not has_name:
-                        reply = "Quel est ton prénom et ton nom ?"
-                    else:
-                        reply = f"Merci {first_name} 🙂\n\nQuelle est ta date de naissance ?"
+                    reply = _missing_profile_field_question(profile_fields)
 
                     updated_global_state = _build_onboarding_global_state(
                         global_state,
