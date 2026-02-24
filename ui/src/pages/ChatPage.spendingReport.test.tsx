@@ -98,4 +98,45 @@ describe('MessageList spending report summary', () => {
     expect(container.textContent).toContain('Partage sortant')
     expect(container.textContent).toContain('Partage entrant')
   })
+
+  it('renders JSON error fallback and keeps PDF button when report loading fails', async () => {
+    vi.mocked(getSpendingReport).mockRejectedValue(new Error('JSON parsing failed'))
+
+    await act(async () => {
+      createRoot(container).render(
+        <MessageList
+          messages={[
+            {
+              id: 'assistant-2',
+              role: 'assistant',
+              content: 'Rapport prêt.',
+              createdAt: Date.now(),
+              toolResult: {
+                type: 'ui_request',
+                name: 'open_pdf_report',
+                url: '/finance/reports/spending.pdf?month=2026-01',
+              },
+            },
+          ]}
+          isLoading={false}
+          debugMode={false}
+          apiBaseUrl="http://127.0.0.1:8000"
+          typingCursor={0}
+          revealedMessageIdsRef={{ current: new Set<string>() }}
+          messagesRef={createRef<HTMLDivElement>()}
+          onImportNow={() => undefined}
+          onScroll={() => undefined}
+          onStartConversation={() => undefined}
+          onTypingDone={() => undefined}
+        />,
+      )
+    })
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    expect(container.textContent).toContain('Impossible de charger le rapport détaillé. Utilise le PDF.')
+    expect(container.textContent).toContain('Ouvrir PDF')
+  })
 })
