@@ -551,6 +551,11 @@ class SupabaseProfilesRepository:
 
         profile_identity = self._get_profile_identity(profile_id=profile_id)
         owner_account_id = profile_identity.get("account_id")
+        owner_user_id_final = (
+            str(owner_account_id)
+            if owner_account_id
+            else str(profile_id)
+        )
         profile_email = profile_identity.get("email")
         guest_email_final = (
             str(profile_email)
@@ -588,7 +593,7 @@ class SupabaseProfilesRepository:
             "status": "active",
             "link_type": normalized_link_type,
             "owner_profile_id": str(profile_id),
-            "owner_user_id": str(owner_account_id) if owner_account_id else None,
+            "owner_user_id": owner_user_id_final,
             "other_profile_id": str(other_profile_id) if other_profile_id else None,
             "other_party_label": str(other_party_label) if other_party_label else None,
             "other_party_email": other_party_email_final,
