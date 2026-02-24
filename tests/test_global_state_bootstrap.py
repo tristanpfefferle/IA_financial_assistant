@@ -1155,10 +1155,10 @@ def test_onboarding_profile_name_message_updates_first_and_last_name(monkeypatch
     response = client.post("/agent/chat", json={"message": "Tristan Pfefferlé"}, headers=_auth_headers())
 
     assert response.status_code == 200
-    assert repo.profile_update_calls == [{"first_name": "Tristan"}]
+    assert repo.profile_update_calls == [{"first_name": "Tristan", "last_name": "Pfefferlé"}]
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
     assert persisted["onboarding_substep"] == "profile_collect"
-    assert "nom de famille" in response.json()["reply"].lower()
+    assert "date de naissance" in response.json()["reply"].lower()
     assert loop.called is False
 
 
@@ -1182,8 +1182,8 @@ def test_onboarding_profile_name_message_acknowledges_and_asks_birth_date(monkey
     response = client.post("/agent/chat", json={"message": "Paul Gorok"}, headers=_auth_headers())
 
     assert response.status_code == 200
-    assert {"first_name": "Paul"} in repo.profile_update_calls
-    assert "nom de famille" in response.json()["reply"].lower()
+    assert {"first_name": "Paul", "last_name": "Gorok"} in repo.profile_update_calls
+    assert "date de naissance" in response.json()["reply"].lower()
     assert "Pour démarrer, j’ai besoin" not in response.json()["reply"]
 
 
@@ -1207,12 +1207,13 @@ def test_onboarding_profile_combined_name_and_birth_date_in_one_message_moves_to
     response = client.post("/agent/chat", json={"message": "Paul Gorok 10.01.1994"}, headers=_auth_headers())
 
     assert response.status_code == 200
-    assert {"first_name": "Paul"} in repo.profile_update_calls
-    assert all("birth_date" not in call for call in repo.profile_update_calls)
+    assert {"first_name": "Paul", "last_name": "Gorok"} in repo.profile_update_calls
+    assert {"birth_date": "1994-01-10"} in repo.profile_update_calls
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
-    assert persisted["onboarding_substep"] == "profile_collect"
-    assert "nom de famille" in response.json()["reply"].lower()
-    assert "quelle banque utilises-tu" not in response.json()["reply"].lower()
+    assert persisted["onboarding_substep"] == "profile_confirm"
+    reply = response.json()["reply"].lower()
+    assert "prénom: paul" in reply
+    assert "nom: gorok" in reply
 
 
 @pytest.mark.parametrize(
@@ -1574,7 +1575,7 @@ def test_profile_collect_name_then_birth_date_then_confirmation_yes_goes_to_bank
     fourth = client.post("/agent/chat", json={"message": "oui"}, headers=_auth_headers())
 
     assert first.status_code == 200
-    assert "nom de famille" in first.json()["reply"].lower()
+    assert "date de naissance" in first.json()["reply"].lower()
     assert second.status_code == 200
     assert "date de naissance" in second.json()["reply"].lower()
     assert third.status_code == 200
@@ -1698,6 +1699,33 @@ def test_profile_collect_meta_answer_does_not_set_last_name_and_reasks(monkeypat
     assert repo.profile_update_calls == []
     assert "nom de famille" in response.json()["reply"].lower()
 
+
+
+
+def test_profile_collect_cant_answer_last_name_reasks_without_reset(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "onboarding",
+                    "onboarding_step": "profile",
+                    "onboarding_substep": "profile_collect",
+                }
+            }
+        },
+        profile_fields={"first_name": "Tristan", "last_name": "", "birth_date": ""},
+    )
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
+
+    response = client.post("/agent/chat", json={"message": "Je sais pas"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert repo.profile_update_calls == []
+    reply = response.json()["reply"].lower()
+    assert "nom de famille" in reply or "initiale" in reply
+    assert "prénom et ton nom" not in reply
 
 def test_profile_collect_when_expect_last_name_ignores_first_name_extraction(monkeypatch) -> None:
     _mock_auth(monkeypatch)
