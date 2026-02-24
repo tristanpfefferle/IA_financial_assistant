@@ -93,7 +93,7 @@ function toLoopDebugState(payload: unknown): LoopDebugState | null {
 
   const loop = (debug as { loop?: unknown }).loop
   if (!loop || typeof loop !== 'object') {
-    return null
+    return { loopId: null, step: null, blocking: null }
   }
 
   const rawLoop = loop as { loop_id?: unknown; step?: unknown; blocking?: unknown }
@@ -468,10 +468,13 @@ export function ChatPage({ email }: ChatPageProps) {
       return
     }
 
-    const parsedLoopDebug = toLoopDebugState(payload)
-    if (parsedLoopDebug) {
-      setLoopDebug(parsedLoopDebug)
+    const debugPayload = payload && typeof payload === 'object' ? (payload as { debug?: unknown }).debug : undefined
+    if (typeof debugPayload === 'undefined') {
+      return
     }
+
+    const parsedLoopDebug = toLoopDebugState(payload)
+    setLoopDebug(parsedLoopDebug)
   }
 
   useEffect(() => {
@@ -1114,14 +1117,16 @@ function Sidebar(props: SidebarProps) {
 }
 
 function ChatHeader({ onLogout, debugMode, loopDebug }: { onLogout: () => void; debugMode: boolean; loopDebug: LoopDebugState | null }) {
+  const loopBadge = loopDebug ?? { loopId: null, step: null, blocking: null }
+
   return (
     <header className="chat-header sticky-top">
       <div>
         <h1>Assistant financier IA</h1>
         <p className="subtle-text">Analyse tes relevés, classe tes dépenses et répond à tes questions rapidement.</p>
-        {debugMode && loopDebug ? (
+        {debugMode ? (
           <p className="loop-debug-badge">
-            Loop: {loopDebug.loopId ?? 'none'} · step: {loopDebug.step ?? 'none'} · blocking: {loopDebug.blocking === null ? 'unknown' : String(loopDebug.blocking)}
+            Loop: {loopBadge.loopId ?? 'none'} · step: {loopBadge.step ?? 'none'} · blocking: {loopBadge.blocking === null ? 'unknown' : String(loopBadge.blocking)}
           </p>
         ) : null}
       </div>
