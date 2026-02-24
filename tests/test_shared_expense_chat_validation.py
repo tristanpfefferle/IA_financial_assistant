@@ -282,7 +282,7 @@ def test_agent_chat_account_link_setup_external_flow_triggers_initial_validation
             assert table == "releves_bancaires"
             assert with_count is False
             assert use_anon_key is False
-            if "category" in str(query.get("select") or ""):
+            if "categorie" in str(query.get("select") or ""):
                 return [
                     {
                         "id": str(tx_seed_1),
@@ -291,7 +291,7 @@ def test_agent_chat_account_link_setup_external_flow_triggers_initial_validation
                         "devise": "CHF",
                         "payee": "Migros",
                         "libelle": "Migros Lausanne",
-                        "category": "Alimentation",
+                        "categorie": "Alimentation",
                     },
                     {
                         "id": str(tx_seed_2),
@@ -300,7 +300,7 @@ def test_agent_chat_account_link_setup_external_flow_triggers_initial_validation
                         "devise": "CHF",
                         "payee": "Régie Immo",
                         "libelle": "Loyer",
-                        "category": "Logement",
+                        "categorie": "Logement",
                     },
                 ], None
             return [
