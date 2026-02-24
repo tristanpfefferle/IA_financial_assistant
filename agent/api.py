@@ -55,13 +55,13 @@ from shared.models import DateRange, RelevesDirection, ToolError, ToolErrorCode
 logger = logging.getLogger(__name__)
 
 
-def _is_debug_request(request: Request) -> bool:
+def _is_debug_request(request: Request, x_debug: str | None = None) -> bool:
     """Return whether debug error details should be included in responses."""
 
     if os.getenv("DEBUG_ENDPOINTS_ENABLED") == "true":
         return True
 
-    debug_header = request.headers.get("x-debug")
+    debug_header = x_debug if isinstance(x_debug, str) else request.headers.get("x-debug")
     if isinstance(debug_header, str) and debug_header.lower() in {"1", "true"}:
         return True
 
@@ -377,7 +377,8 @@ def _execute_account_link_setup_task(
     state_dict: dict[str, Any] | None,
     profile_id: UUID | None = None,
     profiles_repository: Any | None = None,
-) -> tuple[str, dict[str, Any] | None, dict[str, Any] | None]:
+    debug_enabled: bool = False,
+) -> tuple[str, dict[str, Any] | None, dict[str, Any] | None, dict[str, Any] | None]:
     """Advance deterministic account-link setup flow and optionally persist settings in chat state."""
 
     normalized = _normalize_user_text_for_matching(user_message)
@@ -387,32 +388,32 @@ def _execute_account_link_setup_task(
 
     if step == "ask_has_shared_expenses":
         if _is_no(normalized):
-            return "Ok, on laisse le partage désactivé pour l’instant.", None, state_dict
+            return "Ok, on laisse le partage désactivé pour l’instant.", None, state_dict, None
         task["step"] = "ask_link_type"
         task["draft"] = draft
-        return "Tu veux lier avec un compte interne dans l’app ou une personne externe (hors app) ?", task, state_dict
+        return "Tu veux lier avec un compte interne dans l’app ou une personne externe (hors app) ?", task, state_dict, None
 
     if step == "ask_link_type":
         if "externe" in normalized or "hors app" in normalized:
             draft["link_type"] = "external"
             task["step"] = "ask_label"
             task["draft"] = draft
-            return "Quel libellé veux-tu utiliser pour cette personne (ex: Conjoint, Colocataire) ?", task, state_dict
+            return "Quel libellé veux-tu utiliser pour cette personne (ex: Conjoint, Colocataire) ?", task, state_dict, None
         if "interne" in normalized:
             draft["link_type"] = "internal"
             task["step"] = "ask_default_split"
             task["draft"] = draft
-            return "Quel ratio par défaut veux-tu appliquer pour l’autre personne ? (ex: 50/50)", task, state_dict
-        return "Réponds ‘interne’ ou ‘externe’.", task, state_dict
+            return "Quel ratio par défaut veux-tu appliquer pour l’autre personne ? (ex: 50/50)", task, state_dict, None
+        return "Réponds ‘interne’ ou ‘externe’.", task, state_dict, None
 
     if step == "ask_label":
         label = user_message.strip()
         if not label:
-            return "Je n’ai pas compris le libellé. Ex: Conjoint.", task, state_dict
+            return "Je n’ai pas compris le libellé. Ex: Conjoint.", task, state_dict, None
         draft["other_party_label"] = label
         task["step"] = "ask_default_split"
         task["draft"] = draft
-        return "Parfait. Ratio par défaut ? (ex: 50/50, Entrée vide = 50/50)", task, state_dict
+        return "Parfait. Ratio par défaut ? (ex: 50/50, Entrée vide = 50/50)", task, state_dict, None
 
     if step == "ask_default_split":
         ratio_other = Decimal("0.5")
@@ -430,16 +431,21 @@ def _execute_account_link_setup_task(
             "default_split_ratio_other": str(ratio_other),
             "enabled": True,
         }
+        normalized_link_type = link_state["link_type"]
+        other_profile_id = link_state.get("other_profile_id")
+        other_party_label = link_state.get("other_party_label")
+        other_party_email = draft.get("other_party_email")
+        default_split_ratio_other = link_state["default_split_ratio_other"]
 
         if profiles_repository is not None and profile_id is not None and hasattr(profiles_repository, "upsert_household_link"):
             try:
                 persisted_link_state = profiles_repository.upsert_household_link(
                     profile_id=profile_id,
-                    link_type=link_state["link_type"],
-                    other_profile_id=(UUID(str(link_state["other_profile_id"])) if link_state.get("other_profile_id") else None),
-                    other_party_label=link_state.get("other_party_label"),
-                    other_party_email=draft.get("other_party_email"),
-                    default_split_ratio_other=link_state["default_split_ratio_other"],
+                    link_type=normalized_link_type,
+                    other_profile_id=(UUID(str(other_profile_id)) if other_profile_id else None),
+                    other_party_label=other_party_label,
+                    other_party_email=other_party_email,
+                    default_split_ratio_other=default_split_ratio_other,
                 )
                 if isinstance(persisted_link_state, dict):
                     link_state = {
@@ -452,9 +458,32 @@ def _execute_account_link_setup_task(
                         ),
                         "enabled": True,
                     }
-            except Exception:
-                logger.exception("account_link_upsert_failed profile_id=%s", profile_id)
-                return "Impossible d’enregistrer la configuration pour le moment (erreur base de données). Réessaie dans un instant.", task, state_dict
+            except Exception as exc:
+                logger.exception(
+                    "account_link_upsert_failed profile_id=%s link_type=%s has_other_profile_id=%s has_other_party_email=%s",
+                    profile_id,
+                    normalized_link_type,
+                    bool(other_profile_id),
+                    bool(other_party_email),
+                )
+                generic_reply = "Impossible d’enregistrer la configuration pour le moment (erreur base de données). Réessaie dans un instant."
+                tool_result = None
+                if debug_enabled:
+                    tool_result = {
+                        "type": "error",
+                        "where": "upsert_household_link",
+                        "message": str(exc),
+                        "exc_type": type(exc).__name__,
+                        "context": {
+                            "step": "shared_expense_link_setup",
+                            "link_type": normalized_link_type,
+                            "other_party_label": other_party_label,
+                            "has_other_profile_id": bool(other_profile_id),
+                            "has_other_party_email": bool(other_party_email),
+                            "default_split_ratio_other": default_split_ratio_other,
+                        },
+                    }
+                return generic_reply, task, state_dict, tool_result
 
         updated_state = dict(state_dict) if isinstance(state_dict, dict) else {}
         global_state = updated_state.get("global_state") if isinstance(updated_state.get("global_state"), dict) else {}
@@ -463,23 +492,24 @@ def _execute_account_link_setup_task(
         updated_state["global_state"] = global_state
 
         if profile_id is None:
-            return "Configuration enregistrée ✅. Tu peux maintenant utiliser le partage des dépenses, y compris en mode externe.", None, updated_state
+            return "Configuration enregistrée ✅. Tu peux maintenant utiliser le partage des dépenses, y compris en mode externe.", None, updated_state, None
 
         try:
             _seed_shared_expense_suggestions_after_link_setup(profile_id=profile_id, link_state=link_state)
             reply_validation, shared_task = handle_shared_expenses_validation_request(profile_id=profile_id)
         except HTTPException:
-            return "Configuration enregistrée ✅. Tu peux maintenant utiliser le partage des dépenses, y compris en mode externe.", None, updated_state
+            return "Configuration enregistrée ✅. Tu peux maintenant utiliser le partage des dépenses, y compris en mode externe.", None, updated_state, None
         if shared_task is None:
             return (
                 "Configuration enregistrée ✅. Je n’ai pas trouvé de dépenses à proposer pour le partage pour l’instant. "
                 "Tu peux me dire 'valider partage' plus tard.",
                 None,
                 updated_state,
+                None,
             )
-        return f"Configuration enregistrée ✅. Voici les premières dépenses à valider :\n\n{reply_validation}", shared_task, updated_state
+        return f"Configuration enregistrée ✅. Voici les premières dépenses à valider :\n\n{reply_validation}", shared_task, updated_state, None
 
-    return "Je reprends la configuration du partage. Interne ou externe ?", {"type": "account_link_setup", "step": "ask_link_type", "draft": draft}, state_dict
+    return "Je reprends la configuration du partage. Interne ou externe ?", {"type": "account_link_setup", "step": "ask_link_type", "draft": draft}, state_dict, None
 
 
 def _seed_shared_expense_suggestions_after_link_setup(*, profile_id: UUID, link_state: dict[str, Any]) -> int:
@@ -2089,6 +2119,7 @@ def agent_chat(
     """Handle a user chat message through the agent loop."""
 
     logger.info("agent_chat_received message_length=%s", len(payload.message))
+    debug_enabled = _is_debug_request(request, x_debug)
     profile_id: UUID | None = None
     try:
         auth_user_id, profile_id = _resolve_authenticated_profile(request, authorization)
@@ -2947,12 +2978,13 @@ def agent_chat(
                     )
 
         if isinstance(account_link_active_task, dict) and account_link_active_task.get("type") == "account_link_setup":
-            reply_text, updated_link_task, updated_state_dict = _execute_account_link_setup_task(
+            reply_text, updated_link_task, updated_state_dict, link_tool_result = _execute_account_link_setup_task(
                 user_message=payload.message,
                 active_task=account_link_active_task,
                 state_dict=state_dict if isinstance(state_dict, dict) else None,
                 profile_id=profile_id,
                 profiles_repository=profiles_repository,
+                debug_enabled=debug_enabled,
             )
             updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
             if updated_link_task is None:
@@ -2966,7 +2998,7 @@ def agent_chat(
                 user_id=auth_user_id,
                 chat_state=updated_chat_state,
             )
-            return ChatResponse(reply=reply_text, tool_result=None, plan=None)
+            return ChatResponse(reply=reply_text, tool_result=link_tool_result, plan=None)
 
         if _is_account_link_setup_intent(payload.message):
             existing_link = None
@@ -2984,12 +3016,13 @@ def agent_chat(
                 next_state["global_state"] = global_state_entry
                 seed_state = next_state
 
-            reply_text, updated_link_task, updated_state_dict = _execute_account_link_setup_task(
+            reply_text, updated_link_task, updated_state_dict, link_tool_result = _execute_account_link_setup_task(
                 user_message="oui",
                 active_task=None,
                 state_dict=seed_state,
                 profile_id=profile_id,
                 profiles_repository=profiles_repository,
+                debug_enabled=debug_enabled,
             )
             updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
             if updated_link_task is None:
@@ -3003,7 +3036,7 @@ def agent_chat(
                 user_id=auth_user_id,
                 chat_state=updated_chat_state,
             )
-            return ChatResponse(reply=reply_text, tool_result=None, plan=None)
+            return ChatResponse(reply=reply_text, tool_result=link_tool_result, plan=None)
 
         if isinstance(shared_expense_active_task, dict) and shared_expense_active_task.get("type") == "shared_expense_confirm":
             reply_text, updated_shared_task = _execute_shared_expense_confirmation_actions(
