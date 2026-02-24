@@ -477,7 +477,7 @@ class SupabaseProfilesRepository:
         if normalized_link_type not in {"internal", "external"}:
             normalized_link_type = "internal"
 
-        payload: dict[str, Any] = {
+        base_payload_insert: dict[str, Any] = {
             "profile_id": str(profile_id),
             "status": "active",
             "link_type": normalized_link_type,
@@ -486,6 +486,11 @@ class SupabaseProfilesRepository:
             "other_party_email": str(other_party_email) if other_party_email else None,
             "default_split_ratio_other": str(default_split_ratio_other),
             "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        patch_payload: dict[str, Any] = {
+            key: value
+            for key, value in base_payload_insert.items()
+            if key not in {"profile_id", "status"}
         }
 
         active_rows, _ = self._client.get_rows(
@@ -505,16 +510,20 @@ class SupabaseProfilesRepository:
         if existing_id:
             self._client.patch_rows(
                 table="account_links",
-                query={"id": f"eq.{existing_id}"},
-                payload=payload,
+                query={"id": f"eq.{existing_id}", "profile_id": f"eq.{profile_id}"},
+                payload=patch_payload,
                 use_anon_key=False,
             )
         else:
             self._client.post_rows(
                 table="account_links",
-                payload=payload,
+                payload=base_payload_insert,
                 use_anon_key=False,
             )
+
+        current_link = self.get_active_household_link(profile_id=profile_id)
+        if current_link is not None:
+            return current_link
 
         return {
             "link_type": normalized_link_type,

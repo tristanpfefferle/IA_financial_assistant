@@ -219,6 +219,50 @@ def test_update_chat_state_uses_upsert() -> None:
     assert client.post_calls == []
 
 
+def test_upsert_household_link_patch_is_scoped_to_profile_and_payload_is_clean() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    other_profile_id = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+    client = _ClientStub(
+        responses=[
+            [{"id": "cccccccc-cccc-cccc-cccc-cccccccccccc"}],
+            [
+                {
+                    "link_type": "external",
+                    "other_profile_id": str(other_profile_id),
+                    "other_party_label": "Coloc",
+                    "other_party_email": "coloc@example.com",
+                    "default_split_ratio_other": "0.4",
+                }
+            ],
+        ]
+    )
+    repository = SupabaseProfilesRepository(client=client)
+
+    result = repository.upsert_household_link(
+        profile_id=profile_id,
+        link_type="external",
+        other_profile_id=other_profile_id,
+        other_party_label="Coloc",
+        other_party_email="coloc@example.com",
+        default_split_ratio_other="0.4",
+    )
+
+    assert result == {
+        "link_type": "external",
+        "other_profile_id": str(other_profile_id),
+        "other_party_label": "Coloc",
+        "other_party_email": "coloc@example.com",
+        "default_split_ratio_other": "0.4",
+    }
+    assert len(client.patch_calls) == 1
+    assert client.patch_calls[0]["query"] == {
+        "id": "eq.cccccccc-cccc-cccc-cccc-cccccccccccc",
+        "profile_id": f"eq.{profile_id}",
+    }
+    assert "profile_id" not in client.patch_calls[0]["payload"]
+    assert "status" not in client.patch_calls[0]["payload"]
+
+
 def test_get_profile_fields_reads_only_selected_columns() -> None:
     profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
     client = _ClientStub(
