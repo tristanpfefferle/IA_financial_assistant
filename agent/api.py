@@ -2339,7 +2339,6 @@ def agent_chat(
 
         state_dict = dict(state_dict) if isinstance(state_dict, dict) else {}
         current_loop = parse_loop_context(state_dict.get("loop"))
-        had_existing_loop = current_loop is not None
         loop_bootstrapped = False
         loop_reply = None
         registry = get_loop_registry()
@@ -2383,7 +2382,13 @@ def agent_chat(
                 "blocking": resolved_loop.blocking if resolved_loop else None,
             }
 
-            if loop_bootstrapped and should_persist_global_state:
+            should_persist_loop_state = (
+                should_persist_global_state
+                or loop_bootstrapped
+                or resolved_loop != current_loop
+            )
+
+            if should_persist_loop_state:
                 updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
                 if state_dict:
                     updated_chat_state["state"] = state_dict
@@ -2395,17 +2400,7 @@ def agent_chat(
                     chat_state=updated_chat_state,
                 )
 
-            if loop_reply.handled and loop_reply.reply.strip() and mode != "onboarding" and (had_existing_loop or not loop_bootstrapped):
-                updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
-                if state_dict:
-                    updated_chat_state["state"] = state_dict
-                else:
-                    updated_chat_state.pop("state", None)
-                profiles_repository.update_chat_state(
-                    profile_id=profile_id,
-                    user_id=auth_user_id,
-                    chat_state=updated_chat_state,
-                )
+            if loop_reply.handled and loop_reply.reply.strip():
                 return _chat_response(reply=loop_reply.reply, tool_result=None, plan=None)
 
         if global_state is None and hasattr(profiles_repository, "get_profile_fields"):

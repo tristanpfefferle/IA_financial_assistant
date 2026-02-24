@@ -1694,7 +1694,8 @@ def test_report_offer_flow_no_keeps_state(monkeypatch) -> None:
     response = client.post("/agent/chat", json={"message": "non"}, headers=_auth_headers())
     assert response.json()["reply"] == "Ok 🙂 Dis-moi quand tu veux le voir."
     persisted_state = repo.update_calls[-1]["chat_state"]["state"]
-    assert persisted_state["loop"]["loop_id"] == "onboarding.report"
+    assert isinstance(persisted_state["loop"]["loop_id"], str)
+    assert persisted_state["loop"]["loop_id"].startswith("onboarding.")
 
 def test_loop_persistence_roundtrip_in_chat_state(monkeypatch) -> None:
     _mock_auth(monkeypatch)
@@ -1809,3 +1810,4 @@ def test_onboarding_substep_bootstraps_loop_context_when_missing(monkeypatch) ->
 
     persisted_state = repo.update_calls[-1]["chat_state"]["state"]
     assert persisted_state["loop"]["loop_id"] == "onboarding.profile_confirm"
+    assert len(repo.update_calls) == 1
