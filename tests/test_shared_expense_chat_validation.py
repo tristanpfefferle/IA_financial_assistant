@@ -81,6 +81,28 @@ class _Repo:
         return self.active_household_link
 
 
+class _FailingUpsertRepo(_Repo):
+    def upsert_household_link(
+        self,
+        *,
+        profile_id: UUID,
+        link_type: str,
+        other_profile_id: UUID | None,
+        other_party_label: str | None,
+        other_party_email: str | None,
+        default_split_ratio_other: str,
+    ) -> dict[str, object]:
+        super().upsert_household_link(
+            profile_id=profile_id,
+            link_type=link_type,
+            other_profile_id=other_profile_id,
+            other_party_label=other_party_label,
+            other_party_email=other_party_email,
+            default_split_ratio_other=default_split_ratio_other,
+        )
+        raise RuntimeError("Supabase 400: household_link insert violates RLS policy")
+
+
 class _SuggestionsRepository:
     def __init__(self) -> None:
         self.applied_calls: list[dict[str, object]] = []
@@ -486,6 +508,42 @@ def test_agent_chat_account_link_setup_external_flow_no_candidates(monkeypatch) 
     assert response_split.status_code == 200
     assert "pas trouvé de dépenses à proposer" in response_split.json()["reply"]
     assert repo.chat_state.get("active_task") is None
+
+
+def test_agent_chat_account_link_setup_returns_debug_tool_result_on_upsert_error(monkeypatch) -> None:
+    monkeypatch.setattr(
+        agent_api,
+        "get_user_from_bearer_token",
+        lambda _token: {"id": str(AUTH_USER_ID), "email": "user@example.com"},
+    )
+    repo = _FailingUpsertRepo()
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+
+    debug_headers = {**_auth_headers(), "x-debug": "1"}
+    assert client.post("/agent/chat", json={"message": "je veux lier compte pour mon foyer"}, headers=debug_headers).status_code == 200
+    assert client.post("/agent/chat", json={"message": "externe"}, headers=debug_headers).status_code == 200
+    assert client.post("/agent/chat", json={"message": "Conjoint"}, headers=debug_headers).status_code == 200
+
+    response_debug = client.post("/agent/chat", json={"message": "50/50"}, headers=debug_headers)
+
+    assert response_debug.status_code == 200
+    debug_payload = response_debug.json()
+    assert "Impossible d’enregistrer la configuration" in debug_payload["reply"]
+    assert debug_payload["tool_result"] is not None
+    assert debug_payload["tool_result"]["type"] == "error"
+    assert debug_payload["tool_result"]["where"] == "upsert_household_link"
+    assert debug_payload["tool_result"]["exc_type"] == "RuntimeError"
+    assert "Supabase 400" in debug_payload["tool_result"]["message"]
+    assert debug_payload["tool_result"]["context"]["step"] == "shared_expense_link_setup"
+
+    repo.chat_state = {}
+    assert client.post("/agent/chat", json={"message": "je veux lier compte pour mon foyer"}, headers=_auth_headers()).status_code == 200
+    assert client.post("/agent/chat", json={"message": "externe"}, headers=_auth_headers()).status_code == 200
+    assert client.post("/agent/chat", json={"message": "Conjoint"}, headers=_auth_headers()).status_code == 200
+    response_no_debug = client.post("/agent/chat", json={"message": "50/50"}, headers=_auth_headers())
+    assert response_no_debug.status_code == 200
+    assert response_no_debug.json()["tool_result"] is None
 
 
 def test_inmemory_shared_expense_suggestions_dedup_uses_external_label() -> None:
