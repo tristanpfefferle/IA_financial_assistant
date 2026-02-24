@@ -35,7 +35,7 @@ class SharedExpenseSuggestionRow:
     suggested_to_profile_id: UUID | None
     suggested_split_ratio_other: Decimal
     status: str
-    confidence: float | None
+    confidence: Decimal | None
     rationale: str | None
     link_id: UUID | None
     link_pair_id: UUID | None
@@ -135,6 +135,7 @@ class SupabaseSharedExpensesRepository:
                 "link_id": str(row["link_id"]) if row.get("link_id") else None,
                 "link_pair_id": str(row["link_pair_id"]) if row.get("link_pair_id") else None,
                 "suggested_split_ratio_other": str(row.get("suggested_split_ratio_other", Decimal("0.5"))),
+                "confidence": str(row["confidence"]) if row.get("confidence") is not None else None,
             }
             for row in suggestions
         ]
@@ -388,7 +389,7 @@ class SupabaseSharedExpensesRepository:
             suggested_to_profile_id=(UUID(str(row["suggested_to_profile_id"])) if row.get("suggested_to_profile_id") else None),
             suggested_split_ratio_other=Decimal(str(row.get("suggested_split_ratio_other") or "0.5")),
             status=str(row.get("status") or "pending"),
-            confidence=float(row["confidence"]) if row.get("confidence") is not None else None,
+            confidence=Decimal(str(row["confidence"])) if row.get("confidence") is not None else None,
             rationale=str(row["rationale"]) if row.get("rationale") is not None else None,
             link_id=UUID(str(row["link_id"])) if row.get("link_id") else None,
             link_pair_id=UUID(str(row["link_pair_id"])) if row.get("link_pair_id") else None,
@@ -446,7 +447,7 @@ class InMemorySharedExpensesRepository:
                 ),
                 "suggested_split_ratio_other": Decimal(str(suggestion.get("suggested_split_ratio_other") or "0.5")),
                 "status": str(suggestion.get("status") or "pending"),
-                "confidence": float(suggestion["confidence"]) if suggestion.get("confidence") is not None else None,
+                "confidence": Decimal(str(suggestion["confidence"])) if suggestion.get("confidence") is not None else None,
                 "rationale": suggestion.get("rationale"),
                 "link_id": UUID(str(suggestion["link_id"])) if suggestion.get("link_id") else None,
                 "link_pair_id": UUID(str(suggestion["link_pair_id"])) if suggestion.get("link_pair_id") else None,

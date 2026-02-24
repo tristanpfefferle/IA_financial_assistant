@@ -11,22 +11,64 @@ from backend.db.supabase_client import SupabaseClient
 from backend.repositories.shared_expenses_repository import SharedExpensesRepository
 
 _INTERNAL_TRANSFER_PATTERNS = ("virement", "transfer", "twint p2p")
-_HOUSEHOLD_KEYWORDS = (
-    "regie",
-    "régie",
-    "rent",
-    "loyer",
-    "assurance",
-    "swisscom",
-    "salt",
-    "sunrise",
-    "coop",
-    "migros",
-    "sbb",
-    "tpg",
-    "tl",
-)
-_HOUSEHOLD_CATEGORIES = {"logement", "alimentation", "assurance", "abonnements", "transport"}
+SHAREABLE_CATEGORIES = {
+    "food",
+    "housing",
+    "insurance",
+    "subscriptions",
+    "transport",
+}
+
+PERSONAL_CATEGORIES = {
+    "hobbies",
+    "habits",
+    "gifts",
+}
+
+MIN_CONFIDENCE_THRESHOLD = Decimal("0.6")
+
+
+
+_CATEGORY_NORM_FALLBACKS = {
+    "alimentation": "food",
+    "food": "food",
+    "logement": "housing",
+    "housing": "housing",
+    "assurance": "insurance",
+    "insurance": "insurance",
+    "abonnements": "subscriptions",
+    "subscriptions": "subscriptions",
+    "transport": "transport",
+    "hobbies": "hobbies",
+    "habits": "habits",
+    "gifts": "gifts",
+}
+
+def compute_share_confidence(*, category_norm: str | None, amount: Decimal) -> tuple[Decimal, str]:
+    """Return (confidence, rationale) using deterministic category+amount scoring."""
+
+    score = Decimal("0")
+    reasons: list[str] = []
+
+    if category_norm in SHAREABLE_CATEGORIES:
+        score += Decimal("0.4")
+        reasons.append("shareable_category")
+
+    if category_norm in PERSONAL_CATEGORIES:
+        score -= Decimal("0.4")
+        reasons.append("personal_category")
+
+    if amount >= Decimal("20"):
+        score += Decimal("0.2")
+        reasons.append("amount>=20")
+
+    if score < 0:
+        score = Decimal("0")
+    if score > 1:
+        score = Decimal("1")
+
+    rationale = " + ".join(reasons) if reasons else "no_signal"
+    return score, rationale
 
 
 def generate_initial_shared_expense_suggestions(
@@ -49,7 +91,7 @@ def generate_initial_shared_expense_suggestions(
     rows, _ = supabase_client.get_rows(
         table="releves_bancaires",
         query={
-            "select": "id,montant,payee,libelle,categorie,date",
+            "select": "id,montant,payee,libelle,categorie,category_norm,date",
             "profile_id": f"eq.{profile_id}",
             "date": f"gte.{start_date}",
             "order": "date.desc",
@@ -69,20 +111,18 @@ def generate_initial_shared_expense_suggestions(
             continue
 
         category = str(row.get("categorie") or row.get("category") or "").strip()
+        category_norm = _normalize_category_norm(row.get("category_norm"), fallback_category=category)
         if category.lower() == "internal transfer":
             continue
         merchant_blob = f"{row.get('payee') or ''} {row.get('libelle') or ''}".lower()
         if any(pattern in merchant_blob for pattern in _INTERNAL_TRANSFER_PATTERNS):
             continue
 
-        score = 0
-        if any(keyword in merchant_blob for keyword in _HOUSEHOLD_KEYWORDS):
-            score += 2
-        if abs(amount) >= Decimal("80"):
-            score += 1
-        if category.strip().lower() in _HOUSEHOLD_CATEGORIES:
-            score += 1
-        if score < 2:
+        confidence, rationale = compute_share_confidence(
+            category_norm=category_norm,
+            amount=abs(amount),
+        )
+        if confidence < MIN_CONFIDENCE_THRESHOLD:
             continue
 
         suggestions.append(
@@ -92,8 +132,8 @@ def generate_initial_shared_expense_suggestions(
                 "other_party_label": target["other_party_label"],
                 "suggested_split_ratio_other": ratio_other,
                 "status": "pending",
-                "confidence": 0.6,
-                "rationale": "auto_seed_after_link_setup",
+                "confidence": confidence,
+                "rationale": rationale,
                 "link_id": household_link.get("link_id"),
                 "link_pair_id": household_link.get("link_pair_id"),
             }
@@ -103,6 +143,14 @@ def generate_initial_shared_expense_suggestions(
         profile_id=profile_id,
         suggestions=suggestions,
     )
+
+
+
+def _normalize_category_norm(raw_category_norm: Any, *, fallback_category: str) -> str | None:
+    normalized = str(raw_category_norm or "").strip().lower()
+    if normalized:
+        return normalized
+    return _CATEGORY_NORM_FALLBACKS.get(fallback_category.strip().lower())
 
 
 def _resolve_target(household_link: dict[str, Any]) -> dict[str, Any] | None:
