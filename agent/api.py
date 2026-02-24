@@ -216,6 +216,15 @@ _ONBOARDING_PROFILE_TOXIC_PATTERNS = (
     re.compile(r"\bpute\b", re.IGNORECASE),
     re.compile(r"\bencul[ée]\b", re.IGNORECASE),
 )
+_ONBOARDING_PROFILE_META_ANSWER_PATTERNS = (
+    re.compile(r"\btu\s+connais\b", re.IGNORECASE),
+    re.compile(r"\bje\s+viens\s+de\s+te\s+le\s+dire\b", re.IGNORECASE),
+    re.compile(r"\bje\s+l['’]ai\s+deja\s+dit\b", re.IGNORECASE),
+    re.compile(r"\bt['’]es\s+s[ée]rieux\b", re.IGNORECASE),
+    re.compile(r"\b(s[ée]rieux|hein|quoi)\b", re.IGNORECASE),
+    re.compile(r"\b(blague|dr[oô]le)\b", re.IGNORECASE),
+)
+_ONBOARDING_PROFILE_META_VERBS = {"connais", "dis", "dit", "sais", "viens"}
 _ONBOARDING_FIRST_NAME_ALLOWED_CHARS_PATTERN = re.compile(r"^[A-Za-zÀ-ÖØ-öø-ÿ'\- ]+$")
 _ONBOARDING_LAST_NAME_ALLOWED_CHARS_PATTERN = re.compile(r"^[A-Za-zÀ-ÖØ-öø-ÿ'\- ]+$")
 _ONBOARDING_BIRTH_DATE_PATTERN = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
@@ -1968,6 +1977,35 @@ def _missing_profile_field_question(profile_fields: dict[str, Any]) -> str:
     return ""
 
 
+def _next_missing_profile_field(profile_fields: dict[str, Any]) -> str | None:
+    """Return the next missing onboarding profile field in priority order."""
+
+    if not _is_profile_field_completed(profile_fields.get("first_name")):
+        return "first_name"
+    if not _is_profile_field_completed(profile_fields.get("last_name")):
+        return "last_name"
+    if not _is_profile_field_completed(profile_fields.get("birth_date")):
+        return "birth_date"
+    return None
+
+
+def _is_meta_answer(message: str) -> bool:
+    """Return whether message is likely a meta reply instead of field value."""
+
+    normalized = str(message or "").strip()
+    if not normalized:
+        return False
+    lowered = normalized.lower()
+    if any(pattern.search(normalized) for pattern in _ONBOARDING_PROFILE_META_ANSWER_PATTERNS):
+        return True
+    tokens = [token for token in _tokenize_profile_name_fragment(normalized) if token]
+    if ("!" in normalized or "?" in normalized) and len(tokens) <= 2:
+        return True
+    has_pronoun = any(pronoun in lowered.split() for pronoun in {"tu", "je"})
+    has_meta_verb = any(verb in lowered for verb in _ONBOARDING_PROFILE_META_VERBS)
+    return has_pronoun and has_meta_verb
+
+
 def _extract_name_from_message(message: str) -> tuple[str, str] | None:
     match = _ONBOARDING_NAME_PATTERN.match(message)
     if not match:
@@ -3136,6 +3174,39 @@ f"Salut 👋\n\nJe suis ton assistant financier. Je t’aide à analyser tes dé
                                 plan=None,
                             )
 
+                        expected_field = _next_missing_profile_field(profile_fields)
+                        if _is_meta_answer(message):
+                            llm_extraction: dict[str, Any] | None = None
+                            try:
+                                llm_extraction = _extract_profile_fields_with_llm(message)
+                            except Exception:
+                                logger.exception("profile_collect_meta_llm_extraction_failed profile_id=%s", profile_id)
+                            clarification_question = (
+                                str(llm_extraction.get("clarification_question"))
+                                if isinstance(llm_extraction, dict)
+                                and llm_extraction.get("needs_clarification")
+                                and llm_extraction.get("clarification_question")
+                                else None
+                            )
+                            updated_global_state = _build_onboarding_global_state(
+                                global_state,
+                                onboarding_step="profile",
+                                onboarding_substep="profile_collect",
+                            )
+                            state_dict["global_state"] = updated_global_state
+                            updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                            updated_chat_state["state"] = state_dict
+                            profiles_repository.update_chat_state(
+                                profile_id=profile_id,
+                                user_id=auth_user_id,
+                                chat_state=updated_chat_state,
+                            )
+                            return _chat_response(
+                                reply=clarification_question or _missing_profile_field_question(profile_fields),
+                                tool_result=None,
+                                plan=None,
+                            )
+
                         extraction = extract_profile_fields_from_message(message)
 
                         extracted_first_name = extraction.get("first_name")
@@ -3229,6 +3300,35 @@ f"Salut 👋\n\nJe suis ton assistant financier. Je t’aide à analyser tes dé
                                 or suspicious_first_name_normalized in {"m'appel", "mappel", "mappelle", "appel"}
                             )
                         extraction_source = "heuristic"
+                        mismatch_expected_field = (
+                            expected_field == "last_name"
+                            and extraction.get("last_name") is None
+                            and extraction.get("first_name") is not None
+                        ) or (
+                            expected_field == "birth_date"
+                            and extraction.get("birth_date") is None
+                            and (extraction.get("first_name") or extraction.get("last_name"))
+                        )
+                        last_name_message_tokens = _tokenize_profile_name_fragment(message)
+                        last_name_stopwords = _ONBOARDING_PROFILE_STOP_WORDS | {"ton", "tes", "te", "le", "la", "les"}
+                        last_name_useful_tokens = [
+                            token
+                            for token in last_name_message_tokens
+                            if token.lower() not in last_name_stopwords
+                        ]
+                        contains_last_name_verb = any(
+                            verb in message.lower() for verb in {"connais", "sais", "viens", "dis", "dit"}
+                        )
+                        invalid_last_name_phrase = bool(
+                            expected_field == "last_name"
+                            and (
+                                len(last_name_useful_tokens) >= 3
+                                or contains_last_name_verb
+                            )
+                        )
+                        if invalid_last_name_phrase:
+                            extraction["last_name"] = None
+                            invalid_last_name_detected = True
                         should_try_llm = bool(
                             message
                             and (
@@ -3237,6 +3337,8 @@ f"Salut 👋\n\nJe suis ton assistant financier. Je t’aide à analyser tes dé
                                 or invalid_first_name_detected
                                 or invalid_last_name_detected
                                 or suspicious_first_name
+                                or mismatch_expected_field
+                                or invalid_last_name_phrase
                             )
                         )
                         if should_try_llm:
@@ -3306,6 +3408,16 @@ f"Salut 👋\n\nJe suis ton assistant financier. Je t’aide à analyser tes dé
                                     )
                                 extraction = llm_extraction
                                 extraction_source = "llm"
+
+                        if expected_field == "first_name":
+                            extraction["last_name"] = None
+                            extraction["birth_date"] = None
+                        elif expected_field == "last_name":
+                            extraction["first_name"] = None
+                            extraction["birth_date"] = None
+                        elif expected_field == "birth_date":
+                            extraction["first_name"] = None
+                            extraction["last_name"] = None
 
                         logger.info(
                             "profile_collect_extraction source=%s confidence=%.3f fields=%s",
