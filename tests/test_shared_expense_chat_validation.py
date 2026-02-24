@@ -117,6 +117,16 @@ class _SuggestionsRepository:
         return UUID(int=6)
 
 
+class _SeedSuggestionsRepository(InMemorySharedExpensesRepository):
+    def __init__(self) -> None:
+        super().__init__()
+        self.bulk_calls: list[list[dict[str, object]]] = []
+
+    def create_shared_expense_suggestions_bulk(self, *, profile_id: UUID, suggestions: list[dict[str, object]]) -> int:
+        self.bulk_calls.append(suggestions)
+        return super().create_shared_expense_suggestions_bulk(profile_id=profile_id, suggestions=suggestions)
+
+
 def test_parse_shared_expense_confirmation_cases() -> None:
     snapshot = [
         {"index": 1, "suggestion_id": str(SUGGESTION_ID_1)},
@@ -246,32 +256,88 @@ def test_agent_chat_shared_expense_active_task_applies_selected_index(monkeypatc
     assert repo.chat_state.get("active_task") is None
 
 
-def test_agent_chat_account_link_setup_external_flow(monkeypatch) -> None:
+def test_agent_chat_account_link_setup_external_flow_triggers_initial_validation_when_candidates_exist(monkeypatch) -> None:
     monkeypatch.setattr(
         agent_api,
         "get_user_from_bearer_token",
         lambda _token: {"id": str(AUTH_USER_ID), "email": "user@example.com"},
     )
     repo = _Repo()
+    suggestions_repo = _SeedSuggestionsRepository()
 
     monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "_get_shared_expenses_repository_or_501", lambda: suggestions_repo)
+    monkeypatch.setattr(agent_api._config, "supabase_url", lambda: "http://localhost")
+    monkeypatch.setattr(agent_api._config, "supabase_service_role_key", lambda: "service-role")
+    monkeypatch.setattr(agent_api._config, "supabase_anon_key", lambda: "anon")
+
+    tx_seed_1 = UUID("66666666-6666-6666-6666-666666666666")
+    tx_seed_2 = UUID("77777777-7777-7777-7777-777777777777")
+
+    class _FakeSupabaseClient:
+        def __init__(self, settings):
+            self.settings = settings
+
+        def get_rows(self, *, table, query, with_count, use_anon_key):
+            assert table == "releves_bancaires"
+            assert with_count is False
+            assert use_anon_key is False
+            if "category" in str(query.get("select") or ""):
+                return [
+                    {
+                        "id": str(tx_seed_1),
+                        "date": "2026-02-11",
+                        "montant": "-122.00",
+                        "devise": "CHF",
+                        "payee": "Migros",
+                        "libelle": "Migros Lausanne",
+                        "category": "Alimentation",
+                    },
+                    {
+                        "id": str(tx_seed_2),
+                        "date": "2026-02-07",
+                        "montant": "-2100.00",
+                        "devise": "CHF",
+                        "payee": "Régie Immo",
+                        "libelle": "Loyer",
+                        "category": "Logement",
+                    },
+                ], None
+            return [
+                {
+                    "id": str(tx_seed_1),
+                    "date": "2026-02-11",
+                    "montant": "-122.00",
+                    "devise": "CHF",
+                    "payee": "Migros",
+                    "libelle": "Migros Lausanne",
+                },
+                {
+                    "id": str(tx_seed_2),
+                    "date": "2026-02-07",
+                    "montant": "-2100.00",
+                    "devise": "CHF",
+                    "payee": "Régie Immo",
+                    "libelle": "Loyer",
+                },
+            ], None
+
+    monkeypatch.setattr(agent_api, "SupabaseClient", _FakeSupabaseClient)
 
     response_start = client.post("/agent/chat", json={"message": "je veux lier compte pour mon foyer"}, headers=_auth_headers())
     assert response_start.status_code == 200
-    assert "interne" in response_start.json()["reply"].lower()
 
     response_type = client.post("/agent/chat", json={"message": "externe"}, headers=_auth_headers())
     assert response_type.status_code == 200
-    assert "libellé" in response_type.json()["reply"].lower()
 
     response_label = client.post("/agent/chat", json={"message": "Conjoint"}, headers=_auth_headers())
     assert response_label.status_code == 200
-    assert "ratio" in response_label.json()["reply"].lower()
 
     response_split = client.post("/agent/chat", json={"message": "60/40"}, headers=_auth_headers())
     assert response_split.status_code == 200
-    assert "enregistrée" in response_split.json()["reply"]
-    assert repo.chat_state.get("active_task") is None
+    reply = response_split.json()["reply"]
+    assert "Voici les premières dépenses à valider" in reply
+    assert "1)" in reply
 
     assert repo.upsert_household_link_calls == [
         {
@@ -283,18 +349,48 @@ def test_agent_chat_account_link_setup_external_flow(monkeypatch) -> None:
             "default_split_ratio_other": "0.4000",
         }
     ]
+    assert suggestions_repo.bulk_calls
+    seeded_suggestions = suggestions_repo.bulk_calls[0]
+    assert all(item.get("suggested_to_profile_id") is None for item in seeded_suggestions)
+    assert all(item.get("other_party_label") == "Conjoint" for item in seeded_suggestions)
+    active_task = repo.chat_state.get("active_task")
+    assert isinstance(active_task, dict)
+    assert active_task.get("type") == "shared_expense_confirm"
 
-    state = repo.chat_state.get("state")
-    assert isinstance(state, dict)
-    household_link = state.get("global_state", {}).get("household_link")
-    assert household_link == {
-        "link_type": "external",
-        "other_profile_id": None,
-        "other_party_label": "Conjoint",
-        "other_party_email": None,
-        "default_split_ratio_other": "0.4000",
-        "enabled": True,
-    }
+
+def test_agent_chat_account_link_setup_external_flow_no_candidates(monkeypatch) -> None:
+    monkeypatch.setattr(
+        agent_api,
+        "get_user_from_bearer_token",
+        lambda _token: {"id": str(AUTH_USER_ID), "email": "user@example.com"},
+    )
+    repo = _Repo()
+    suggestions_repo = _SeedSuggestionsRepository()
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "_get_shared_expenses_repository_or_501", lambda: suggestions_repo)
+    monkeypatch.setattr(agent_api._config, "supabase_url", lambda: "http://localhost")
+    monkeypatch.setattr(agent_api._config, "supabase_service_role_key", lambda: "service-role")
+    monkeypatch.setattr(agent_api._config, "supabase_anon_key", lambda: "anon")
+
+    class _FakeSupabaseClient:
+        def __init__(self, settings):
+            self.settings = settings
+
+        def get_rows(self, *, table, query, with_count, use_anon_key):
+            assert table == "releves_bancaires"
+            return [], None
+
+    monkeypatch.setattr(agent_api, "SupabaseClient", _FakeSupabaseClient)
+
+    client.post("/agent/chat", json={"message": "je veux lier compte pour mon foyer"}, headers=_auth_headers())
+    client.post("/agent/chat", json={"message": "externe"}, headers=_auth_headers())
+    client.post("/agent/chat", json={"message": "Conjoint"}, headers=_auth_headers())
+    response_split = client.post("/agent/chat", json={"message": "60/40"}, headers=_auth_headers())
+
+    assert response_split.status_code == 200
+    assert "pas trouvé de dépenses à proposer" in response_split.json()["reply"]
+    assert repo.chat_state.get("active_task") is None
 
 
 def test_inmemory_shared_expense_suggestions_dedup_uses_external_label() -> None:

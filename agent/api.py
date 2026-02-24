@@ -47,6 +47,7 @@ from backend.db.supabase_client import SupabaseClient, SupabaseSettings
 from backend.repositories.profiles_repository import ProfilesRepository, SupabaseProfilesRepository
 from backend.repositories.shared_expenses_repository import SharedExpensesRepository, SupabaseSharedExpensesRepository
 from backend.services.shared_expenses.effective_spending_adapter import compute_effective_spending_summary_safe
+from backend.services.shared_expenses.suggestion_generator import generate_initial_shared_expense_suggestions
 from shared.models import DateRange, RelevesDirection, ToolError, ToolErrorCode
 
 
@@ -401,9 +402,53 @@ def _execute_account_link_setup_task(
         global_state = dict(global_state)
         global_state["household_link"] = link_state
         updated_state["global_state"] = global_state
-        return "Configuration enregistrée ✅. Tu peux maintenant utiliser le partage des dépenses, y compris en mode externe.", None, updated_state
+
+        if profile_id is None:
+            return "Configuration enregistrée ✅. Tu peux maintenant utiliser le partage des dépenses, y compris en mode externe.", None, updated_state
+
+        try:
+            _seed_shared_expense_suggestions_after_link_setup(profile_id=profile_id, link_state=link_state)
+            reply_validation, shared_task = handle_shared_expenses_validation_request(profile_id=profile_id)
+        except HTTPException:
+            return "Configuration enregistrée ✅. Tu peux maintenant utiliser le partage des dépenses, y compris en mode externe.", None, updated_state
+        if shared_task is None:
+            return (
+                "Configuration enregistrée ✅. Je n’ai pas trouvé de dépenses à proposer pour le partage pour l’instant. "
+                "Tu peux me dire 'valider partage' plus tard.",
+                None,
+                updated_state,
+            )
+        return f"Configuration enregistrée ✅. Voici les premières dépenses à valider :\n\n{reply_validation}", shared_task, updated_state
 
     return "Je reprends la configuration du partage. Interne ou externe ?", {"type": "account_link_setup", "step": "ask_link_type", "draft": draft}, state_dict
+
+
+def _seed_shared_expense_suggestions_after_link_setup(*, profile_id: UUID, link_state: dict[str, Any]) -> int:
+    """Generate first deterministic shared-expense suggestions after link setup."""
+
+    try:
+        repository = _get_shared_expenses_repository_or_501()
+    except HTTPException:
+        return 0
+
+    supabase_client = SupabaseClient(
+        settings=SupabaseSettings(
+            url=_config.supabase_url(),
+            service_role_key=_config.supabase_service_role_key(),
+            anon_key=_config.supabase_anon_key(),
+        )
+    )
+    try:
+        return generate_initial_shared_expense_suggestions(
+            profile_id=profile_id,
+            household_link=link_state,
+            shared_expenses_repository=repository,
+            supabase_client=supabase_client,
+            limit=40,
+        )
+    except RuntimeError:
+        logger.exception("shared_expense_seed_after_link_setup_failed profile_id=%s", profile_id)
+        return 0
 
 
 def fetch_transactions_snapshot(profile_id: UUID, transaction_ids: list[UUID]) -> dict[UUID, dict[str, str | None]]:
