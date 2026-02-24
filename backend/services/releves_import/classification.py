@@ -202,3 +202,14 @@ def classify_and_categorize_transaction(row: dict[str, Any]) -> ClassifiedTransa
 def category_key_to_label(category_key: str) -> str:
     normalized_key = _LEGACY_CATEGORY_KEY_ALIASES.get(category_key, category_key)
     return _SYSTEM_CATEGORY_LABELS.get(normalized_key, _SYSTEM_CATEGORY_LABELS["other"])
+
+
+def resolve_system_category_label(category_key: str | None) -> str | None:
+    """Resolve a system category key to a user-facing label when possible."""
+
+    if not isinstance(category_key, str):
+        return None
+    cleaned_key = category_key.strip().lower()
+    if not cleaned_key:
+        return None
+    return category_key_to_label(cleaned_key)

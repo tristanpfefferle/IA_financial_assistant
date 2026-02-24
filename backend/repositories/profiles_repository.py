@@ -146,6 +146,9 @@ class ProfilesRepository(Protocol):
     def find_profile_category_id_by_name_norm(self, *, profile_id: UUID, name_norm: str) -> UUID | None:
         """Resolve one profile category id by normalized name."""
 
+    def get_profile_category_name_by_id(self, *, profile_id: UUID, category_id: UUID) -> str | None:
+        """Resolve one profile category label by id."""
+
     def get_merchant_entity_suggested_category_norm(self, *, merchant_entity_id: UUID) -> str | None:
         """Return suggested_category_norm for one merchant entity."""
 
@@ -847,6 +850,32 @@ class SupabaseProfilesRepository:
 
         category_id = rows[0].get("id")
         return UUID(str(category_id)) if category_id else None
+
+    def get_profile_category_name_by_id(self, *, profile_id: UUID, category_id: UUID) -> str | None:
+        rows, _ = self._client.get_rows(
+            table="profile_categories",
+            query={
+                "select": "id,name",
+                "profile_id": f"eq.{profile_id}",
+                "id": f"eq.{category_id}",
+                "limit": 1,
+            },
+            with_count=False,
+            use_anon_key=False,
+        )
+        if not rows:
+            return None
+
+        for row in rows:
+            if str(row.get("id") or "").strip() != str(category_id):
+                continue
+            raw_name = row.get("name")
+            if not isinstance(raw_name, str):
+                continue
+            cleaned_name = raw_name.strip()
+            if cleaned_name:
+                return cleaned_name
+        return None
 
     def get_merchant_entity_suggested_category_norm(self, *, merchant_entity_id: UUID) -> str | None:
         rows, _ = self._client.get_rows(

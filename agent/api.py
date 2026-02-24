@@ -36,6 +36,7 @@ from agent.import_label_normalizer import extract_observed_alias_from_label
 from backend.factory import build_backend_tool_service
 from backend.services.classification.decision_engine import normalize_merchant_alias
 from backend.services.releves_import.bank_detector import detect_bank_from_csv_bytes
+from backend.services.releves_import.classification import resolve_system_category_label
 from backend.reporting import (
     SpendingCategoryRow,
     SpendingReportData,
@@ -3565,6 +3566,55 @@ def _normalize_report_category(value: str | None) -> str:
     return "Sans catégorie"
 
 
+def _resolve_report_category_label(
+    *,
+    profile_id: UUID,
+    item: dict[str, Any],
+    profiles_repository: ProfilesRepository,
+) -> str:
+    """Resolve report category with category_id priority then fallback system key."""
+
+    direct_label = _pick_first_non_empty_string(
+        [
+            item.get("categorie"),
+            item.get("category_name"),
+            item.get("category_label"),
+            item.get("category"),
+            item.get("merchant_category"),
+            item.get("profile_category"),
+            item.get("category_override"),
+            item.get("category_norm"),
+            item.get("category_display_name"),
+        ]
+    )
+    if direct_label:
+        return _normalize_report_category(direct_label)
+
+    category_id_raw = item.get("category_id")
+    if category_id_raw is not None:
+        try:
+            category_id = category_id_raw if isinstance(category_id_raw, UUID) else UUID(str(category_id_raw))
+        except (TypeError, ValueError):
+            category_id = None
+        if category_id is not None:
+            resolved = profiles_repository.get_profile_category_name_by_id(
+                profile_id=profile_id,
+                category_id=category_id,
+            )
+            if isinstance(resolved, str) and resolved.strip():
+                return _normalize_report_category(resolved)
+
+    metadata = item.get("metadonnees") if isinstance(item.get("metadonnees"), dict) else {}
+    if not metadata and isinstance(item.get("meta"), dict):
+        metadata = item.get("meta")
+    category_key = str(metadata.get("category_key") or "").strip().lower()
+    resolved_system_label = resolve_system_category_label(category_key)
+    if resolved_system_label:
+        return _normalize_report_category(resolved_system_label)
+
+    return "Autres"
+
+
 def _determine_report_flow_type(*, item: dict[str, Any], category: str, amount: Decimal) -> str:
     """Determine report flow type for transaction sectioning."""
 
@@ -3617,6 +3667,7 @@ def _fetch_spending_transactions(
         return [], False, False
 
     rows: list[SpendingTransactionRow] = []
+    profiles_repository = get_profiles_repository()
     for item in items:
         if not isinstance(item, dict):
             continue
@@ -3643,20 +3694,10 @@ def _fetch_spending_transactions(
             ]
         ) or "Inconnu"
 
-        category = _normalize_report_category(
-            _pick_first_non_empty_string(
-                [
-                    item.get("categorie"),
-                    item.get("category_name"),
-                    item.get("category_label"),
-                    item.get("category"),
-                    item.get("merchant_category"),
-                    item.get("profile_category"),
-                    item.get("category_override"),
-                    item.get("category_norm"),
-                    item.get("category_display_name"),
-                ]
-            )
+        category = _resolve_report_category_label(
+            profile_id=profile_id,
+            item=item,
+            profiles_repository=profiles_repository,
         )
         merchant = _clean_merchant_display_name(merchant_raw)
         flow_type = _determine_report_flow_type(item=item, category=category, amount=amount)
@@ -3769,7 +3810,10 @@ def _build_spending_report_payload(
                 continue
             if amount == Decimal("0"):
                 continue
-            name = _normalize_report_category(category_name if isinstance(category_name, str) else None)
+            resolved_name = category_name if isinstance(category_name, str) else None
+            if not resolved_name or not str(resolved_name).strip():
+                resolved_name = resolve_system_category_label(str(category_name or "").strip().lower())
+            name = _normalize_report_category(resolved_name)
             normalized_name = "Autres" if name.casefold() in {"autres", "sans catégorie", "sans categorie"} else name
             category_totals[normalized_name] = category_totals.get(normalized_name, Decimal("0")) + amount
 
