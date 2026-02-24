@@ -348,6 +348,10 @@ class SupabaseSharedExpensesRepository:
 
         mapped: list[SharedExpenseRow] = []
         for row in rows:
+            raw_status = str(row.get("status") or "").strip().lower()
+            if raw_status not in {"active", "pending"}:
+                raw_status = "active"
+
             created_at = None
             created_raw = row.get("created_at")
             if isinstance(created_raw, str) and created_raw:
@@ -363,7 +367,7 @@ class SupabaseSharedExpensesRepository:
                     transaction_id=UUID(str(row["transaction_id"])) if row.get("transaction_id") else None,
                     amount=Decimal(str(row.get("amount") or "0")),
                     created_at=created_at,
-                    status=str(row.get("status") or "active"),
+                    status=raw_status,
                     split_ratio_other=(
                         Decimal(str(row["split_ratio_other"]))
                         if row.get("split_ratio_other") is not None
@@ -519,6 +523,7 @@ class InMemorySharedExpensesRepository:
                 other_party_label=row.get("other_party_label"),
             )
             self._shared_expenses.append(shared_row)
+            # This status belongs to shared_expense_suggestions and is independent from shared_expenses.status.
             row["status"] = "applied"
             return uuid4()
         return None
