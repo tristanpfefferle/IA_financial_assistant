@@ -132,7 +132,7 @@ export type SpendingReportApi = {
     internal_transfers: string
     net_including_transfers: string
     transaction_count: number
-    currency: string
+    currency: string | null
   }
   effective_spending: {
     outgoing: string
@@ -398,7 +398,7 @@ export function normalizeSpendingReport(api: SpendingReportApi): SpendingReport 
       internal_transfers: toNumberOrZero(api.cashflow.internal_transfers),
       net_including_transfers: toNumberOrZero(api.cashflow.net_including_transfers),
       transaction_count: api.cashflow.transaction_count,
-      currency: api.cashflow.currency,
+      currency: api.cashflow.currency ?? api.currency,
     },
     effective_spending: {
       outgoing: toNumberOrZero(api.effective_spending.outgoing),
