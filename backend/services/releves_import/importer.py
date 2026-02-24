@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import logging
 import re
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
@@ -14,7 +15,7 @@ from backend.repositories.profiles_repository import ProfilesRepository
 from backend.repositories.releves_repository import RelevesRepository
 from backend.repositories.shared_expenses_repository import SupabaseSharedExpensesRepository
 from backend.services.classification.decision_engine import decide_releve_classification, normalize_merchant_alias
-from backend.services.releves_import.classification import classify_and_categorize_transaction
+from backend.services.releves_import.classification import classify_and_categorize_transaction, resolve_system_category_label
 from backend.services.releves_import.dedup import compare_rows
 from backend.services.releves_import.routing import route_bank_parser
 from backend.services.shared_expenses.auto_share import apply_auto_share_suggestions_for_period
@@ -28,6 +29,9 @@ from shared.models import (
     RelevesImportRequest,
     RelevesImportResult,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -265,70 +269,105 @@ class RelevesImportService:
         merchant_key_norm = self._derive_clean_merchant_key_norm(observed_alias)
         meta_dict["observed_alias_key_norm"] = observed_alias_key_norm
 
-        decision = None
+        merchant_entity_id: UUID | None
+        merchant_resolution = "fallback"
         suggestion_created = False
-        if self.profiles_repository is not None:
-            resolved_entity = None
-            if observed_alias_norm:
-                resolved_entity = self.profiles_repository.find_merchant_entity_by_alias_norm(
-                    alias_norm=observed_alias_norm,
-                )
 
-            if resolved_entity is not None and resolved_entity.get("id"):
-                merchant_entity_id = UUID(str(resolved_entity["id"]))
-                decision = decide_releve_classification(
-                    profile_id=profile_id,
-                    merchant_entity_id=merchant_entity_id,
-                    bank_account_id=bank_account_id,
-                    libelle=libelle,
-                    payee=payee,
-                    montant=amount,
-                    devise=devise,
-                    date=parsed_date,
-                    metadata=meta_dict,
-                    repositories=self.profiles_repository,
-                )
-                meta_dict["classification_source"] = decision.source.value
-                meta_dict["classification_rationale"] = decision.rationale
-                meta_dict["classify_confidence"] = decision.confidence
-                meta_dict["classify_at"] = datetime.now(timezone.utc).isoformat()
-            else:
-                merchant_entity_id = None
-                if observed_alias_norm:
-                    meta_dict["merchant_resolution"] = "unresolved"
-                    meta_dict["observed_alias_norm"] = observed_alias_norm
-                    meta_dict["observed_alias_key_norm"] = observed_alias_key_norm
-                    meta_dict["llm_context"] = self._build_non_sensitive_llm_context(
-                        source=source,
-                        parsed_date=parsed_date,
-                        amount=amount,
-                        devise=devise,
-                        payee=payee,
-                        libelle=libelle,
-                        external_id=external_id,
-                        bank_account_id=bank_account_id,
-                    )
-                    # TODO(tristanpfefferle): Le batch job LLM transformera les suggestions
-                    # map_alias en merchant_entity + alias + suggested_category_norm.
-                    suggestion_created = self.profiles_repository.create_pending_map_alias_suggestion(
-                        profile_id=profile_id,
-                        observed_alias=observed_alias,
-                        observed_alias_norm=observed_alias_key_norm,
-                        rationale=(
-                            "Alias inconnu lors de l'import; nécessite normalisation/"
-                            "canonicalisation et catégorisation LLM."
-                        ),
-                        confidence=0.0,
-                    )
-                else:
-                    meta_dict["merchant_resolution"] = "unresolved_empty_alias"
-        else:
+        if self.profiles_repository is None:
             merchant_entity_id = self._fallback_merchant_entity_id(
                 profile_id=profile_id,
                 merchant_key_norm=merchant_key_norm,
             )
+            merchant_resolution = "fallback_no_profiles_repository"
+        elif not observed_alias_norm:
+            merchant_entity_id = None
+            merchant_resolution = "unresolved_empty_alias"
+        else:
+            alias_candidates = [observed_alias_norm]
+            if observed_alias_key_norm and observed_alias_key_norm != observed_alias_norm:
+                alias_candidates.append(observed_alias_key_norm)
+
+            merchant_entity_id = None
+            for alias_candidate in alias_candidates:
+                resolved_entity = self.profiles_repository.find_merchant_entity_by_alias_norm(
+                    alias_norm=alias_candidate,
+                )
+                if resolved_entity and resolved_entity.get("id"):
+                    merchant_entity_id = UUID(str(resolved_entity["id"]))
+                    merchant_resolution = (
+                        "resolved_deterministic"
+                        if alias_candidate == observed_alias_norm
+                        else "resolved_deterministic_key_norm"
+                    )
+                    break
+
+            if merchant_entity_id is None:
+                merchant_resolution = "unresolved"
+                meta_dict["llm_context"] = self._build_non_sensitive_llm_context(
+                    source=source,
+                    parsed_date=parsed_date,
+                    amount=amount,
+                    devise=devise,
+                    payee=payee,
+                    libelle=libelle,
+                    external_id=external_id,
+                    bank_account_id=bank_account_id,
+                )
+                suggestion_created = self.profiles_repository.create_pending_map_alias_suggestion(
+                    profile_id=profile_id,
+                    observed_alias=observed_alias,
+                    observed_alias_norm=observed_alias_key_norm,
+                    rationale=(
+                        "Alias inconnu lors de l'import; nécessite normalisation/"
+                        "canonicalisation et catégorisation LLM."
+                    ),
+                    confidence=0.0,
+                )
+
+        meta_dict["merchant_resolution"] = merchant_resolution
+        if observed_alias_norm:
+            meta_dict["observed_alias_norm"] = observed_alias_norm
+
+        decision = None
+        if merchant_entity_id is not None and self.profiles_repository is not None:
+            decision = decide_releve_classification(
+                profile_id=profile_id,
+                merchant_entity_id=merchant_entity_id,
+                bank_account_id=bank_account_id,
+                libelle=libelle,
+                payee=payee,
+                montant=amount,
+                devise=devise,
+                date=parsed_date,
+                metadata=meta_dict,
+                repositories=self.profiles_repository,
+            )
+            meta_dict["classification_source"] = decision.source.value
+            meta_dict["classification_rationale"] = decision.rationale
+            meta_dict["classify_confidence"] = decision.confidence
+            meta_dict["classify_at"] = datetime.now(timezone.utc).isoformat()
 
         category_id = decision.category_id if decision else None
+        if category_id is None and self.profiles_repository is not None:
+            category_label = resolve_system_category_label(classification.category_key)
+            if category_label:
+                category_id = self.profiles_repository.find_profile_category_id_by_name_norm(
+                    profile_id=profile_id,
+                    name_norm=normalize_merchant_alias(category_label),
+                )
+                if category_id is not None:
+                    meta_dict["classification_source"] = "category_key_fallback"
+                    meta_dict["classification_rationale"] = "category_key heuristique import"
+
+        if merchant_resolution.startswith("resolved") and merchant_entity_id is None:
+            logger.warning(
+                "releves_import_resolved_without_merchant_entity_id profile_id=%s bank_account_id=%s external_id=%s observed_alias_norm=%s",
+                profile_id,
+                bank_account_id,
+                external_id,
+                observed_alias_norm,
+            )
+
         if category_id is None:
             category_id = self._resolve_default_category_id(profile_id=profile_id)
 
@@ -374,8 +413,15 @@ class RelevesImportService:
                         source=source,
                     )
                 except Exception as exc:
+                    debug_detail = ""
+                    if (config.get_env("DEBUG_ENDPOINTS_ENABLED", "") or "").strip().lower() in {"1", "true"}:
+                        debug_detail = " [debug branch=normalize_row step=row_normalization_failed]"
                     errors.append(
-                        RelevesImportError(file=file.filename, row_index=index, message=str(exc))
+                        RelevesImportError(
+                            file=file.filename,
+                            row_index=index,
+                            message=f"{exc}{debug_detail}",
+                        )
                     )
                     continue
 

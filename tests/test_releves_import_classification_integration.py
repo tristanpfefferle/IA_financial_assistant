@@ -285,3 +285,56 @@ def test_same_merchant_entity_has_profile_specific_override_categories() -> None
 
     assert coop_row_a["merchant_entity_id"] == coop_row_b["merchant_entity_id"]
     assert coop_row_a["category_id"] != coop_row_b["category_id"]
+
+
+def test_import_deterministic_known_alias_writes_merchant_entity_id_without_llm() -> None:
+    repository = InMemoryRelevesRepository()
+    profiles_repository = _ProfilesStub(with_autres=False)
+    service = RelevesImportService(releves_repository=repository, profiles_repository=profiles_repository)
+
+    alias_norm = normalize_merchant_alias("COOP MONTHEY")
+    expected_entity_id = profiles_repository.ensure_merchant_entity_from_alias(
+        profile_id=PROFILE_ID,
+        observed_alias="COOP MONTHEY",
+        observed_alias_norm=alias_norm,
+        merchant_key_norm=alias_norm,
+    )
+
+    result = service.import_releves(_build_request(_build_single_coop_csv()))
+
+    assert result.imported_count == 1
+
+    imported_rows = repository.list_releves_for_import(profile_id=PROFILE_ID, bank_account_id=None)
+    coop_row = [row for row in imported_rows if row.get("libelle") == "COOP MONTHEY"][0]
+    assert coop_row["merchant_entity_id"] == expected_entity_id
+    assert coop_row["meta"]["merchant_resolution"] == "resolved_deterministic"
+
+
+def test_import_known_alias_key_norm_fallback_writes_merchant_entity_and_override_category() -> None:
+    repository = InMemoryRelevesRepository()
+    profiles_repository = _ProfilesStub(with_autres=False)
+    service = RelevesImportService(releves_repository=repository, profiles_repository=profiles_repository)
+
+    expected_entity_id = profiles_repository.ensure_merchant_entity_from_alias(
+        profile_id=PROFILE_ID,
+        observed_alias="Le Scalp Coif Le Bouveret",
+        observed_alias_norm="le scalp coif le bouveret",
+        merchant_key_norm="le scalp coif le bouveret",
+    )
+    expected_category_id = UUID("22222222-2222-2222-2222-222222222222")
+    profiles_repository.profile_entity_overrides[(PROFILE_ID, expected_entity_id)] = expected_category_id
+
+    result = service.import_releves(_build_request(_build_sumup_alias_variants_csv()))
+
+    assert result.imported_count == 2
+
+    imported_rows = repository.list_releves_for_import(profile_id=PROFILE_ID, bank_account_id=None)
+    sumup_rows = [
+        row
+        for row in imported_rows
+        if isinstance(row.get("libelle"), str) and str(row.get("libelle", "")).startswith("SumUp *L")
+    ]
+    assert len(sumup_rows) == 2
+    assert all(row["merchant_entity_id"] == expected_entity_id for row in sumup_rows)
+    assert all(row["category_id"] == expected_category_id for row in sumup_rows)
+    assert all(row["meta"]["merchant_resolution"] == "resolved_deterministic_key_norm" for row in sumup_rows)
