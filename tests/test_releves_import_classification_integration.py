@@ -16,14 +16,21 @@ PROFILE_B = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2")
 
 
 class _ProfilesStub:
-    def __init__(self, *, with_autres: bool = True) -> None:
+    def __init__(self, *, with_autres: bool = True, releves_repository: InMemoryRelevesRepository | None = None) -> None:
         self._categories_by_norm: dict[str, UUID] = {
             "transport": UUID("11111111-1111-1111-1111-111111111111"),
             "alimentation": UUID("22222222-2222-2222-2222-222222222222"),
         }
+        self._categories_by_system_key: dict[str, UUID] = {
+            "transport": self._categories_by_norm["transport"],
+            "food": self._categories_by_norm["alimentation"],
+        }
         if with_autres:
-            self._categories_by_norm["autres"] = UUID("99999999-9999-9999-9999-999999999999")
+            autres_id = UUID("99999999-9999-9999-9999-999999999999")
+            self._categories_by_norm["autres"] = autres_id
+            self._categories_by_system_key["other"] = autres_id
 
+        self._releves_repository = releves_repository
         self.alias_to_entity: dict[str, UUID] = {}
         self.entity_suggested: dict[UUID, str] = {}
         self.profile_entity_overrides: dict[tuple[UUID, UUID], UUID] = {}
@@ -36,9 +43,16 @@ class _ProfilesStub:
         created_count = 0
         for category in categories:
             norm = normalize_merchant_alias(str(category.get("name", "")))
-            if norm and norm not in self._categories_by_norm:
-                self._categories_by_norm[norm] = uuid4()
+            system_key = str(category.get("system_key", "")).strip().lower()
+            if not norm:
+                continue
+            category_id = self._categories_by_norm.get(norm)
+            if category_id is None:
+                category_id = uuid4()
+                self._categories_by_norm[norm] = category_id
                 created_count += 1
+            if system_key:
+                self._categories_by_system_key[system_key] = category_id
         return {"created_count": created_count, "system_total_count": len(self._categories_by_norm)}
 
     def ensure_merchant_entity_from_alias(
@@ -92,6 +106,11 @@ class _ProfilesStub:
         del profile_id
         return self._categories_by_norm.get(normalize_merchant_alias(name_norm))
 
+
+    def get_profile_category_id_by_system_key(self, *, profile_id: UUID, system_key: str) -> UUID | None:
+        del profile_id
+        return self._categories_by_system_key.get(system_key.strip().lower())
+
     def get_profile_merchant_override(self, *, profile_id: UUID, merchant_entity_id: UUID):
         category_id = self.profile_entity_overrides.get((profile_id, merchant_entity_id))
         if category_id is None:
@@ -101,6 +120,24 @@ class _ProfilesStub:
     def get_merchant_entity_suggested_category_norm(self, *, merchant_entity_id: UUID):
         suggested = self.entity_suggested.get(merchant_entity_id)
         return suggested if suggested else None
+
+
+    def attach_merchant_entity_to_releve(
+        self,
+        *,
+        releve_id: UUID,
+        merchant_entity_id: UUID,
+        category_id: UUID | None,
+    ) -> None:
+        if self._releves_repository is None:
+            return
+        for index, row in enumerate(self._releves_repository._seed):  # noqa: SLF001 - test-only seam
+            if row.id != releve_id:
+                continue
+            self._releves_repository._seed[index] = row.model_copy(
+                update={"merchant_id": merchant_entity_id, "category_id": category_id}
+            )
+            return
 
 
 def _build_request(csv_content: bytes, *, profile_id: UUID = PROFILE_ID) -> RelevesImportRequest:
@@ -355,3 +392,114 @@ def test_import_food_category_key_fallback_uses_profile_alimentation_category() 
     assert coop_row["category_id"] == UUID("22222222-2222-2222-2222-222222222222")
     assert coop_row["category_id"] != UUID("99999999-9999-9999-9999-999999999999")
     assert coop_row["meta"]["classification_source"] == "category_key_fallback"
+
+
+def test_import_known_alias_applies_profile_override_category() -> None:
+    repository = InMemoryRelevesRepository()
+    profiles_repository = _ProfilesStub(with_autres=True)
+    service = RelevesImportService(releves_repository=repository, profiles_repository=profiles_repository)
+
+    alias_norm = normalize_merchant_alias("COOP MONTHEY")
+    entity_id = profiles_repository.ensure_merchant_entity_from_alias(
+        profile_id=PROFILE_ID,
+        observed_alias="COOP MONTHEY",
+        observed_alias_norm=alias_norm,
+        merchant_key_norm=alias_norm,
+    )
+    expected_category_id = UUID("11111111-1111-1111-1111-111111111111")
+    profiles_repository.profile_entity_overrides[(PROFILE_ID, entity_id)] = expected_category_id
+
+    result = service.import_releves(_build_request(_build_single_coop_csv()))
+
+    assert result.imported_count == 1
+    imported_rows = repository.list_releves_for_import(profile_id=PROFILE_ID, bank_account_id=None)
+    coop_row = [row for row in imported_rows if row.get("libelle") == "COOP MONTHEY"][0]
+    assert coop_row["merchant_entity_id"] == entity_id
+    assert coop_row["category_id"] == expected_category_id
+
+
+def test_import_known_alias_applies_entity_suggested_category_norm() -> None:
+    repository = InMemoryRelevesRepository()
+    profiles_repository = _ProfilesStub(with_autres=True)
+    service = RelevesImportService(releves_repository=repository, profiles_repository=profiles_repository)
+
+    alias_norm = normalize_merchant_alias("COOP MONTHEY")
+    entity_id = profiles_repository.ensure_merchant_entity_from_alias(
+        profile_id=PROFILE_ID,
+        observed_alias="COOP MONTHEY",
+        observed_alias_norm=alias_norm,
+        merchant_key_norm=alias_norm,
+    )
+    profiles_repository.entity_suggested[entity_id] = "transport"
+
+    result = service.import_releves(_build_request(_build_single_coop_csv()))
+
+    assert result.imported_count == 1
+    imported_rows = repository.list_releves_for_import(profile_id=PROFILE_ID, bank_account_id=None)
+    coop_row = [row for row in imported_rows if row.get("libelle") == "COOP MONTHEY"][0]
+    assert coop_row["category_id"] == UUID("11111111-1111-1111-1111-111111111111")
+
+
+def test_backfill_updates_existing_rows_from_autres_to_override_or_suggested() -> None:
+    repository = InMemoryRelevesRepository()
+    profiles_repository = _ProfilesStub(with_autres=True, releves_repository=repository)
+    service = RelevesImportService(releves_repository=repository, profiles_repository=profiles_repository)
+
+    alias_norm = normalize_merchant_alias("COOP MONTHEY")
+    override_entity = profiles_repository.ensure_merchant_entity_from_alias(
+        profile_id=PROFILE_ID,
+        observed_alias="COOP MONTHEY",
+        observed_alias_norm=alias_norm,
+        merchant_key_norm=alias_norm,
+    )
+    suggested_entity = profiles_repository.ensure_merchant_entity_from_alias(
+        profile_id=PROFILE_ID,
+        observed_alias="CFF",
+        observed_alias_norm=normalize_merchant_alias("CFF"),
+        merchant_key_norm=normalize_merchant_alias("CFF"),
+    )
+
+    autres_id = UUID("99999999-9999-9999-9999-999999999999")
+    override_category_id = UUID("22222222-2222-2222-2222-222222222222")
+    suggested_category_id = UUID("11111111-1111-1111-1111-111111111111")
+    profiles_repository.profile_entity_overrides[(PROFILE_ID, override_entity)] = override_category_id
+    profiles_repository.entity_suggested[suggested_entity] = "transport"
+
+    repository.insert_releves_bulk(
+        profile_id=PROFILE_ID,
+        rows=[
+            {
+                "date": date(2025, 1, 10),
+                "montant": 12,
+                "devise": "CHF",
+                "libelle": "COOP MONTHEY",
+                "payee": "COOP MONTHEY",
+                "merchant_entity_id": override_entity,
+                "category_id": autres_id,
+                "categorie": None,
+                "meta": {"category_key": "food"},
+                "source": "ubs",
+            },
+            {
+                "date": date(2025, 1, 11),
+                "montant": 20,
+                "devise": "CHF",
+                "libelle": "CFF",
+                "payee": "CFF",
+                "merchant_entity_id": suggested_entity,
+                "category_id": autres_id,
+                "categorie": None,
+                "meta": {"category_key": "transport"},
+                "source": "ubs",
+            },
+        ],
+    )
+
+    updated = service.backfill_categories_for_known_merchant_entities(profile_id=PROFILE_ID)
+
+    assert updated == 2
+    rows = repository.list_releves_for_import(profile_id=PROFILE_ID, bank_account_id=None)
+    inserted = [row for row in rows if row.get("libelle") in {"COOP MONTHEY", "CFF"}]
+    by_libelle = {str(row.get("libelle")): row for row in inserted}
+    assert by_libelle["COOP MONTHEY"]["category_id"] == override_category_id
+    assert by_libelle["CFF"]["category_id"] == suggested_category_id

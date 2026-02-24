@@ -64,6 +64,70 @@ class RelevesImportService:
             raise RuntimeError("Impossible de résoudre la catégorie système obligatoire 'Autres'.")
         return category_id
 
+    def _resolve_category_id_for_merchant_entity(
+        self,
+        *,
+        profile_id: UUID,
+        merchant_entity_id: UUID,
+        metadata: dict[str, Any],
+    ) -> UUID | None:
+        """Resolve a deterministic category for an already linked merchant entity."""
+
+        if self.profiles_repository is None:
+            return None
+
+        override = self.profiles_repository.get_profile_merchant_override(
+            profile_id=profile_id,
+            merchant_entity_id=merchant_entity_id,
+        )
+        if override and override.get("category_id"):
+            return UUID(str(override["category_id"]))
+
+        suggested_norm = self.profiles_repository.get_merchant_entity_suggested_category_norm(
+            merchant_entity_id=merchant_entity_id,
+        )
+        if suggested_norm:
+            category_id = self.profiles_repository.find_profile_category_id_by_name_norm(
+                profile_id=profile_id,
+                name_norm=suggested_norm,
+            )
+            if category_id is None:
+                suggested_label = resolve_system_category_label(suggested_norm)
+                if suggested_label:
+                    self.profiles_repository.ensure_system_categories(
+                        profile_id=profile_id,
+                        categories=[{"system_key": suggested_norm, "name": suggested_label}],
+                    )
+                    category_id = self.profiles_repository.get_profile_category_id_by_system_key(
+                        profile_id=profile_id,
+                        system_key=suggested_norm,
+                    )
+            if category_id is not None:
+                return category_id
+
+        category_key = str(metadata.get("category_key") or "").strip().lower()
+        if category_key and category_key != "other":
+            category_label = resolve_system_category_label(category_key)
+            if category_label:
+                category_name_norm = normalize_category_name(category_label)
+                self.profiles_repository.ensure_system_categories(
+                    profile_id=profile_id,
+                    categories=[{"system_key": category_key, "name": category_label}],
+                )
+                category_id = self.profiles_repository.find_profile_category_id_by_name_norm(
+                    profile_id=profile_id,
+                    name_norm=category_name_norm,
+                )
+                if category_id is None:
+                    category_id = self.profiles_repository.get_profile_category_id_by_system_key(
+                        profile_id=profile_id,
+                        system_key=category_key,
+                    )
+                if category_id is not None:
+                    return category_id
+
+        return self._resolve_default_category_id(profile_id=profile_id)
+
     @staticmethod
     def _redact_llm_context_value(value: str | None, *, max_len: int = 200) -> str | None:
         if value is None:
@@ -329,6 +393,14 @@ class RelevesImportService:
         if observed_alias_norm:
             meta_dict["observed_alias_norm"] = observed_alias_norm
 
+        resolved_category_id: UUID | None = None
+        if merchant_entity_id is not None:
+            resolved_category_id = self._resolve_category_id_for_merchant_entity(
+                profile_id=profile_id,
+                merchant_entity_id=merchant_entity_id,
+                metadata=meta_dict,
+            )
+
         decision = None
         if merchant_entity_id is not None and self.profiles_repository is not None:
             decision = decide_releve_classification(
@@ -348,7 +420,7 @@ class RelevesImportService:
             meta_dict["classify_confidence"] = decision.confidence
             meta_dict["classify_at"] = datetime.now(timezone.utc).isoformat()
 
-        category_id = decision.category_id if decision else None
+        category_id = resolved_category_id or (decision.category_id if decision else None)
         if category_id is None and self.profiles_repository is not None:
             category_label = resolve_system_category_label(classification.category_key)
             if category_label:
@@ -392,6 +464,46 @@ class RelevesImportService:
             "contenu_brut": raw_dict,
             "source": source,
         }
+
+    def backfill_categories_for_known_merchant_entities(self, *, profile_id: UUID) -> int:
+        """Backfill releves still categorized as `Autres` while already linked to a merchant entity."""
+
+        if self.profiles_repository is None:
+            return 0
+
+        autres_category_id = self._resolve_default_category_id(profile_id=profile_id)
+        existing_rows = self.releves_repository.list_releves_for_import(
+            profile_id=profile_id,
+            bank_account_id=None,
+        )
+
+        updated = 0
+        for row in existing_rows:
+            releve_id = row.get("id")
+            merchant_entity_id = row.get("merchant_entity_id")
+            category_id = row.get("category_id")
+            if releve_id is None or merchant_entity_id is None:
+                continue
+            if category_id != autres_category_id:
+                continue
+
+            metadata = row.get("meta") if isinstance(row.get("meta"), dict) else {}
+            resolved_category_id = self._resolve_category_id_for_merchant_entity(
+                profile_id=profile_id,
+                merchant_entity_id=merchant_entity_id,
+                metadata=metadata,
+            )
+            if resolved_category_id is None or resolved_category_id == autres_category_id:
+                continue
+
+            self.profiles_repository.attach_merchant_entity_to_releve(
+                releve_id=releve_id,
+                merchant_entity_id=merchant_entity_id,
+                category_id=resolved_category_id,
+            )
+            updated += 1
+
+        return updated
 
     def import_releves(self, request: RelevesImportRequest) -> RelevesImportResult:
         errors: list[RelevesImportError] = []

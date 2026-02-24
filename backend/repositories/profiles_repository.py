@@ -146,6 +146,9 @@ class ProfilesRepository(Protocol):
     def find_profile_category_id_by_name_norm(self, *, profile_id: UUID, name_norm: str) -> UUID | None:
         """Resolve one profile category id by normalized name."""
 
+    def get_profile_category_id_by_system_key(self, *, profile_id: UUID, system_key: str) -> UUID | None:
+        """Resolve one profile category id by category system key."""
+
     def get_profile_category_name_by_id(self, *, profile_id: UUID, category_id: UUID) -> str | None:
         """Resolve one profile category label by id."""
 
@@ -840,6 +843,28 @@ class SupabaseProfilesRepository:
                 "select": "id",
                 "profile_id": f"eq.{profile_id}",
                 "name_norm": f"eq.{cleaned_name_norm}",
+                "limit": 1,
+            },
+            with_count=False,
+            use_anon_key=False,
+        )
+        if not rows:
+            return None
+
+        category_id = rows[0].get("id")
+        return UUID(str(category_id)) if category_id else None
+
+    def get_profile_category_id_by_system_key(self, *, profile_id: UUID, system_key: str) -> UUID | None:
+        cleaned_system_key = " ".join(str(system_key).strip().split()).lower()
+        if not cleaned_system_key:
+            return None
+
+        rows, _ = self._client.get_rows(
+            table="profile_categories",
+            query={
+                "select": "id",
+                "profile_id": f"eq.{profile_id}",
+                "system_key": f"eq.{cleaned_system_key}",
                 "limit": 1,
             },
             with_count=False,
