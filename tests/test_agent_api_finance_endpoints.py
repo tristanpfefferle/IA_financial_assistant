@@ -813,6 +813,63 @@ def test_spending_report_pdf_accepts_access_token_query_param(monkeypatch) -> No
     assert captured["token"] == "query-token"
 
 
+
+def test_spending_report_pdf_internal_error_returns_error_id_and_debug_fields(monkeypatch) -> None:
+    _mock_authenticated(monkeypatch)
+
+    class _Repo:
+        def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None):
+            assert auth_user_id == AUTH_USER_ID
+            assert email == "user@example.com"
+            return PROFILE_ID
+
+        def get_chat_state(self, *, profile_id: UUID, user_id: UUID):
+            assert profile_id == PROFILE_ID
+            assert user_id == AUTH_USER_ID
+            return {"state": {}}
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: _Repo())
+
+    class _Router:
+        def call(self, tool_name: str, payload: dict, *, profile_id: UUID | None = None):
+            assert profile_id == PROFILE_ID
+            if tool_name == "finance_releves_sum":
+                return {"total": "0", "count": 0, "average": "0", "currency": "CHF"}
+            if tool_name == "finance_releves_aggregate":
+                return {"group_by": payload.get("group_by") or "month", "currency": "CHF", "groups": {}}
+            if tool_name == "finance_releves_search":
+                return {"items": [], "limit": 500, "offset": 0, "total": 0}
+            raise AssertionError(tool_name)
+
+    monkeypatch.setattr(agent_api, "get_tool_router", lambda: _Router())
+
+    def _raise_pdf_error(_data):
+        raise RuntimeError("pdf generation exploded")
+
+    monkeypatch.setattr(agent_api, "generate_spending_report_pdf", _raise_pdf_error)
+
+    no_debug_client = TestClient(app, raise_server_exceptions=False)
+
+    response = no_debug_client.get("/finance/reports/spending.pdf?month=2026-01", headers=_auth_headers())
+
+    assert response.status_code == 500
+    payload = response.json()
+    assert payload["detail"] == "Internal Server Error"
+    assert payload["error_id"]
+    assert "exception_type" not in payload
+    assert "exception_message" not in payload
+    assert response.headers.get("X-Error-Id") == payload["error_id"]
+
+    debug_response = no_debug_client.get("/finance/reports/spending.pdf?month=2026-01&debug=1", headers=_auth_headers())
+
+    assert debug_response.status_code == 500
+    debug_payload = debug_response.json()
+    assert debug_payload["detail"] == "Internal Server Error"
+    assert debug_payload["error_id"]
+    assert debug_payload["exception_type"] == "RuntimeError"
+    assert debug_payload["exception_message"] == "pdf generation exploded"
+    assert debug_response.headers.get("X-Error-Id") == debug_payload["error_id"]
+
 def test_spending_report_pdf_returns_pdf_two_pages_and_calls_search(monkeypatch) -> None:
     _mock_authenticated(monkeypatch)
 
