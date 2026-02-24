@@ -4,6 +4,13 @@ export type AgentChatResponse = {
   reply: string
   tool_result: Record<string, unknown> | null
   plan: Record<string, unknown> | null
+  debug?: {
+    loop?: {
+      loop_id?: string | null
+      step?: string | null
+      blocking?: boolean | null
+    } | null
+  } | null
 }
 
 export type BankAccount = {
@@ -275,7 +282,7 @@ async function buildAuthHeaders(): Promise<Record<string, string>> {
 export async function sendChatMessage(message: string, options?: { debug?: boolean; requestGreeting?: boolean }): Promise<AgentChatResponse> {
   const headers = await buildAuthHeaders()
   if (options?.debug) {
-    headers['X-Debug'] = '1'
+    headers['x-debug'] = '1'
   }
 
   const response = await fetch(`${getBaseUrl()}/agent/chat`, {

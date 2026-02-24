@@ -57,6 +57,53 @@ type ProgressUiAction = {
   steps: string[]
 }
 
+type LoopDebugState = {
+  loopId: string | null
+  step: string | null
+  blocking: boolean | null
+}
+
+const CHAT_DEBUG_STORAGE_KEY = 'chat_debug'
+
+function isChatDebugEnabledByEnv(): boolean {
+  return import.meta.env.VITE_CHAT_DEBUG === '1'
+}
+
+function readChatDebugMode(): boolean {
+  const storedValue = localStorage.getItem(CHAT_DEBUG_STORAGE_KEY)
+  if (storedValue === '1') {
+    return true
+  }
+  if (storedValue === '0') {
+    return false
+  }
+
+  return isChatDebugEnabledByEnv()
+}
+
+function toLoopDebugState(payload: unknown): LoopDebugState | null {
+  if (!payload || typeof payload !== 'object') {
+    return null
+  }
+
+  const debug = (payload as { debug?: unknown }).debug
+  if (!debug || typeof debug !== 'object') {
+    return null
+  }
+
+  const loop = (debug as { loop?: unknown }).loop
+  if (!loop || typeof loop !== 'object') {
+    return null
+  }
+
+  const rawLoop = loop as { loop_id?: unknown; step?: unknown; blocking?: unknown }
+  return {
+    loopId: typeof rawLoop.loop_id === 'string' ? rawLoop.loop_id : null,
+    step: typeof rawLoop.step === 'string' ? rawLoop.step : null,
+    blocking: typeof rawLoop.blocking === 'boolean' ? rawLoop.blocking : null,
+  }
+}
+
 function formatFileSize(fileSize: number): string {
   if (fileSize < 1024) {
     return `${fileSize} o`
@@ -316,6 +363,7 @@ export function ChatPage({ email }: ChatPageProps) {
   const [isResolvingPendingAliases, setIsResolvingPendingAliases] = useState(false)
   const [resolvePendingAliasesFeedback, setResolvePendingAliasesFeedback] = useState<string | null>(null)
   const [debugMode, setDebugMode] = useState(false)
+  const [loopDebug, setLoopDebug] = useState<LoopDebugState | null>(null)
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false)
   const [autoOpenImportPicker, setAutoOpenImportPicker] = useState(false)
@@ -383,8 +431,7 @@ export function ChatPage({ email }: ChatPageProps) {
   }, [toast])
 
   useEffect(() => {
-    const storedDebugMode = localStorage.getItem('debugMode')
-    setDebugMode(storedDebugMode === '1')
+    setDebugMode(readChatDebugMode())
 
     let active = true
 
@@ -407,8 +454,25 @@ export function ChatPage({ email }: ChatPageProps) {
   }, [])
 
   useEffect(() => {
-    localStorage.setItem('debugMode', debugMode ? '1' : '0')
+    if (debugMode) {
+      localStorage.setItem(CHAT_DEBUG_STORAGE_KEY, '1')
+      return
+    }
+
+    localStorage.removeItem(CHAT_DEBUG_STORAGE_KEY)
+    setLoopDebug(null)
   }, [debugMode])
+
+  function syncLoopDebug(payload: unknown): void {
+    if (!debugMode) {
+      return
+    }
+
+    const parsedLoopDebug = toLoopDebugState(payload)
+    if (parsedLoopDebug) {
+      setLoopDebug(parsedLoopDebug)
+    }
+  }
 
   useEffect(() => {
     if (!hasToken) {
@@ -688,6 +752,7 @@ export function ChatPage({ email }: ChatPageProps) {
       }
 
       const response = await sendChatMessage(apiMessage, { debug: debugMode })
+      syncLoopDebug(response)
       const segments = splitAssistantReply(response.reply)
       enqueueAssistantMessages(segments, response.tool_result, response.plan, response)
       await refreshPendingCategorizationStatus({ withPrompt: true })
@@ -712,6 +777,7 @@ export function ChatPage({ email }: ChatPageProps) {
 
     try {
       const response = await sendChatMessage(trimmedMessage, { debug: debugMode })
+      syncLoopDebug(response)
       const segments = splitAssistantReply(response.reply)
       enqueueAssistantMessages(segments, response.tool_result, response.plan, response)
     } catch (caughtError) {
@@ -730,6 +796,7 @@ export function ChatPage({ email }: ChatPageProps) {
     setError(null)
     try {
       const response = await sendChatMessage('', { debug: debugMode, requestGreeting: true })
+      syncLoopDebug(response)
       const segments = splitAssistantReply(response.reply)
       enqueueAssistantMessages(segments, response.tool_result, response.plan, response)
       await refreshPendingCategorizationStatus({ withPrompt: true })
@@ -849,6 +916,7 @@ export function ChatPage({ email }: ChatPageProps) {
         setToast({ type: 'success', message: 'Import terminé. Analyse automatique en cours…' })
         setIsLoading(true)
         const response = await sendChatMessage('', { debug: debugMode })
+        syncLoopDebug(response)
         const segments = splitAssistantReply(response.reply)
         enqueueAssistantMessages(segments, response.tool_result, response.plan, response)
         await refreshPendingCategorizationStatus({ withPrompt: true })
@@ -887,7 +955,7 @@ export function ChatPage({ email }: ChatPageProps) {
       />
 
       <section className="chat-panel">
-        <ChatHeader onLogout={handleLogout} />
+        <ChatHeader onLogout={handleLogout} debugMode={debugMode} loopDebug={loopDebug} />
 
         <MessageList
           messages={messages}
@@ -1004,6 +1072,10 @@ type SidebarProps = {
 }
 
 function Sidebar(props: SidebarProps) {
+  const handleToggleDebug = (nextValue: boolean) => {
+    props.setDebugMode(nextValue)
+  }
+
   return (
     <aside className={`sidebar ${props.isOpen ? 'open' : ''}`}>
       <section className="card sidebar-card">
@@ -1012,7 +1084,7 @@ function Sidebar(props: SidebarProps) {
         {props.pendingCategorizationCount > 0 ? <p className="subtle-text">À catégoriser (TWINT): {props.pendingCategorizationCount}</p> : null}
 
         <label className="switch-row">
-          <input type="checkbox" checked={props.debugMode} onChange={(event) => props.setDebugMode(event.target.checked)} />
+          <input type="checkbox" checked={props.debugMode} onChange={(event) => handleToggleDebug(event.target.checked)} />
           Mode debug
         </label>
 
@@ -1041,12 +1113,17 @@ function Sidebar(props: SidebarProps) {
   )
 }
 
-function ChatHeader({ onLogout }: { onLogout: () => void }) {
+function ChatHeader({ onLogout, debugMode, loopDebug }: { onLogout: () => void; debugMode: boolean; loopDebug: LoopDebugState | null }) {
   return (
     <header className="chat-header sticky-top">
       <div>
         <h1>Assistant financier IA</h1>
         <p className="subtle-text">Analyse tes relevés, classe tes dépenses et répond à tes questions rapidement.</p>
+        {debugMode && loopDebug ? (
+          <p className="loop-debug-badge">
+            Loop: {loopDebug.loopId ?? 'none'} · step: {loopDebug.step ?? 'none'} · blocking: {loopDebug.blocking === null ? 'unknown' : String(loopDebug.blocking)}
+          </p>
+        ) : null}
       </div>
       <button type="button" className="secondary-button" onClick={onLogout}>
         Se déconnecter
