@@ -1427,7 +1427,7 @@ def test_spending_report_json_includes_effective_spending_when_repository_availa
                 amount=Decimal("30"),
                 other_party_label="Conjoint",
                 created_at=datetime(2026, 1, 10, tzinfo=timezone.utc),
-                status="active",
+                status="settled",
                 split_ratio_other=Decimal("0.5"),
             ),
             SharedExpenseRow(
@@ -1436,7 +1436,7 @@ def test_spending_report_json_includes_effective_spending_when_repository_availa
                 transaction_id=None,
                 amount=Decimal("10"),
                 created_at=datetime(2026, 1, 15, tzinfo=timezone.utc),
-                status="active",
+                status="settled",
                 split_ratio_other=Decimal("0.5"),
             ),
         ]

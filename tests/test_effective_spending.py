@@ -20,7 +20,7 @@ def test_compute_effective_spending_summary_with_incoming_and_outgoing() -> None
                 transaction_id=None,
                 amount=Decimal("100"),
                 created_at=datetime(2026, 2, 10, tzinfo=timezone.utc),
-                status="active",
+                status="settled",
                 split_ratio_other=Decimal("0.5"),
             ),
             SharedExpenseRow(
@@ -29,7 +29,7 @@ def test_compute_effective_spending_summary_with_incoming_and_outgoing() -> None
                 transaction_id=None,
                 amount=Decimal("60"),
                 created_at=datetime(2026, 2, 12, tzinfo=timezone.utc),
-                status="active",
+                status="settled",
                 split_ratio_other=Decimal("0.5"),
             ),
         ],
@@ -101,7 +101,7 @@ def test_compute_effective_spending_summary_external_outgoing_only() -> None:
                 transaction_id=None,
                 amount=Decimal("25"),
                 created_at=datetime(2026, 2, 8, tzinfo=timezone.utc),
-                status="active",
+                status="settled",
                 split_ratio_other=Decimal("0.5"),
                 other_party_label="Conjoint",
             )
