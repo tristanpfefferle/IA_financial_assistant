@@ -315,6 +315,8 @@ def _execute_account_link_setup_task(
     user_message: str,
     active_task: dict[str, Any] | None,
     state_dict: dict[str, Any] | None,
+    profile_id: UUID | None = None,
+    profiles_repository: Any | None = None,
 ) -> tuple[str, dict[str, Any] | None, dict[str, Any] | None]:
     """Advance deterministic account-link setup flow and optionally persist settings in chat state."""
 
@@ -368,6 +370,32 @@ def _execute_account_link_setup_task(
             "default_split_ratio_other": str(ratio_other),
             "enabled": True,
         }
+
+        if profiles_repository is not None and profile_id is not None and hasattr(profiles_repository, "upsert_household_link"):
+            try:
+                persisted_link_state = profiles_repository.upsert_household_link(
+                    profile_id=profile_id,
+                    link_type=link_state["link_type"],
+                    other_profile_id=(UUID(str(link_state["other_profile_id"])) if link_state.get("other_profile_id") else None),
+                    other_party_label=link_state.get("other_party_label"),
+                    other_party_email=draft.get("other_party_email"),
+                    default_split_ratio_other=link_state["default_split_ratio_other"],
+                )
+                if isinstance(persisted_link_state, dict):
+                    link_state = {
+                        "link_type": str(persisted_link_state.get("link_type") or link_state["link_type"]),
+                        "other_profile_id": persisted_link_state.get("other_profile_id"),
+                        "other_party_label": persisted_link_state.get("other_party_label"),
+                        "other_party_email": persisted_link_state.get("other_party_email"),
+                        "default_split_ratio_other": str(
+                            persisted_link_state.get("default_split_ratio_other") or link_state["default_split_ratio_other"]
+                        ),
+                        "enabled": True,
+                    }
+            except Exception:
+                logger.exception("account_link_upsert_failed profile_id=%s", profile_id)
+                return "Impossible d’enregistrer la configuration pour le moment (erreur base de données). Réessaie dans un instant.", task, state_dict
+
         updated_state = dict(state_dict) if isinstance(state_dict, dict) else {}
         global_state = updated_state.get("global_state") if isinstance(updated_state.get("global_state"), dict) else {}
         global_state = dict(global_state)
@@ -2789,6 +2817,8 @@ def agent_chat(
                 user_message=payload.message,
                 active_task=account_link_active_task,
                 state_dict=state_dict if isinstance(state_dict, dict) else None,
+                profile_id=profile_id,
+                profiles_repository=profiles_repository,
             )
             updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
             if updated_link_task is None:
@@ -2824,6 +2854,8 @@ def agent_chat(
                 user_message="oui",
                 active_task=None,
                 state_dict=seed_state,
+                profile_id=profile_id,
+                profiles_repository=profiles_repository,
             )
             updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
             if updated_link_task is None:
