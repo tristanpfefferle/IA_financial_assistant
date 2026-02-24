@@ -92,7 +92,7 @@ class SharedExpensesRepository(Protocol):
         start_date: date,
         end_date: date,
     ) -> list[SharedExpenseRow]:
-        """Return active shared expenses where profile is payer or beneficiary for the period."""
+        """Return pending/settled shared expenses where profile is payer or beneficiary for the period."""
 
 
 class SupabaseSharedExpensesRepository:
@@ -244,8 +244,9 @@ class SupabaseSharedExpensesRepository:
             "to_profile_id": str(suggestion["suggested_to_profile_id"]) if suggestion.get("suggested_to_profile_id") else None,
             "transaction_id": str(suggestion["transaction_id"]),
             "amount": str(amount),
-            # shared_expenses.status is a DB enum; avoid unsupported statuses (e.g. "applied").
-            "status": "active",
+            # shared_expenses.status is a DB enum and only accepts pending|settled.
+            # shared_expense_suggestions.status is independent and can be set to "applied".
+            "status": "pending",
             "split_ratio_other": str(suggestion.get("suggested_split_ratio_other") or "0.5"),
             "other_party_label": str(suggestion["other_party_label"]) if suggestion.get("other_party_label") else None,
             "link_id": str(suggestion["link_id"]) if suggestion.get("link_id") else None,
@@ -330,7 +331,7 @@ class SupabaseSharedExpensesRepository:
                         "from_profile_id,to_profile_id,transaction_id,amount,created_at,status,split_ratio_other,other_party_label",
                     ),
                     ("or", f"(from_profile_id.eq.{profile_id},to_profile_id.eq.{profile_id})"),
-                    ("status", "in.(active,pending)"),
+                    ("status", "in.(pending,settled)"),
                     # TODO(MVP): created_at is only a proxy; ideally filter by underlying transaction date.
                     ("created_at", f"gte.{start_date.isoformat()}T00:00:00+00:00"),
                     ("created_at", f"lte.{end_date.isoformat()}T23:59:59+00:00"),
@@ -349,8 +350,8 @@ class SupabaseSharedExpensesRepository:
         mapped: list[SharedExpenseRow] = []
         for row in rows:
             raw_status = str(row.get("status") or "").strip().lower()
-            if raw_status not in {"active", "pending"}:
-                raw_status = "active"
+            if raw_status not in {"pending", "settled"}:
+                raw_status = "pending"
 
             created_at = None
             created_raw = row.get("created_at")
@@ -518,7 +519,7 @@ class InMemorySharedExpensesRepository:
                 transaction_id=row["transaction_id"],
                 amount=Decimal(str(amount)),
                 created_at=datetime.now(timezone.utc),
-                status="active",
+                status="pending",
                 split_ratio_other=row.get("suggested_split_ratio_other"),
                 other_party_label=row.get("other_party_label"),
             )
@@ -537,7 +538,7 @@ class InMemorySharedExpensesRepository:
     ) -> list[SharedExpenseRow]:
         filtered: list[SharedExpenseRow] = []
         for row in self._shared_expenses:
-            if row.status not in {"active", "pending"}:
+            if row.status not in {"pending", "settled"}:
                 continue
             if row.from_profile_id != profile_id and row.to_profile_id != profile_id:
                 continue

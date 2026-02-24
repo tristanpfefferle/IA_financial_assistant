@@ -28,11 +28,11 @@ def test_list_shared_expenses_for_period_does_not_use_applied_status_filter() ->
 
     assert isinstance(fake_client.last_query, list)
     query_pairs = dict(fake_client.last_query)
-    assert query_pairs["status"] == "in.(active,pending)"
+    assert query_pairs["status"] == "in.(pending,settled)"
     assert "applied" not in query_pairs["status"]
 
 
-def test_list_shared_expenses_for_period_normalizes_unknown_status_to_active() -> None:
+def test_list_shared_expenses_for_period_normalizes_unknown_status_to_pending() -> None:
     profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
     fake_client = _FakeSupabaseClient(
         rows=[
@@ -57,5 +57,5 @@ def test_list_shared_expenses_for_period_normalizes_unknown_status_to_active() -
     )
 
     assert len(expenses) == 1
-    assert expenses[0].status == "active"
+    assert expenses[0].status == "pending"
     assert expenses[0].amount == Decimal("10.50")
