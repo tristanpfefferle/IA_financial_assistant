@@ -361,6 +361,41 @@ def test_upsert_household_link_insert_includes_required_not_null_fields() -> Non
     assert "profile_id" not in payload
 
 
+def test_upsert_household_link_external_without_email_uses_valid_placeholders() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    client = _ClientStub(
+        responses=[
+            [{"account_id": "dddddddd-dddd-dddd-dddd-dddddddddddd", "email": "c3a85f89-9a5c-4f50-bf6f-8297b2398aa9@local"}],
+            [],
+            [
+                {
+                    "id": "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee",
+                    "link_type": "external",
+                    "other_profile_id": None,
+                    "other_party_label": "Conjoint",
+                    "other_party_email": None,
+                    "default_split_ratio_other": "0.5",
+                }
+            ],
+        ]
+    )
+    repository = SupabaseProfilesRepository(client=client)
+
+    repository.upsert_household_link(
+        profile_id=profile_id,
+        link_type="external",
+        other_profile_id=None,
+        other_party_label="Conjoint",
+        other_party_email=None,
+        default_split_ratio_other="0.5",
+    )
+
+    payload = client.post_calls[0]["payload"]
+    assert "@" in payload["guest_email"] and "." in payload["guest_email"].split("@", 1)[1]
+    assert "@" in payload["other_email"] and "." in payload["other_email"].split("@", 1)[1]
+    assert payload["other_email"].strip() != ""
+
+
 def test_get_profile_fields_reads_only_selected_columns() -> None:
     profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
     client = _ClientStub(

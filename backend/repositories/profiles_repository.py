@@ -375,6 +375,28 @@ class SupabaseProfilesRepository:
             or "conflict" in error_message
         )
 
+    @staticmethod
+    def _looks_like_email(value: str | None) -> bool:
+        """Return True when value matches a minimal local@domain.tld shape."""
+        if not value:
+            return False
+        candidate = str(value).strip()
+        if not candidate or "@" not in candidate:
+            return False
+        _, domain = candidate.split("@", 1)
+        return "." in domain
+
+    @staticmethod
+    def _email_placeholder(local_part: str, domain: str) -> str:
+        """Build a deterministic placeholder email with a sanitized local-part."""
+        normalized_local = unicodedata.normalize("NFKD", str(local_part)).encode("ascii", "ignore").decode("ascii")
+        normalized_local = normalized_local.lower().replace(" ", "-")
+        normalized_local = re.sub(r"[^a-z0-9._-]+", "", normalized_local)
+        normalized_local = normalized_local.strip("-._")
+        if not normalized_local:
+            normalized_local = "placeholder"
+        return f"{normalized_local}@{domain}"
+
     def _ensure_initial_chat_state(self, *, profile_id: UUID, user_id: UUID) -> None:
         conversation_id = str(profile_id)
         rows, _ = self._client.get_rows(
@@ -530,6 +552,11 @@ class SupabaseProfilesRepository:
         profile_identity = self._get_profile_identity(profile_id=profile_id)
         owner_account_id = profile_identity.get("account_id")
         profile_email = profile_identity.get("email")
+        guest_email_final = (
+            str(profile_email)
+            if self._looks_like_email(str(profile_email) if profile_email is not None else None)
+            else self._email_placeholder(local_part=str(profile_id), domain="app.local")
+        )
 
         link_group_id = uuid5(
             NAMESPACE_URL,
@@ -546,6 +573,11 @@ class SupabaseProfilesRepository:
                 NAMESPACE_URL,
                 f"ia-financial-assistant:{profile_id}:external:{external_key}",
             )
+        other_email_final = (
+            str(other_party_email)
+            if self._looks_like_email(other_party_email)
+            else self._email_placeholder(local_part=str(link_pair_id), domain="external.local")
+        )
 
         base_payload_insert: dict[str, Any] = {
             "status": "active",
@@ -560,8 +592,8 @@ class SupabaseProfilesRepository:
             "relationship_type": "household",
             "link_group_id": str(link_group_id),
             "link_pair_id": str(link_pair_id),
-            "other_email": str(other_party_email or ""),
-            "guest_email": str(profile_email or ""),
+            "other_email": other_email_final,
+            "guest_email": guest_email_final,
         }
         patch_payload: dict[str, Any] = {
             "other_profile_id": str(other_profile_id) if other_profile_id else None,
