@@ -116,6 +116,42 @@ export type ResolvePendingMerchantAliasesResult = {
   stats: Record<string, unknown>
 }
 
+export type SpendingReport = {
+  period: {
+    start_date: string
+    end_date: string
+    label: string
+  }
+  currency: string
+  total: number
+  count: number
+  cashflow: {
+    total_income: number
+    total_expense: number
+    net_cashflow: number
+    internal_transfers: number
+    net_including_transfers: number
+    transaction_count: number
+    currency: string
+  }
+  effective_spending: {
+    outgoing: number
+    incoming: number
+    net_balance: number
+    effective_total: number
+  }
+  categories: Array<{
+    name: string
+    amount: number
+  }>
+}
+
+export type SpendingReportParams = {
+  month?: string
+  start_date?: string
+  end_date?: string
+}
+
 type ErrorPayload = {
   detail?: string | { message?: string }
 }
@@ -300,6 +336,32 @@ export async function openPdfFromUrl(url: string): Promise<void> {
 export async function openSpendingReportPdf(month?: string): Promise<void> {
   const query = month ? `?month=${encodeURIComponent(month)}` : ''
   await openPdfFromUrl(`/finance/reports/spending.pdf${query}`)
+}
+
+export async function getSpendingReport(params: SpendingReportParams = {}): Promise<SpendingReport> {
+  const searchParams = new URLSearchParams()
+  if (params.month) {
+    searchParams.set('month', params.month)
+  }
+  if (params.start_date) {
+    searchParams.set('start_date', params.start_date)
+  }
+  if (params.end_date) {
+    searchParams.set('end_date', params.end_date)
+  }
+
+  const query = searchParams.toString()
+  const response = await fetch(`${getBaseUrl()}/finance/reports/spending${query ? `?${query}` : ''}`, {
+    method: 'GET',
+    headers: await buildAuthHeaders(),
+  })
+
+  if (!response.ok) {
+    const detail = await extractErrorDetail(response)
+    throw new Error(`Erreur API rapport JSON (${response.status}): ${detail}`)
+  }
+
+  return (await response.json()) as SpendingReport
 }
 
 export async function hardResetProfile(): Promise<void> {

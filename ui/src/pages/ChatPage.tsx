@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent,
 
 import {
   fetchPendingTransactions,
+  getSpendingReport,
   getPendingMerchantAliasesCount,
   hardResetProfile,
   importReleves,
@@ -10,6 +11,7 @@ import {
   resolvePendingMerchantAliases,
   resetSession,
   sendChatMessage,
+  type SpendingReport,
   type RelevesImportResult,
 } from '../api/agentApi'
 import { DebugPanel } from '../components/DebugPanel'
@@ -204,6 +206,29 @@ function renderContentWithLinks(content: string, apiBaseUrl: string): ReactNode[
   }
 
   return nodes
+}
+
+function parseSpendingReportParams(url: string): { month?: string; start_date?: string; end_date?: string } | null {
+  const isSpendingPdfUrl = /\/finance\/reports\/spending\.pdf/i.test(url)
+  if (!isSpendingPdfUrl) {
+    return null
+  }
+
+  const resolvedUrl = url.startsWith('http://') || url.startsWith('https://') ? url : `http://local${url}`
+  const searchParams = new URL(resolvedUrl).searchParams
+
+  return {
+    month: searchParams.get('month') ?? undefined,
+    start_date: searchParams.get('start_date') ?? undefined,
+    end_date: searchParams.get('end_date') ?? undefined,
+  }
+}
+
+function formatMoney(value: number, currency: string): string {
+  return new Intl.NumberFormat('fr-CH', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value) + ` ${currency}`
 }
 
 function findPendingImportIntent(messages: ChatMessage[]): ImportIntent | null {
@@ -1257,6 +1282,9 @@ function MessageBubble({
   const dateLabel = new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   const pdfUiRequest = toPdfUiRequest(message.toolResult)
   const hasPdfAction = pdfUiRequest !== null
+  const spendingReportParams = pdfUiRequest ? parseSpendingReportParams(pdfUiRequest.url) : null
+  const [spendingReport, setSpendingReport] = useState<SpendingReport | null>(null)
+  const [spendingReportError, setSpendingReportError] = useState<string | null>(null)
   const importUiAction = toOpenImportPanelUiAction(message.toolResult)
   const importUiRequest = toLegacyImportUiRequest(message.toolResult)
   const importIntent: ImportIntent | null = importUiAction
@@ -1289,6 +1317,36 @@ function MessageBubble({
         ? matchedStepIndex + 1
         : 1
     : 0
+
+  useEffect(() => {
+    if (!spendingReportParams) {
+      setSpendingReport(null)
+      setSpendingReportError(null)
+      return
+    }
+
+    let isActive = true
+    setSpendingReportError(null)
+
+    void getSpendingReport(spendingReportParams)
+      .then((report) => {
+        if (!isActive) {
+          return
+        }
+        setSpendingReport(report)
+      })
+      .catch((error: unknown) => {
+        if (!isActive) {
+          return
+        }
+        setSpendingReport(null)
+        setSpendingReportError(error instanceof Error ? error.message : 'Impossible de charger le rapport JSON.')
+      })
+
+    return () => {
+      isActive = false
+    }
+  }, [spendingReportParams?.end_date, spendingReportParams?.month, spendingReportParams?.start_date])
 
   return (
     <article className={`message message-${message.role}`}>
@@ -1348,6 +1406,33 @@ function MessageBubble({
           </span>
         ) : null}
       </div>
+      {spendingReport ? (
+        <section className="report-summary" aria-label="Résumé rapport dépenses">
+          <p className="subtle-text">Période: {spendingReport.period.label}</p>
+          <p className="subtle-text">Total dépenses: {formatMoney(spendingReport.total, spendingReport.currency)}</p>
+          <p className="subtle-text">Nb opérations: {spendingReport.count}</p>
+          <div className="shared-spending-block">
+            <p><strong>Dépenses partagées / Total effectif</strong></p>
+            <p className="subtle-text">Partage sortant: {formatMoney(spendingReport.effective_spending.outgoing, spendingReport.currency)}</p>
+            <p className="subtle-text">Partage entrant: {formatMoney(spendingReport.effective_spending.incoming, spendingReport.currency)}</p>
+            <p className="subtle-text">Solde partage: {formatMoney(spendingReport.effective_spending.net_balance, spendingReport.currency)}</p>
+            <p><strong>Total effectif: {formatMoney(spendingReport.effective_spending.effective_total, spendingReport.currency)}</strong></p>
+          </div>
+          {pdfUiRequest ? (
+            <button type="button" className="secondary-button" onClick={() => void openPdfFromUrl(pdfUiRequest.url)}>
+              Ouvrir PDF
+            </button>
+          ) : null}
+        </section>
+      ) : null}
+      {spendingReportError && hasPdfAction ? (
+        <section className="report-summary" aria-label="Erreur rapport dépenses">
+          <p className="subtle-text">Impossible de charger le rapport détaillé. Utilise le PDF.</p>
+          <button type="button" className="secondary-button" onClick={() => pdfUiRequest && void openPdfFromUrl(pdfUiRequest.url)}>
+            Ouvrir PDF
+          </button>
+        </section>
+      ) : null}
       {message.role === 'assistant' && importIntent ? (
         <div className="message-actions">
           <button type="button" className="secondary-button" onClick={() => onImportNow(importIntent)}>
