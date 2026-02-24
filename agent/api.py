@@ -2287,20 +2287,20 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.post("/agent/chat", response_model=ChatResponse, response_model_exclude_none=True)
+@app.post("/agent/chat", response_model=ChatResponse)
 def agent_chat(
     request: Request,
     payload: ChatRequest,
     authorization: str | None = Header(default=None),
     x_debug: str | None = Header(default=None),
-) -> ChatResponse:
+) -> JSONResponse:
     """Handle a user chat message through the agent loop."""
 
     logger.info("agent_chat_received message_length=%s", len(payload.message))
     debug_enabled = _is_debug_request(request, x_debug)
     loop_debug: dict[str, Any] = {"loop_id": None, "step": None, "blocking": None}
 
-    def _chat_response(*, reply: str, tool_result: Any | None, plan: Any | None = None) -> dict[str, Any]:
+    def _chat_response(*, reply: str, tool_result: Any | None, plan: Any | None = None) -> JSONResponse:
         payload_dict: dict[str, Any] = {
             "reply": reply,
             "tool_result": tool_result,
@@ -2308,7 +2308,7 @@ def agent_chat(
         }
         if debug_enabled:
             payload_dict["debug"] = {"loop": loop_debug}
-        return payload_dict
+        return JSONResponse(content=payload_dict)
 
     profile_id: UUID | None = None
     try:
