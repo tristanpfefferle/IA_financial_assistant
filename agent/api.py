@@ -35,7 +35,7 @@ from agent.merchant_cleanup import MerchantSuggestion, run_merchant_cleanup
 from agent.merchant_alias_resolver import resolve_pending_map_alias
 from agent.import_label_normalizer import extract_observed_alias_from_label
 from agent.loops import build_default_registry
-from agent.loops.router import parse_loop_context, serialize_loop_context
+from agent.loops.router import parse_loop_context, route_message, serialize_loop_context
 from agent.loops.types import LoopContext
 from backend.factory import build_backend_tool_service
 from backend.services.classification.decision_engine import normalize_merchant_alias
@@ -1991,6 +1991,7 @@ class ChatResponse(BaseModel):
     reply: str
     tool_result: Any | None
     plan: Any | None = None
+    debug: dict[str, Any] | None = None
 
 
 class ImportFilePayload(BaseModel):
@@ -2226,6 +2227,37 @@ ALLOW_ORIGINS = _config.cors_allow_origins()
 
 
 @app.middleware("http")
+async def inject_agent_chat_debug_payload(request: Request, call_next):
+    """Inject loop debug payload into /agent/chat responses when debug is enabled."""
+
+    response = await call_next(request)
+    if request.url.path != "/agent/chat" or not _is_debug_request(request):
+        return response
+
+    body = b""
+    async for chunk in response.body_iterator:
+        body += chunk
+
+    try:
+        payload = json.loads(body)
+    except Exception:
+        return response
+    if not isinstance(payload, dict):
+        return response
+
+    loop_debug = getattr(request.state, "agent_chat_debug_loop", None)
+    payload["debug"] = {
+        "loop": loop_debug
+        if isinstance(loop_debug, dict)
+        else {"loop_id": None, "step": None, "blocking": None}
+    }
+
+    headers = dict(response.headers)
+    headers.pop("content-length", None)
+    return JSONResponse(status_code=response.status_code, content=payload, headers=headers)
+
+
+@app.middleware("http")
 async def log_http_requests(request: Request, call_next):
     """Log incoming requests, HTTP status codes and unexpected errors."""
 
@@ -2331,11 +2363,49 @@ def agent_chat(
             if isinstance(onboarding_substep, str):
                 mapped_loop_id = _ONBOARDING_SUBSTEP_TO_LOOP_ID.get(onboarding_substep)
                 if isinstance(mapped_loop_id, str):
-                    current_loop = LoopContext(loop_id=mapped_loop_id, step="start", data={}, blocking=True)
+                    mapped_loop = get_loop_registry().get(mapped_loop_id)
+                    is_blocking = mapped_loop.blocking if mapped_loop is not None else True
+                    current_loop = LoopContext(loop_id=mapped_loop_id, step="start", data={}, blocking=is_blocking)
                     state_dict["loop"] = serialize_loop_context(current_loop)
                     should_persist_global_state = True
 
-        _ = get_loop_registry()
+        request.state.agent_chat_debug_loop = {
+            "loop_id": current_loop.loop_id if current_loop else None,
+            "step": current_loop.step if current_loop else None,
+            "blocking": current_loop.blocking if current_loop else None,
+        }
+
+        registry = get_loop_registry()
+        loop_reply = route_message(
+            message=payload.message,
+            current_loop=current_loop,
+            global_state=global_state or {},
+            services=None,
+            profile_id=profile_id,
+            user_id=auth_user_id,
+            llm_judge=None,
+            registry=registry,
+        )
+
+        resolved_loop = loop_reply.next_loop if loop_reply.handled else current_loop
+        if resolved_loop is None:
+            state_dict.pop("loop", None)
+        else:
+            state_dict["loop"] = serialize_loop_context(resolved_loop)
+            should_persist_global_state = True
+
+        if loop_reply.handled and loop_reply.reply.strip():
+            updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+            if state_dict:
+                updated_chat_state["state"] = state_dict
+            else:
+                updated_chat_state.pop("state", None)
+            profiles_repository.update_chat_state(
+                profile_id=profile_id,
+                user_id=auth_user_id,
+                chat_state=updated_chat_state,
+            )
+            return ChatResponse(reply=loop_reply.reply, tool_result=None, plan=None)
 
         if global_state is None and hasattr(profiles_repository, "get_profile_fields"):
             try:
