@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from datetime import date
 from decimal import Decimal
-from typing import Protocol
+from typing import Any, Protocol
 import unicodedata
 from uuid import UUID, uuid4
 
@@ -34,6 +35,23 @@ def _category_norm_candidates(value: str) -> tuple[str, ...]:
     else:
         candidates.add(f"{normalized}s")
     return tuple(candidates)
+
+
+def _coerce_json_dict(value: Any) -> dict[str, Any]:
+    """Return a dict from a dict-or-JSON-string metadata payload."""
+
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return {}
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
 
 
 class RelevesRepository(Protocol):
@@ -602,9 +620,7 @@ class SupabaseRelevesRepository:
 
     @staticmethod
     def _row_tx_kind(row: dict[str, object]) -> str | None:
-        meta = row.get("metadonnees")
-        if not isinstance(meta, dict):
-            return None
+        meta = _coerce_json_dict(row.get("metadonnees"))
         tx_kind = meta.get("tx_kind")
         if isinstance(tx_kind, str) and tx_kind.strip():
             return tx_kind.strip().lower()
@@ -818,8 +834,7 @@ class SupabaseRelevesRepository:
                         key = "Autres"
 
                 if key is None:
-                    meta = row.get("metadonnees")
-                    meta_dict = meta if isinstance(meta, dict) else {}
+                    meta_dict = _coerce_json_dict(row.get("metadonnees"))
                     category_key = str(meta_dict.get("category_key") or "").strip().lower()
                     if category_key:
                         key = resolve_system_category_label(category_key)

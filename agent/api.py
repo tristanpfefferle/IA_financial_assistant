@@ -3544,6 +3544,28 @@ def _pick_first_non_empty_string(values: list[object]) -> str | None:
     return None
 
 
+def _coerce_json_dict(value: Any) -> dict[str, Any]:
+    """Return a dict from a dict-or-JSON-string metadata payload."""
+
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return {}
+        try:
+            parsed = json.loads(raw)
+        except Exception as exc:
+            logger.debug(
+                "metadata_json_parse_failed exc_type=%s value_length=%s",
+                type(exc).__name__,
+                len(value),
+            )
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
 def _clean_merchant_display_name(raw_value: str) -> str:
     """Normalize merchant label for compact PDF display."""
 
@@ -3604,9 +3626,9 @@ def _resolve_report_category_label(
             if isinstance(resolved, str) and resolved.strip():
                 return _normalize_report_category(resolved)
 
-    metadata = item.get("metadonnees") if isinstance(item.get("metadonnees"), dict) else {}
-    if not metadata and isinstance(item.get("meta"), dict):
-        metadata = item.get("meta")
+    metadata = _coerce_json_dict(item.get("metadonnees"))
+    if not metadata:
+        metadata = _coerce_json_dict(item.get("meta"))
     category_key = str(metadata.get("category_key") or "").strip().lower()
     resolved_system_label = resolve_system_category_label(category_key)
     if resolved_system_label:
@@ -3618,10 +3640,8 @@ def _resolve_report_category_label(
 def _determine_report_flow_type(*, item: dict[str, Any], category: str, amount: Decimal) -> str:
     """Determine report flow type for transaction sectioning."""
 
-    metadata = item.get("metadonnees")
-    tx_kind = ""
-    if isinstance(metadata, dict):
-        tx_kind = str(metadata.get("tx_kind") or "").strip().lower()
+    metadata = _coerce_json_dict(item.get("metadonnees"))
+    tx_kind = str(metadata.get("tx_kind") or "").strip().lower()
     if tx_kind == "transfer_internal":
         return "transfer_internal"
 
