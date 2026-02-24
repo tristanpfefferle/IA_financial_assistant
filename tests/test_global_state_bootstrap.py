@@ -1763,9 +1763,40 @@ def test_agent_chat_debug_payload_exposes_loop_context(monkeypatch) -> None:
     assert payload_no_debug.get("debug") is None
 
 
+
+
+def test_agent_chat_debug_payload_uses_final_onboarding_substep_mapping(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "onboarding",
+                    "onboarding_step": "profile",
+                    "onboarding_substep": "profile_collect",
+                }
+            }
+        },
+        profile_fields={"first_name": "Ada", "last_name": "Lovelace", "birth_date": "1815-12-10"},
+    )
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
+
+    response = client.post(
+        "/agent/chat",
+        json={"message": "bonjour"},
+        headers={**_auth_headers(), "X-Debug": "1"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["debug"]["loop"] == {"loop_id": "onboarding.profile_confirm", "step": "start", "blocking": True}
+
+
 def test_agent_chat_debug_payload_includes_null_loop_when_absent(monkeypatch) -> None:
     _mock_auth(monkeypatch)
-    repo = _Repo(initial_chat_state={"state": {"global_state": {"mode": "free_chat", "onboarding_step": None, "onboarding_substep": None}}})
+    repo = _Repo(initial_chat_state={"state": {"global_state": {"mode": "free_chat", "onboarding_step": None, "onboarding_substep": None, "has_imported_transactions": True}}})
+    repo.bank_accounts = [{"id": "bank-1", "name": "UBS"}]
     monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
     monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
 
