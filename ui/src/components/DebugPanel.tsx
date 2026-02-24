@@ -108,6 +108,31 @@ export function DebugPanel({ payload }: DebugPanelProps) {
     return (payload as Record<string, unknown>).plan
   }, [payload])
 
+  const toolErrorDebug = useMemo(() => {
+    if (!toolResult || typeof toolResult !== 'object') {
+      return null
+    }
+
+    const resultRecord = toolResult as Record<string, unknown>
+    if (resultRecord.type !== 'error') {
+      return null
+    }
+
+    const dbErrorRaw = resultRecord.db_error
+    if (!dbErrorRaw || typeof dbErrorRaw !== 'object') {
+      return null
+    }
+
+    const dbError = dbErrorRaw as Record<string, unknown>
+    return {
+      code: dbError.code ?? null,
+      message: dbError.message ?? null,
+      details: dbError.details ?? null,
+      hint: dbError.hint ?? null,
+      error_id: resultRecord.error_id ?? null,
+    }
+  }, [toolResult])
+
   async function handleCopyJson() {
     try {
       await copyToClipboard(payloadText)
@@ -170,6 +195,13 @@ export function DebugPanel({ payload }: DebugPanelProps) {
 
       <p>tool_result:</p>
       <pre>{stringifyPayload(toolResult ?? null)}</pre>
+
+      {toolErrorDebug ? (
+        <>
+          <p>db_error:</p>
+          <pre>{stringifyPayload(toolErrorDebug)}</pre>
+        </>
+      ) : null}
 
       <p>plan:</p>
       <pre>{stringifyPayload(plan ?? null)}</pre>

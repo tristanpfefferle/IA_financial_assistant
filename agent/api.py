@@ -8,6 +8,7 @@ import inspect
 import os
 import re
 import base64
+import secrets
 import unicodedata
 import calendar
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
@@ -44,7 +45,7 @@ from backend.reporting import (
     generate_spending_report_pdf,
 )
 from backend.auth.supabase_auth import UnauthorizedError, extract_bearer_token, get_user_from_bearer_token
-from backend.db.supabase_client import SupabaseClient, SupabaseSettings
+from backend.db.supabase_client import SupabaseClient, SupabaseRequestError, SupabaseSettings
 from backend.repositories.profiles_repository import ProfilesRepository, SupabaseProfilesRepository
 from backend.repositories.shared_expenses_repository import SharedExpensesRepository, SupabaseSharedExpensesRepository
 from backend.services.shared_expenses.effective_spending_adapter import compute_effective_spending_summary_safe
@@ -73,6 +74,13 @@ def _new_error_id() -> str:
     """Return a unique error identifier for correlating logs and API responses."""
 
     return str(uuid4())
+
+
+def _new_short_error_id(prefix: str) -> str:
+    """Return a compact prefixed error id (example: HHL-ABC123)."""
+
+    token = base64.b32encode(secrets.token_bytes(4)).decode("ascii").rstrip("=")[:6]
+    return f"{prefix}-{token}"
 
 
 def _normalize_chat_state(value: Any) -> dict[str, Any]:
@@ -459,29 +467,42 @@ def _execute_account_link_setup_task(
                         "enabled": True,
                     }
             except Exception as exc:
-                logger.exception(
-                    "account_link_upsert_failed profile_id=%s link_type=%s has_other_profile_id=%s has_other_party_email=%s",
+                error_id = _new_short_error_id("HHL")
+                context_payload = {
+                    "step": "shared_expense_link_setup",
+                    "link_type": normalized_link_type,
+                    "other_party_label": other_party_label,
+                    "has_other_profile_id": bool(other_profile_id),
+                    "has_other_party_email": bool(other_party_email),
+                    "default_split_ratio_other": default_split_ratio_other,
+                }
+                logger.error(
+                    "account_link_upsert_failed error_id=%s profile_id=%s",
+                    error_id,
                     profile_id,
-                    normalized_link_type,
-                    bool(other_profile_id),
-                    bool(other_party_email),
+                    exc_info=exc,
+                    extra={"error_id": error_id, "payload_synthese": context_payload},
                 )
                 generic_reply = "Impossible d’enregistrer la configuration pour le moment (erreur base de données). Réessaie dans un instant."
                 tool_result = None
                 if debug_enabled:
+                    db_error: dict[str, Any] | None = None
+                    if isinstance(exc, SupabaseRequestError):
+                        error_json = exc.error_json or {}
+                        db_error = {
+                            "status_code": exc.status_code,
+                            "code": error_json.get("code"),
+                            "details": error_json.get("details"),
+                            "hint": error_json.get("hint"),
+                            "message": error_json.get("message") or exc.raw_text,
+                        }
                     tool_result = {
                         "type": "error",
                         "where": "upsert_household_link",
                         "message": str(exc),
-                        "exc_type": type(exc).__name__,
-                        "context": {
-                            "step": "shared_expense_link_setup",
-                            "link_type": normalized_link_type,
-                            "other_party_label": other_party_label,
-                            "has_other_profile_id": bool(other_profile_id),
-                            "has_other_party_email": bool(other_party_email),
-                            "default_split_ratio_other": default_split_ratio_other,
-                        },
+                        "context": context_payload,
+                        "db_error": db_error,
+                        "error_id": error_id,
                     }
                 return generic_reply, task, state_dict, tool_result
 

@@ -7,7 +7,7 @@ from urllib.error import HTTPError
 
 import pytest
 
-from backend.db.supabase_client import SupabaseClient, SupabaseSettings
+from backend.db.supabase_client import SupabaseClient, SupabaseRequestError, SupabaseSettings
 
 
 def _build_client() -> SupabaseClient:
@@ -63,10 +63,39 @@ def test_get_rows_includes_status_and_body_on_http_error(monkeypatch: pytest.Mon
 
     monkeypatch.setattr("backend.db.supabase_client.urlopen", _raise_http_error)
 
-    with pytest.raises(RuntimeError, match="status 400") as error:
+    with pytest.raises(SupabaseRequestError, match="status 400") as error:
         client.get_rows(table="releves_bancaires", query={"select": "*"}, with_count=False)
 
     assert "Bad Request from Supabase" in str(error.value)
+    assert error.value.status_code == 400
+    assert error.value.error_json is None
+    assert error.value.raw_text == "Bad Request from Supabase"
+
+
+def test_get_rows_parses_json_error_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _build_client()
+
+    def _raise_http_error(_request):
+        raise HTTPError(
+            url="https://example.supabase.co/rest/v1/releves_bancaires",
+            code=409,
+            msg="Conflict",
+            hdrs=None,
+            fp=BytesIO(b'{"code":"23505","message":"duplicate key","details":"Key exists","hint":"Use upsert"}'),
+        )
+
+    monkeypatch.setattr("backend.db.supabase_client.urlopen", _raise_http_error)
+
+    with pytest.raises(SupabaseRequestError) as error:
+        client.get_rows(table="releves_bancaires", query={"select": "*"}, with_count=False)
+
+    assert error.value.status_code == 409
+    assert error.value.error_json == {
+        "code": "23505",
+        "message": "duplicate key",
+        "details": "Key exists",
+        "hint": "Use upsert",
+    }
 
 
 def test_post_rows_sets_prefer_header(monkeypatch: pytest.MonkeyPatch) -> None:

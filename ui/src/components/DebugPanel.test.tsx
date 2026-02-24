@@ -39,4 +39,27 @@ describe('DebugPanel', () => {
 
     expect(html).toContain('[Unserializable payload]')
   })
+
+  it('renders structured db_error details for tool errors', () => {
+    const payload = {
+      tool_result: {
+        type: 'error',
+        where: 'upsert_household_link',
+        error_id: 'HHL-ABC123',
+        db_error: {
+          code: '23514',
+          message: 'violates check constraint',
+          details: 'Failing row contains null',
+          hint: 'Provide a valid email',
+        },
+      },
+    }
+
+    const html = renderToStaticMarkup(<DebugPanel payload={payload} />)
+
+    expect(html).toContain('db_error')
+    expect(html).toContain('23514')
+    expect(html).toContain('HHL-ABC123')
+    expect(html).toContain('Provide a valid email')
+  })
 })
