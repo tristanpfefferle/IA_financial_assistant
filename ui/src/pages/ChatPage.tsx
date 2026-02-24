@@ -1346,7 +1346,7 @@ function MessageBubble({
     return () => {
       isActive = false
     }
-  }, [pdfUiRequest?.url, spendingReportParams?.end_date, spendingReportParams?.month, spendingReportParams?.start_date])
+  }, [apiBaseUrl, pdfUiRequest?.url, spendingReportParams?.end_date, spendingReportParams?.month, spendingReportParams?.start_date])
 
   return (
     <article className={`message message-${message.role}`}>

@@ -436,7 +436,11 @@ export async function getSpendingReport(params: SpendingReportParams = {}): Prom
     throw new Error(`Erreur API rapport JSON (${response.status}): ${detail}`)
   }
 
-  const payload = (await response.json()) as SpendingReportApi
+  const apiPayload = (await response.json()) as SpendingReportApi
+  const payload: SpendingReportApi = {
+    ...apiPayload,
+    categories: Array.isArray(apiPayload.categories) ? apiPayload.categories : [],
+  }
   return normalizeSpendingReport(payload)
 }
 
