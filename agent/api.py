@@ -2300,13 +2300,15 @@ def agent_chat(
     debug_enabled = _is_debug_request(request, x_debug)
     loop_debug: dict[str, Any] = {"loop_id": None, "step": None, "blocking": None}
 
-    def _chat_response(*, reply: str, tool_result: Any | None, plan: Any | None = None) -> ChatResponse:
-        return ChatResponse(
-            reply=reply,
-            tool_result=tool_result,
-            plan=plan,
-            debug={"loop": loop_debug} if debug_enabled else None,
-        )
+    def _chat_response(*, reply: str, tool_result: Any | None, plan: Any | None = None) -> JSONResponse:
+        payload_dict: dict[str, Any] = {
+            "reply": reply,
+            "tool_result": tool_result,
+            "plan": plan,
+        }
+        if debug_enabled:
+            payload_dict["debug"] = {"loop": loop_debug}
+        return JSONResponse(content=payload_dict)
 
     profile_id: UUID | None = None
     try:
@@ -2337,54 +2339,45 @@ def agent_chat(
 
         state_dict = dict(state_dict) if isinstance(state_dict, dict) else {}
         current_loop = parse_loop_context(state_dict.get("loop"))
-        if current_loop is None and isinstance(global_state, dict) and global_state.get("mode") == "onboarding":
-            onboarding_substep = global_state.get("onboarding_substep")
-            if isinstance(onboarding_substep, str):
-                mapped_loop_id = _ONBOARDING_SUBSTEP_TO_LOOP_ID.get(onboarding_substep)
-                if isinstance(mapped_loop_id, str):
-                    mapped_loop = get_loop_registry().get(mapped_loop_id)
-                    is_blocking = mapped_loop.blocking if mapped_loop is not None else True
-                    current_loop = LoopContext(loop_id=mapped_loop_id, step="start", data={}, blocking=is_blocking)
-                    state_dict["loop"] = serialize_loop_context(current_loop)
-                    should_persist_global_state = True
-
-        registry = get_loop_registry()
-        loop_reply = route_message(
-            message=payload.message,
-            current_loop=current_loop,
-            global_state=global_state or {},
-            services=None,
-            profile_id=profile_id,
-            user_id=auth_user_id,
-            llm_judge=None,
-            registry=registry,
-        )
-
-        resolved_loop = loop_reply.next_loop if loop_reply.handled else current_loop
-        if resolved_loop is None:
-            state_dict.pop("loop", None)
-        else:
-            state_dict["loop"] = serialize_loop_context(resolved_loop)
-            should_persist_global_state = True
-
-        loop_debug = {
-            "loop_id": resolved_loop.loop_id if resolved_loop else None,
-            "step": resolved_loop.step if resolved_loop else None,
-            "blocking": resolved_loop.blocking if resolved_loop else None,
-        }
-
-        if loop_reply.handled and loop_reply.reply.strip():
-            updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
-            if state_dict:
-                updated_chat_state["state"] = state_dict
-            else:
-                updated_chat_state.pop("state", None)
-            profiles_repository.update_chat_state(
+        loop_reply = None
+        if current_loop is not None:
+            registry = get_loop_registry()
+            loop_reply = route_message(
+                message=payload.message,
+                current_loop=current_loop,
+                global_state=global_state or {},
+                services=None,
                 profile_id=profile_id,
                 user_id=auth_user_id,
-                chat_state=updated_chat_state,
+                llm_judge=None,
+                registry=registry,
             )
-            return _chat_response(reply=loop_reply.reply, tool_result=None, plan=None)
+
+            resolved_loop = loop_reply.next_loop if loop_reply.handled else current_loop
+            if resolved_loop is None:
+                state_dict.pop("loop", None)
+            else:
+                state_dict["loop"] = serialize_loop_context(resolved_loop)
+                should_persist_global_state = True
+
+            loop_debug = {
+                "loop_id": resolved_loop.loop_id if resolved_loop else None,
+                "step": resolved_loop.step if resolved_loop else None,
+                "blocking": resolved_loop.blocking if resolved_loop else None,
+            }
+
+            if loop_reply.handled and loop_reply.reply.strip():
+                updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                if state_dict:
+                    updated_chat_state["state"] = state_dict
+                else:
+                    updated_chat_state.pop("state", None)
+                profiles_repository.update_chat_state(
+                    profile_id=profile_id,
+                    user_id=auth_user_id,
+                    chat_state=updated_chat_state,
+                )
+                return _chat_response(reply=loop_reply.reply, tool_result=None, plan=None)
 
         if global_state is None and hasattr(profiles_repository, "get_profile_fields"):
             try:
@@ -3439,7 +3432,7 @@ def agent_chat(
                 plan={"tool_name": "finance_report_spending_pdf", "payload": plan_payload},
             )
 
-        memory_for_loop = state_dict if isinstance(state_dict, dict) else None
+        memory_for_loop = state_dict if isinstance(state_dict, dict) and state_dict else None
 
         logger.info(
             "agent_chat_state_loaded active_task_present=%s memory_present=%s memory_keys=%s",
@@ -3448,7 +3441,6 @@ def agent_chat(
             sorted(memory_for_loop.keys()) if isinstance(memory_for_loop, dict) else [],
         )
 
-        debug_enabled = isinstance(x_debug, str) and x_debug.strip() == "1"
         loop = get_agent_loop()
         handler = loop.handle_user_message
         handler_kwargs: dict[str, Any] = {
