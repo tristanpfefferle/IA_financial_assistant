@@ -32,6 +32,18 @@ class ProfilesRepository(Protocol):
     def get_active_household_link(self, *, profile_id: UUID) -> dict[str, Any] | None:
         """Return active household link settings for a profile when available."""
 
+    def upsert_household_link(
+        self,
+        *,
+        profile_id: UUID,
+        link_type: str,
+        other_profile_id: UUID | None,
+        other_party_label: str | None,
+        other_party_email: str | None,
+        default_split_ratio_other: str,
+    ) -> dict[str, Any]:
+        """Create or update the active household link settings for a profile."""
+
     def get_profile_fields(self, *, profile_id: UUID, fields: list[str] | None = None) -> dict[str, Any]:
         """Return selected profile columns for one profile id."""
 
@@ -449,6 +461,67 @@ class SupabaseProfilesRepository:
             "other_party_label": str(row["other_party_label"]) if row.get("other_party_label") else None,
             "other_party_email": str(row["other_party_email"]) if row.get("other_party_email") else None,
             "default_split_ratio_other": str(row.get("default_split_ratio_other") or "0.5"),
+        }
+
+    def upsert_household_link(
+        self,
+        *,
+        profile_id: UUID,
+        link_type: str,
+        other_profile_id: UUID | None,
+        other_party_label: str | None,
+        other_party_email: str | None,
+        default_split_ratio_other: str,
+    ) -> dict[str, Any]:
+        normalized_link_type = str(link_type or "internal").strip().lower()
+        if normalized_link_type not in {"internal", "external"}:
+            normalized_link_type = "internal"
+
+        payload: dict[str, Any] = {
+            "profile_id": str(profile_id),
+            "status": "active",
+            "link_type": normalized_link_type,
+            "other_profile_id": str(other_profile_id) if other_profile_id else None,
+            "other_party_label": str(other_party_label) if other_party_label else None,
+            "other_party_email": str(other_party_email) if other_party_email else None,
+            "default_split_ratio_other": str(default_split_ratio_other),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+        active_rows, _ = self._client.get_rows(
+            table="account_links",
+            query={
+                "select": "id",
+                "profile_id": f"eq.{profile_id}",
+                "status": "eq.active",
+                "order": "updated_at.desc",
+                "limit": 1,
+            },
+            with_count=False,
+            use_anon_key=False,
+        )
+
+        existing_id = active_rows[0].get("id") if active_rows else None
+        if existing_id:
+            self._client.patch_rows(
+                table="account_links",
+                query={"id": f"eq.{existing_id}"},
+                payload=payload,
+                use_anon_key=False,
+            )
+        else:
+            self._client.post_rows(
+                table="account_links",
+                payload=payload,
+                use_anon_key=False,
+            )
+
+        return {
+            "link_type": normalized_link_type,
+            "other_profile_id": str(other_profile_id) if other_profile_id else None,
+            "other_party_label": str(other_party_label) if other_party_label else None,
+            "other_party_email": str(other_party_email) if other_party_email else None,
+            "default_split_ratio_other": str(default_split_ratio_other),
         }
 
     def update_chat_state(self, *, profile_id: UUID, user_id: UUID, chat_state: dict[str, Any]) -> None:

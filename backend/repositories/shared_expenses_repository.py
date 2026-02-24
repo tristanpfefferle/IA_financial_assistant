@@ -403,11 +403,16 @@ class InMemorySharedExpensesRepository:
     def create_shared_expense_suggestions_bulk(self, *, profile_id: UUID, suggestions: list[dict[str, Any]]) -> int:
         created_count = 0
         for suggestion in suggestions:
+            suggested_to_profile_id = (
+                UUID(str(suggestion["suggested_to_profile_id"])) if suggestion.get("suggested_to_profile_id") else None
+            )
+            other_party_label = str(suggestion["other_party_label"]) if suggestion.get("other_party_label") else None
             dedup_key = (
                 profile_id,
                 UUID(str(suggestion["transaction_id"])),
-                UUID(str(suggestion["suggested_to_profile_id"])) if suggestion.get("suggested_to_profile_id") else None,
+                suggested_to_profile_id,
                 Decimal(str(suggestion.get("suggested_split_ratio_other") or "0.5")),
+                other_party_label if suggested_to_profile_id is None else None,
             )
             already_pending = any(
                 item["status"] == "pending"
@@ -416,6 +421,9 @@ class InMemorySharedExpensesRepository:
                     UUID(str(item["transaction_id"])),
                     UUID(str(item["suggested_to_profile_id"])) if item.get("suggested_to_profile_id") else None,
                     Decimal(str(item.get("suggested_split_ratio_other") or "0.5")),
+                    (str(item["other_party_label"]) if item.get("other_party_label") else None)
+                    if item.get("suggested_to_profile_id") is None
+                    else None,
                 )
                 == dedup_key
                 for item in self._suggestions

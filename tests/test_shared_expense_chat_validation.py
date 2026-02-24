@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 import agent.api as agent_api
 from agent.api import app, parse_shared_expense_confirmation
-from backend.repositories.shared_expenses_repository import SharedExpenseSuggestionRow
+from backend.repositories.shared_expenses_repository import InMemorySharedExpensesRepository, SharedExpenseSuggestionRow
 
 
 client = TestClient(app)
@@ -30,6 +30,7 @@ class _Repo:
     def __init__(self, chat_state: dict[str, object] | None = None) -> None:
         self.chat_state = chat_state or {}
         self.updated_chat_states: list[dict[str, object]] = []
+        self.upsert_household_link_calls: list[dict[str, object]] = []
 
     def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None):
         assert auth_user_id == AUTH_USER_ID
@@ -46,6 +47,33 @@ class _Repo:
         assert user_id == AUTH_USER_ID
         self.chat_state = dict(chat_state)
         self.updated_chat_states.append(dict(chat_state))
+
+    def upsert_household_link(
+        self,
+        *,
+        profile_id: UUID,
+        link_type: str,
+        other_profile_id: UUID | None,
+        other_party_label: str | None,
+        other_party_email: str | None,
+        default_split_ratio_other: str,
+    ) -> dict[str, object]:
+        payload = {
+            "profile_id": profile_id,
+            "link_type": link_type,
+            "other_profile_id": other_profile_id,
+            "other_party_label": other_party_label,
+            "other_party_email": other_party_email,
+            "default_split_ratio_other": default_split_ratio_other,
+        }
+        self.upsert_household_link_calls.append(payload)
+        return {
+            "link_type": link_type,
+            "other_profile_id": str(other_profile_id) if other_profile_id else None,
+            "other_party_label": other_party_label,
+            "other_party_email": other_party_email,
+            "default_split_ratio_other": default_split_ratio_other,
+        }
 
 
 class _SuggestionsRepository:
@@ -245,6 +273,17 @@ def test_agent_chat_account_link_setup_external_flow(monkeypatch) -> None:
     assert "enregistrée" in response_split.json()["reply"]
     assert repo.chat_state.get("active_task") is None
 
+    assert repo.upsert_household_link_calls == [
+        {
+            "profile_id": PROFILE_ID,
+            "link_type": "external",
+            "other_profile_id": None,
+            "other_party_label": "Conjoint",
+            "other_party_email": None,
+            "default_split_ratio_other": "0.4000",
+        }
+    ]
+
     state = repo.chat_state.get("state")
     assert isinstance(state, dict)
     household_link = state.get("global_state", {}).get("household_link")
@@ -252,6 +291,31 @@ def test_agent_chat_account_link_setup_external_flow(monkeypatch) -> None:
         "link_type": "external",
         "other_profile_id": None,
         "other_party_label": "Conjoint",
+        "other_party_email": None,
         "default_split_ratio_other": "0.4000",
         "enabled": True,
     }
+
+
+def test_inmemory_shared_expense_suggestions_dedup_uses_external_label() -> None:
+    repository = InMemorySharedExpensesRepository()
+
+    created = repository.create_shared_expense_suggestions_bulk(
+        profile_id=PROFILE_ID,
+        suggestions=[
+            {
+                "transaction_id": TX_ID_1,
+                "suggested_to_profile_id": None,
+                "suggested_split_ratio_other": Decimal("0.4"),
+                "other_party_label": "Conjoint",
+            },
+            {
+                "transaction_id": TX_ID_1,
+                "suggested_to_profile_id": None,
+                "suggested_split_ratio_other": Decimal("0.4"),
+                "other_party_label": "Colocataire",
+            },
+        ],
+    )
+
+    assert created == 2
