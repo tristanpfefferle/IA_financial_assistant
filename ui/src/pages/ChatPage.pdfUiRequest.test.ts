@@ -1,4 +1,10 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+
+vi.mock('../api/agentApi', () => ({
+  resolveApiBaseUrl: (override?: string) => (override && override.trim().length > 0 ? override.replace(/\/+$/, '') : 'http://127.0.0.1:8000'),
+}))
+
+import { resolvePdfReportUrl } from './pdfUrl'
 
 import {
   claimPdfUiRequestExecution,
@@ -8,6 +14,21 @@ import {
 } from './chatUiRequests'
 
 describe('chatUiRequests', () => {
+  it('resolves relative pdf url with api base url', () => {
+    expect(resolvePdfReportUrl('/finance/reports/spending.pdf?month=2026-01', 'http://127.0.0.1:8000')).toBe(
+      'http://127.0.0.1:8000/finance/reports/spending.pdf?month=2026-01',
+    )
+    expect(resolvePdfReportUrl('finance/reports/spending.pdf?month=2026-01', 'http://127.0.0.1:8000')).toBe(
+      'http://127.0.0.1:8000/finance/reports/spending.pdf?month=2026-01',
+    )
+  })
+
+  it('keeps absolute pdf url unchanged', () => {
+    expect(resolvePdfReportUrl('https://api.example.com/finance/reports/spending.pdf')).toBe(
+      'https://api.example.com/finance/reports/spending.pdf',
+    )
+  })
+
   it('parses open_pdf_report ui request', () => {
     expect(
       toPdfUiRequest({
