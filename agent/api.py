@@ -2339,9 +2339,26 @@ def agent_chat(
 
         state_dict = dict(state_dict) if isinstance(state_dict, dict) else {}
         current_loop = parse_loop_context(state_dict.get("loop"))
+        had_existing_loop = current_loop is not None
+        loop_bootstrapped = False
         loop_reply = None
+        registry = get_loop_registry()
+        if current_loop is None and _is_valid_global_state(global_state) and global_state.get("mode") == "onboarding":
+            onboarding_substep = global_state.get("onboarding_substep")
+            mapped_loop_id = (
+                _ONBOARDING_SUBSTEP_TO_LOOP_ID.get(onboarding_substep)
+                if isinstance(onboarding_substep, str)
+                else None
+            )
+            if mapped_loop_id is not None:
+                mapped_loop = registry.get(mapped_loop_id)
+                is_blocking = mapped_loop.blocking if mapped_loop is not None else True
+                current_loop = LoopContext(loop_id=mapped_loop_id, step="start", data={}, blocking=is_blocking)
+                state_dict["loop"] = serialize_loop_context(current_loop)
+                should_persist_global_state = True
+                loop_bootstrapped = True
+
         if current_loop is not None:
-            registry = get_loop_registry()
             loop_reply = route_message(
                 message=payload.message,
                 current_loop=current_loop,
@@ -2366,7 +2383,19 @@ def agent_chat(
                 "blocking": resolved_loop.blocking if resolved_loop else None,
             }
 
-            if loop_reply.handled and loop_reply.reply.strip():
+            if loop_bootstrapped and should_persist_global_state:
+                updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                if state_dict:
+                    updated_chat_state["state"] = state_dict
+                else:
+                    updated_chat_state.pop("state", None)
+                profiles_repository.update_chat_state(
+                    profile_id=profile_id,
+                    user_id=auth_user_id,
+                    chat_state=updated_chat_state,
+                )
+
+            if loop_reply.handled and loop_reply.reply.strip() and mode != "onboarding" and (had_existing_loop or not loop_bootstrapped):
                 updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
                 if state_dict:
                     updated_chat_state["state"] = state_dict
