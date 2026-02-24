@@ -224,7 +224,12 @@ _ONBOARDING_PROFILE_META_ANSWER_PATTERNS = (
     re.compile(r"\b(s[ée]rieux|hein|quoi)\b", re.IGNORECASE),
     re.compile(r"\b(blague|dr[oô]le)\b", re.IGNORECASE),
 )
-_ONBOARDING_PROFILE_META_VERBS = {"connais", "dis", "dit", "sais", "viens"}
+_ONBOARDING_PROFILE_META_VERBS = {"connais", "dis", "dit", "viens"}
+_ONBOARDING_PROFILE_CANT_ANSWER_PATTERNS = (
+    re.compile(r"^\s*je\s+sais\s+pas\s*[\!\.\?]*\s*$", re.IGNORECASE),
+    re.compile(r"^\s*(non|nop|nan)\s*[\!\.\?]*\s*$", re.IGNORECASE),
+    re.compile(r"^\s*j[’']?en\s+sais\s+rien\s*[\!\.\?]*\s*$", re.IGNORECASE),
+)
 _ONBOARDING_FIRST_NAME_ALLOWED_CHARS_PATTERN = re.compile(r"^[A-Za-zÀ-ÖØ-öø-ÿ'\- ]+$")
 _ONBOARDING_LAST_NAME_ALLOWED_CHARS_PATTERN = re.compile(r"^[A-Za-zÀ-ÖØ-öø-ÿ'\- ]+$")
 _ONBOARDING_BIRTH_DATE_PATTERN = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
@@ -2240,6 +2245,50 @@ def _extract_profile_fields_with_llm(message: str) -> dict[str, Any] | None:
     }
 
 
+def _apply_field_gating(extraction: dict[str, Any], expected_field: str | None, raw_message: str) -> dict[str, Any]:
+    """Apply expected-field gating while allowing explicit multi-field inputs."""
+
+    if expected_field is None:
+        return extraction
+
+    gated = dict(extraction)
+    explicit_birth_date = _extract_birth_date_from_text(raw_message) is not None
+
+    if expected_field == "first_name":
+        first_name = gated.get("first_name")
+        last_name = gated.get("last_name")
+        has_clear_full_name = bool(
+            isinstance(first_name, str)
+            and first_name.strip()
+            and isinstance(last_name, str)
+            and last_name.strip()
+            and (
+                str(gated.get("reason") or "") in {"full_name_pattern", "generic_multi_token_name"}
+                or _extract_name_from_text_prefix(raw_message) is not None
+                or _extract_name_from_message(raw_message) is not None
+            )
+        )
+        if not has_clear_full_name:
+            gated["last_name"] = None
+
+        if gated.get("birth_date") is not None and not (gated.get("last_name") or explicit_birth_date):
+            gated["birth_date"] = None
+        return gated
+
+    if expected_field == "last_name":
+        gated["first_name"] = None
+        if not explicit_birth_date:
+            gated["birth_date"] = None
+        return gated
+
+    if expected_field == "birth_date":
+        gated["first_name"] = None
+        gated["last_name"] = None
+        return gated
+
+    return gated
+
+
 def _extract_name_from_text_prefix(message: str) -> tuple[str, str] | None:
     match = _ONBOARDING_NAME_PREFIX_PATTERN.match(message)
     if not match:
@@ -3175,19 +3224,23 @@ f"Salut 👋\n\nJe suis ton assistant financier. Je t’aide à analyser tes dé
                             )
 
                         expected_field = _next_missing_profile_field(profile_fields)
-                        if _is_meta_answer(message):
-                            llm_extraction: dict[str, Any] | None = None
-                            try:
-                                llm_extraction = _extract_profile_fields_with_llm(message)
-                            except Exception:
-                                logger.exception("profile_collect_meta_llm_extraction_failed profile_id=%s", profile_id)
-                            clarification_question = (
-                                str(llm_extraction.get("clarification_question"))
-                                if isinstance(llm_extraction, dict)
-                                and llm_extraction.get("needs_clarification")
-                                and llm_extraction.get("clarification_question")
-                                else None
-                            )
+                        if any(pattern.match(message) for pattern in _ONBOARDING_PROFILE_CANT_ANSWER_PATTERNS):
+                            if expected_field == "last_name":
+                                if existing_first_name:
+                                    reply = (
+                                        f"Ok {existing_first_name} 🙂 J’ai besoin de ton nom de famille "
+                                        "(celui sur tes documents). Si tu préfères, tu peux mettre uniquement l’initiale."
+                                    )
+                                else:
+                                    reply = "Quel est ton prénom et ton nom ?"
+                            elif expected_field == "birth_date":
+                                reply = (
+                                    f"Merci {existing_first_name} 🙂 Peux-tu me donner ta date de naissance "
+                                    "au format YYYY-MM-DD ?"
+                                )
+                            else:
+                                reply = "Quel est ton prénom ?"
+
                             updated_global_state = _build_onboarding_global_state(
                                 global_state,
                                 onboarding_step="profile",
@@ -3202,7 +3255,27 @@ f"Salut 👋\n\nJe suis ton assistant financier. Je t’aide à analyser tes dé
                                 chat_state=updated_chat_state,
                             )
                             return _chat_response(
-                                reply=clarification_question or _missing_profile_field_question(profile_fields),
+                                reply=reply,
+                                tool_result=None,
+                                plan=None,
+                            )
+
+                        if _is_meta_answer(message):
+                            updated_global_state = _build_onboarding_global_state(
+                                global_state,
+                                onboarding_step="profile",
+                                onboarding_substep="profile_collect",
+                            )
+                            state_dict["global_state"] = updated_global_state
+                            updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                            updated_chat_state["state"] = state_dict
+                            profiles_repository.update_chat_state(
+                                profile_id=profile_id,
+                                user_id=auth_user_id,
+                                chat_state=updated_chat_state,
+                            )
+                            return _chat_response(
+                                reply=_missing_profile_field_question(profile_fields),
                                 tool_result=None,
                                 plan=None,
                             )
@@ -3409,15 +3482,7 @@ f"Salut 👋\n\nJe suis ton assistant financier. Je t’aide à analyser tes dé
                                 extraction = llm_extraction
                                 extraction_source = "llm"
 
-                        if expected_field == "first_name":
-                            extraction["last_name"] = None
-                            extraction["birth_date"] = None
-                        elif expected_field == "last_name":
-                            extraction["first_name"] = None
-                            extraction["birth_date"] = None
-                        elif expected_field == "birth_date":
-                            extraction["first_name"] = None
-                            extraction["last_name"] = None
+                        extraction = _apply_field_gating(extraction, expected_field, message)
 
                         logger.info(
                             "profile_collect_extraction source=%s confidence=%.3f fields=%s",
