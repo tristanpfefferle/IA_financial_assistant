@@ -361,6 +361,39 @@ def test_upsert_household_link_insert_includes_required_not_null_fields() -> Non
     assert "profile_id" not in payload
 
 
+def test_upsert_household_link_external_without_other_profile_starts_pending() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    client = _ClientStub(
+        responses=[
+            [{"account_id": "dddddddd-dddd-dddd-dddd-dddddddddddd", "email": "owner@example.com"}],
+            [],
+            [
+                {
+                    "id": "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee",
+                    "link_type": "external",
+                    "other_profile_id": None,
+                    "other_party_label": "Coloc",
+                    "other_party_email": "coloc@example.com",
+                    "default_split_ratio_other": "0.4",
+                }
+            ],
+        ]
+    )
+    repository = SupabaseProfilesRepository(client=client)
+
+    repository.upsert_household_link(
+        profile_id=profile_id,
+        link_type="external",
+        other_profile_id=None,
+        other_party_label="Coloc",
+        other_party_email="coloc@example.com",
+        default_split_ratio_other="0.4",
+    )
+
+    payload = client.post_calls[0]["payload"]
+    assert payload["status"] == "pending"
+
+
 def test_upsert_household_link_insert_falls_back_owner_user_id_to_profile_id() -> None:
     profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
     client = _ClientStub(
