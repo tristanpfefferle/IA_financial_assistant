@@ -1328,7 +1328,7 @@ function MessageBubble({
     let isActive = true
     setSpendingReportError(null)
 
-    void getSpendingReport(spendingReportParams)
+    void getSpendingReport(spendingReportParams, apiBaseUrl)
       .then((report) => {
         if (!isActive) {
           return
