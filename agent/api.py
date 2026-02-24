@@ -34,6 +34,9 @@ from agent.bank_catalog import extract_canonical_banks
 from agent.merchant_cleanup import MerchantSuggestion, run_merchant_cleanup
 from agent.merchant_alias_resolver import resolve_pending_map_alias
 from agent.import_label_normalizer import extract_observed_alias_from_label
+from agent.loops import build_default_registry
+from agent.loops.router import parse_loop_context, serialize_loop_context
+from agent.loops.types import LoopContext
 from backend.factory import build_backend_tool_service
 from backend.services.classification.decision_engine import normalize_merchant_alias
 from backend.services.releves_import.bank_detector import detect_bank_from_csv_bytes
@@ -245,6 +248,19 @@ _HOUSEHOLD_LINK_AUTO_PROMPT_REPLY = (
     "Maintenant que tu as vu ton premier rapport de dépenses, j’aimerais affiner: "
     "certaines dépenses sont-elles communes à ton foyer (conjoint/coloc) ?"
 )
+
+_ONBOARDING_SUBSTEP_TO_LOOP_ID: dict[str, str] = {
+    "profile_collect": "onboarding.profile_collect",
+    "profile_confirm": "onboarding.profile_confirm",
+    "bank_accounts_collect": "onboarding.bank_accounts_collect",
+    "bank_accounts_confirm": "onboarding.bank_accounts_confirm",
+    "import_select_account": "onboarding.import_select_account",
+    "import_wait_ready": "onboarding.import_wait_ready",
+    "categories_intro": "onboarding.categories_intro",
+    "categories_bootstrap": "onboarding.categories_bootstrap",
+    "report_offer": "onboarding.report",
+    "report_sent": "onboarding.report",
+}
 
 
 def _build_system_categories_payload() -> list[dict[str, str]]:
@@ -2080,6 +2096,13 @@ def get_agent_loop() -> AgentLoop:
 
 
 @lru_cache(maxsize=1)
+def get_loop_registry():
+    """Create and cache loop registry once per process."""
+
+    return build_default_registry()
+
+
+@lru_cache(maxsize=1)
 def get_profiles_repository() -> SupabaseProfilesRepository:
     """Create and cache profiles repository."""
 
@@ -2300,6 +2323,19 @@ def agent_chat(
                 state_dict = dict(state_dict) if isinstance(state_dict, dict) else {}
                 state_dict["global_state"] = normalized
                 should_persist_global_state = True
+
+        state_dict = dict(state_dict) if isinstance(state_dict, dict) else {}
+        current_loop = parse_loop_context(state_dict.get("loop"))
+        if current_loop is None and isinstance(global_state, dict) and global_state.get("mode") == "onboarding":
+            onboarding_substep = global_state.get("onboarding_substep")
+            if isinstance(onboarding_substep, str):
+                mapped_loop_id = _ONBOARDING_SUBSTEP_TO_LOOP_ID.get(onboarding_substep)
+                if isinstance(mapped_loop_id, str):
+                    current_loop = LoopContext(loop_id=mapped_loop_id, step="start", data={}, blocking=True)
+                    state_dict["loop"] = serialize_loop_context(current_loop)
+                    should_persist_global_state = True
+
+        _ = get_loop_registry()
 
         if global_state is None and hasattr(profiles_repository, "get_profile_fields"):
             try:
