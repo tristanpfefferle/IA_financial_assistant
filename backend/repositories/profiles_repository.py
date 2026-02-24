@@ -7,7 +7,7 @@ import logging
 import re
 from typing import Any, Protocol
 import unicodedata
-from uuid import UUID
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from backend.db.supabase_client import SupabaseClient
 from shared.models import PROFILE_DEFAULT_CORE_FIELDS
@@ -444,10 +444,10 @@ class SupabaseProfilesRepository:
         rows, _ = self._client.get_rows(
             table="account_links",
             query={
-                "select": "link_type,other_profile_id,other_party_label,other_party_email,default_split_ratio_other",
-                "profile_id": f"eq.{profile_id}",
+                "select": "id,link_type,other_profile_id,other_party_label,other_party_email,default_split_ratio_other,created_at",
+                "owner_profile_id": f"eq.{profile_id}",
                 "status": "eq.active",
-                "order": "updated_at.desc",
+                "order": "created_at.desc",
                 "limit": 1,
             },
             with_count=False,
@@ -462,11 +462,33 @@ class SupabaseProfilesRepository:
             link_type = "internal"
 
         return {
+            "id": str(row["id"]) if row.get("id") else None,
             "link_type": link_type,
             "other_profile_id": str(row["other_profile_id"]) if row.get("other_profile_id") else None,
             "other_party_label": str(row["other_party_label"]) if row.get("other_party_label") else None,
             "other_party_email": str(row["other_party_email"]) if row.get("other_party_email") else None,
             "default_split_ratio_other": str(row.get("default_split_ratio_other") or "0.5"),
+        }
+
+    def _get_profile_identity(self, *, profile_id: UUID) -> dict[str, UUID | str | None]:
+        rows, _ = self._client.get_rows(
+            table="profils",
+            query={"select": "account_id,email", "id": f"eq.{profile_id}", "limit": 1},
+            with_count=False,
+            use_anon_key=False,
+        )
+        if not rows:
+            return {"account_id": None, "email": None}
+
+        row = rows[0] or {}
+        account_id_raw = row.get("account_id")
+        account_id: UUID | None = None
+        if account_id_raw:
+            account_id = UUID(str(account_id_raw))
+
+        return {
+            "account_id": account_id,
+            "email": str(row.get("email")) if row.get("email") else None,
         }
 
     def upsert_household_link(
@@ -483,29 +505,59 @@ class SupabaseProfilesRepository:
         if normalized_link_type not in {"internal", "external"}:
             normalized_link_type = "internal"
 
+        profile_identity = self._get_profile_identity(profile_id=profile_id)
+        owner_account_id = profile_identity.get("account_id")
+        profile_email = profile_identity.get("email")
+
+        link_group_id = uuid5(
+            NAMESPACE_URL,
+            f"ia-financial-assistant:{profile_id}:household_group",
+        )
+        if normalized_link_type == "internal" and other_profile_id is not None:
+            link_pair_id = uuid5(
+                NAMESPACE_URL,
+                f"ia-financial-assistant:{profile_id}:internal:{other_profile_id}",
+            )
+        else:
+            external_key = str(other_party_email or other_party_label or "external").strip().lower()
+            link_pair_id = uuid5(
+                NAMESPACE_URL,
+                f"ia-financial-assistant:{profile_id}:external:{external_key}",
+            )
+
         base_payload_insert: dict[str, Any] = {
-            "profile_id": str(profile_id),
             "status": "active",
             "link_type": normalized_link_type,
+            "owner_profile_id": str(profile_id),
+            "owner_user_id": str(owner_account_id) if owner_account_id else None,
             "other_profile_id": str(other_profile_id) if other_profile_id else None,
             "other_party_label": str(other_party_label) if other_party_label else None,
             "other_party_email": str(other_party_email) if other_party_email else None,
             "default_split_ratio_other": str(default_split_ratio_other),
-            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "display_name": str(other_party_label) if other_party_label else None,
+            "relationship_type": "household",
+            "link_group_id": str(link_group_id),
+            "link_pair_id": str(link_pair_id),
+            "other_email": str(other_party_email or ""),
+            "guest_email": str(profile_email or ""),
         }
         patch_payload: dict[str, Any] = {
-            key: value
-            for key, value in base_payload_insert.items()
-            if key not in {"profile_id", "status"}
+            "other_profile_id": str(other_profile_id) if other_profile_id else None,
+            "other_party_label": str(other_party_label) if other_party_label else None,
+            "other_party_email": str(other_party_email) if other_party_email else None,
+            "default_split_ratio_other": str(default_split_ratio_other),
+            "display_name": str(other_party_label) if other_party_label else None,
+            "relationship_type": "household",
         }
 
         active_rows, _ = self._client.get_rows(
             table="account_links",
             query={
-                "select": "id",
-                "profile_id": f"eq.{profile_id}",
+                "select": "id,link_type,other_profile_id,other_party_label,other_party_email,default_split_ratio_other,link_pair_id,link_group_id",
+                "owner_profile_id": f"eq.{profile_id}",
+                "link_type": f"eq.{normalized_link_type}",
                 "status": "eq.active",
-                "order": "updated_at.desc",
+                "link_pair_id": f"eq.{link_pair_id}",
                 "limit": 1,
             },
             with_count=False,
@@ -516,7 +568,7 @@ class SupabaseProfilesRepository:
         if existing_id:
             self._client.patch_rows(
                 table="account_links",
-                query={"id": f"eq.{existing_id}", "profile_id": f"eq.{profile_id}"},
+                query={"id": f"eq.{existing_id}"},
                 payload=patch_payload,
                 use_anon_key=False,
             )
