@@ -191,6 +191,17 @@ function getBaseUrl(): string {
   return rawBaseUrl.replace(/\/+$/, '')
 }
 
+function isUiDebugEnabled(): boolean {
+  return import.meta.env.VITE_UI_DEBUG === 'true'
+}
+
+function debugLog(...args: unknown[]): void {
+  if (!isUiDebugEnabled()) {
+    return
+  }
+  console.debug('[agentApi]', ...args)
+}
+
 export function resolveApiBaseUrl(override?: string): string {
   if (override && override.trim().length > 0) {
     return override.replace(/\/+$/, '')
@@ -355,20 +366,35 @@ export async function fetchPendingTransactions(): Promise<PendingTransactionsRes
 export async function openPdfFromUrl(url: string): Promise<void> {
   const accessToken = await getAccessToken()
   const resolvedUrl = url.startsWith('http://') || url.startsWith('https://') ? url : `${getBaseUrl()}${url}`
-  const response = await fetch(resolvedUrl, {
-    method: 'GET',
-    headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
-  })
+  debugLog('openPdfFromUrl url=', resolvedUrl)
 
-  if (!response.ok) {
-    const detail = await extractErrorDetail(response)
-    throw new Error(`Erreur API rapport (${response.status}): ${detail}`)
+  try {
+    const response = await fetch(resolvedUrl, {
+      method: 'GET',
+      headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
+    })
+
+    if (!response.ok) {
+      const detail = await extractErrorDetail(response)
+      throw new Error(`Erreur API rapport (${response.status}): ${detail}`)
+    }
+
+    const blob = await response.blob()
+    const blobUrl = URL.createObjectURL(blob)
+    window.open(blobUrl, '_blank', 'noopener,noreferrer')
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000)
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error)
+    const isNetworkError =
+      error instanceof TypeError || message.includes('Failed to fetch') || message.includes('NetworkError')
+    debugLog('openPdfFromUrl errorType=', error instanceof TypeError ? 'TypeError' : typeof error)
+    if (isNetworkError) {
+      window.open(resolvedUrl, '_blank', 'noopener,noreferrer')
+      return
+    }
+
+    throw error instanceof Error ? error : new Error(`Erreur ouverture PDF: ${message}`)
   }
-
-  const blob = await response.blob()
-  const blobUrl = URL.createObjectURL(blob)
-  window.open(blobUrl, '_blank', 'noopener,noreferrer')
-  setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000)
 }
 
 export async function openSpendingReportPdf(month?: string): Promise<void> {
@@ -434,13 +460,22 @@ export async function getSpendingReport(params: SpendingReportParams = {}, apiBa
   }
 
   const query = searchParams.toString()
-  const response = await fetch(`${resolveApiBaseUrl(apiBaseUrl)}/finance/reports/spending${query ? `?${query}` : ''}`, {
-    method: 'GET',
-    headers: await buildAuthHeaders(),
-  })
+  const url = `${resolveApiBaseUrl(apiBaseUrl)}/finance/reports/spending${query ? `?${query}` : ''}`
+  debugLog('getSpendingReport url=', url)
+  let response: Response
+  try {
+    response = await fetch(url, {
+      method: 'GET',
+      headers: await buildAuthHeaders(),
+    })
+  } catch (error: unknown) {
+    debugLog('getSpendingReport errorType=', error instanceof TypeError ? 'TypeError' : typeof error)
+    throw error
+  }
 
   if (!response.ok) {
     const detail = await extractErrorDetail(response)
+    debugLog('getSpendingReport errorType=', 'http_error')
     throw new Error(`Erreur API rapport JSON (${response.status}): ${detail}`)
   }
 
