@@ -1693,7 +1693,8 @@ def test_report_offer_flow_no_keeps_state(monkeypatch) -> None:
 
     response = client.post("/agent/chat", json={"message": "non"}, headers=_auth_headers())
     assert response.json()["reply"] == "Ok 🙂 Dis-moi quand tu veux le voir."
-    assert repo.update_calls == []
+    persisted_state = repo.update_calls[-1]["chat_state"]["state"]
+    assert persisted_state["loop"]["loop_id"] == "onboarding.report"
 
 def test_loop_persistence_roundtrip_in_chat_state(monkeypatch) -> None:
     _mock_auth(monkeypatch)
@@ -1761,3 +1762,50 @@ def test_agent_chat_debug_payload_exposes_loop_context(monkeypatch) -> None:
     assert response_no_debug.status_code == 200
     payload_no_debug = response_no_debug.json()
     assert payload_no_debug.get("debug") is None
+
+
+def test_agent_chat_debug_payload_includes_null_loop_when_absent(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(initial_chat_state={"state": {"global_state": {"mode": "free_chat", "onboarding_step": None, "onboarding_substep": None}}})
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
+
+    response = client.post(
+        "/agent/chat",
+        json={"message": "peut-être"},
+        headers={**_auth_headers(), "X-Debug": "1"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["debug"]["loop"] == {"loop_id": None, "step": None, "blocking": None}
+
+
+def test_onboarding_substep_bootstraps_loop_context_when_missing(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "onboarding",
+                    "onboarding_step": "profile",
+                    "onboarding_substep": "profile_confirm",
+                }
+            }
+        }
+    )
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
+
+    response = client.post(
+        "/agent/chat",
+        json={"message": "peut-être"},
+        headers={**_auth_headers(), "X-Debug": "1"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["debug"]["loop"]["loop_id"] == "onboarding.profile_confirm"
+
+    persisted_state = repo.update_calls[-1]["chat_state"]["state"]
+    assert persisted_state["loop"]["loop_id"] == "onboarding.profile_confirm"
