@@ -7,6 +7,8 @@ from uuid import UUID
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from fastapi import Request as FastAPIRequest
+
 from shared import config
 
 
@@ -15,6 +17,28 @@ class UnauthorizedError(Exception):
 
 
 REQUIRED_AUTH_USER_ID_FIELD = "id"
+
+
+def extract_bearer_token(request: FastAPIRequest) -> str:
+    """Extract bearer token from Authorization header or access_token query param."""
+
+    authorization = request.headers.get("Authorization")
+    prefix = "Bearer "
+    if authorization:
+        if not authorization.startswith(prefix):
+            raise UnauthorizedError("Invalid Authorization header")
+        token = authorization[len(prefix) :].strip()
+        if token:
+            return token
+        raise UnauthorizedError("Missing bearer token")
+
+    query_token = request.query_params.get("access_token")
+    if query_token:
+        normalized_query_token = query_token.strip()
+        if normalized_query_token:
+            return normalized_query_token
+
+    raise UnauthorizedError("Missing Authorization header")
 
 
 def _is_uuid_like(value: str) -> bool:

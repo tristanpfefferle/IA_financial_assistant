@@ -42,7 +42,7 @@ from backend.reporting import (
     SpendingTransactionRow,
     generate_spending_report_pdf,
 )
-from backend.auth.supabase_auth import UnauthorizedError, get_user_from_bearer_token
+from backend.auth.supabase_auth import UnauthorizedError, extract_bearer_token, get_user_from_bearer_token
 from backend.db.supabase_client import SupabaseClient, SupabaseSettings
 from backend.repositories.profiles_repository import ProfilesRepository, SupabaseProfilesRepository
 from backend.repositories.shared_expenses_repository import SharedExpensesRepository, SupabaseSharedExpensesRepository
@@ -1913,18 +1913,6 @@ def get_profiles_repository() -> SupabaseProfilesRepository:
     return SupabaseProfilesRepository(client)
 
 
-def _extract_bearer_token(authorization: str | None) -> str:
-    if not authorization:
-        raise HTTPException(status_code=401, detail="Missing Authorization header")
-    prefix = "Bearer "
-    if not authorization.startswith(prefix):
-        raise HTTPException(status_code=401, detail="Invalid Authorization header")
-    token = authorization[len(prefix) :].strip()
-    if not token:
-        raise HTTPException(status_code=401, detail="Missing bearer token")
-    return token
-
-
 def _get_shared_expenses_repository_or_501() -> SupabaseSharedExpensesRepository:
     """Return shared-expenses repository when Supabase config is available."""
 
@@ -1952,10 +1940,21 @@ def _try_get_shared_expenses_repository() -> SharedExpensesRepository | None:
     return SupabaseSharedExpensesRepository(client=client)
 
 
-def _resolve_authenticated_profile(authorization: str | None) -> tuple[UUID, UUID]:
-    """Resolve authenticated user and linked profile from authorization header."""
+def _resolve_authenticated_profile(authorization: str | None, request: Request | None = None) -> tuple[UUID, UUID]:
+    """Resolve authenticated user and linked profile from auth header or query access token."""
 
-    token = _extract_bearer_token(authorization)
+    request_for_token = request
+    if request_for_token is None:
+        scope = {"type": "http", "headers": [], "query_string": b"", "path": "/", "method": "GET"}
+        if authorization is not None:
+            scope["headers"] = [(b"authorization", authorization.encode("latin-1"))]
+        request_for_token = Request(scope)
+
+    try:
+        token = extract_bearer_token(request_for_token)
+    except UnauthorizedError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
     try:
         user_payload = get_user_from_bearer_token(token)
     except UnauthorizedError as exc:
@@ -3853,12 +3852,13 @@ def _build_spending_report_pdf_data(payload: dict[str, Any]) -> SpendingReportDa
 
 @app.get("/finance/reports/spending")
 def get_spending_report_json(
+    request: Request,
     authorization: str | None = Header(default=None),
     start_date: str | None = None,
     end_date: str | None = None,
     month: str | None = None,
 ) -> dict[str, Any]:
-    auth_user_id, profile_id = _resolve_authenticated_profile(authorization)
+    auth_user_id, profile_id = _resolve_authenticated_profile(authorization, request)
     profiles_repository = get_profiles_repository()
     chat_state = profiles_repository.get_chat_state(profile_id=profile_id, user_id=auth_user_id)
     state_dict = chat_state.get("state") if isinstance(chat_state, dict) else None
@@ -3884,12 +3884,13 @@ def get_spending_report_json(
 
 @app.get("/finance/reports/spending.pdf")
 def get_spending_report_pdf(
+    request: Request,
     authorization: str | None = Header(default=None),
     start_date: str | None = None,
     end_date: str | None = None,
     month: str | None = None,
 ) -> Response:
-    auth_user_id, profile_id = _resolve_authenticated_profile(authorization)
+    auth_user_id, profile_id = _resolve_authenticated_profile(authorization, request)
     profiles_repository = get_profiles_repository()
     chat_state = profiles_repository.get_chat_state(profile_id=profile_id, user_id=auth_user_id)
     state_dict = chat_state.get("state") if isinstance(chat_state, dict) else None

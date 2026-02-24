@@ -202,6 +202,15 @@ function debugLog(...args: unknown[]): void {
   console.debug('[agentApi]', ...args)
 }
 
+function appendAccessTokenToUrl(url: string, accessToken: string): string {
+  const separator = url.includes('?') ? '&' : '?'
+  return `${url}${separator}access_token=${encodeURIComponent(accessToken)}`
+}
+
+function maskAccessTokenInUrl(url: string): string {
+  return url.replace(/access_token=[^&]*/g, 'access_token=***')
+}
+
 export function resolveApiBaseUrl(override?: string): string {
   if (override && override.trim().length > 0) {
     return override.replace(/\/+$/, '')
@@ -366,7 +375,7 @@ export async function fetchPendingTransactions(): Promise<PendingTransactionsRes
 export async function openPdfFromUrl(url: string): Promise<void> {
   const accessToken = await getAccessToken()
   const resolvedUrl = url.startsWith('http://') || url.startsWith('https://') ? url : `${getBaseUrl()}${url}`
-  debugLog('openPdfFromUrl url=', resolvedUrl)
+  debugLog('openPdfFromUrl url=', maskAccessTokenInUrl(resolvedUrl))
 
   try {
     const response = await fetch(resolvedUrl, {
@@ -389,7 +398,9 @@ export async function openPdfFromUrl(url: string): Promise<void> {
       error instanceof TypeError || message.includes('Failed to fetch') || message.includes('NetworkError')
     debugLog('openPdfFromUrl errorType=', error instanceof TypeError ? 'TypeError' : typeof error)
     if (isNetworkError) {
-      window.open(resolvedUrl, '_blank', 'noopener,noreferrer')
+      const openedUrl = accessToken ? appendAccessTokenToUrl(resolvedUrl, accessToken) : resolvedUrl
+      debugLog('openPdfFromUrl fallbackWindowOpen=', maskAccessTokenInUrl(openedUrl))
+      window.open(openedUrl, '_blank', 'noopener,noreferrer')
       return
     }
 
