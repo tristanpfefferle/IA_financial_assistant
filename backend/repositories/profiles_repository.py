@@ -456,7 +456,11 @@ class SupabaseProfilesRepository:
         if not rows:
             return None
 
-        row = rows[0] or {}
+        return self._parse_household_link_row(rows[0] or {})
+
+    @staticmethod
+    def _parse_household_link_row(row: dict[str, Any]) -> dict[str, Any]:
+        """Normalize one household link row to public repository output."""
         link_type = str(row.get("link_type") or "internal").strip().lower()
         if link_type not in {"internal", "external"}:
             link_type = "internal"
@@ -469,6 +473,24 @@ class SupabaseProfilesRepository:
             "other_party_email": str(row["other_party_email"]) if row.get("other_party_email") else None,
             "default_split_ratio_other": str(row.get("default_split_ratio_other") or "0.5"),
         }
+
+    def _get_household_link_by_pair(self, *, profile_id: UUID, link_pair_id: UUID) -> dict[str, Any] | None:
+        rows, _ = self._client.get_rows(
+            table="account_links",
+            query={
+                "select": "id,link_type,other_profile_id,other_party_label,other_party_email,default_split_ratio_other,created_at",
+                "owner_profile_id": f"eq.{profile_id}",
+                "status": "eq.active",
+                "link_pair_id": f"eq.{link_pair_id}",
+                "limit": 1,
+            },
+            with_count=False,
+            use_anon_key=False,
+        )
+        if not rows:
+            return None
+
+        return self._parse_household_link_row(rows[0] or {})
 
     def _get_profile_identity(self, *, profile_id: UUID) -> dict[str, UUID | str | None]:
         rows, _ = self._client.get_rows(
@@ -568,7 +590,7 @@ class SupabaseProfilesRepository:
         if existing_id:
             self._client.patch_rows(
                 table="account_links",
-                query={"id": f"eq.{existing_id}"},
+                query={"id": f"eq.{existing_id}", "owner_profile_id": f"eq.{profile_id}"},
                 payload=patch_payload,
                 use_anon_key=False,
             )
@@ -579,7 +601,7 @@ class SupabaseProfilesRepository:
                 use_anon_key=False,
             )
 
-        current_link = self.get_active_household_link(profile_id=profile_id)
+        current_link = self._get_household_link_by_pair(profile_id=profile_id, link_pair_id=link_pair_id)
         if current_link is not None:
             return current_link
 

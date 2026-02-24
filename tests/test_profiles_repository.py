@@ -307,9 +307,19 @@ def test_upsert_household_link_patch_scopes_by_id_and_link_pair() -> None:
         "link_pair_id": f"eq.{link_pair_id}",
         "limit": 1,
     }
-    assert client.patch_calls[0]["query"] == {"id": f"eq.{existing_id}"}
+    assert client.patch_calls[0]["query"] == {
+        "id": f"eq.{existing_id}",
+        "owner_profile_id": f"eq.{profile_id}",
+    }
     assert "updated_at" not in client.patch_calls[0]["payload"]
     assert "profile_id" not in client.patch_calls[0]["payload"]
+    assert client.calls[2]["query"] == {
+        "select": "id,link_type,other_profile_id,other_party_label,other_party_email,default_split_ratio_other,created_at",
+        "owner_profile_id": f"eq.{profile_id}",
+        "status": "eq.active",
+        "link_pair_id": f"eq.{link_pair_id}",
+        "limit": 1,
+    }
 
 
 def test_upsert_household_link_insert_includes_required_not_null_fields() -> None:
