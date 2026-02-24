@@ -22,7 +22,7 @@ from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse, Response
 from fastapi.requests import Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from shared import config as _config
 from agent.backend_client import BackendClient
@@ -1991,7 +1991,7 @@ class ChatResponse(BaseModel):
     reply: str
     tool_result: Any | None
     plan: Any | None = None
-    debug: dict[str, Any] | None = None
+    debug: dict[str, Any] | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class ImportFilePayload(BaseModel):
@@ -2300,7 +2300,7 @@ def agent_chat(
     debug_enabled = _is_debug_request(request, x_debug)
     loop_debug: dict[str, Any] = {"loop_id": None, "step": None, "blocking": None}
 
-    def _chat_response(*, reply: str, tool_result: Any | None, plan: Any | None = None) -> JSONResponse:
+    def _chat_response(*, reply: str, tool_result: Any | None, plan: Any | None = None) -> dict[str, Any]:
         payload_dict: dict[str, Any] = {
             "reply": reply,
             "tool_result": tool_result,
@@ -2308,7 +2308,7 @@ def agent_chat(
         }
         if debug_enabled:
             payload_dict["debug"] = {"loop": loop_debug}
-        return JSONResponse(content=payload_dict)
+        return payload_dict
 
     profile_id: UUID | None = None
     try:
