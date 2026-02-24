@@ -2026,8 +2026,17 @@ def _normalize_name_token(token: str) -> str:
     return token.strip(" '\"-_").strip()
 
 
+def _capitalize_name_chunk(chunk: str) -> str:
+    """Capitalize a chunk while preserving its inner punctuation."""
+
+    normalized = chunk.strip()
+    if not normalized:
+        return ""
+    return normalized[0].upper() + normalized[1:].lower()
+
+
 def _format_person_name(value: str) -> str:
-    """Normalize person names to title-case words and hyphenated segments."""
+    """Normalize person names token by token while preserving '-' and apostrophes."""
 
     normalized = str(value or "").strip()
     if not normalized:
@@ -2035,9 +2044,16 @@ def _format_person_name(value: str) -> str:
 
     formatted_words: list[str] = []
     for word in normalized.split():
-        segments = [segment.capitalize() for segment in word.split("-") if segment]
-        if segments:
-            formatted_words.append("-".join(segments))
+        hyphen_chunks = [chunk for chunk in word.split("-") if chunk]
+        formatted_hyphen_chunks: list[str] = []
+        for hyphen_chunk in hyphen_chunks:
+            apostrophe_chunks = [chunk for chunk in hyphen_chunk.split("'") if chunk]
+            if not apostrophe_chunks:
+                continue
+            formatted_apostrophe_chunks = [_capitalize_name_chunk(chunk) for chunk in apostrophe_chunks]
+            formatted_hyphen_chunks.append("'".join(formatted_apostrophe_chunks))
+        if formatted_hyphen_chunks:
+            formatted_words.append("-".join(formatted_hyphen_chunks))
     return " ".join(formatted_words)
 
 
