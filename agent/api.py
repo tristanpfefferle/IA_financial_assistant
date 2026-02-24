@@ -2227,37 +2227,6 @@ ALLOW_ORIGINS = _config.cors_allow_origins()
 
 
 @app.middleware("http")
-async def inject_agent_chat_debug_payload(request: Request, call_next):
-    """Inject loop debug payload into /agent/chat responses when debug is enabled."""
-
-    response = await call_next(request)
-    if request.url.path != "/agent/chat" or not _is_debug_request(request):
-        return response
-
-    body = b""
-    async for chunk in response.body_iterator:
-        body += chunk
-
-    try:
-        payload = json.loads(body)
-    except Exception:
-        return response
-    if not isinstance(payload, dict):
-        return response
-
-    loop_debug = getattr(request.state, "agent_chat_debug_loop", None)
-    payload["debug"] = {
-        "loop": loop_debug
-        if isinstance(loop_debug, dict)
-        else {"loop_id": None, "step": None, "blocking": None}
-    }
-
-    headers = dict(response.headers)
-    headers.pop("content-length", None)
-    return JSONResponse(status_code=response.status_code, content=payload, headers=headers)
-
-
-@app.middleware("http")
 async def log_http_requests(request: Request, call_next):
     """Log incoming requests, HTTP status codes and unexpected errors."""
 
@@ -2329,6 +2298,16 @@ def agent_chat(
 
     logger.info("agent_chat_received message_length=%s", len(payload.message))
     debug_enabled = _is_debug_request(request, x_debug)
+    loop_debug: dict[str, Any] = {"loop_id": None, "step": None, "blocking": None}
+
+    def _chat_response(*, reply: str, tool_result: Any | None, plan: Any | None = None) -> ChatResponse:
+        return ChatResponse(
+            reply=reply,
+            tool_result=tool_result,
+            plan=plan,
+            debug={"loop": loop_debug} if debug_enabled else None,
+        )
+
     profile_id: UUID | None = None
     try:
         auth_user_id, profile_id = _resolve_authenticated_profile(request, authorization)
@@ -2369,12 +2348,6 @@ def agent_chat(
                     state_dict["loop"] = serialize_loop_context(current_loop)
                     should_persist_global_state = True
 
-        request.state.agent_chat_debug_loop = {
-            "loop_id": current_loop.loop_id if current_loop else None,
-            "step": current_loop.step if current_loop else None,
-            "blocking": current_loop.blocking if current_loop else None,
-        }
-
         registry = get_loop_registry()
         loop_reply = route_message(
             message=payload.message,
@@ -2394,6 +2367,12 @@ def agent_chat(
             state_dict["loop"] = serialize_loop_context(resolved_loop)
             should_persist_global_state = True
 
+        loop_debug = {
+            "loop_id": resolved_loop.loop_id if resolved_loop else None,
+            "step": resolved_loop.step if resolved_loop else None,
+            "blocking": resolved_loop.blocking if resolved_loop else None,
+        }
+
         if loop_reply.handled and loop_reply.reply.strip():
             updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
             if state_dict:
@@ -2405,7 +2384,7 @@ def agent_chat(
                 user_id=auth_user_id,
                 chat_state=updated_chat_state,
             )
-            return ChatResponse(reply=loop_reply.reply, tool_result=None, plan=None)
+            return _chat_response(reply=loop_reply.reply, tool_result=None, plan=None)
 
         if global_state is None and hasattr(profiles_repository, "get_profile_fields"):
             try:
@@ -2436,7 +2415,7 @@ def agent_chat(
                     user_id=auth_user_id,
                     chat_state=updated_chat_state,
                 )
-                return ChatResponse(
+                return _chat_response(
                     reply=_build_profile_recap_reply(profile_fields),
                     tool_result=_build_quick_reply_yes_no_ui_action(),
                     plan=None,
@@ -2456,7 +2435,7 @@ def agent_chat(
                 }
                 import_result = get_tool_router().call("finance_releves_import_files", tool_payload, profile_id=profile_id)
                 if isinstance(import_result, ToolError):
-                    return ChatResponse(reply=f"Import impossible: {import_result.message}", tool_result=None, plan=None)
+                    return _chat_response(reply=f"Import impossible: {import_result.message}", tool_result=None, plan=None)
 
                 updated_state = dict(state_dict) if isinstance(state_dict, dict) else {}
                 updated_import_context = dict(import_context) if isinstance(import_context, dict) else {}
@@ -2476,7 +2455,7 @@ def agent_chat(
                 )
                 imported_count = int((import_result or {}).get("imported_count", 0)) if isinstance(import_result, dict) else 0
                 account_name = str(matched_account.get("name") or "ce compte")
-                return ChatResponse(
+                return _chat_response(
                     reply=f"Parfait, j’ai importé le relevé sur {account_name}. {imported_count} transactions détectées.",
                     tool_result=None,
                     plan=None,
@@ -2510,14 +2489,14 @@ def agent_chat(
                 chat_state=updated_chat_state,
             )
             if payload.request_greeting:
-                return ChatResponse(
+                return _chat_response(
                     reply=(
 "Salut 👋\n\nJe suis ton assistant financier. Je t’aide à analyser tes dépenses et à construire un budget clair, automatiquement.\n\nOn va faire ça en 3 étapes :\n1) créer ton profil\n2) ajouter ta banque\n3) importer un relevé récent pour générer ton premier rapport.\n\nCommençons 🙂\n\nQuel est ton prénom et ton nom ?"
                     ),
                     tool_result=None,
                     plan=None,
                 )
-            return ChatResponse(
+            return _chat_response(
                 reply=(
                     "Avant de continuer, quel est ton prénom et ton nom ? "
                     "(ex: Paul Murt)"
@@ -2533,7 +2512,7 @@ def agent_chat(
             and global_state.get("onboarding_substep") == "profile_collect"
         )
         if payload.request_greeting and is_onboarding_profile_collect:
-            return ChatResponse(
+            return _chat_response(
                 reply=(
                     "Salut 👋\n\nJe suis ton assistant financier. Je t’aide à analyser tes dépenses et à construire un budget clair, automatiquement.\n\nOn va faire ça en 3 étapes :\n1) créer ton profil\n2) ajouter ta banque\n3) importer un relevé récent pour générer ton premier rapport.\n\nCommençons 🙂\n\nQuel est ton prénom et ton nom ?"
                 ),
@@ -2624,7 +2603,7 @@ def agent_chat(
                             user_id=auth_user_id,
                             chat_state=updated_chat_state,
                         )
-                        return ChatResponse(
+                        return _chat_response(
                             reply=(
                                 f"Parfait ✅\n\nRécapitulatif de ton profil :\n- Prénom: {first_name}\n- Nom: {last_name}\n- Date de naissance: {birth_date_iso}\n\n"
                                 "Tout est correct ?"
@@ -2651,7 +2630,7 @@ def agent_chat(
                         user_id=auth_user_id,
                         chat_state=updated_chat_state,
                     )
-                    return ChatResponse(reply=reply, tool_result=None, plan=None)
+                    return _chat_response(reply=reply, tool_result=None, plan=None)
 
                 if substep == "profile_confirm":
                     correction_pending = bool(state_dict.get("profile_correction_choice_pending", False))
@@ -2673,7 +2652,7 @@ def agent_chat(
                             user_id=auth_user_id,
                             chat_state=updated_chat_state,
                         )
-                        return ChatResponse(
+                        return _chat_response(
                             reply=(
                                 "Super 👍\n\nMaintenant, on ajoute ta banque. Ça me permet de lier correctement tes relevés et de classer tes transactions.\n\n"
                                 "Quelle banque utilises-tu ? (ex: UBS, Revolut)"
@@ -2700,7 +2679,7 @@ def agent_chat(
                             user_id=auth_user_id,
                             chat_state=updated_chat_state,
                         )
-                        return ChatResponse(
+                        return _chat_response(
                             reply=(
                                 "Pas de souci 🙂\n\nDis-moi ce que tu veux corriger :\n1) prénom/nom\n2) date de naissance\n\nRéponds simplement par 1 ou 2."
                             ),
@@ -2729,7 +2708,7 @@ def agent_chat(
                             user_id=auth_user_id,
                             chat_state=updated_chat_state,
                         )
-                        return ChatResponse(reply="Ok. Quel est ton prénom et ton nom ?", tool_result=None, plan=None)
+                        return _chat_response(reply="Ok. Quel est ton prénom et ton nom ?", tool_result=None, plan=None)
                     if correction_pending and normalized_confirmation == "2":
                         if hasattr(profiles_repository, "update_profile_fields"):
                             profiles_repository.update_profile_fields(profile_id=profile_id, set_dict={"birth_date": ""})
@@ -2751,22 +2730,22 @@ def agent_chat(
                             user_id=auth_user_id,
                             chat_state=updated_chat_state,
                         )
-                        return ChatResponse(reply="Ok. Quelle est ta date de naissance ?", tool_result=None, plan=None)
+                        return _chat_response(reply="Ok. Quelle est ta date de naissance ?", tool_result=None, plan=None)
                     if correction_pending:
-                        return ChatResponse(reply="Réponds par 1 ou 2.", tool_result=None, plan=None)
-                    return ChatResponse(reply="Tout est correct ?", tool_result=_build_quick_reply_yes_no_ui_action(), plan=None)
+                        return _chat_response(reply="Réponds par 1 ou 2.", tool_result=None, plan=None)
+                    return _chat_response(reply="Tout est correct ?", tool_result=_build_quick_reply_yes_no_ui_action(), plan=None)
 
             mode = global_state.get("mode")
             onboarding_step = global_state.get("onboarding_step")
 
             if mode == "onboarding" and onboarding_step == "import" and global_state.get("onboarding_substep") == "import_wait_ready":
                 if _is_yes(payload.message):
-                    return ChatResponse(
+                    return _chat_response(
                         reply="Parfait 🙂\n\nClique sur « Importer maintenant » pour sélectionner ton fichier CSV.",
                         tool_result=_build_import_file_ui_request(),
                         plan=None,
                     )
-                return ChatResponse(
+                return _chat_response(
                     reply=_IMPORT_WAIT_READY_REPLY,
                     tool_result=_build_quick_reply_yes_no_ui_action(),
                     plan=None,
@@ -2788,7 +2767,7 @@ def agent_chat(
                     user_id=auth_user_id,
                     chat_state=updated_chat_state,
                 )
-                return ChatResponse(
+                return _chat_response(
                     reply="Avant de continuer, indique-moi ta/tes banques (ex: ‘UBS, Revolut’).",
                     tool_result=None,
                     plan=None,
@@ -2808,7 +2787,7 @@ def agent_chat(
                     user_id=auth_user_id,
                     chat_state=updated_chat_state,
                 )
-                return ChatResponse(
+                return _chat_response(
                     reply="Avant de continuer, indique-moi ta/tes banques (ex: ‘UBS, Revolut’).",
                     tool_result=None,
                     plan=None,
@@ -2839,7 +2818,7 @@ def agent_chat(
                     user_id=auth_user_id,
                     chat_state=updated_chat_state,
                 )
-                return ChatResponse(
+                return _chat_response(
                     reply=_IMPORT_WAIT_READY_REPLY,
                     tool_result=_build_quick_reply_yes_no_ui_action(),
                     plan=None,
@@ -2867,12 +2846,12 @@ def agent_chat(
                                 user_id=auth_user_id,
                                 chat_state=updated_chat_state,
                             )
-                            return ChatResponse(
+                            return _chat_response(
                                 reply=f"J’ai noté: {accounts_display}.\n\nC’est correct ?",
                                 tool_result=_build_quick_reply_yes_no_ui_action(),
                                 plan=None,
                             )
-                        return ChatResponse(
+                        return _chat_response(
                             reply="Il faut au moins une banque pour continuer l’onboarding.",
                             tool_result=None,
                             plan=None,
@@ -2894,7 +2873,7 @@ def agent_chat(
                             user_id=auth_user_id,
                             chat_state=updated_chat_state,
                         )
-                        return ChatResponse(
+                        return _chat_response(
                             reply=f"J’ai noté: {accounts_display}.\n\nC’est correct ?",
                             tool_result=_build_quick_reply_yes_no_ui_action(),
                             plan=None,
@@ -2905,13 +2884,13 @@ def agent_chat(
                         normalized_message = payload.message.lower()
                         message_looks_like_request = any(hint in normalized_message for hint in _BANK_ACCOUNTS_REQUEST_HINTS)
                         if message_looks_like_request:
-                            return ChatResponse(
+                            return _chat_response(
                                 reply="Avant de continuer, indique-moi tes banques (ex: UBS, Revolut).",
                                 tool_result=None,
                                 plan=None,
                             )
                         if unknown_segments:
-                            return ChatResponse(
+                            return _chat_response(
                                 reply=(
                                     f"Je n’ai pas reconnu: {', '.join(unknown_segments)}. "
                                     "Peux-tu donner le nom exact de ta banque ?"
@@ -2919,7 +2898,7 @@ def agent_chat(
                                 tool_result=None,
                                 plan=None,
                             )
-                        return ChatResponse(
+                        return _chat_response(
                             reply="Indique-moi tes banques/comptes (ex: 'UBS, Revolut').",
                             tool_result=None,
                             plan=None,
@@ -2946,7 +2925,7 @@ def agent_chat(
                         chat_state=updated_chat_state,
                     )
 
-                    return ChatResponse(
+                    return _chat_response(
                         reply=f"J’ai noté: {accounts_display}.\n\nC’est correct ?",
                         tool_result=_build_quick_reply_yes_no_ui_action(),
                         plan=None,
@@ -2968,14 +2947,14 @@ def agent_chat(
                             user_id=auth_user_id,
                             chat_state=updated_chat_state,
                         )
-                        return ChatResponse(
+                        return _chat_response(
                             reply="Ok. Dis-moi la/les banques à ajouter ou corriger (ex: UBS, Revolut).",
                             tool_result=None,
                             plan=None,
                         )
                     if _is_yes(payload.message):
                         if not existing_accounts:
-                            return ChatResponse(
+                            return _chat_response(
                                 reply="Il faut au moins une banque pour continuer l’onboarding.",
                                 tool_result=None,
                                 plan=None,
@@ -3009,7 +2988,7 @@ def agent_chat(
                                 user_id=auth_user_id,
                                 chat_state=updated_chat_state,
                             )
-                            return ChatResponse(
+                            return _chat_response(
                                 reply=_IMPORT_WAIT_READY_REPLY,
                                 tool_result=_build_quick_reply_yes_no_ui_action(),
                                 plan=None,
@@ -3020,18 +2999,18 @@ def agent_chat(
                             user_id=auth_user_id,
                             chat_state=updated_chat_state,
                         )
-                        return ChatResponse(
+                        return _chat_response(
                             reply=_IMPORT_WAIT_READY_REPLY,
                             tool_result=_build_quick_reply_yes_no_ui_action(),
                             plan=None,
                         )
-                    return ChatResponse(reply="C’est correct ? Réponds ✅ ou ❌.", tool_result=_build_quick_reply_yes_no_ui_action(), plan=None)
+                    return _chat_response(reply="C’est correct ? Réponds ✅ ou ❌.", tool_result=_build_quick_reply_yes_no_ui_action(), plan=None)
 
             if mode == "onboarding" and onboarding_step == "import" and global_state.get("onboarding_substep") == "import_select_account" and hasattr(profiles_repository, "list_bank_accounts"):
                 existing_accounts = profiles_repository.list_bank_accounts(profile_id=profile_id)
                 matched_account = _match_bank_account_name(payload.message, existing_accounts)
                 if matched_account is None:
-                    return ChatResponse(
+                    return _chat_response(
                         reply=(
                             "Je ne trouve pas ce compte. Comptes dispo: "
                             f"{_format_accounts_for_reply(existing_accounts)}"
@@ -3054,7 +3033,7 @@ def agent_chat(
                 )
                 ui_request = _build_import_file_ui_request(updated_state.get("import_context"))
                 account_name = str(matched_account.get("name", "ce compte")).strip() or "ce compte"
-                return ChatResponse(
+                return _chat_response(
                     reply=f"On peut importer ton premier relevé maintenant.\n\nEnvoie-moi le fichier CSV de ton compte {account_name}.",
                     tool_result=ui_request,
                     plan=None,
@@ -3088,7 +3067,7 @@ def agent_chat(
                         chat_state=updated_chat_state,
                     )
 
-                    return ChatResponse(
+                    return _chat_response(
                         reply=(
                             "Import terminé ✅\n\nJe viens de classer tes dépenses et de générer ton rapport mensuel.\n\n"
                             "Es-tu prêt à voir ton rapport mensuel ?"
@@ -3148,7 +3127,7 @@ def agent_chat(
                         user_id=auth_user_id,
                         chat_state=updated_chat_state,
                     )
-                    return ChatResponse(
+                    return _chat_response(
                         reply=(
                             "Parfait, le voici 📄\n\n"
                             "Petit conseil : au début, une partie des dépenses peut tomber dans « Autres ».\n\nPlus tu personnalises tes catégories, plus le rapport devient précis.\n\n"
@@ -3158,12 +3137,12 @@ def agent_chat(
                         plan=None,
                     )
                 if _is_no(payload.message):
-                    return ChatResponse(
+                    return _chat_response(
                         reply="Ok 🙂 Dis-moi quand tu veux le voir.",
                         tool_result=None,
                         plan=None,
                     )
-                return ChatResponse(reply="Réponds par oui ou non.", tool_result=None, plan=None)
+                return _chat_response(reply="Réponds par oui ou non.", tool_result=None, plan=None)
 
         if _should_prompt_household_link_setup(
             global_state=global_state,
@@ -3186,7 +3165,7 @@ def agent_chat(
                 user_id=auth_user_id,
                 chat_state=updated_chat_state,
             )
-            return ChatResponse(
+            return _chat_response(
                 reply=_HOUSEHOLD_LINK_AUTO_PROMPT_REPLY,
                 tool_result=None,
                 plan=None,
@@ -3231,7 +3210,7 @@ def agent_chat(
                         tool_payload=tool_payload,
                         pending_result=pending_result,
                     )
-                    return ChatResponse(
+                    return _chat_response(
                         reply=pending_reply,
                         tool_result=serialized_pending_result,
                         plan=jsonable_encoder({"tool_name": tool_name, "payload": tool_payload}),
@@ -3258,7 +3237,7 @@ def agent_chat(
                 user_id=auth_user_id,
                 chat_state=updated_chat_state,
             )
-            return ChatResponse(reply=reply_text, tool_result=link_tool_result, plan=None)
+            return _chat_response(reply=reply_text, tool_result=link_tool_result, plan=None)
 
         if _is_account_link_setup_intent(payload.message):
             existing_link = None
@@ -3296,13 +3275,13 @@ def agent_chat(
                 user_id=auth_user_id,
                 chat_state=updated_chat_state,
             )
-            return ChatResponse(reply=reply_text, tool_result=link_tool_result, plan=None)
+            return _chat_response(reply=reply_text, tool_result=link_tool_result, plan=None)
 
         share_rule_command = parse_share_rule_command(payload.message)
         if isinstance(share_rule_command, dict):
             error_code = share_rule_command.get("error")
             if error_code == "category_unknown":
-                return ChatResponse(
+                return _chat_response(
                     reply=(
                         "Je n’ai pas reconnu la catégorie. Catégories possibles: "
                         "logement, alimentation, assurance, abonnements, transport, loisirs, habits, cadeaux."
@@ -3311,7 +3290,7 @@ def agent_chat(
                     plan=None,
                 )
             if error_code == "invalid_boost":
-                return ChatResponse(
+                return _chat_response(
                     reply="Je n’ai pas compris le boost. Utilise par exemple: ‘boost logement +0.2’ (valeur > 0 et <= 1).",
                     tool_result=None,
                     plan=None,
@@ -3319,7 +3298,7 @@ def agent_chat(
 
             share_rules_repository = _try_get_share_rules_repository()
             if share_rules_repository is None:
-                return ChatResponse(reply="Fonction indisponible (share rules disabled)", tool_result=None, plan=None)
+                return _chat_response(reply="Fonction indisponible (share rules disabled)", tool_result=None, plan=None)
 
             share_rules_repository.upsert_share_rule(
                 profile_id=profile_id,
@@ -3366,7 +3345,7 @@ def agent_chat(
                     link_state = maybe_link
 
             if not isinstance(link_state, dict):
-                return ChatResponse(
+                return _chat_response(
                     reply=f"{confirmation}\n{undo_hint}\nDis ‘valider partage’ pour voir les nouvelles suggestions.",
                     tool_result=None,
                     plan=None,
@@ -3376,7 +3355,7 @@ def agent_chat(
                 _seed_shared_expense_suggestions_after_link_setup(profile_id=profile_id, link_state=link_state)
                 validation_reply, validation_task = handle_shared_expenses_validation_request(profile_id=profile_id)
             except HTTPException:
-                return ChatResponse(
+                return _chat_response(
                     reply=f"{confirmation}\n{undo_hint}\nDis ‘valider partage’ pour voir les nouvelles suggestions.",
                     tool_result=None,
                     plan=None,
@@ -3393,12 +3372,12 @@ def agent_chat(
                 chat_state=updated_chat_state,
             )
             if validation_task is None:
-                return ChatResponse(
+                return _chat_response(
                     reply=f"{confirmation}\n{undo_hint}\nDis ‘valider partage’ pour voir les nouvelles suggestions.",
                     tool_result=None,
                     plan=None,
                 )
-            return ChatResponse(reply=f"{confirmation}\n{undo_hint}\n\n{validation_reply}", tool_result=None, plan=None)
+            return _chat_response(reply=f"{confirmation}\n{undo_hint}\n\n{validation_reply}", tool_result=None, plan=None)
 
         if isinstance(shared_expense_active_task, dict) and shared_expense_active_task.get("type") == "shared_expense_confirm":
             reply_text, updated_shared_task = _execute_shared_expense_confirmation_actions(
@@ -3416,7 +3395,7 @@ def agent_chat(
                 user_id=auth_user_id,
                 chat_state=updated_chat_state,
             )
-            return ChatResponse(reply=reply_text, tool_result=None, plan=None)
+            return _chat_response(reply=reply_text, tool_result=None, plan=None)
 
         if _is_shared_expense_validation_intent(payload.message):
             reply_text, updated_shared_task = handle_shared_expenses_validation_request(profile_id=profile_id)
@@ -3430,7 +3409,7 @@ def agent_chat(
                 user_id=auth_user_id,
                 chat_state=updated_chat_state,
             )
-            return ChatResponse(reply=reply_text, tool_result=None, plan=None)
+            return _chat_response(reply=reply_text, tool_result=None, plan=None)
 
         if mode == "free_chat" and _is_pdf_report_request(payload.message):
             month_value, start_date_value, end_date_value = _resolve_report_period_from_message(
@@ -3454,7 +3433,7 @@ def agent_chat(
             elif start_date_value and end_date_value:
                 plan_payload["start_date"] = start_date_value
                 plan_payload["end_date"] = end_date_value
-            return ChatResponse(
+            return _chat_response(
                 reply=f"Voici ton rapport PDF pour {period_label} : [Ouvrir le PDF]({report_url})",
                 tool_result=_build_open_pdf_ui_request(report_url),
                 plan={"tool_name": "finance_report_spending_pdf", "payload": plan_payload},
@@ -3573,12 +3552,12 @@ def agent_chat(
         if reminder:
             reply_text = f"{reply_text}\n\n{reminder}"
 
-        return ChatResponse(reply=reply_text, tool_result=safe_tool_result, plan=safe_plan)
+        return _chat_response(reply=reply_text, tool_result=safe_tool_result, plan=safe_plan)
     except HTTPException as exc:
         if exc.status_code in {401, 403}:
             raise
         logger.exception("agent_chat_http_exception", exc_info=exc)
-        return ChatResponse(
+        return _chat_response(
             reply="Une erreur est survenue côté serveur. Réessaie dans quelques secondes.",
             tool_result={"error": "internal_server_error"},
             plan=None,
@@ -3589,7 +3568,7 @@ def agent_chat(
             "agent_chat_unhandled_error",
             extra={"path": "/agent/chat", "profile_id": str(profile_id) if profile_id is not None else None},
         )
-        return ChatResponse(
+        return _chat_response(
             reply="Une erreur est survenue côté serveur. Réessaie dans quelques secondes.",
             tool_result={"error": "internal_server_error"},
             plan=None,
