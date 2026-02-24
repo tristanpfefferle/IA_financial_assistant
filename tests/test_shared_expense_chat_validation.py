@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 import agent.api as agent_api
 from agent.api import app, parse_shared_expense_confirmation
 from backend.db.supabase_client import SupabaseRequestError
+from backend.repositories.share_rules_repository import InMemoryShareRulesRepository
 from backend.repositories.shared_expenses_repository import InMemorySharedExpensesRepository, SharedExpenseSuggestionRow
 
 
@@ -586,3 +587,69 @@ def test_inmemory_shared_expense_suggestions_dedup_uses_external_label() -> None
     )
 
     assert created == 2
+
+
+def test_agent_chat_share_rule_force_share_command(monkeypatch) -> None:
+    monkeypatch.setattr(
+        agent_api,
+        "get_user_from_bearer_token",
+        lambda _token: {"id": str(AUTH_USER_ID), "email": "user@example.com"},
+    )
+    repo = _Repo()
+    rules_repository = InMemoryShareRulesRepository()
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "_try_get_share_rules_repository", lambda: rules_repository)
+
+    response = client.post("/agent/chat", json={"message": "toutes mes dépenses logement sont partagées"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert "Règle enregistrée" in response.json()["reply"]
+
+    rules = rules_repository.list_share_rules(PROFILE_ID)
+    assert len(rules) == 1
+    assert rules[0]["rule_type"] == "category"
+    assert rules[0]["rule_key"] == "housing"
+    assert rules[0]["action"] == "force_share"
+
+
+def test_agent_chat_share_rule_boost_command(monkeypatch) -> None:
+    monkeypatch.setattr(
+        agent_api,
+        "get_user_from_bearer_token",
+        lambda _token: {"id": str(AUTH_USER_ID), "email": "user@example.com"},
+    )
+    repo = _Repo()
+    rules_repository = InMemoryShareRulesRepository()
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "_try_get_share_rules_repository", lambda: rules_repository)
+
+    response = client.post("/agent/chat", json={"message": "boost logement +0.2"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert "Règle enregistrée" in response.json()["reply"]
+
+    rules = rules_repository.list_share_rules(PROFILE_ID)
+    assert len(rules) == 1
+    assert rules[0]["action"] == "boost"
+    assert rules[0]["boost_value"] == Decimal("0.2")
+
+
+def test_agent_chat_share_rule_unknown_category(monkeypatch) -> None:
+    monkeypatch.setattr(
+        agent_api,
+        "get_user_from_bearer_token",
+        lambda _token: {"id": str(AUTH_USER_ID), "email": "user@example.com"},
+    )
+    repo = _Repo()
+    rules_repository = InMemoryShareRulesRepository()
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "_try_get_share_rules_repository", lambda: rules_repository)
+
+    response = client.post("/agent/chat", json={"message": "partage licornes"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert "Je n’ai pas reconnu la catégorie" in response.json()["reply"]
+    assert rules_repository.list_share_rules(PROFILE_ID) == []

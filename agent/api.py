@@ -224,6 +224,23 @@ _ACCOUNT_LINK_SETUP_INTENT_KEYWORDS = (
     "colocataire",
 )
 
+_SHARE_RULE_CATEGORY_ALIASES: dict[str, str] = {
+    "logement": "housing",
+    "housing": "housing",
+    "alimentation": "food",
+    "food": "food",
+    "assurance": "insurance",
+    "insurance": "insurance",
+    "abonnements": "subscriptions",
+    "subscriptions": "subscriptions",
+    "transport": "transport",
+    "loisirs": "hobbies",
+    "hobbies": "hobbies",
+    "habits": "habits",
+    "gifts": "gifts",
+    "cadeaux": "gifts",
+}
+
 _HOUSEHOLD_LINK_AUTO_PROMPT_REPLY = (
     "Maintenant que tu as vu ton premier rapport de dépenses, j’aimerais affiner: "
     "certaines dépenses sont-elles communes à ton foyer (conjoint/coloc) ?"
@@ -364,9 +381,104 @@ def _build_open_pdf_ui_request(url: str) -> dict[str, str]:
 
 
 def _normalize_user_text_for_matching(value: str) -> str:
-    normalized = unicodedata.normalize("NFKD", value)
+    return _normalize_text_basic(value)
+
+
+def _normalize_text_basic(s: str) -> str:
+    """Normalize user text for deterministic command parsing."""
+
+    normalized = unicodedata.normalize("NFKD", s.replace("’", "'").replace("`", "'"))
     ascii_only = "".join(char for char in normalized if not unicodedata.combining(char))
     return re.sub(r"\s+", " ", ascii_only.lower()).strip()
+
+
+def _parse_category_norm_from_text(fragment: str) -> str | None:
+    """Resolve one supported category alias to canonical category key."""
+
+    normalized = _normalize_text_basic(fragment)
+    category = _SHARE_RULE_CATEGORY_ALIASES.get(normalized)
+    if category is not None:
+        return category
+
+    compact = re.sub(r"[^a-z]", "", normalized)
+    for alias, category_norm in _SHARE_RULE_CATEGORY_ALIASES.items():
+        alias_compact = re.sub(r"[^a-z]", "", alias)
+        if compact == alias_compact:
+            return category_norm
+    return None
+
+
+def parse_share_rule_command(message: str) -> dict[str, Any] | None:
+    """Parse deterministic FR share-rule chat command."""
+
+    normalized = _normalize_text_basic(message)
+
+    share_patterns = (
+        re.compile(r"^toutes mes (depenses|transactions) (?P<cat>.+?) sont partagees$"),
+        re.compile(r"^(partage|toujours partager) (?P<cat>.+)$"),
+    )
+    for pattern in share_patterns:
+        match = pattern.match(normalized)
+        if not match:
+            continue
+        category_norm = _parse_category_norm_from_text(str(match.group("cat") or ""))
+        if category_norm is None:
+            return {"error": "category_unknown"}
+        return {
+            "rule_type": "category",
+            "rule_key": category_norm,
+            "action": "force_share",
+            "boost_value": None,
+        }
+
+    exclude_patterns = (
+        re.compile(r"^ne (jamais )?partage (pas )?(?P<cat>.+)$"),
+        re.compile(r"^ne partage pas (?P<cat>.+)$"),
+        re.compile(r"^stop partage (?P<cat>.+)$"),
+    )
+    for pattern in exclude_patterns:
+        match = pattern.match(normalized)
+        if not match:
+            continue
+        category_norm = _parse_category_norm_from_text(str(match.group("cat") or ""))
+        if category_norm is None:
+            return {"error": "category_unknown"}
+        return {
+            "rule_type": "category",
+            "rule_key": category_norm,
+            "action": "force_exclude",
+            "boost_value": None,
+        }
+
+    boost_patterns = (
+        re.compile(r"^boost( partage)? (?P<cat>.+?) (?P<val>[+-]?\d+(\.\d+)?)$"),
+        re.compile(r"^augmente partage (?P<cat>.+?) (?P<val>[+-]?\d+(\.\d+)?)$"),
+    )
+    for pattern in boost_patterns:
+        match = pattern.match(normalized)
+        if not match:
+            continue
+        category_norm = _parse_category_norm_from_text(str(match.group("cat") or ""))
+        if category_norm is None:
+            return {"error": "category_unknown"}
+        raw_val = str(match.group("val") or "").strip()
+        try:
+            boost_value = Decimal(raw_val)
+        except InvalidOperation:
+            return {"error": "invalid_boost"}
+        if boost_value <= Decimal("0") or boost_value > Decimal("1"):
+            return {"error": "invalid_boost"}
+        return {
+            "rule_type": "category",
+            "rule_key": category_norm,
+            "action": "boost",
+            "boost_value": boost_value,
+        }
+
+    if normalized.startswith("boost") or normalized.startswith("augmente partage"):
+        return {"error": "invalid_boost"}
+
+    return None
 
 
 def _is_shared_expense_validation_intent(message: str) -> bool:
@@ -3079,6 +3191,108 @@ def agent_chat(
                 chat_state=updated_chat_state,
             )
             return ChatResponse(reply=reply_text, tool_result=link_tool_result, plan=None)
+
+        share_rule_command = parse_share_rule_command(payload.message)
+        if isinstance(share_rule_command, dict):
+            error_code = share_rule_command.get("error")
+            if error_code == "category_unknown":
+                return ChatResponse(
+                    reply=(
+                        "Je n’ai pas reconnu la catégorie. Catégories possibles: "
+                        "logement, alimentation, assurance, abonnements, transport, loisirs, habits, cadeaux."
+                    ),
+                    tool_result=None,
+                    plan=None,
+                )
+            if error_code == "invalid_boost":
+                return ChatResponse(
+                    reply="Je n’ai pas compris le boost. Utilise par exemple: ‘boost logement +0.2’ (valeur > 0 et <= 1).",
+                    tool_result=None,
+                    plan=None,
+                )
+
+            share_rules_repository = _try_get_share_rules_repository()
+            if share_rules_repository is None:
+                return ChatResponse(reply="Fonction indisponible (share rules disabled)", tool_result=None, plan=None)
+
+            share_rules_repository.upsert_share_rule(
+                profile_id=profile_id,
+                rule_type=str(share_rule_command["rule_type"]),
+                rule_key=str(share_rule_command["rule_key"]),
+                action=str(share_rule_command["action"]),
+                boost_value=share_rule_command.get("boost_value"),
+            )
+
+            requested_category = str(share_rule_command["rule_key"])
+            display_category = next(
+                (
+                    alias
+                    for alias, category_norm in _SHARE_RULE_CATEGORY_ALIASES.items()
+                    if category_norm == requested_category and alias in {"logement", "alimentation", "assurance", "abonnements", "transport", "loisirs", "habits", "cadeaux"}
+                ),
+                requested_category,
+            )
+            action = str(share_rule_command["action"])
+            if action == "force_share":
+                confirmation = f"Règle enregistrée ✅ : {display_category} → toujours partagé (score forcé à 1)."
+                undo_hint = f"Pour annuler: ‘ne jamais partager {display_category}’."
+            elif action == "force_exclude":
+                confirmation = f"Règle enregistrée ✅ : {display_category} → ne jamais partager (score forcé à 0)."
+                undo_hint = f"Pour annuler: ‘partage {display_category}’."
+            else:
+                boost_value = share_rule_command.get("boost_value")
+                confirmation = f"Règle enregistrée ✅ : {display_category} → boost +{boost_value}."
+                undo_hint = f"Pour annuler: ‘ne jamais partager {display_category}’ ou ‘partage {display_category}’."
+
+            link_state = None
+            state_global = state_dict.get("global_state") if isinstance(state_dict, dict) else None
+            if isinstance(state_global, dict):
+                household_link = state_global.get("household_link")
+                if isinstance(household_link, dict):
+                    link_state = household_link
+            if link_state is None and hasattr(profiles_repository, "get_active_household_link"):
+                try:
+                    maybe_link = profiles_repository.get_active_household_link(profile_id=profile_id)
+                except Exception:
+                    logger.exception("share_rule_chat_get_active_household_link_failed profile_id=%s", profile_id)
+                    maybe_link = None
+                if isinstance(maybe_link, dict):
+                    link_state = maybe_link
+
+            if not isinstance(link_state, dict):
+                return ChatResponse(
+                    reply=f"{confirmation}\n{undo_hint}\nDis ‘valider partage’ pour voir les nouvelles suggestions.",
+                    tool_result=None,
+                    plan=None,
+                )
+
+            try:
+                _seed_shared_expense_suggestions_after_link_setup(profile_id=profile_id, link_state=link_state)
+                validation_reply, validation_task = handle_shared_expenses_validation_request(profile_id=profile_id)
+            except HTTPException:
+                return ChatResponse(
+                    reply=f"{confirmation}\n{undo_hint}\nDis ‘valider partage’ pour voir les nouvelles suggestions.",
+                    tool_result=None,
+                    plan=None,
+                )
+
+            updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+            if validation_task is None:
+                updated_chat_state.pop("active_task", None)
+            else:
+                updated_chat_state["active_task"] = validation_task
+            profiles_repository.update_chat_state(
+                profile_id=profile_id,
+                user_id=auth_user_id,
+                chat_state=updated_chat_state,
+            )
+            if validation_task is None:
+                return ChatResponse(
+                    reply=f"{confirmation}\n{undo_hint}\nDis ‘valider partage’ pour voir les nouvelles suggestions.",
+                    tool_result=None,
+                    plan=None,
+                )
+            return ChatResponse(reply=f"{confirmation}\n{undo_hint}\n\n{validation_reply}", tool_result=None, plan=None)
 
         if isinstance(shared_expense_active_task, dict) and shared_expense_active_task.get("type") == "shared_expense_confirm":
             reply_text, updated_shared_task = _execute_shared_expense_confirmation_actions(
