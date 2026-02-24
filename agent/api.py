@@ -14,7 +14,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import lru_cache
 from typing import Any
 from datetime import date, datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi.encoders import jsonable_encoder
 from fastapi import FastAPI, Header, HTTPException
@@ -52,6 +52,26 @@ from shared.models import DateRange, RelevesDirection, ToolError, ToolErrorCode
 
 
 logger = logging.getLogger(__name__)
+
+
+def _is_debug_request(request: Request) -> bool:
+    """Return whether debug error details should be included in responses."""
+
+    if os.getenv("DEBUG_ENDPOINTS_ENABLED") == "true":
+        return True
+
+    debug_header = request.headers.get("x-debug")
+    if isinstance(debug_header, str) and debug_header.lower() in {"1", "true"}:
+        return True
+
+    debug_param = request.query_params.get("debug")
+    return isinstance(debug_param, str) and debug_param.lower() in {"1", "true"}
+
+
+def _new_error_id() -> str:
+    """Return a unique error identifier for correlating logs and API responses."""
+
+    return str(uuid4())
 
 
 def _normalize_chat_state(value: Any) -> dict[str, Any]:
@@ -2036,15 +2056,19 @@ logger.info("cors_allow_origins=%s", ALLOW_ORIGINS)
 async def handle_unexpected_exception(request: Request, exc: Exception) -> JSONResponse:
     """Return a JSON 500 response for unhandled exceptions."""
 
+    error_id = _new_error_id()
+
     logger.exception(
-        "unhandled_exception method=%s path=%s exception_type=%s message=%s",
-        request.method,
-        request.url.path,
-        type(exc).__name__,
-        str(exc),
-        exc_info=exc,
+        "unhandled_exception",
+        extra={"error_id": error_id, "path": request.url.path, "method": request.method},
     )
-    return JSONResponse(status_code=500, content={"detail": "Internal Server Error"})
+
+    content: dict[str, str] = {"detail": "Internal Server Error", "error_id": error_id}
+    if _is_debug_request(request):
+        content["exception_type"] = type(exc).__name__
+        content["exception_message"] = str(exc)
+
+    return JSONResponse(status_code=500, content=content, headers={"X-Error-Id": error_id})
 
 
 @app.get("/health")
@@ -3858,28 +3882,32 @@ def get_spending_report_json(
     end_date: str | None = None,
     month: str | None = None,
 ) -> dict[str, Any]:
-    auth_user_id, profile_id = _resolve_authenticated_profile(request, authorization)
-    profiles_repository = get_profiles_repository()
-    chat_state = profiles_repository.get_chat_state(profile_id=profile_id, user_id=auth_user_id)
-    state_dict = chat_state.get("state") if isinstance(chat_state, dict) else None
+    try:
+        auth_user_id, profile_id = _resolve_authenticated_profile(request, authorization)
+        profiles_repository = get_profiles_repository()
+        chat_state = profiles_repository.get_chat_state(profile_id=profile_id, user_id=auth_user_id)
+        state_dict = chat_state.get("state") if isinstance(chat_state, dict) else None
 
-    period_start, period_end = _resolve_report_date_range(
-        month=month,
-        start_date=start_date,
-        end_date=end_date,
-        state_dict=state_dict if isinstance(state_dict, dict) else None,
-        profile_id=profile_id,
-    )
-    logger.info(
-        "finance_spending_report_requested",
-        extra={
-            "profile_id": str(profile_id),
-            "start_date": period_start.isoformat(),
-            "end_date": period_end.isoformat(),
-            "format": "json",
-        },
-    )
-    return _build_spending_report_payload(profile_id=profile_id, period_start=period_start, period_end=period_end)
+        period_start, period_end = _resolve_report_date_range(
+            month=month,
+            start_date=start_date,
+            end_date=end_date,
+            state_dict=state_dict if isinstance(state_dict, dict) else None,
+            profile_id=profile_id,
+        )
+        logger.info(
+            "finance_spending_report_requested",
+            extra={
+                "profile_id": str(profile_id),
+                "start_date": period_start.isoformat(),
+                "end_date": period_end.isoformat(),
+                "format": "json",
+            },
+        )
+        return _build_spending_report_payload(profile_id=profile_id, period_start=period_start, period_end=period_end)
+    except Exception:
+        logger.exception("spending_report_failed", extra={"format": "json"})
+        raise
 
 
 @app.get("/finance/reports/spending.pdf")
@@ -3890,37 +3918,43 @@ def get_spending_report_pdf(
     end_date: str | None = None,
     month: str | None = None,
 ) -> Response:
-    auth_user_id, profile_id = _resolve_authenticated_profile(request, authorization)
-    profiles_repository = get_profiles_repository()
-    chat_state = profiles_repository.get_chat_state(profile_id=profile_id, user_id=auth_user_id)
-    state_dict = chat_state.get("state") if isinstance(chat_state, dict) else None
+    try:
+        auth_user_id, profile_id = _resolve_authenticated_profile(request, authorization)
+        profiles_repository = get_profiles_repository()
+        chat_state = profiles_repository.get_chat_state(profile_id=profile_id, user_id=auth_user_id)
+        state_dict = chat_state.get("state") if isinstance(chat_state, dict) else None
 
-    period_start, period_end = _resolve_report_date_range(
-        month=month,
-        start_date=start_date,
-        end_date=end_date,
-        state_dict=state_dict if isinstance(state_dict, dict) else None,
-        profile_id=profile_id,
-    )
-    logger.info(
-        "finance_spending_report_requested",
-        extra={
-            "profile_id": str(profile_id),
-            "start_date": period_start.isoformat(),
-            "end_date": period_end.isoformat(),
-            "format": "pdf",
-        },
-    )
+        period_start, period_end = _resolve_report_date_range(
+            month=month,
+            start_date=start_date,
+            end_date=end_date,
+            state_dict=state_dict if isinstance(state_dict, dict) else None,
+            profile_id=profile_id,
+        )
+        logger.info(
+            "finance_spending_report_requested",
+            extra={
+                "profile_id": str(profile_id),
+                "start_date": period_start.isoformat(),
+                "end_date": period_end.isoformat(),
+                "format": "pdf",
+            },
+        )
 
-    report_payload = _build_spending_report_payload(profile_id=profile_id, period_start=period_start, period_end=period_end)
+        report_payload = _build_spending_report_payload(profile_id=profile_id, period_start=period_start, period_end=period_end)
 
-    filename_period = period_start.strftime("%Y-%m") if period_start.day == 1 else f"{period_start.isoformat()}_{period_end.isoformat()}"
-    pdf_bytes = generate_spending_report_pdf(_build_spending_report_pdf_data(report_payload))
-    return Response(
-        content=pdf_bytes,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f'inline; filename="rapport-depenses-{filename_period}.pdf"'},
-    )
+        filename_period = (
+            period_start.strftime("%Y-%m") if period_start.day == 1 else f"{period_start.isoformat()}_{period_end.isoformat()}"
+        )
+        pdf_bytes = generate_spending_report_pdf(_build_spending_report_pdf_data(report_payload))
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'inline; filename="rapport-depenses-{filename_period}.pdf"'},
+        )
+    except Exception:
+        logger.exception("spending_report_failed", extra={"format": "pdf"})
+        raise
 
 
 @app.post("/finance/releves/import")
