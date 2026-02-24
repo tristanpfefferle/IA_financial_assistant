@@ -2287,7 +2287,7 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.post("/agent/chat", response_model=ChatResponse, response_model_exclude_unset=True)
+@app.post("/agent/chat", response_model=ChatResponse, response_model_exclude_none=True)
 def agent_chat(
     request: Request,
     payload: ChatRequest,
