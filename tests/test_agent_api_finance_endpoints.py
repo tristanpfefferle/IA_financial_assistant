@@ -1542,3 +1542,51 @@ def test_spending_report_json_neutralizes_when_shared_expenses_table_missing(mon
         "net_balance": "0",
         "effective_total": "80",
     }
+
+def test_spending_report_json_resolves_transaction_category_from_category_id(monkeypatch) -> None:
+    _mock_authenticated(monkeypatch)
+
+    class _Repo:
+        def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None):
+            return PROFILE_ID
+
+        def get_chat_state(self, *, profile_id: UUID, user_id: UUID):
+            return {"state": {"last_query": {"month": "2026-01"}}}
+
+        def get_profile_category_name_by_id(self, *, profile_id: UUID, category_id: UUID) -> str | None:
+            assert profile_id == PROFILE_ID
+            assert category_id == UUID("11111111-2222-3333-4444-555555555555")
+            return "Alimentation"
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: _Repo())
+
+    class _Router:
+        def call(self, tool_name: str, payload: dict, *, profile_id: UUID | None = None):
+            assert profile_id == PROFILE_ID
+            if tool_name == "finance_releves_sum":
+                return {"total": "-12.34", "count": 1, "currency": "CHF"}
+            if tool_name == "finance_releves_aggregate":
+                return {"group_by": "categorie", "currency": "CHF", "groups": {"Autres": {"total": "-12.34", "count": 1}}}
+            if tool_name == "finance_releves_search":
+                return {
+                    "items": [
+                        {
+                            "date": "2026-01-10",
+                            "montant": "-12.34",
+                            "categorie": None,
+                            "category_id": "11111111-2222-3333-4444-555555555555",
+                            "meta": {"category_key": "other"},
+                            "payee": "Migros",
+                        }
+                    ],
+                    "total": 1,
+                }
+            raise AssertionError(tool_name)
+
+    monkeypatch.setattr(agent_api, "get_tool_router", lambda: _Router())
+
+    response = client.get("/finance/reports/spending?month=2026-01", headers=_auth_headers())
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["transactions"][0]["category"] == "Alimentation"

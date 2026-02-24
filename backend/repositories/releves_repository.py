@@ -9,6 +9,8 @@ import unicodedata
 from uuid import UUID, uuid4
 
 from backend.db.supabase_client import SupabaseClient
+from backend.repositories.profiles_repository import ProfilesRepository, SupabaseProfilesRepository
+from backend.services.releves_import.classification import resolve_system_category_label
 from shared.text_utils import normalize_category_name
 from shared.models import (
     DateRange,
@@ -493,8 +495,9 @@ class InMemoryRelevesRepository:
 class SupabaseRelevesRepository:
     """Supabase-backed repository for releves_bancaires."""
 
-    def __init__(self, client: SupabaseClient) -> None:
+    def __init__(self, client: SupabaseClient, profiles_repository: ProfilesRepository | None = None) -> None:
         self._client = client
+        self._profiles_repository = profiles_repository or SupabaseProfilesRepository(client=client)
 
     # Keep embed wiring centralized: some PostgREST setups require explicit FK syntax.
     _CATEGORY_EMBED_DEFAULT = "profile_categories(name)"
@@ -793,40 +796,33 @@ class SupabaseRelevesRepository:
 
         groups: dict[str, tuple[Decimal, int]] = {}
         currency: str | None = rows[0].get("devise") if rows else None
-        category_names_by_id: dict[str, str] = {}
-        category_names_by_norm: dict[str, str] = {}
-        if request.group_by == RelevesGroupBy.CATEGORIE:
-            categories_rows, _ = self._client.get_rows(
-                table="profile_categories",
-                query=[
-                    ("profile_id", f"eq.{request.profile_id}"),
-                    ("select", "id,name,name_norm,system_key"),
-                    ("limit", 500),
-                ],
-                with_count=False,
-            )
-            for category_row in categories_rows:
-                raw_id = category_row.get("id")
-                raw_name = category_row.get("name")
-                if raw_id is None or not isinstance(raw_name, str) or not raw_name.strip():
-                    continue
-                cleaned_name = raw_name.strip()
-                category_names_by_id[str(raw_id)] = cleaned_name
-                norm_source_raw = category_row.get("name_norm") or category_row.get("name") or category_row.get("system_key")
-                norm_source = str(norm_source_raw).strip() if norm_source_raw else ""
-                if norm_source:
-                    for candidate_norm in _category_norm_candidates(norm_source):
-                        category_names_by_norm[candidate_norm] = cleaned_name
-
         for row in rows:
             if request.group_by == RelevesGroupBy.CATEGORIE:
-                category_id = row.get("category_id")
-                key: str | None = category_names_by_id.get(str(category_id)) if category_id is not None else None
+                key: str | None = None
+                category_id_raw = row.get("category_id")
+                if category_id_raw is not None:
+                    try:
+                        category_id = category_id_raw if isinstance(category_id_raw, UUID) else UUID(str(category_id_raw))
+                    except (TypeError, ValueError):
+                        category_id = None
+                    if category_id is not None:
+                        key = self._profiles_repository.get_profile_category_name_by_id(
+                            profile_id=request.profile_id,
+                            category_id=category_id,
+                        )
 
                 raw_category = row.get("categorie")
                 if key is None and isinstance(raw_category, str) and raw_category.strip():
-                    normalized_candidates = _category_norm_candidates(raw_category)
-                    key = next((category_names_by_norm.get(candidate) for candidate in normalized_candidates if category_names_by_norm.get(candidate)), None) or raw_category
+                    key = raw_category.strip()
+                    if normalize_category_name(key) in {"autre", "autres"}:
+                        key = "Autres"
+
+                if key is None:
+                    meta = row.get("metadonnees")
+                    meta_dict = meta if isinstance(meta, dict) else {}
+                    category_key = str(meta_dict.get("category_key") or "").strip().lower()
+                    if category_key:
+                        key = resolve_system_category_label(category_key)
 
                 if key is None:
                     key = "Autres"
