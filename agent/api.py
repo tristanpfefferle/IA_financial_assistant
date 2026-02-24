@@ -144,6 +144,8 @@ _ONBOARDING_PROFILE_STOP_WORDS = {
     "de",
     "famille",
     "suis",
+    "mais",
+    "bref",
 }
 _ONBOARDING_PROFILE_NON_NAME_HINTS = {
     "liste",
@@ -155,14 +157,44 @@ _ONBOARDING_PROFILE_NON_NAME_HINTS = {
     "revenus",
     "budget",
 }
+_ONBOARDING_PROFILE_TROLL_FIRST_NAMES = {
+    "lol",
+    "mdr",
+    "lmao",
+    "haha",
+    "ptdr",
+    "xd",
+    "jai",
+    "j'ai",
+    "j",
+    "pas",
+    "prenom",
+    "prénom",
+    "non",
+    "aucun",
+    "personne",
+}
 _ONBOARDING_PROFILE_TROLL_LAST_NAMES = {"lol", "mdr", "lmao", "haha", "ptdr", "xd"}
 _ONBOARDING_PROFILE_REFUSAL_PATTERNS = (
     re.compile(r"j[’']ai\s+pas\s+de\s+nom", flags=re.IGNORECASE),
     re.compile(r"je\s+n[’']ai\s+pas\s+de\s+nom", flags=re.IGNORECASE),
+    re.compile(r"j[’']ai\s+pas\s+de\s+pr[ée]nom", flags=re.IGNORECASE),
+    re.compile(r"je\s+n[’']ai\s+pas\s+de\s+pr[ée]nom", flags=re.IGNORECASE),
+    re.compile(r"pas\s+de\s+pr[ée]nom", flags=re.IGNORECASE),
+    re.compile(r"je\s+suis\s+pas\s+n[ée]", flags=re.IGNORECASE),
+    re.compile(r"pas\s+n[ée]", flags=re.IGNORECASE),
     re.compile(r"pas\s+de\s+nom", flags=re.IGNORECASE),
     re.compile(r"aucun\s+nom", flags=re.IGNORECASE),
     re.compile(r"je\s+refuse", flags=re.IGNORECASE),
 )
+_ONBOARDING_PROFILE_TOXIC_PATTERNS = (
+    re.compile(r"\bta gueule\b", re.IGNORECASE),
+    re.compile(r"\bftg\b", re.IGNORECASE),
+    re.compile(r"\bconnard\b", re.IGNORECASE),
+    re.compile(r"\bpute\b", re.IGNORECASE),
+    re.compile(r"\bencul[ée]\b", re.IGNORECASE),
+)
+_ONBOARDING_FIRST_NAME_ALLOWED_CHARS_PATTERN = re.compile(r"^[A-Za-zÀ-ÖØ-öø-ÿ'\- ]+$")
 _ONBOARDING_LAST_NAME_ALLOWED_CHARS_PATTERN = re.compile(r"^[A-Za-zÀ-ÖØ-öø-ÿ'\- ]+$")
 _ONBOARDING_BIRTH_DATE_PATTERN = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
 _ONBOARDING_BIRTH_DATE_DOT_PATTERN = re.compile(r"^(\d{1,2})\.(\d{1,2})\.(\d{4})$")
@@ -1950,6 +1982,27 @@ def _is_plausible_last_name(value: str) -> bool:
     return True
 
 
+def _is_plausible_first_name(value: str) -> bool:
+    normalized = str(value or "").strip()
+    if len(normalized) < 2:
+        return False
+    lowered = normalized.lower()
+    if lowered in _ONBOARDING_PROFILE_TROLL_FIRST_NAMES:
+        return False
+    if any(char.isdigit() for char in normalized):
+        return False
+    if not _ONBOARDING_FIRST_NAME_ALLOWED_CHARS_PATTERN.fullmatch(normalized):
+        return False
+    if len([token for token in normalized.split() if token.strip()]) > 2:
+        return False
+    return True
+
+
+def _is_toxic_message(message: str) -> bool:
+    normalized = str(message or "")
+    return any(pattern.search(normalized) for pattern in _ONBOARDING_PROFILE_TOXIC_PATTERNS)
+
+
 def _is_plausible_birth_date(value_iso: str) -> bool:
     if not isinstance(value_iso, str):
         return False
@@ -2025,9 +2078,11 @@ def extract_profile_fields_from_message(message: str) -> dict[str, Any]:
             extracted["confidence"] = max(float(extracted["confidence"]), 0.85)
             extracted["reason"] = "generic_multi_token_name"
         elif len(generic_tokens) == 1:
-            extracted["first_name"] = generic_tokens[0]
-            extracted["confidence"] = max(float(extracted["confidence"]), 0.6)
-            extracted["reason"] = "generic_single_token_name"
+            single_token = generic_tokens[0]
+            if single_token.lower() not in {"jai", "j", "pas"}:
+                extracted["first_name"] = single_token
+                extracted["confidence"] = max(float(extracted["confidence"]), 0.6)
+                extracted["reason"] = "generic_single_token_name"
 
     return extracted
 
@@ -2830,8 +2885,30 @@ f"Salut 👋\n\nJe suis ton assistant financier. Je t’aide à analyser tes dé
                         existing_first_name = str(profile_fields.get("first_name") or "").strip()
                         existing_last_name = str(profile_fields.get("last_name") or "").strip()
                         existing_birth_date = str(profile_fields.get("birth_date") or "").strip()
+                        if _is_toxic_message(message):
+                            toxic_reply = (
+                                "Je peux t’aider, mais restons respectueux 🙂 Quel est ton prénom ?"
+                                if not _is_profile_field_completed(existing_first_name)
+                                else f"Ok {existing_first_name} 🙂 Et ton nom de famille ?"
+                            )
+                            updated_global_state = _build_onboarding_global_state(
+                                global_state,
+                                onboarding_step="profile",
+                                onboarding_substep="profile_collect",
+                            )
+                            state_dict["global_state"] = updated_global_state
+                            updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                            updated_chat_state["state"] = state_dict
+                            profiles_repository.update_chat_state(
+                                profile_id=profile_id,
+                                user_id=auth_user_id,
+                                chat_state=updated_chat_state,
+                            )
+                            return _chat_response(reply=toxic_reply, tool_result=None, plan=None)
+
+                        normalized_message = f" {message.lower()} "
                         refusal_detected = any(pattern.search(message) for pattern in _ONBOARDING_PROFILE_REFUSAL_PATTERNS)
-                        if refusal_detected:
+                        if refusal_detected and " mais " not in normalized_message:
                             refusal_reply = (
                                 "Quel est ton prénom ?"
                                 if not _is_profile_field_completed(existing_first_name)
@@ -2860,7 +2937,15 @@ f"Salut 👋\n\nJe suis ton assistant financier. Je t’aide à analyser tes dé
                         extracted_first_name = extraction.get("first_name")
                         extracted_last_name = extraction.get("last_name")
                         extracted_birth_date = extraction.get("birth_date")
+                        invalid_first_name_detected = False
                         invalid_last_name_detected = False
+
+                        if isinstance(extracted_first_name, str) and extracted_first_name.strip() and not _is_plausible_first_name(
+                            extracted_first_name
+                        ):
+                            extraction["first_name"] = None
+                            extracted_first_name = None
+                            invalid_first_name_detected = True
 
                         if isinstance(extracted_last_name, str) and extracted_last_name.strip() and not _is_plausible_last_name(
                             extracted_last_name
@@ -2901,13 +2986,31 @@ f"Salut 👋\n\nJe suis ton assistant financier. Je t’aide à analyser tes dé
                             and "nom" in message.lower()
                         )
                         extraction_source = "heuristic"
-                        if message and (not extracted_any or ambiguous_message):
+                        should_try_llm = bool(
+                            message
+                            and (
+                                (not extracted_any)
+                                or ambiguous_message
+                                or invalid_first_name_detected
+                                or invalid_last_name_detected
+                            )
+                        )
+                        if should_try_llm:
                             try:
                                 llm_extraction = _extract_profile_fields_with_llm(message)
                             except Exception:
                                 logger.exception("profile_collect_llm_extraction_failed profile_id=%s", profile_id)
                                 llm_extraction = None
                             if llm_extraction is not None:
+                                invalid_first_name_detected = False
+                                invalid_last_name_detected = False
+                                llm_first_name = llm_extraction.get("first_name")
+                                if isinstance(llm_first_name, str) and llm_first_name.strip() and not _is_plausible_first_name(
+                                    llm_first_name
+                                ):
+                                    llm_extraction["first_name"] = None
+                                    invalid_first_name_detected = True
+
                                 llm_last_name = llm_extraction.get("last_name")
                                 if isinstance(llm_last_name, str) and llm_last_name.strip() and not _is_plausible_last_name(
                                     llm_last_name
@@ -2979,6 +3082,26 @@ f"Salut 👋\n\nJe suis ton assistant financier. Je t’aide à analyser tes dé
                         extracted_last_name = extraction.get("last_name")
                         if isinstance(extracted_last_name, str) and extracted_last_name.strip() and not existing_last_name:
                             name_update_payload["last_name"] = extracted_last_name.strip()
+
+                        if invalid_first_name_detected and not _is_profile_field_completed(existing_first_name):
+                            updated_global_state = _build_onboarding_global_state(
+                                global_state,
+                                onboarding_step="profile",
+                                onboarding_substep="profile_collect",
+                            )
+                            state_dict["global_state"] = updated_global_state
+                            updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                            updated_chat_state["state"] = state_dict
+                            profiles_repository.update_chat_state(
+                                profile_id=profile_id,
+                                user_id=auth_user_id,
+                                chat_state=updated_chat_state,
+                            )
+                            return _chat_response(
+                                reply="Je n’ai pas bien compris ton prénom 🙂 Quel est ton prénom ?",
+                                tool_result=None,
+                                plan=None,
+                            )
 
                         if invalid_last_name_detected and not _is_profile_field_completed(existing_last_name):
                             updated_global_state = _build_onboarding_global_state(
