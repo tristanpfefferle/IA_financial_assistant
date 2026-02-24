@@ -8,6 +8,7 @@ from typing import Any
 from uuid import UUID
 
 from backend.db.supabase_client import SupabaseClient
+from backend.repositories.share_rules_repository import ShareRulesRepository
 from backend.repositories.shared_expenses_repository import SharedExpensesRepository
 
 _INTERNAL_TRANSFER_PATTERNS = ("virement", "transfer", "twint p2p")
@@ -77,6 +78,7 @@ def generate_initial_shared_expense_suggestions(
     household_link: dict[str, Any],
     shared_expenses_repository: SharedExpensesRepository,
     supabase_client: SupabaseClient,
+    share_rules_repository: ShareRulesRepository | None = None,
     limit: int = 40,
     lookback_days: int = 30,
 ) -> int:
@@ -88,6 +90,12 @@ def generate_initial_shared_expense_suggestions(
         return 0
 
     start_date = (date.today() - timedelta(days=max(1, lookback_days))).isoformat()
+    share_rules: list[dict[str, Any]] = []
+    if share_rules_repository is not None:
+        try:
+            share_rules = share_rules_repository.list_share_rules(profile_id)
+        except Exception:
+            share_rules = []
     rows, _ = supabase_client.get_rows(
         table="releves_bancaires",
         query={
@@ -122,6 +130,15 @@ def generate_initial_shared_expense_suggestions(
             category_norm=category_norm,
             amount=abs(amount),
         )
+
+        confidence, rationale = apply_share_rules(
+            confidence=confidence,
+            rationale=rationale,
+            category_norm=category_norm,
+            rules=share_rules,
+        )
+        if confidence == Decimal("0"):
+            continue
         if confidence < MIN_CONFIDENCE_THRESHOLD:
             continue
 
@@ -143,6 +160,53 @@ def generate_initial_shared_expense_suggestions(
         profile_id=profile_id,
         suggestions=suggestions,
     )
+
+
+def apply_share_rules(
+    confidence: Decimal,
+    rationale: str,
+    category_norm: str | None,
+    rules: list[dict[str, Any]],
+) -> tuple[Decimal, str]:
+    """Apply deterministic per-profile rules to a score/rationale pair."""
+
+    if not category_norm:
+        return confidence, rationale
+
+    result_confidence = confidence
+    result_rationale = rationale
+    category_key = category_norm.strip().lower()
+    for rule in rules:
+        if str(rule.get("rule_type") or "").strip().lower() != "category":
+            continue
+        if str(rule.get("rule_key") or "").strip().lower() != category_key:
+            continue
+
+        action = str(rule.get("action") or "").strip().lower()
+        if action == "force_share":
+            result_confidence = Decimal("1")
+            result_rationale = _append_rationale(result_rationale, "rule_force_share")
+            continue
+
+        if action == "force_exclude":
+            result_confidence = Decimal("0")
+            result_rationale = _append_rationale(result_rationale, "rule_force_exclude")
+            continue
+
+        if action == "boost":
+            boost_value = _safe_decimal(rule.get("boost_value"), fallback=Decimal("0"))
+            result_confidence = min(Decimal("1"), result_confidence + boost_value)
+            result_rationale = _append_rationale(result_rationale, f"rule_boost(+{boost_value})")
+
+    return result_confidence, result_rationale
+
+
+def _append_rationale(rationale: str, token: str) -> str:
+    if not rationale:
+        return token
+    if rationale == "no_signal":
+        return token
+    return f"{rationale} + {token}"
 
 
 

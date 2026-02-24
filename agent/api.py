@@ -47,6 +47,7 @@ from backend.reporting import (
 from backend.auth.supabase_auth import UnauthorizedError, extract_bearer_token, get_user_from_bearer_token
 from backend.db.supabase_client import SupabaseClient, SupabaseRequestError, SupabaseSettings
 from backend.repositories.profiles_repository import ProfilesRepository, SupabaseProfilesRepository
+from backend.repositories.share_rules_repository import ShareRulesRepository, SupabaseShareRulesRepository
 from backend.repositories.shared_expenses_repository import SharedExpensesRepository, SupabaseSharedExpensesRepository
 from backend.services.shared_expenses.effective_spending_adapter import compute_effective_spending_summary_safe
 from backend.services.shared_expenses.suggestion_generator import generate_initial_shared_expense_suggestions
@@ -554,6 +555,7 @@ def _seed_shared_expense_suggestions_after_link_setup(*, profile_id: UUID, link_
             household_link=link_state,
             shared_expenses_repository=repository,
             supabase_client=supabase_client,
+            share_rules_repository=_try_get_share_rules_repository(),
             limit=40,
         )
     except RuntimeError:
@@ -1993,6 +1995,25 @@ def _get_shared_expenses_repository_or_501() -> SupabaseSharedExpensesRepository
         raise HTTPException(status_code=501, detail="shared expenses disabled")
     return repository
 
+
+
+
+def _try_get_share_rules_repository() -> ShareRulesRepository | None:
+    """Return share-rules repository when Supabase config is available, else ``None``."""
+
+    supabase_url = _config.supabase_url()
+    supabase_key = _config.supabase_service_role_key()
+    if not supabase_url or not supabase_key:
+        return None
+
+    client = SupabaseClient(
+        settings=SupabaseSettings(
+            url=supabase_url,
+            service_role_key=supabase_key,
+            anon_key=_config.supabase_anon_key(),
+        )
+    )
+    return SupabaseShareRulesRepository(client=client)
 
 def _try_get_shared_expenses_repository() -> SharedExpensesRepository | None:
     """Return shared-expenses repository when Supabase config is available, else ``None``."""
