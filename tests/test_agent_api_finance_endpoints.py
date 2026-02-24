@@ -1324,9 +1324,10 @@ def test_spending_report_json_includes_effective_spending_when_repository_availa
         [
             SharedExpenseRow(
                 from_profile_id=PROFILE_ID,
-                to_profile_id=UUID("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+                to_profile_id=None,
                 transaction_id=None,
                 amount=Decimal("30"),
+                other_party_label="Conjoint",
                 created_at=datetime(2026, 1, 10, tzinfo=timezone.utc),
                 status="applied",
                 split_ratio_other=Decimal("0.5"),

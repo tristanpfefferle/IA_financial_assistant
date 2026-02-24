@@ -16,12 +16,13 @@ class SharedExpenseRow:
     """Shared expense materialized row used for effective spending reporting."""
 
     from_profile_id: UUID
-    to_profile_id: UUID
+    to_profile_id: UUID | None
     transaction_id: UUID | None
     amount: Decimal
     created_at: datetime | None
     status: str
     split_ratio_other: Decimal | None
+    other_party_label: str | None = None
 
 
 @dataclass(slots=True)
@@ -31,13 +32,14 @@ class SharedExpenseSuggestionRow:
     id: UUID
     profile_id: UUID
     transaction_id: UUID
-    suggested_to_profile_id: UUID
+    suggested_to_profile_id: UUID | None
     suggested_split_ratio_other: Decimal
     status: str
     confidence: float | None
     rationale: str | None
     link_id: UUID | None
     link_pair_id: UUID | None
+    other_party_label: str | None = None
 
 
 class SharedExpensesRepository(Protocol):
@@ -128,7 +130,8 @@ class SupabaseSharedExpensesRepository:
                 **row,
                 "profile_id": str(profile_id),
                 "transaction_id": str(row["transaction_id"]),
-                "suggested_to_profile_id": str(row["suggested_to_profile_id"]),
+                "suggested_to_profile_id": str(row["suggested_to_profile_id"]) if row.get("suggested_to_profile_id") else None,
+                "other_party_label": str(row["other_party_label"]) if row.get("other_party_label") else None,
                 "link_id": str(row["link_id"]) if row.get("link_id") else None,
                 "link_pair_id": str(row["link_pair_id"]) if row.get("link_pair_id") else None,
                 "suggested_split_ratio_other": str(row.get("suggested_split_ratio_other", Decimal("0.5"))),
@@ -173,7 +176,7 @@ class SupabaseSharedExpensesRepository:
             table="shared_expense_suggestions",
             query={
                 "select": (
-                    "id,profile_id,transaction_id,suggested_to_profile_id,"
+                    "id,profile_id,transaction_id,suggested_to_profile_id,other_party_label,"
                     "suggested_split_ratio_other,status,confidence,rationale,link_id,link_pair_id"
                 ),
                 "profile_id": f"eq.{profile_id}",
@@ -222,7 +225,7 @@ class SupabaseSharedExpensesRepository:
             table="shared_expense_suggestions",
             query={
                 "select": (
-                    "id,profile_id,transaction_id,suggested_to_profile_id,"
+                    "id,profile_id,transaction_id,suggested_to_profile_id,other_party_label,"
                     "suggested_split_ratio_other,status,link_id,link_pair_id"
                 ),
                 "profile_id": f"eq.{profile_id}",
@@ -238,11 +241,12 @@ class SupabaseSharedExpensesRepository:
         suggestion = rows[0]
         expense_payload = {
             "from_profile_id": str(profile_id),
-            "to_profile_id": str(suggestion["suggested_to_profile_id"]),
+            "to_profile_id": str(suggestion["suggested_to_profile_id"]) if suggestion.get("suggested_to_profile_id") else None,
             "transaction_id": str(suggestion["transaction_id"]),
             "amount": str(amount),
             "status": "applied",
             "split_ratio_other": str(suggestion.get("suggested_split_ratio_other") or "0.5"),
+            "other_party_label": str(suggestion["other_party_label"]) if suggestion.get("other_party_label") else None,
             "link_id": str(suggestion["link_id"]) if suggestion.get("link_id") else None,
             "link_pair_id": str(suggestion["link_pair_id"]) if suggestion.get("link_pair_id") else None,
         }
@@ -295,7 +299,7 @@ class SupabaseSharedExpensesRepository:
             table="shared_expense_suggestions",
             query={
                 "select": (
-                    "id,profile_id,transaction_id,suggested_to_profile_id,"
+                    "id,profile_id,transaction_id,suggested_to_profile_id,other_party_label,"
                     "suggested_split_ratio_other,status,confidence,rationale,link_id,link_pair_id"
                 ),
                 "profile_id": f"eq.{profile_id}",
@@ -320,7 +324,10 @@ class SupabaseSharedExpensesRepository:
             rows, _ = self._client.get_rows(
                 table="shared_expenses",
                 query=[
-                    ("select", "from_profile_id,to_profile_id,transaction_id,amount,created_at,status,split_ratio_other"),
+                    (
+                        "select",
+                        "from_profile_id,to_profile_id,transaction_id,amount,created_at,status,split_ratio_other,other_party_label",
+                    ),
                     ("or", f"(from_profile_id.eq.{profile_id},to_profile_id.eq.{profile_id})"),
                     ("status", "in.(applied,active,pending)"),
                     # TODO(MVP): created_at is only a proxy; ideally filter by underlying transaction date.
@@ -351,7 +358,7 @@ class SupabaseSharedExpensesRepository:
             mapped.append(
                 SharedExpenseRow(
                     from_profile_id=UUID(str(row["from_profile_id"])),
-                    to_profile_id=UUID(str(row["to_profile_id"])),
+                    to_profile_id=UUID(str(row["to_profile_id"])) if row.get("to_profile_id") else None,
                     transaction_id=UUID(str(row["transaction_id"])) if row.get("transaction_id") else None,
                     amount=Decimal(str(row.get("amount") or "0")),
                     created_at=created_at,
@@ -361,6 +368,7 @@ class SupabaseSharedExpensesRepository:
                         if row.get("split_ratio_other") is not None
                         else None
                     ),
+                    other_party_label=str(row["other_party_label"]) if row.get("other_party_label") else None,
                 )
             )
         return mapped
@@ -371,13 +379,14 @@ class SupabaseSharedExpensesRepository:
             id=UUID(str(row["id"])),
             profile_id=UUID(str(row["profile_id"])),
             transaction_id=UUID(str(row["transaction_id"])),
-            suggested_to_profile_id=UUID(str(row["suggested_to_profile_id"])),
+            suggested_to_profile_id=(UUID(str(row["suggested_to_profile_id"])) if row.get("suggested_to_profile_id") else None),
             suggested_split_ratio_other=Decimal(str(row.get("suggested_split_ratio_other") or "0.5")),
             status=str(row.get("status") or "pending"),
             confidence=float(row["confidence"]) if row.get("confidence") is not None else None,
             rationale=str(row["rationale"]) if row.get("rationale") is not None else None,
             link_id=UUID(str(row["link_id"])) if row.get("link_id") else None,
             link_pair_id=UUID(str(row["link_pair_id"])) if row.get("link_pair_id") else None,
+            other_party_label=str(row["other_party_label"]) if row.get("other_party_label") else None,
         )
 
 
@@ -397,7 +406,7 @@ class InMemorySharedExpensesRepository:
             dedup_key = (
                 profile_id,
                 UUID(str(suggestion["transaction_id"])),
-                UUID(str(suggestion["suggested_to_profile_id"])),
+                UUID(str(suggestion["suggested_to_profile_id"])) if suggestion.get("suggested_to_profile_id") else None,
                 Decimal(str(suggestion.get("suggested_split_ratio_other") or "0.5")),
             )
             already_pending = any(
@@ -405,7 +414,7 @@ class InMemorySharedExpensesRepository:
                 and (
                     UUID(str(item["profile_id"])),
                     UUID(str(item["transaction_id"])),
-                    UUID(str(item["suggested_to_profile_id"])),
+                    UUID(str(item["suggested_to_profile_id"])) if item.get("suggested_to_profile_id") else None,
                     Decimal(str(item.get("suggested_split_ratio_other") or "0.5")),
                 )
                 == dedup_key
@@ -418,13 +427,16 @@ class InMemorySharedExpensesRepository:
                 "id": uuid4(),
                 "profile_id": profile_id,
                 "transaction_id": UUID(str(suggestion["transaction_id"])),
-                "suggested_to_profile_id": UUID(str(suggestion["suggested_to_profile_id"])),
+                "suggested_to_profile_id": (
+                    UUID(str(suggestion["suggested_to_profile_id"])) if suggestion.get("suggested_to_profile_id") else None
+                ),
                 "suggested_split_ratio_other": Decimal(str(suggestion.get("suggested_split_ratio_other") or "0.5")),
                 "status": str(suggestion.get("status") or "pending"),
                 "confidence": float(suggestion["confidence"]) if suggestion.get("confidence") is not None else None,
                 "rationale": suggestion.get("rationale"),
                 "link_id": UUID(str(suggestion["link_id"])) if suggestion.get("link_id") else None,
                 "link_pair_id": UUID(str(suggestion["link_pair_id"])) if suggestion.get("link_pair_id") else None,
+                "other_party_label": str(suggestion["other_party_label"]) if suggestion.get("other_party_label") else None,
                 "updated_at": datetime.now(timezone.utc),
             }
             self._suggestions.append(row)
@@ -455,6 +467,7 @@ class InMemorySharedExpensesRepository:
                 rationale=row.get("rationale"),
                 link_id=row.get("link_id"),
                 link_pair_id=row.get("link_pair_id"),
+                other_party_label=row.get("other_party_label"),
             )
             for row in items[:limit]
         ]
@@ -494,6 +507,7 @@ class InMemorySharedExpensesRepository:
                 created_at=datetime.now(timezone.utc),
                 status="applied",
                 split_ratio_other=row.get("suggested_split_ratio_other"),
+                other_party_label=row.get("other_party_label"),
             )
             self._shared_expenses.append(shared_row)
             row["status"] = "applied"
@@ -540,6 +554,7 @@ class InMemorySharedExpensesRepository:
                 rationale=row.get("rationale"),
                 link_id=row.get("link_id"),
                 link_pair_id=row.get("link_pair_id"),
+                other_party_label=row.get("other_party_label"),
             )
         return None
 

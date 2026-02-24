@@ -33,11 +33,11 @@ def compute_effective_spending_summary(
     for row in rows:
         if row.from_profile_id == profile_id:
             outgoing += row.amount
-        if row.to_profile_id == profile_id:
+        if row.to_profile_id is not None and row.to_profile_id == profile_id:
             incoming += row.amount
 
     net_balance = incoming - outgoing
-    effective_total = abs(releves_total_expense) - outgoing + incoming
+    effective_total = abs(releves_total_expense) + net_balance
     return {
         "outgoing": outgoing,
         "incoming": incoming,

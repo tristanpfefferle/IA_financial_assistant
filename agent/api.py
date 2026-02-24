@@ -182,6 +182,17 @@ _SHARED_EXPENSE_INTENT_KEYWORDS = (
     "partager ces dépenses",
 )
 
+_ACCOUNT_LINK_SETUP_INTENT_KEYWORDS = (
+    "lier compte",
+    "dépenses communes",
+    "depenses communes",
+    "foyer",
+    "partage externe",
+    "partage hors app",
+    "conjoint",
+    "colocataire",
+)
+
 
 def _build_system_categories_payload() -> list[dict[str, str]]:
     """Return canonical default system categories payload for repository bootstrap."""
@@ -294,6 +305,79 @@ def _is_shared_expense_validation_intent(message: str) -> bool:
     return any(keyword in normalized for keyword in _SHARED_EXPENSE_INTENT_KEYWORDS)
 
 
+def _is_account_link_setup_intent(message: str) -> bool:
+    normalized = _normalize_user_text_for_matching(message)
+    return any(keyword in normalized for keyword in _ACCOUNT_LINK_SETUP_INTENT_KEYWORDS)
+
+
+def _execute_account_link_setup_task(
+    *,
+    user_message: str,
+    active_task: dict[str, Any] | None,
+    state_dict: dict[str, Any] | None,
+) -> tuple[str, dict[str, Any] | None, dict[str, Any] | None]:
+    """Advance deterministic account-link setup flow and optionally persist settings in chat state."""
+
+    normalized = _normalize_user_text_for_matching(user_message)
+    task = dict(active_task) if isinstance(active_task, dict) else {"type": "account_link_setup", "step": "ask_has_shared_expenses", "draft": {}}
+    draft = task.get("draft") if isinstance(task.get("draft"), dict) else {}
+    step = str(task.get("step") or "ask_has_shared_expenses")
+
+    if step == "ask_has_shared_expenses":
+        if _is_no(normalized):
+            return "Ok, on laisse le partage désactivé pour l’instant.", None, state_dict
+        task["step"] = "ask_link_type"
+        task["draft"] = draft
+        return "Tu veux lier avec un compte interne dans l’app ou une personne externe (hors app) ?", task, state_dict
+
+    if step == "ask_link_type":
+        if "externe" in normalized or "hors app" in normalized:
+            draft["link_type"] = "external"
+            task["step"] = "ask_label"
+            task["draft"] = draft
+            return "Quel libellé veux-tu utiliser pour cette personne (ex: Conjoint, Colocataire) ?", task, state_dict
+        if "interne" in normalized:
+            draft["link_type"] = "internal"
+            task["step"] = "ask_default_split"
+            task["draft"] = draft
+            return "Quel ratio par défaut veux-tu appliquer pour l’autre personne ? (ex: 50/50)", task, state_dict
+        return "Réponds ‘interne’ ou ‘externe’.", task, state_dict
+
+    if step == "ask_label":
+        label = user_message.strip()
+        if not label:
+            return "Je n’ai pas compris le libellé. Ex: Conjoint.", task, state_dict
+        draft["other_party_label"] = label
+        task["step"] = "ask_default_split"
+        task["draft"] = draft
+        return "Parfait. Ratio par défaut ? (ex: 50/50, Entrée vide = 50/50)", task, state_dict
+
+    if step == "ask_default_split":
+        ratio_other = Decimal("0.5")
+        split_match = re.search(r"(\d{1,3})\s*/\s*(\d{1,3})", normalized)
+        if split_match:
+            left = int(split_match.group(1))
+            right = int(split_match.group(2))
+            if left + right > 0:
+                ratio_other = (Decimal(str(right)) / Decimal(str(left + right))).quantize(Decimal("0.0001"))
+
+        link_state = {
+            "link_type": str(draft.get("link_type") or "external"),
+            "other_profile_id": draft.get("other_profile_id"),
+            "other_party_label": draft.get("other_party_label"),
+            "default_split_ratio_other": str(ratio_other),
+            "enabled": True,
+        }
+        updated_state = dict(state_dict) if isinstance(state_dict, dict) else {}
+        global_state = updated_state.get("global_state") if isinstance(updated_state.get("global_state"), dict) else {}
+        global_state = dict(global_state)
+        global_state["household_link"] = link_state
+        updated_state["global_state"] = global_state
+        return "Configuration enregistrée ✅. Tu peux maintenant utiliser le partage des dépenses, y compris en mode externe.", None, updated_state
+
+    return "Je reprends la configuration du partage. Interne ou externe ?", {"type": "account_link_setup", "step": "ask_link_type", "draft": draft}, state_dict
+
+
 def fetch_transactions_snapshot(profile_id: UUID, transaction_ids: list[UUID]) -> dict[UUID, dict[str, str | None]]:
     """Return transaction details keyed by transaction id for shared-expense confirmation."""
 
@@ -350,7 +434,8 @@ def _build_shared_expense_confirmation_reply(suggestions: list[dict[str, Any]]) 
         currency = str(row.get("currency") or "CHF")
         split_value = Decimal(str(row.get("suggested_split_ratio_other") or "0.5")) * Decimal("100")
         split_text = f"autre: {int(split_value)}%"
-        lines.append(f"{row['index']}) {date_value} — {merchant} — {amount_value} {currency} — {split_text}")
+        target_text = str(row.get("target_label") or "autre")
+        lines.append(f"{row['index']}) {date_value} — {merchant} — {amount_value} {currency} — {split_text} — cible: {target_text}")
     lines.append(
         "Réponds: ‘oui tout’, ‘non tout’, ‘oui 1 et 2’, ‘non 2’, ‘split 2 60/40’ (règle split: toi/autre)."
     )
@@ -389,7 +474,9 @@ def handle_shared_expenses_validation_request(*, profile_id: UUID) -> tuple[str,
                 "amount": f"{amount:.2f}",
                 "currency": str((transaction_row or {}).get("devise") or "CHF"),
                 "suggested_split_ratio_other": str(suggestion.suggested_split_ratio_other),
-                "suggested_to_profile_id": str(suggestion.suggested_to_profile_id),
+                "suggested_to_profile_id": str(suggestion.suggested_to_profile_id) if suggestion.suggested_to_profile_id else None,
+                "other_party_label": suggestion.other_party_label,
+                "target_label": suggestion.other_party_label or ("autre (hors app)" if suggestion.suggested_to_profile_id is None else "autre"),
             }
         )
 
@@ -1884,6 +1971,7 @@ def agent_chat(
         state = chat_state.get("state")
         state_dict = dict(state) if isinstance(state, dict) else None
         shared_expense_active_task = chat_state.get("active_task")
+        account_link_active_task = chat_state.get("active_task")
         existing_global_state = state_dict.get("global_state") if isinstance(state_dict, dict) else None
         global_state = existing_global_state if _is_valid_global_state(existing_global_state) else None
         should_persist_global_state = False
@@ -2695,6 +2783,61 @@ def agent_chat(
                         tool_result=serialized_pending_result,
                         plan=jsonable_encoder({"tool_name": tool_name, "payload": tool_payload}),
                     )
+
+        if isinstance(account_link_active_task, dict) and account_link_active_task.get("type") == "account_link_setup":
+            reply_text, updated_link_task, updated_state_dict = _execute_account_link_setup_task(
+                user_message=payload.message,
+                active_task=account_link_active_task,
+                state_dict=state_dict if isinstance(state_dict, dict) else None,
+            )
+            updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+            if updated_link_task is None:
+                updated_chat_state.pop("active_task", None)
+            else:
+                updated_chat_state["active_task"] = updated_link_task
+            if isinstance(updated_state_dict, dict):
+                updated_chat_state["state"] = updated_state_dict
+            profiles_repository.update_chat_state(
+                profile_id=profile_id,
+                user_id=auth_user_id,
+                chat_state=updated_chat_state,
+            )
+            return ChatResponse(reply=reply_text, tool_result=None, plan=None)
+
+        if _is_account_link_setup_intent(payload.message):
+            existing_link = None
+            if hasattr(profiles_repository, "get_active_household_link"):
+                try:
+                    existing_link = profiles_repository.get_active_household_link(profile_id=profile_id)
+                except Exception:
+                    logger.exception("account_link_fetch_failed profile_id=%s", profile_id)
+            seed_state = state_dict if isinstance(state_dict, dict) else {}
+            if isinstance(existing_link, dict):
+                next_state = dict(seed_state)
+                global_state_entry = next_state.get("global_state") if isinstance(next_state.get("global_state"), dict) else {}
+                global_state_entry = dict(global_state_entry)
+                global_state_entry["household_link"] = existing_link
+                next_state["global_state"] = global_state_entry
+                seed_state = next_state
+
+            reply_text, updated_link_task, updated_state_dict = _execute_account_link_setup_task(
+                user_message="oui",
+                active_task=None,
+                state_dict=seed_state,
+            )
+            updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+            if updated_link_task is None:
+                updated_chat_state.pop("active_task", None)
+            else:
+                updated_chat_state["active_task"] = updated_link_task
+            if isinstance(updated_state_dict, dict):
+                updated_chat_state["state"] = updated_state_dict
+            profiles_repository.update_chat_state(
+                profile_id=profile_id,
+                user_id=auth_user_id,
+                chat_state=updated_chat_state,
+            )
+            return ChatResponse(reply=reply_text, tool_result=None, plan=None)
 
         if isinstance(shared_expense_active_task, dict) and shared_expense_active_task.get("type") == "shared_expense_confirm":
             reply_text, updated_shared_task = _execute_shared_expense_confirmation_actions(

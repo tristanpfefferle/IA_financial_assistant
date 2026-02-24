@@ -73,13 +73,14 @@ class _SuggestionsRepository:
                 id=SUGGESTION_ID_2,
                 profile_id=PROFILE_ID,
                 transaction_id=TX_ID_2,
-                suggested_to_profile_id=OTHER_PROFILE_ID,
+                suggested_to_profile_id=None,
                 suggested_split_ratio_other=Decimal("0.5"),
                 status="pending",
                 confidence=0.9,
                 rationale=None,
                 link_id=None,
                 link_pair_id=None,
+                other_party_label="Conjoint",
             ),
         ]
 
@@ -164,6 +165,7 @@ def test_agent_chat_shared_expense_intent_lists_pending_and_persists_active_task
     payload = response.json()
     assert "1) 2026-02-05" in payload["reply"]
     assert "Réponds:" in payload["reply"]
+    assert "Conjoint" in payload["reply"]
     active_task = repo.chat_state.get("active_task")
     assert isinstance(active_task, dict)
     assert active_task["type"] == "shared_expense_confirm"
@@ -214,3 +216,42 @@ def test_agent_chat_shared_expense_active_task_applies_selected_index(monkeypatc
         }
     ]
     assert repo.chat_state.get("active_task") is None
+
+
+def test_agent_chat_account_link_setup_external_flow(monkeypatch) -> None:
+    monkeypatch.setattr(
+        agent_api,
+        "get_user_from_bearer_token",
+        lambda _token: {"id": str(AUTH_USER_ID), "email": "user@example.com"},
+    )
+    repo = _Repo()
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+
+    response_start = client.post("/agent/chat", json={"message": "je veux lier compte pour mon foyer"}, headers=_auth_headers())
+    assert response_start.status_code == 200
+    assert "interne" in response_start.json()["reply"].lower()
+
+    response_type = client.post("/agent/chat", json={"message": "externe"}, headers=_auth_headers())
+    assert response_type.status_code == 200
+    assert "libellé" in response_type.json()["reply"].lower()
+
+    response_label = client.post("/agent/chat", json={"message": "Conjoint"}, headers=_auth_headers())
+    assert response_label.status_code == 200
+    assert "ratio" in response_label.json()["reply"].lower()
+
+    response_split = client.post("/agent/chat", json={"message": "60/40"}, headers=_auth_headers())
+    assert response_split.status_code == 200
+    assert "enregistrée" in response_split.json()["reply"]
+    assert repo.chat_state.get("active_task") is None
+
+    state = repo.chat_state.get("state")
+    assert isinstance(state, dict)
+    household_link = state.get("global_state", {}).get("household_link")
+    assert household_link == {
+        "link_type": "external",
+        "other_profile_id": None,
+        "other_party_label": "Conjoint",
+        "default_split_ratio_other": "0.4000",
+        "enabled": True,
+    }

@@ -29,6 +29,9 @@ class ProfilesRepository(Protocol):
     def update_chat_state(self, *, profile_id: UUID, user_id: UUID, chat_state: dict[str, Any]) -> None:
         """Persist chat state for a profile."""
 
+    def get_active_household_link(self, *, profile_id: UUID) -> dict[str, Any] | None:
+        """Return active household link settings for a profile when available."""
+
     def get_profile_fields(self, *, profile_id: UUID, fields: list[str] | None = None) -> dict[str, Any]:
         """Return selected profile columns for one profile id."""
 
@@ -418,6 +421,35 @@ class SupabaseProfilesRepository:
         if state is not None:
             result["state"] = state
         return result
+
+    def get_active_household_link(self, *, profile_id: UUID) -> dict[str, Any] | None:
+        rows, _ = self._client.get_rows(
+            table="account_links",
+            query={
+                "select": "link_type,other_profile_id,other_party_label,other_party_email,default_split_ratio_other",
+                "profile_id": f"eq.{profile_id}",
+                "status": "eq.active",
+                "order": "updated_at.desc",
+                "limit": 1,
+            },
+            with_count=False,
+            use_anon_key=False,
+        )
+        if not rows:
+            return None
+
+        row = rows[0] or {}
+        link_type = str(row.get("link_type") or "internal").strip().lower()
+        if link_type not in {"internal", "external"}:
+            link_type = "internal"
+
+        return {
+            "link_type": link_type,
+            "other_profile_id": str(row["other_profile_id"]) if row.get("other_profile_id") else None,
+            "other_party_label": str(row["other_party_label"]) if row.get("other_party_label") else None,
+            "other_party_email": str(row["other_party_email"]) if row.get("other_party_email") else None,
+            "default_split_ratio_other": str(row.get("default_split_ratio_other") or "0.5"),
+        }
 
     def update_chat_state(self, *, profile_id: UUID, user_id: UUID, chat_state: dict[str, Any]) -> None:
         conversation_id = str(profile_id)
