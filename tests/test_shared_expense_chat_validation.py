@@ -31,6 +31,7 @@ class _Repo:
         self.chat_state = chat_state or {}
         self.updated_chat_states: list[dict[str, object]] = []
         self.upsert_household_link_calls: list[dict[str, object]] = []
+        self.active_household_link: dict[str, object] | None = None
 
     def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None):
         assert auth_user_id == AUTH_USER_ID
@@ -74,6 +75,10 @@ class _Repo:
             "other_party_email": other_party_email,
             "default_split_ratio_other": default_split_ratio_other,
         }
+
+    def get_active_household_link(self, *, profile_id: UUID):
+        assert profile_id == PROFILE_ID
+        return self.active_household_link
 
 
 class _SuggestionsRepository:
@@ -253,6 +258,96 @@ def test_agent_chat_shared_expense_active_task_applies_selected_index(monkeypatc
             "amount": Decimal("40.00"),
         }
     ]
+    assert repo.chat_state.get("active_task") is None
+
+
+def test_agent_chat_auto_prompts_account_link_after_report(monkeypatch) -> None:
+    monkeypatch.setattr(
+        agent_api,
+        "get_user_from_bearer_token",
+        lambda _token: {"id": str(AUTH_USER_ID), "email": "user@example.com"},
+    )
+    repo = _Repo(
+        chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "onboarding",
+                    "onboarding_step": "report",
+                    "onboarding_substep": "report_sent",
+                }
+            }
+        }
+    )
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+
+    response = client.post("/agent/chat", json={"message": "ok"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert "certaines dépenses sont-elles communes à ton foyer" in response.json()["reply"]
+    active_task = repo.chat_state.get("active_task")
+    assert isinstance(active_task, dict)
+    assert active_task.get("type") == "account_link_setup"
+    global_state = repo.chat_state.get("state", {}).get("global_state", {})
+    assert global_state.get("household_link_prompted") is True
+
+
+def test_agent_chat_auto_prompt_skipped_when_already_prompted(monkeypatch) -> None:
+    monkeypatch.setattr(
+        agent_api,
+        "get_user_from_bearer_token",
+        lambda _token: {"id": str(AUTH_USER_ID), "email": "user@example.com"},
+    )
+    repo = _Repo(
+        chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "onboarding",
+                    "onboarding_step": "report",
+                    "onboarding_substep": "report_sent",
+                    "household_link_prompted": True,
+                }
+            }
+        }
+    )
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+
+    response = client.post("/agent/chat", json={"message": "ok"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert "certaines dépenses sont-elles communes à ton foyer" not in response.json()["reply"]
+    assert repo.chat_state.get("active_task") is None
+
+
+def test_agent_chat_auto_prompt_skipped_when_link_exists(monkeypatch) -> None:
+    monkeypatch.setattr(
+        agent_api,
+        "get_user_from_bearer_token",
+        lambda _token: {"id": str(AUTH_USER_ID), "email": "user@example.com"},
+    )
+    repo = _Repo(
+        chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "onboarding",
+                    "onboarding_step": "report",
+                    "onboarding_substep": "report_sent",
+                }
+            }
+        }
+    )
+    repo.active_household_link = {
+        "id": "link-1",
+        "enabled": True,
+    }
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+
+    response = client.post("/agent/chat", json={"message": "ok"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert "certaines dépenses sont-elles communes à ton foyer" not in response.json()["reply"]
     assert repo.chat_state.get("active_task") is None
 
 

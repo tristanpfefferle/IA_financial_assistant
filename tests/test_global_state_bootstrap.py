@@ -468,7 +468,7 @@ def test_classify_merchants_without_category_invalid_ids_not_counted_as_remainin
     assert repo.merchants[1]["category"] == ""
 
 
-def test_report_offer_oui_returns_pdf_ui_request_and_switches_to_free_chat(monkeypatch) -> None:
+def test_report_offer_oui_returns_pdf_ui_request_and_stays_on_report_step(monkeypatch) -> None:
     _mock_auth(monkeypatch)
     repo = _Repo(
         initial_chat_state={
@@ -499,9 +499,9 @@ def test_report_offer_oui_returns_pdf_ui_request_and_switches_to_free_chat(monke
     assert payload["tool_result"]["name"] == "open_pdf_report"
     assert "month=2026-01" in payload["tool_result"]["url"]
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
-    assert persisted["mode"] == "free_chat"
-    assert persisted["onboarding_step"] is None
-    assert persisted["onboarding_substep"] is None
+    assert persisted["mode"] == "onboarding"
+    assert persisted["onboarding_step"] == "report"
+    assert persisted["onboarding_substep"] == "report_sent"
     assert loop.called is False
 
 

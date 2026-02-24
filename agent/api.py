@@ -194,6 +194,11 @@ _ACCOUNT_LINK_SETUP_INTENT_KEYWORDS = (
     "colocataire",
 )
 
+_HOUSEHOLD_LINK_AUTO_PROMPT_REPLY = (
+    "Maintenant que tu as vu ton premier rapport de dépenses, j’aimerais affiner: "
+    "certaines dépenses sont-elles communes à ton foyer (conjoint/coloc) ?"
+)
+
 
 def _build_system_categories_payload() -> list[dict[str, str]]:
     """Return canonical default system categories payload for repository bootstrap."""
@@ -258,6 +263,39 @@ def _build_import_file_ui_request(_import_context: dict[str, Any] | None = None)
         "name": "import_file",
         "accepted_types": ["csv"],
     }
+
+
+def _should_prompt_household_link_setup(
+    *,
+    global_state: dict[str, Any] | None,
+    profiles_repository: Any,
+    profile_id: UUID,
+) -> bool:
+    """Return True when the onboarding flow should auto-start household link setup."""
+
+    if not isinstance(global_state, dict):
+        return False
+    if global_state.get("mode") not in {"guided_budget", "onboarding"}:
+        return False
+    if global_state.get("onboarding_step") != "report":
+        return False
+    if global_state.get("household_link_prompted") is True:
+        return False
+
+    household_link_state = global_state.get("household_link")
+    if isinstance(household_link_state, dict) and household_link_state.get("enabled") is True:
+        return False
+
+    if hasattr(profiles_repository, "get_active_household_link"):
+        try:
+            existing_link = profiles_repository.get_active_household_link(profile_id=profile_id)
+        except Exception:
+            logger.exception("household_link_auto_prompt_fetch_failed profile_id=%s", profile_id)
+            existing_link = None
+        if existing_link is not None:
+            return False
+
+    return True
 
 
 def _build_profile_recap_reply(profile_fields: dict[str, Any]) -> str:
@@ -2785,7 +2823,11 @@ def agent_chat(
                         start_date=start_date_value,
                         end_date=end_date_value,
                     )
-                    updated_global_state = _build_free_chat_global_state(global_state)
+                    updated_global_state = _build_onboarding_global_state(
+                        global_state,
+                        onboarding_step="report",
+                        onboarding_substep="report_sent",
+                    )
                     updated_global_state = _normalize_onboarding_step_substep(updated_global_state)
                     state_dict["global_state"] = updated_global_state
                     updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
@@ -2811,6 +2853,33 @@ def agent_chat(
                         plan=None,
                     )
                 return ChatResponse(reply="Réponds par oui ou non.", tool_result=None, plan=None)
+
+        if _should_prompt_household_link_setup(
+            global_state=global_state,
+            profiles_repository=profiles_repository,
+            profile_id=profile_id,
+        ):
+            next_state = dict(state_dict) if isinstance(state_dict, dict) else {}
+            next_global_state = dict(global_state) if isinstance(global_state, dict) else {}
+            next_global_state["household_link_prompted"] = True
+            next_state["global_state"] = _normalize_onboarding_step_substep(next_global_state)
+            updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+            updated_chat_state["state"] = next_state
+            updated_chat_state["active_task"] = {
+                "type": "account_link_setup",
+                "step": "ask_has_shared_expenses",
+                "draft": {},
+            }
+            profiles_repository.update_chat_state(
+                profile_id=profile_id,
+                user_id=auth_user_id,
+                chat_state=updated_chat_state,
+            )
+            return ChatResponse(
+                reply=_HOUSEHOLD_LINK_AUTO_PROMPT_REPLY,
+                tool_result=None,
+                plan=None,
+            )
 
         pending_clarification = state_dict.get("pending_clarification") if isinstance(state_dict, dict) else None
         if (
