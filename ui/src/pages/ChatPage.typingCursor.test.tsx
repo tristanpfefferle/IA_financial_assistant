@@ -16,6 +16,7 @@ vi.mock('../api/agentApi', () => ({
   resetSession: vi.fn(),
   openPdfFromUrl: vi.fn(),
   isImportClarificationResult: vi.fn(() => false),
+  resolveApiBaseUrl: vi.fn((override?: string) => (override && override.trim().length > 0 ? override.replace(/\/+$/, '') : 'http://127.0.0.1:8000')),
 }))
 
 vi.mock('../lib/sessionLifecycle', () => ({
