@@ -22,7 +22,7 @@ from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse, Response
 from fastapi.requests import Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from shared import config as _config
 from agent.backend_client import BackendClient
@@ -1991,7 +1991,7 @@ class ChatResponse(BaseModel):
     reply: str
     tool_result: Any | None
     plan: Any | None = None
-    debug: dict[str, Any] | None = Field(default=None, exclude_if=lambda value: value is None)
+    debug: dict[str, Any] | None = None
 
 
 class ImportFilePayload(BaseModel):
@@ -2287,7 +2287,7 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.post("/agent/chat", response_model=ChatResponse)
+@app.post("/agent/chat", response_model=ChatResponse, response_model_exclude_unset=True)
 def agent_chat(
     request: Request,
     payload: ChatRequest,
