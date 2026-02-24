@@ -1662,6 +1662,60 @@ def test_profile_collect_accepts_birth_date_only_when_name_known(monkeypatch) ->
     assert persisted["onboarding_substep"] == "profile_confirm"
 
 
+
+
+def test_profile_collect_refusal_last_name_does_not_set_last_name(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "onboarding",
+                    "onboarding_step": "profile",
+                    "onboarding_substep": "profile_collect",
+                }
+            }
+        },
+        profile_fields={"first_name": "Tristan", "last_name": "", "birth_date": ""},
+    )
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
+
+    response = client.post("/agent/chat", json={"message": "Je n'ai pas de nom lol"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert all("last_name" not in call for call in repo.profile_update_calls)
+    assert "nom de famille" in response.json()["reply"].lower() or "initiale" in response.json()["reply"].lower()
+    persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
+    assert persisted["onboarding_substep"] == "profile_collect"
+
+
+def test_profile_collect_absurd_birth_date_requires_confirmation(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "onboarding",
+                    "onboarding_step": "profile",
+                    "onboarding_substep": "profile_collect",
+                }
+            }
+        },
+        profile_fields={"first_name": "Tristan", "last_name": "Jadre", "birth_date": ""},
+    )
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
+
+    response = client.post("/agent/chat", json={"message": "le 14 mai 1845"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert all("birth_date" not in call for call in repo.profile_update_calls)
+    assert "improbable" in response.json()["reply"].lower()
+    assert "yyyy-mm-dd" in response.json()["reply"].lower()
+    persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
+    assert persisted["onboarding_substep"] == "profile_collect"
+
 def test_profile_collect_llm_fallback_handles_weird_input(monkeypatch) -> None:
     _mock_auth(monkeypatch)
     repo = _Repo(
