@@ -368,9 +368,17 @@ export async function openSpendingReportPdf(month?: string): Promise<void> {
   await openPdfFromUrl(`/finance/reports/spending.pdf${query}`)
 }
 
-function toNumberOrZero(value: string): number {
-  const parsed = Number.parseFloat(value)
-  return Number.isNaN(parsed) ? 0 : parsed
+function toNumberOrZero(value: unknown): number {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : 0
+  }
+
+  if (typeof value === 'string') {
+    const parsed = Number.parseFloat(value)
+    return Number.isFinite(parsed) ? parsed : 0
+  }
+
+  return 0
 }
 
 export function normalizeSpendingReport(api: SpendingReportApi): SpendingReport {
