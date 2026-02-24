@@ -87,3 +87,38 @@ def test_compute_effective_spending_summary_safe_neutralizes_when_table_absent_e
     assert summary["incoming"] == Decimal("0")
     assert summary["net_balance"] == Decimal("0")
     assert summary["effective_total"] == Decimal("50")
+
+
+def test_compute_effective_spending_summary_external_outgoing_only() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+
+    repository = InMemorySharedExpensesRepository()
+    repository.seed_shared_expenses(
+        [
+            SharedExpenseRow(
+                from_profile_id=profile_id,
+                to_profile_id=None,
+                transaction_id=None,
+                amount=Decimal("25"),
+                created_at=datetime(2026, 2, 8, tzinfo=timezone.utc),
+                status="applied",
+                split_ratio_other=Decimal("0.5"),
+                other_party_label="Conjoint",
+            )
+        ],
+    )
+
+    summary = compute_effective_spending_summary(
+        profile_id=profile_id,
+        start_date=date(2026, 2, 1),
+        end_date=date(2026, 2, 28),
+        releves_total_expense=Decimal("100"),
+        shared_expenses_repository=repository,
+    )
+
+    assert summary == {
+        "outgoing": Decimal("25"),
+        "incoming": Decimal("0"),
+        "net_balance": Decimal("-25"),
+        "effective_total": Decimal("75"),
+    }
