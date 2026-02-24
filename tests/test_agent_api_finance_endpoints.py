@@ -772,6 +772,47 @@ def test_merge_merchants_endpoint_returns_200_and_calls_repo(monkeypatch) -> Non
     assert response.json()["moved_releves_count"] == 3
 
 
+def test_spending_report_pdf_accepts_access_token_query_param(monkeypatch) -> None:
+    captured: dict[str, str] = {}
+
+    def _get_user(token: str):
+        captured["token"] = token
+        return {"id": str(AUTH_USER_ID), "email": "user@example.com"}
+
+    monkeypatch.setattr(agent_api, "get_user_from_bearer_token", _get_user)
+
+    class _Repo:
+        def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None):
+            assert auth_user_id == AUTH_USER_ID
+            assert email == "user@example.com"
+            return PROFILE_ID
+
+        def get_chat_state(self, *, profile_id: UUID, user_id: UUID):
+            assert profile_id == PROFILE_ID
+            assert user_id == AUTH_USER_ID
+            return {"state": {}}
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: _Repo())
+
+    class _Router:
+        def call(self, tool_name: str, payload: dict, *, profile_id: UUID | None = None):
+            assert profile_id == PROFILE_ID
+            if tool_name == "finance_releves_sum":
+                return {"total": "0", "count": 0, "average": "0", "currency": "CHF"}
+            if tool_name == "finance_releves_aggregate":
+                return {"group_by": payload.get("group_by") or "month", "currency": "CHF", "groups": {}}
+            if tool_name == "finance_releves_search":
+                return {"items": [], "limit": 500, "offset": 0, "total": 0}
+            raise AssertionError(tool_name)
+
+    monkeypatch.setattr(agent_api, "get_tool_router", lambda: _Router())
+
+    response = client.get("/finance/reports/spending.pdf?month=2026-01&access_token=query-token")
+
+    assert response.status_code == 200
+    assert captured["token"] == "query-token"
+
+
 def test_spending_report_pdf_returns_pdf_two_pages_and_calls_search(monkeypatch) -> None:
     _mock_authenticated(monkeypatch)
 

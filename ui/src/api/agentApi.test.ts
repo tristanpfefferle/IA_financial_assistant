@@ -66,7 +66,7 @@ describe('openPdfFromUrl', () => {
     vi.restoreAllMocks()
   })
 
-  it('falls back to window.open when fetch fails with TypeError', async () => {
+  it('falls back to window.open with access_token when fetch fails with TypeError', async () => {
     const fetchMock = vi.fn(async () => {
       throw new TypeError('Failed to fetch')
     })
@@ -76,10 +76,26 @@ describe('openPdfFromUrl', () => {
     await expect(openPdfFromUrl('http://127.0.0.1:8000/finance/reports/spending.pdf')).resolves.toBeUndefined()
 
     expect(windowOpenSpy).toHaveBeenCalledWith(
-      'http://127.0.0.1:8000/finance/reports/spending.pdf',
+      'http://127.0.0.1:8000/finance/reports/spending.pdf?access_token=token-123',
       '_blank',
       'noopener,noreferrer',
     )
+  })
+
+  it('masks access_token in debug logs when fallback appends query token', async () => {
+    vi.stubEnv('VITE_UI_DEBUG', 'true')
+    const fetchMock = vi.fn(async () => {
+      throw new TypeError('NetworkError')
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.spyOn(window, 'open').mockReturnValue(null)
+    const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => undefined)
+
+    await openPdfFromUrl('http://127.0.0.1:8000/finance/reports/spending.pdf')
+
+    const logs = debugSpy.mock.calls.flat().map(String).join(' ')
+    expect(logs).toContain('access_token=***')
+    expect(logs).not.toContain('access_token=token-123')
   })
 })
 
