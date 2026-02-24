@@ -86,3 +86,44 @@ def test_aggregate_categories_parses_string_metadata_category_key() -> None:
 
     assert currency == "CHF"
     assert groups == {"Alimentation": (Decimal("-15.00"), 1)}
+
+
+def test_aggregate_categories_overrides_autres_category_id_with_metadata_key() -> None:
+    class _ClientOtherCategoryIdStub:
+        def get_rows(self, *, table, query, with_count, use_anon_key=False):
+            assert table == "releves_bancaires"
+            return (
+                [
+                    {
+                        "montant": "-19.90",
+                        "devise": "CHF",
+                        "date": "2026-01-07",
+                        "categorie": None,
+                        "category_id": "11111111-2222-3333-4444-555555555555",
+                        "payee": "Migros",
+                        "metadonnees": '{"category_key":"food"}',
+                    }
+                ],
+                None,
+            )
+
+    class _ProfilesRepositoryAutresStub:
+        def get_profile_category_name_by_id(self, *, profile_id: UUID, category_id: UUID) -> str | None:
+            assert profile_id == UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+            assert category_id == UUID("11111111-2222-3333-4444-555555555555")
+            return "Autres"
+
+    repository = SupabaseRelevesRepository(
+        client=_ClientOtherCategoryIdStub(),
+        profiles_repository=_ProfilesRepositoryAutresStub(),
+    )
+
+    groups, currency = repository.aggregate_releves(
+        RelevesAggregateRequest(
+            profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            group_by=RelevesGroupBy.CATEGORIE,
+        )
+    )
+
+    assert currency == "CHF"
+    assert groups == {"Alimentation": (Decimal("-19.90"), 1)}

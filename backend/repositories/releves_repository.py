@@ -826,6 +826,10 @@ class SupabaseRelevesRepository:
                             profile_id=request.profile_id,
                             category_id=category_id,
                         )
+                        if isinstance(key, str) and key.strip():
+                            normalized_key = normalize_category_name(key)
+                            if normalized_key in {"autre", "autres", "sans categorie"}:
+                                key = None
 
                 raw_category = row.get("categorie")
                 if key is None and isinstance(raw_category, str) and raw_category.strip():
@@ -836,7 +840,7 @@ class SupabaseRelevesRepository:
                 if key is None:
                     meta_dict = _coerce_json_dict(row.get("metadonnees"))
                     category_key = str(meta_dict.get("category_key") or "").strip().lower()
-                    if category_key:
+                    if category_key and category_key != "other":
                         key = resolve_system_category_label(category_key)
 
                 if key is None:

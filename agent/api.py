@@ -3624,15 +3624,18 @@ def _resolve_report_category_label(
                 category_id=category_id,
             )
             if isinstance(resolved, str) and resolved.strip():
-                return _normalize_report_category(resolved)
+                resolved_norm = _normalize_report_category(resolved)
+                if resolved_norm.casefold() not in {"autres", "sans catégorie", "sans categorie"}:
+                    return resolved_norm
 
     metadata = _coerce_json_dict(item.get("metadonnees"))
     if not metadata:
         metadata = _coerce_json_dict(item.get("meta"))
     category_key = str(metadata.get("category_key") or "").strip().lower()
-    resolved_system_label = resolve_system_category_label(category_key)
-    if resolved_system_label:
-        return _normalize_report_category(resolved_system_label)
+    if category_key and category_key != "other":
+        resolved_system_label = resolve_system_category_label(category_key)
+        if resolved_system_label:
+            return _normalize_report_category(resolved_system_label)
 
     return "Autres"
 
