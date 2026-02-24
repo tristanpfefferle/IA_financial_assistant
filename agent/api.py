@@ -118,7 +118,11 @@ _ONBOARDING_NAME_PREFIX_PATTERN = re.compile(
     r"^\s*([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'\-]+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'\-]+)\b"
 )
 _ONBOARDING_PROFILE_FIRST_NAME_HINT_PATTERN = re.compile(
-    r"\b(?:je\s+m[’']?appelle|moi\s+c[’']?est|c[’']?est|(?:pr[ée]nom|pernom|p[ée]rnom|prenon|pr[ée]non)\s*:?)\s+([^,.;!?\n]+)",
+    r"\b(?:je\s+m[’']?\s*app(?:el|ell?e|elle)?|moi\s+c[’']?est|c[’']?est|(?:pr[ée]nom|pernom|p[ée]rnom|prenon|pr[ée]non)\s*:?)\s+([^,.;!?\n]+)",
+    flags=re.IGNORECASE,
+)
+_ONBOARDING_PROFILE_JE_MAPPELLE_TYPO_PATTERN = re.compile(
+    r"\bje\s+m[’']?\s*app(?:el|ell?e|elle)?\b",
     flags=re.IGNORECASE,
 )
 _ONBOARDING_PROFILE_LAST_NAME_HINT_PATTERN = re.compile(
@@ -132,6 +136,11 @@ _ONBOARDING_PROFILE_STOP_WORDS = {
     "me",
     "moi",
     "appelle",
+    "appel",
+    "app",
+    "ap",
+    "mappel",
+    "mappelle",
     "est",
     "et",
     "c",
@@ -183,6 +192,9 @@ _ONBOARDING_PROFILE_TROLL_FIRST_NAMES = {
     "non",
     "aucun",
     "personne",
+    "appel",
+    "mappel",
+    "mappelle",
 }
 _ONBOARDING_PROFILE_TROLL_LAST_NAMES = {"lol", "mdr", "lmao", "haha", "ptdr", "xd"}
 _ONBOARDING_PROFILE_REFUSAL_PATTERNS = (
@@ -2017,6 +2029,23 @@ def _is_toxic_message(message: str) -> bool:
     return any(pattern.search(normalized) for pattern in _ONBOARDING_PROFILE_TOXIC_PATTERNS)
 
 
+def _is_low_signal_message(message: str) -> bool:
+    normalized = str(message or "").strip().lower()
+    if len(normalized) < 3:
+        return True
+    tokens = _ONBOARDING_PROFILE_TOKEN_PATTERN.findall(normalized)
+    if len(tokens) == 0:
+        if any(char.isdigit() for char in normalized):
+            return False
+        return True
+    low_signal_tokens = {"serieux", "sérieux", "quoi", "hein", "ok", "okay", "lol", "es", "e"}
+    if len(tokens) == 1 and tokens[0].lower() in low_signal_tokens:
+        return True
+    if all(token.lower() in low_signal_tokens for token in tokens):
+        return True
+    return False
+
+
 def _is_plausible_birth_date(value_iso: str) -> bool:
     if not isinstance(value_iso, str):
         return False
@@ -2074,6 +2103,16 @@ def extract_profile_fields_from_message(message: str) -> dict[str, Any]:
             extracted["confidence"] = max(float(extracted["confidence"]), confidence)
             extracted["reason"] = "explicit_first_name"
 
+    typo_mappelle_match = _ONBOARDING_PROFILE_JE_MAPPELLE_TYPO_PATTERN.search(raw_message)
+    if typo_mappelle_match and extracted["first_name"] is None:
+        trailing_fragment = raw_message[typo_mappelle_match.end() :]
+        typo_tokens = _tokenize_profile_name_fragment(trailing_fragment)
+        if typo_tokens:
+            extracted["first_name"] = typo_tokens[0]
+            extracted["last_name"] = extracted["last_name"] if explicit_last_name else None
+            extracted["confidence"] = max(float(extracted["confidence"]), 0.85)
+            extracted["reason"] = "je_mappelle_typo"
+
     if extracted["first_name"] is None and extracted["last_name"] is None:
         extracted_name = _extract_name_from_text_prefix(raw_message) or _extract_name_from_message(raw_message)
         if extracted_name is not None:
@@ -2089,6 +2128,9 @@ def extract_profile_fields_from_message(message: str) -> dict[str, Any]:
         if generic_tokens and generic_tokens[0].lower() in {"pernom", "pérnom", "prenon", "prénon"}:
             extracted["confidence"] = max(float(extracted["confidence"]), 0.1)
             extracted["reason"] = "generic_name_typo_blocked"
+        elif generic_tokens and generic_tokens[0].lower() in {"m", "m'appel", "mappel", "mappelle", "appel"}:
+            extracted["confidence"] = max(float(extracted["confidence"]), 0.1)
+            extracted["reason"] = "generic_prefix_blocked"
         elif 2 <= len(generic_tokens) <= 3:
             extracted["first_name"] = generic_tokens[0]
             extracted["last_name"] = " ".join(generic_tokens[1:])
@@ -3074,6 +3116,26 @@ f"Salut 👋\n\nJe suis ton assistant financier. Je t’aide à analyser tes dé
                             else:
                                 return _chat_response(reply="Réponds par oui ou non 🙂", tool_result=None, plan=None)
 
+                        if _is_low_signal_message(message):
+                            updated_global_state = _build_onboarding_global_state(
+                                global_state,
+                                onboarding_step="profile",
+                                onboarding_substep="profile_collect",
+                            )
+                            state_dict["global_state"] = updated_global_state
+                            updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                            updated_chat_state["state"] = state_dict
+                            profiles_repository.update_chat_state(
+                                profile_id=profile_id,
+                                user_id=auth_user_id,
+                                chat_state=updated_chat_state,
+                            )
+                            return _chat_response(
+                                reply=_missing_profile_field_question(profile_fields),
+                                tool_result=None,
+                                plan=None,
+                            )
+
                         extraction = extract_profile_fields_from_message(message)
 
                         extracted_first_name = extraction.get("first_name")
@@ -3158,6 +3220,14 @@ f"Salut 👋\n\nJe suis ton assistant financier. Je t’aide à analyser tes dé
                             and extraction.get("last_name") is None
                             and "nom" in message.lower()
                         )
+                        suspicious_first_name = False
+                        suspicious_first_name_value = extraction.get("first_name")
+                        if isinstance(suspicious_first_name_value, str) and suspicious_first_name_value.strip():
+                            suspicious_first_name_normalized = suspicious_first_name_value.strip().lower()
+                            suspicious_first_name = bool(
+                                ("'" in suspicious_first_name_normalized and suspicious_first_name_normalized.startswith("m"))
+                                or suspicious_first_name_normalized in {"m'appel", "mappel", "mappelle", "appel"}
+                            )
                         extraction_source = "heuristic"
                         should_try_llm = bool(
                             message
@@ -3166,6 +3236,7 @@ f"Salut 👋\n\nJe suis ton assistant financier. Je t’aide à analyser tes dé
                                 or ambiguous_message
                                 or invalid_first_name_detected
                                 or invalid_last_name_detected
+                                or suspicious_first_name
                             )
                         )
                         if should_try_llm:
