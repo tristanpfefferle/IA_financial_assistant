@@ -8,12 +8,14 @@ const {
   fetchPendingTransactions,
   getPendingMerchantAliasesCount,
   importReleves,
+  getSpendingReport,
   openPdfFromUrl,
   sendChatMessage,
 } = vi.hoisted(() => ({
   fetchPendingTransactions: vi.fn(),
   getPendingMerchantAliasesCount: vi.fn(),
   importReleves: vi.fn(),
+  getSpendingReport: vi.fn(),
   openPdfFromUrl: vi.fn(),
   sendChatMessage: vi.fn(),
 }))
@@ -28,6 +30,7 @@ vi.mock('../api/agentApi', () => ({
   },
   sendChatMessage,
   importReleves,
+  getSpendingReport,
   hardResetProfile: vi.fn(),
   resetSession: vi.fn(),
   openPdfFromUrl,
@@ -76,8 +79,31 @@ describe('ChatPage import intent rendering', () => {
     getPendingMerchantAliasesCount.mockReset()
     importReleves.mockReset()
     sendChatMessage.mockReset()
+    getSpendingReport.mockReset()
     openPdfFromUrl.mockReset()
     openPdfFromUrl.mockResolvedValue(undefined)
+    getSpendingReport.mockResolvedValue({
+      period: { start_date: '2026-01-01', end_date: '2026-01-31', label: 'Janvier 2026' },
+      currency: 'CHF',
+      total: 0,
+      count: 0,
+      cashflow: {
+        total_income: 0,
+        total_expense: 0,
+        net_cashflow: 0,
+        internal_transfers: 0,
+        net_including_transfers: 0,
+        transaction_count: 0,
+        currency: 'CHF',
+      },
+      effective_spending: {
+        outgoing: 0,
+        incoming: 0,
+        net_balance: 0,
+        effective_total: 0,
+      },
+      categories: [],
+    })
     getPendingMerchantAliasesCount.mockResolvedValue({ pending_total_count: 0 })
     fetchPendingTransactions.mockResolvedValue({ count_total: 0, count_twint_p2p_pending: 0, items: [] })
   })

@@ -116,6 +116,36 @@ export type ResolvePendingMerchantAliasesResult = {
   stats: Record<string, unknown>
 }
 
+export type SpendingReportApi = {
+  period: {
+    start_date: string
+    end_date: string
+    label: string
+  }
+  currency: string
+  total: string
+  count: number
+  cashflow: {
+    total_income: string
+    total_expense: string
+    net_cashflow: string
+    internal_transfers: string
+    net_including_transfers: string
+    transaction_count: number
+    currency: string
+  }
+  effective_spending: {
+    outgoing: string
+    incoming: string
+    net_balance: string
+    effective_total: string
+  }
+  categories: Array<{
+    name: string
+    amount: string
+  }>
+}
+
 export type SpendingReport = {
   period: {
     start_date: string
@@ -338,6 +368,43 @@ export async function openSpendingReportPdf(month?: string): Promise<void> {
   await openPdfFromUrl(`/finance/reports/spending.pdf${query}`)
 }
 
+function toNumberOrZero(value: string): number {
+  const parsed = Number.parseFloat(value)
+  return Number.isNaN(parsed) ? 0 : parsed
+}
+
+export function normalizeSpendingReport(api: SpendingReportApi): SpendingReport {
+  return {
+    period: {
+      start_date: api.period.start_date,
+      end_date: api.period.end_date,
+      label: api.period.label,
+    },
+    currency: api.currency,
+    total: toNumberOrZero(api.total),
+    count: api.count,
+    cashflow: {
+      total_income: toNumberOrZero(api.cashflow.total_income),
+      total_expense: toNumberOrZero(api.cashflow.total_expense),
+      net_cashflow: toNumberOrZero(api.cashflow.net_cashflow),
+      internal_transfers: toNumberOrZero(api.cashflow.internal_transfers),
+      net_including_transfers: toNumberOrZero(api.cashflow.net_including_transfers),
+      transaction_count: api.cashflow.transaction_count,
+      currency: api.cashflow.currency,
+    },
+    effective_spending: {
+      outgoing: toNumberOrZero(api.effective_spending.outgoing),
+      incoming: toNumberOrZero(api.effective_spending.incoming),
+      net_balance: toNumberOrZero(api.effective_spending.net_balance),
+      effective_total: toNumberOrZero(api.effective_spending.effective_total),
+    },
+    categories: api.categories.map((category) => ({
+      name: category.name,
+      amount: toNumberOrZero(category.amount),
+    })),
+  }
+}
+
 export async function getSpendingReport(params: SpendingReportParams = {}): Promise<SpendingReport> {
   const searchParams = new URLSearchParams()
   if (params.month) {
@@ -361,7 +428,8 @@ export async function getSpendingReport(params: SpendingReportParams = {}): Prom
     throw new Error(`Erreur API rapport JSON (${response.status}): ${detail}`)
   }
 
-  return (await response.json()) as SpendingReport
+  const payload = (await response.json()) as SpendingReportApi
+  return normalizeSpendingReport(payload)
 }
 
 export async function hardResetProfile(): Promise<void> {
