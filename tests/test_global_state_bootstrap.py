@@ -1614,6 +1614,31 @@ def test_profile_collect_accepts_je_m_appelle_first_name(monkeypatch) -> None:
     assert "prénom et ton nom" not in response.json()["reply"].lower()
 
 
+def test_profile_collect_typo_pernom_extracts_first_name_correctly(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "onboarding",
+                    "onboarding_step": "profile",
+                    "onboarding_substep": "profile_collect",
+                }
+            }
+        },
+        profile_fields={"first_name": "", "last_name": "", "birth_date": ""},
+    )
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
+
+    response = client.post("/agent/chat", json={"message": "Mon pérnom c'est Jake"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert {"first_name": "Jake"} in repo.profile_update_calls
+    assert not any(call.get("first_name") == "pérnom" for call in repo.profile_update_calls)
+    assert "nom de famille" in response.json()["reply"].lower()
+
+
 def test_profile_collect_accepts_first_and_last_non_standard(monkeypatch) -> None:
     _mock_auth(monkeypatch)
     repo = _Repo(
@@ -1842,6 +1867,74 @@ def test_profile_collect_absurd_birth_date_requires_confirmation(monkeypatch) ->
     assert "yyyy-mm-dd" in response.json()["reply"].lower()
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
     assert persisted["onboarding_substep"] == "profile_collect"
+
+
+def test_profile_collect_year_typo_sets_pending_and_confirms_then_persists(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "onboarding",
+                    "onboarding_step": "profile",
+                    "onboarding_substep": "profile_collect",
+                }
+            }
+        },
+        profile_fields={"first_name": "Jake", "last_name": "Avassdd", "birth_date": ""},
+    )
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
+
+    first = client.post("/agent/chat", json={"message": "Je sui né le 10 mai 20002"}, headers=_auth_headers())
+
+    assert first.status_code == 200
+    assert "peux-tu confirmer ton année de naissance" in first.json()["reply"].lower()
+    assert first.json()["tool_result"] == {
+        "type": "ui_action",
+        "action": "quick_replies",
+        "options": [{"id": "yes", "label": "✅", "value": "oui"}, {"id": "no", "label": "❌", "value": "non"}],
+    }
+    assert repo.update_calls[-1]["chat_state"]["state"]["profile_birth_date_pending_iso"] == "2002-05-10"
+
+    second = client.post("/agent/chat", json={"message": "oui"}, headers=_auth_headers())
+
+    assert second.status_code == 200
+    assert {"birth_date": "2002-05-10"} in repo.profile_update_calls
+    assert "profile_birth_date_pending_iso" not in repo.update_calls[-1]["chat_state"]["state"]
+    assert "récapitulatif de ton profil" in second.json()["reply"].lower()
+    assert second.json()["tool_result"] == {
+        "type": "ui_action",
+        "action": "quick_replies",
+        "options": [{"id": "yes", "label": "✅", "value": "oui"}, {"id": "no", "label": "❌", "value": "non"}],
+    }
+
+
+def test_profile_collect_pending_birth_date_non_keeps_collect(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "profile_birth_date_pending_iso": "2002-05-10",
+                "global_state": {
+                    "mode": "onboarding",
+                    "onboarding_step": "profile",
+                    "onboarding_substep": "profile_collect",
+                },
+            }
+        },
+        profile_fields={"first_name": "Jake", "last_name": "Avassdd", "birth_date": ""},
+    )
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
+
+    response = client.post("/agent/chat", json={"message": "non"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert "yyyy-mm-dd" in response.json()["reply"].lower()
+    assert "profile_birth_date_pending_iso" not in repo.update_calls[-1]["chat_state"]["state"]
+    persisted_global = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
+    assert persisted_global["onboarding_substep"] == "profile_collect"
 
 def test_profile_collect_llm_fallback_handles_weird_input(monkeypatch) -> None:
     _mock_auth(monkeypatch)
