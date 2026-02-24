@@ -589,8 +589,14 @@ class SupabaseProfilesRepository:
             else (other_email_final if normalized_link_type == "external" else None)
         )
 
+        status_final = (
+            "active"
+            if normalized_link_type == "internal" or other_profile_id is not None
+            else "pending"
+        )
+
         base_payload_insert: dict[str, Any] = {
-            "status": "active",
+            "status": status_final,
             "link_type": normalized_link_type,
             "owner_profile_id": str(profile_id),
             "owner_user_id": owner_user_id_final,
