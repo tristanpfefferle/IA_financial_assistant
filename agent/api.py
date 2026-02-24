@@ -155,6 +155,15 @@ _ONBOARDING_PROFILE_NON_NAME_HINTS = {
     "revenus",
     "budget",
 }
+_ONBOARDING_PROFILE_TROLL_LAST_NAMES = {"lol", "mdr", "lmao", "haha", "ptdr", "xd"}
+_ONBOARDING_PROFILE_REFUSAL_PATTERNS = (
+    re.compile(r"j[’']ai\s+pas\s+de\s+nom", flags=re.IGNORECASE),
+    re.compile(r"je\s+n[’']ai\s+pas\s+de\s+nom", flags=re.IGNORECASE),
+    re.compile(r"pas\s+de\s+nom", flags=re.IGNORECASE),
+    re.compile(r"aucun\s+nom", flags=re.IGNORECASE),
+    re.compile(r"je\s+refuse", flags=re.IGNORECASE),
+)
+_ONBOARDING_LAST_NAME_ALLOWED_CHARS_PATTERN = re.compile(r"^[A-Za-zÀ-ÖØ-öø-ÿ'\- ]+$")
 _ONBOARDING_BIRTH_DATE_PATTERN = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
 _ONBOARDING_BIRTH_DATE_DOT_PATTERN = re.compile(r"^(\d{1,2})\.(\d{1,2})\.(\d{4})$")
 _ONBOARDING_BIRTH_DATE_SLASH_PATTERN = re.compile(r"^(\d{1,2})/(\d{1,2})/(\d{4})$")
@@ -1927,6 +1936,36 @@ def _tokenize_profile_name_fragment(fragment: str) -> list[str]:
     return cleaned_tokens
 
 
+def _is_plausible_last_name(value: str) -> bool:
+    normalized = str(value or "").strip()
+    if len(normalized) < 2:
+        return False
+    lowered = normalized.lower()
+    if lowered in _ONBOARDING_PROFILE_TROLL_LAST_NAMES:
+        return False
+    if any(char.isdigit() for char in normalized):
+        return False
+    if not _ONBOARDING_LAST_NAME_ALLOWED_CHARS_PATTERN.fullmatch(normalized):
+        return False
+    return True
+
+
+def _is_plausible_birth_date(value_iso: str) -> bool:
+    if not isinstance(value_iso, str):
+        return False
+    try:
+        parsed = datetime.strptime(value_iso.strip(), "%Y-%m-%d").date()
+    except ValueError:
+        return False
+
+    today = date.today()
+    if parsed > today:
+        return False
+
+    age = today.year - parsed.year - ((today.month, today.day) < (parsed.month, parsed.day))
+    return 10 <= age <= 110
+
+
 def extract_profile_fields_from_message(message: str) -> dict[str, Any]:
     """Extract profile fields from a free-form onboarding message."""
 
@@ -1952,7 +1991,7 @@ def extract_profile_fields_from_message(message: str) -> dict[str, Any]:
     if last_name_match:
         last_tokens = _tokenize_profile_name_fragment(last_name_match.group(1))
         if last_tokens:
-            extracted["last_name"] = " ".join(last_tokens)
+            extracted["last_name"] = " ".join(last_tokens[:3])
             extracted["confidence"] = max(float(extracted["confidence"]), 0.9)
             extracted["reason"] = "explicit_last_name"
             explicit_last_name = True
@@ -2790,7 +2829,68 @@ f"Salut 👋\n\nJe suis ton assistant financier. Je t’aide à analyser tes dé
                     if hasattr(profiles_repository, "update_profile_fields"):
                         existing_first_name = str(profile_fields.get("first_name") or "").strip()
                         existing_last_name = str(profile_fields.get("last_name") or "").strip()
+                        existing_birth_date = str(profile_fields.get("birth_date") or "").strip()
+                        refusal_detected = any(pattern.search(message) for pattern in _ONBOARDING_PROFILE_REFUSAL_PATTERNS)
+                        if refusal_detected:
+                            refusal_reply = (
+                                "Quel est ton prénom ?"
+                                if not _is_profile_field_completed(existing_first_name)
+                                else (
+                                    f"Ok {existing_first_name} 🙂 J’ai besoin de ton nom de famille "
+                                    "(celui sur tes documents). Si tu préfères, tu peux mettre uniquement l’initiale."
+                                )
+                            )
+                            updated_global_state = _build_onboarding_global_state(
+                                global_state,
+                                onboarding_step="profile",
+                                onboarding_substep="profile_collect",
+                            )
+                            state_dict["global_state"] = updated_global_state
+                            updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                            updated_chat_state["state"] = state_dict
+                            profiles_repository.update_chat_state(
+                                profile_id=profile_id,
+                                user_id=auth_user_id,
+                                chat_state=updated_chat_state,
+                            )
+                            return _chat_response(reply=refusal_reply, tool_result=None, plan=None)
+
                         extraction = extract_profile_fields_from_message(message)
+
+                        extracted_first_name = extraction.get("first_name")
+                        extracted_last_name = extraction.get("last_name")
+                        extracted_birth_date = extraction.get("birth_date")
+                        invalid_last_name_detected = False
+
+                        if isinstance(extracted_last_name, str) and extracted_last_name.strip() and not _is_plausible_last_name(
+                            extracted_last_name
+                        ):
+                            extraction["last_name"] = None
+                            extracted_last_name = None
+                            invalid_last_name_detected = True
+
+                        if isinstance(extracted_birth_date, str) and extracted_birth_date.strip() and not _is_plausible_birth_date(
+                            extracted_birth_date
+                        ):
+                            updated_global_state = _build_onboarding_global_state(
+                                global_state,
+                                onboarding_step="profile",
+                                onboarding_substep="profile_collect",
+                            )
+                            state_dict["global_state"] = updated_global_state
+                            updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                            updated_chat_state["state"] = state_dict
+                            profiles_repository.update_chat_state(
+                                profile_id=profile_id,
+                                user_id=auth_user_id,
+                                chat_state=updated_chat_state,
+                            )
+                            return _chat_response(
+                                reply="Ça me paraît improbable 🙂 Peux-tu confirmer ta date de naissance au format YYYY-MM-DD ?",
+                                tool_result=None,
+                                plan=None,
+                            )
+
                         extracted_any = any(
                             extraction.get(field_name)
                             for field_name in ("first_name", "last_name", "birth_date")
@@ -2808,6 +2908,55 @@ f"Salut 👋\n\nJe suis ton assistant financier. Je t’aide à analyser tes dé
                                 logger.exception("profile_collect_llm_extraction_failed profile_id=%s", profile_id)
                                 llm_extraction = None
                             if llm_extraction is not None:
+                                llm_last_name = llm_extraction.get("last_name")
+                                if isinstance(llm_last_name, str) and llm_last_name.strip() and not _is_plausible_last_name(
+                                    llm_last_name
+                                ):
+                                    llm_extraction["last_name"] = None
+                                    invalid_last_name_detected = True
+
+                                llm_birth_date = llm_extraction.get("birth_date")
+                                if isinstance(llm_birth_date, str) and llm_birth_date.strip() and not _is_plausible_birth_date(
+                                    llm_birth_date
+                                ):
+                                    updated_global_state = _build_onboarding_global_state(
+                                        global_state,
+                                        onboarding_step="profile",
+                                        onboarding_substep="profile_collect",
+                                    )
+                                    state_dict["global_state"] = updated_global_state
+                                    updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                                    updated_chat_state["state"] = state_dict
+                                    profiles_repository.update_chat_state(
+                                        profile_id=profile_id,
+                                        user_id=auth_user_id,
+                                        chat_state=updated_chat_state,
+                                    )
+                                    return _chat_response(
+                                        reply="Ça me paraît improbable 🙂 Peux-tu confirmer ta date de naissance au format YYYY-MM-DD ?",
+                                        tool_result=None,
+                                        plan=None,
+                                    )
+
+                                if llm_extraction.get("needs_clarification") and llm_extraction.get("clarification_question"):
+                                    updated_global_state = _build_onboarding_global_state(
+                                        global_state,
+                                        onboarding_step="profile",
+                                        onboarding_substep="profile_collect",
+                                    )
+                                    state_dict["global_state"] = updated_global_state
+                                    updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                                    updated_chat_state["state"] = state_dict
+                                    profiles_repository.update_chat_state(
+                                        profile_id=profile_id,
+                                        user_id=auth_user_id,
+                                        chat_state=updated_chat_state,
+                                    )
+                                    return _chat_response(
+                                        reply=str(llm_extraction["clarification_question"]),
+                                        tool_result=None,
+                                        plan=None,
+                                    )
                                 extraction = llm_extraction
                                 extraction_source = "llm"
 
@@ -2831,9 +2980,32 @@ f"Salut 👋\n\nJe suis ton assistant financier. Je t’aide à analyser tes dé
                         if isinstance(extracted_last_name, str) and extracted_last_name.strip() and not existing_last_name:
                             name_update_payload["last_name"] = extracted_last_name.strip()
 
+                        if invalid_last_name_detected and not _is_profile_field_completed(existing_last_name):
+                            updated_global_state = _build_onboarding_global_state(
+                                global_state,
+                                onboarding_step="profile",
+                                onboarding_substep="profile_collect",
+                            )
+                            state_dict["global_state"] = updated_global_state
+                            updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                            updated_chat_state["state"] = state_dict
+                            profiles_repository.update_chat_state(
+                                profile_id=profile_id,
+                                user_id=auth_user_id,
+                                chat_state=updated_chat_state,
+                            )
+                            if _is_profile_field_completed(existing_first_name):
+                                last_name_prompt = (
+                                    f"Ok {existing_first_name} 🙂 J’ai besoin de ton nom de famille "
+                                    "(celui sur tes documents). Si tu préfères, tu peux mettre uniquement l’initiale."
+                                )
+                            else:
+                                last_name_prompt = "Quel est ton prénom et ton nom ?"
+                            return _chat_response(reply=last_name_prompt, tool_result=None, plan=None)
+
                         birth_date_update_payload: dict[str, str] = {}
                         extracted_birth_date = extraction.get("birth_date")
-                        if isinstance(extracted_birth_date, str) and extracted_birth_date.strip():
+                        if isinstance(extracted_birth_date, str) and extracted_birth_date.strip() and not existing_birth_date:
                             birth_date_update_payload["birth_date"] = extracted_birth_date.strip()
 
                         if name_update_payload:
