@@ -203,6 +203,10 @@ function debugLog(...args: unknown[]): void {
 }
 
 function appendAccessTokenToUrl(url: string, accessToken: string): string {
+  if (/[?&]access_token=/.test(url)) {
+    return url
+  }
+
   const separator = url.includes('?') ? '&' : '?'
   return `${url}${separator}access_token=${encodeURIComponent(accessToken)}`
 }

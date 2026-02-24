@@ -97,6 +97,24 @@ describe('openPdfFromUrl', () => {
     expect(logs).toContain('access_token=***')
     expect(logs).not.toContain('access_token=token-123')
   })
+
+  it('keeps existing access_token when fallback opens url', async () => {
+    const fetchMock = vi.fn(async () => {
+      throw new TypeError('Failed to fetch')
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const windowOpenSpy = vi.spyOn(window, 'open').mockReturnValue(null)
+
+    await expect(
+      openPdfFromUrl('http://127.0.0.1:8000/finance/reports/spending.pdf?access_token=existing'),
+    ).resolves.toBeUndefined()
+
+    expect(windowOpenSpy).toHaveBeenCalledWith(
+      'http://127.0.0.1:8000/finance/reports/spending.pdf?access_token=existing',
+      '_blank',
+      'noopener,noreferrer',
+    )
+  })
 })
 
 describe('getSpendingReport', () => {

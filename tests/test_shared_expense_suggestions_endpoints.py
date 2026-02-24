@@ -22,7 +22,11 @@ def _auth_headers() -> dict[str, str]:
 
 
 def _mock_authenticated(monkeypatch) -> None:
-    monkeypatch.setattr(agent_api, "_resolve_authenticated_profile", lambda _authorization: (UUID(int=1), PROFILE_ID))
+    monkeypatch.setattr(
+        agent_api,
+        "_resolve_authenticated_profile",
+        lambda _request, _authorization=None: (UUID(int=1), PROFILE_ID),
+    )
 
 
 def test_list_shared_expense_suggestions_returns_501_without_supabase(monkeypatch) -> None:
