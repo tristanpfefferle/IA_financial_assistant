@@ -49,7 +49,7 @@ def generate_initial_shared_expense_suggestions(
     rows, _ = supabase_client.get_rows(
         table="releves_bancaires",
         query={
-            "select": "id,montant,payee,libelle,category,date",
+            "select": "id,montant,payee,libelle,categorie,date",
             "profile_id": f"eq.{profile_id}",
             "date": f"gte.{start_date}",
             "order": "date.desc",
@@ -68,7 +68,7 @@ def generate_initial_shared_expense_suggestions(
         if transaction_id is None or amount >= Decimal("0"):
             continue
 
-        category = str(row.get("category") or "").strip()
+        category = str(row.get("categorie") or row.get("category") or "").strip()
         if category.lower() == "internal transfer":
             continue
         merchant_blob = f"{row.get('payee') or ''} {row.get('libelle') or ''}".lower()
@@ -134,4 +134,3 @@ def _safe_decimal(raw_value: Any, *, fallback: Decimal) -> Decimal:
         return Decimal(str(raw_value))
     except (InvalidOperation, TypeError, ValueError):
         return fallback
-
