@@ -191,6 +191,14 @@ function getBaseUrl(): string {
   return rawBaseUrl.replace(/\/+$/, '')
 }
 
+export function resolveApiBaseUrl(override?: string): string {
+  if (override && override.trim().length > 0) {
+    return override.replace(/\/+$/, '')
+  }
+
+  return getBaseUrl()
+}
+
 let sessionResetRequested = false
 
 export function __unsafeResetSessionResetStateForTests(): void {
@@ -413,7 +421,7 @@ export function normalizeSpendingReport(api: SpendingReportApi): SpendingReport 
   }
 }
 
-export async function getSpendingReport(params: SpendingReportParams = {}): Promise<SpendingReport> {
+export async function getSpendingReport(params: SpendingReportParams = {}, apiBaseUrl?: string): Promise<SpendingReport> {
   const searchParams = new URLSearchParams()
   if (params.month) {
     searchParams.set('month', params.month)
@@ -426,7 +434,7 @@ export async function getSpendingReport(params: SpendingReportParams = {}): Prom
   }
 
   const query = searchParams.toString()
-  const response = await fetch(`${getBaseUrl()}/finance/reports/spending${query ? `?${query}` : ''}`, {
+  const response = await fetch(`${resolveApiBaseUrl(apiBaseUrl)}/finance/reports/spending${query ? `?${query}` : ''}`, {
     method: 'GET',
     headers: await buildAuthHeaders(),
   })
