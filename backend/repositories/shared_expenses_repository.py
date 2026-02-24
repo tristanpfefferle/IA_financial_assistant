@@ -92,7 +92,7 @@ class SharedExpensesRepository(Protocol):
         start_date: date,
         end_date: date,
     ) -> list[SharedExpenseRow]:
-        """Return applied shared expenses where profile is payer or beneficiary for the period."""
+        """Return active shared expenses where profile is payer or beneficiary for the period."""
 
 
 class SupabaseSharedExpensesRepository:
@@ -244,7 +244,8 @@ class SupabaseSharedExpensesRepository:
             "to_profile_id": str(suggestion["suggested_to_profile_id"]) if suggestion.get("suggested_to_profile_id") else None,
             "transaction_id": str(suggestion["transaction_id"]),
             "amount": str(amount),
-            "status": "applied",
+            # shared_expenses.status is a DB enum; avoid unsupported statuses (e.g. "applied").
+            "status": "active",
             "split_ratio_other": str(suggestion.get("suggested_split_ratio_other") or "0.5"),
             "other_party_label": str(suggestion["other_party_label"]) if suggestion.get("other_party_label") else None,
             "link_id": str(suggestion["link_id"]) if suggestion.get("link_id") else None,
@@ -329,7 +330,7 @@ class SupabaseSharedExpensesRepository:
                         "from_profile_id,to_profile_id,transaction_id,amount,created_at,status,split_ratio_other,other_party_label",
                     ),
                     ("or", f"(from_profile_id.eq.{profile_id},to_profile_id.eq.{profile_id})"),
-                    ("status", "in.(applied,active,pending)"),
+                    ("status", "in.(active,pending)"),
                     # TODO(MVP): created_at is only a proxy; ideally filter by underlying transaction date.
                     ("created_at", f"gte.{start_date.isoformat()}T00:00:00+00:00"),
                     ("created_at", f"lte.{end_date.isoformat()}T23:59:59+00:00"),
@@ -362,7 +363,7 @@ class SupabaseSharedExpensesRepository:
                     transaction_id=UUID(str(row["transaction_id"])) if row.get("transaction_id") else None,
                     amount=Decimal(str(row.get("amount") or "0")),
                     created_at=created_at,
-                    status=str(row.get("status") or "applied"),
+                    status=str(row.get("status") or "active"),
                     split_ratio_other=(
                         Decimal(str(row["split_ratio_other"]))
                         if row.get("split_ratio_other") is not None
@@ -513,7 +514,7 @@ class InMemorySharedExpensesRepository:
                 transaction_id=row["transaction_id"],
                 amount=Decimal(str(amount)),
                 created_at=datetime.now(timezone.utc),
-                status="applied",
+                status="active",
                 split_ratio_other=row.get("suggested_split_ratio_other"),
                 other_party_label=row.get("other_party_label"),
             )
@@ -531,7 +532,7 @@ class InMemorySharedExpensesRepository:
     ) -> list[SharedExpenseRow]:
         filtered: list[SharedExpenseRow] = []
         for row in self._shared_expenses:
-            if row.status != "applied":
+            if row.status not in {"active", "pending"}:
                 continue
             if row.from_profile_id != profile_id and row.to_profile_id != profile_id:
                 continue
