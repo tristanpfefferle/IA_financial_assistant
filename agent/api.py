@@ -1940,18 +1940,13 @@ def _try_get_shared_expenses_repository() -> SharedExpensesRepository | None:
     return SupabaseSharedExpensesRepository(client=client)
 
 
-def _resolve_authenticated_profile(authorization: str | None, request: Request | None = None) -> tuple[UUID, UUID]:
+def _resolve_authenticated_profile(request: Request, authorization: str | None) -> tuple[UUID, UUID]:
     """Resolve authenticated user and linked profile from auth header or query access token."""
 
-    request_for_token = request
-    if request_for_token is None:
-        scope = {"type": "http", "headers": [], "query_string": b"", "path": "/", "method": "GET"}
-        if authorization is not None:
-            scope["headers"] = [(b"authorization", authorization.encode("latin-1"))]
-        request_for_token = Request(scope)
+    _ = authorization
 
     try:
-        token = extract_bearer_token(request_for_token)
+        token = extract_bearer_token(request)
     except UnauthorizedError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
@@ -2061,6 +2056,7 @@ def health() -> dict[str, str]:
 
 @app.post("/agent/chat", response_model=ChatResponse)
 def agent_chat(
+    request: Request,
     payload: ChatRequest,
     authorization: str | None = Header(default=None),
     x_debug: str | None = Header(default=None),
@@ -2070,7 +2066,7 @@ def agent_chat(
     logger.info("agent_chat_received message_length=%s", len(payload.message))
     profile_id: UUID | None = None
     try:
-        auth_user_id, profile_id = _resolve_authenticated_profile(authorization)
+        auth_user_id, profile_id = _resolve_authenticated_profile(request, authorization)
         profiles_repository = get_profiles_repository()
 
         chat_state = _normalize_chat_state(
@@ -3181,10 +3177,10 @@ def agent_chat(
 
 
 @app.post("/agent/reset-session")
-def reset_session(authorization: str | None = Header(default=None)) -> dict[str, bool]:
+def reset_session(request: Request, authorization: str | None = Header(default=None)) -> dict[str, bool]:
     """Reset persisted chat session state for the authenticated profile."""
 
-    auth_user_id, profile_id = _resolve_authenticated_profile(authorization)
+    auth_user_id, profile_id = _resolve_authenticated_profile(request, authorization)
     profiles_repository = get_profiles_repository()
 
     chat_state = profiles_repository.get_chat_state(profile_id=profile_id, user_id=auth_user_id)
@@ -3210,6 +3206,7 @@ def reset_session(authorization: str | None = Header(default=None)) -> dict[str,
 
 @app.post("/debug/hard-reset")
 def debug_hard_reset(
+    request: Request,
     payload: HardResetPayload,
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
@@ -3221,7 +3218,7 @@ def debug_hard_reset(
     if payload.confirm is not True:
         raise HTTPException(status_code=400, detail="confirm=true is required")
 
-    auth_user_id, profile_id = _resolve_authenticated_profile(authorization)
+    auth_user_id, profile_id = _resolve_authenticated_profile(request, authorization)
     repo = get_profiles_repository()
     repo.hard_reset_profile(profile_id=profile_id, user_id=auth_user_id)
     return {"ok": True}
@@ -3229,13 +3226,14 @@ def debug_hard_reset(
 
 @app.get("/finance/shared-expenses/suggestions")
 def list_shared_expense_suggestions(
+    request: Request,
     status: str = "pending",
     limit: int = 50,
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
     """List shared expense suggestions for authenticated profile."""
 
-    _, profile_id = _resolve_authenticated_profile(authorization)
+    _, profile_id = _resolve_authenticated_profile(request, authorization)
     repository = _get_shared_expenses_repository_or_501()
     items = repository.list_shared_expense_suggestions(profile_id=profile_id, status=status, limit=limit)
     return {
@@ -3258,13 +3256,14 @@ def list_shared_expense_suggestions(
 
 @app.post("/finance/shared-expenses/suggestions/{suggestion_id}/dismiss")
 def dismiss_shared_expense_suggestion(
+    request: Request,
     suggestion_id: UUID,
     payload: SharedExpenseSuggestionDismissPayload | None = None,
     authorization: str | None = Header(default=None),
 ) -> dict[str, bool]:
     """Dismiss a shared expense suggestion."""
 
-    _, profile_id = _resolve_authenticated_profile(authorization)
+    _, profile_id = _resolve_authenticated_profile(request, authorization)
     repository = _get_shared_expenses_repository_or_501()
     repository.mark_suggestion_status(
         profile_id=profile_id,
@@ -3277,13 +3276,14 @@ def dismiss_shared_expense_suggestion(
 
 @app.post("/finance/shared-expenses/suggestions/{suggestion_id}/apply")
 def apply_shared_expense_suggestion(
+    request: Request,
     suggestion_id: UUID,
     payload: SharedExpenseSuggestionApplyPayload | None = None,
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
     """Apply one shared expense suggestion and create a shared expense row."""
 
-    _, profile_id = _resolve_authenticated_profile(authorization)
+    _, profile_id = _resolve_authenticated_profile(request, authorization)
     repository = _get_shared_expenses_repository_or_501()
 
     amount: Decimal | None = None
@@ -3343,10 +3343,10 @@ def apply_shared_expense_suggestion(
 
 
 @app.get("/finance/bank-accounts")
-def list_bank_accounts(authorization: str | None = Header(default=None)) -> Any:
+def list_bank_accounts(request: Request, authorization: str | None = Header(default=None)) -> Any:
     """Return bank accounts for the authenticated profile."""
 
-    _, profile_id = _resolve_authenticated_profile(authorization)
+    _, profile_id = _resolve_authenticated_profile(request, authorization)
     result = get_tool_router().call("finance_bank_accounts_list", {}, profile_id=profile_id)
     if isinstance(result, ToolError):
         raise HTTPException(status_code=400, detail=result.message)
@@ -3858,7 +3858,7 @@ def get_spending_report_json(
     end_date: str | None = None,
     month: str | None = None,
 ) -> dict[str, Any]:
-    auth_user_id, profile_id = _resolve_authenticated_profile(authorization, request)
+    auth_user_id, profile_id = _resolve_authenticated_profile(request, authorization)
     profiles_repository = get_profiles_repository()
     chat_state = profiles_repository.get_chat_state(profile_id=profile_id, user_id=auth_user_id)
     state_dict = chat_state.get("state") if isinstance(chat_state, dict) else None
@@ -3890,7 +3890,7 @@ def get_spending_report_pdf(
     end_date: str | None = None,
     month: str | None = None,
 ) -> Response:
-    auth_user_id, profile_id = _resolve_authenticated_profile(authorization, request)
+    auth_user_id, profile_id = _resolve_authenticated_profile(request, authorization)
     profiles_repository = get_profiles_repository()
     chat_state = profiles_repository.get_chat_state(profile_id=profile_id, user_id=auth_user_id)
     state_dict = chat_state.get("state") if isinstance(chat_state, dict) else None
@@ -3924,10 +3924,10 @@ def get_spending_report_pdf(
 
 
 @app.post("/finance/releves/import")
-def import_releves(payload: ImportRequestPayload, authorization: str | None = Header(default=None)) -> Any:
+def import_releves(request: Request, payload: ImportRequestPayload, authorization: str | None = Header(default=None)) -> Any:
     """Import bank statements using backend tool router."""
 
-    auth_user_id, profile_id = _resolve_authenticated_profile(authorization)
+    auth_user_id, profile_id = _resolve_authenticated_profile(request, authorization)
     files_payload = [
         {"filename": import_file.filename, "content_base64": import_file.content_base64}
         for import_file in payload.files
@@ -4332,6 +4332,7 @@ def _maybe_auto_apply_suggestion(
 
 @app.post("/finance/merchants/suggestions/resolve")
 def resolve_merchant_alias_suggestions(
+    request: Request,
     payload: MerchantAliasResolvePayload,
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
@@ -4340,7 +4341,7 @@ def resolve_merchant_alias_suggestions(
     if not _config.llm_enabled():
         raise HTTPException(status_code=400, detail="LLM is disabled (set AGENT_LLM_ENABLED=1)")
 
-    _, profile_id = _resolve_authenticated_profile(authorization)
+    _, profile_id = _resolve_authenticated_profile(request, authorization)
     profiles_repository = get_profiles_repository()
 
     limit = max(1, min(int(payload.limit), 500))
@@ -4367,10 +4368,10 @@ def resolve_merchant_alias_suggestions(
 
 
 @app.get("/finance/transactions/pending")
-def get_pending_transactions(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+def get_pending_transactions(request: Request, authorization: str | None = Header(default=None)) -> dict[str, Any]:
     """List/count pending categorization transactions for authenticated profile."""
 
-    _, profile_id = _resolve_authenticated_profile(authorization)
+    _, profile_id = _resolve_authenticated_profile(request, authorization)
     tool_router = get_tool_router()
     backend_client = getattr(tool_router, "backend_client", None)
     tool_service = getattr(backend_client, "tool_service", None)
@@ -4418,10 +4419,10 @@ def get_pending_transactions(authorization: str | None = Header(default=None)) -
     }
 
 @app.get("/finance/merchants/aliases/pending-count")
-def get_pending_merchant_aliases_count(authorization: str | None = Header(default=None)) -> dict[str, int]:
+def get_pending_merchant_aliases_count(request: Request, authorization: str | None = Header(default=None)) -> dict[str, int]:
     """Return count of pending/failed map_alias suggestions for authenticated profile."""
 
-    _, profile_id = _resolve_authenticated_profile(authorization)
+    _, profile_id = _resolve_authenticated_profile(request, authorization)
     profiles_repository = get_profiles_repository()
 
     pending_total_count: int | None = None
@@ -4447,6 +4448,7 @@ def get_pending_merchant_aliases_count(authorization: str | None = Header(defaul
 
 @app.post("/finance/merchants/aliases/resolve-pending")
 def resolve_pending_merchant_aliases(
+    request: Request,
     payload: ResolvePendingMerchantAliasesPayload | None = None,
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
@@ -4455,7 +4457,7 @@ def resolve_pending_merchant_aliases(
     if not _config.llm_enabled():
         raise HTTPException(status_code=400, detail="LLM is disabled (set AGENT_LLM_ENABLED=1)")
 
-    _, profile_id = _resolve_authenticated_profile(authorization)
+    _, profile_id = _resolve_authenticated_profile(request, authorization)
     profiles_repository = get_profiles_repository()
 
     requested_limit = payload.limit if payload else None
@@ -4554,10 +4556,11 @@ def resolve_pending_merchant_aliases(
 
 @app.post("/finance/merchants/suggestions/list")
 def list_merchant_suggestions(
+    request: Request,
     payload: MerchantSuggestionsListPayload,
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    _, profile_id = _resolve_authenticated_profile(authorization)
+    _, profile_id = _resolve_authenticated_profile(request, authorization)
     result = get_tool_router().call(
         "finance_merchants_suggest_fixes",
         payload.model_dump(),
@@ -4570,10 +4573,11 @@ def list_merchant_suggestions(
 
 @app.post("/finance/merchants/suggestions/apply")
 def apply_merchant_suggestion(
+    request: Request,
     payload: MerchantSuggestionApplyPayload,
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    _, profile_id = _resolve_authenticated_profile(authorization)
+    _, profile_id = _resolve_authenticated_profile(request, authorization)
     result = get_tool_router().call(
         "finance_merchants_apply_suggestion",
         payload.model_dump(mode="json"),
@@ -4586,10 +4590,10 @@ def apply_merchant_suggestion(
 
 
 @app.post("/finance/merchants/rename")
-def rename_merchant(payload: RenameMerchantPayload, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+def rename_merchant(request: Request, payload: RenameMerchantPayload, authorization: str | None = Header(default=None)) -> dict[str, Any]:
     """Rename one merchant for the authenticated profile."""
 
-    _, profile_id = _resolve_authenticated_profile(authorization)
+    _, profile_id = _resolve_authenticated_profile(request, authorization)
     profiles_repository = get_profiles_repository()
     try:
         return profiles_repository.rename_merchant(
@@ -4604,10 +4608,10 @@ def rename_merchant(payload: RenameMerchantPayload, authorization: str | None = 
 
 
 @app.post("/finance/merchants/merge")
-def merge_merchants(payload: MergeMerchantsPayload, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+def merge_merchants(request: Request, payload: MergeMerchantsPayload, authorization: str | None = Header(default=None)) -> dict[str, Any]:
     """Merge source merchant into target merchant for the authenticated profile."""
 
-    _, profile_id = _resolve_authenticated_profile(authorization)
+    _, profile_id = _resolve_authenticated_profile(request, authorization)
     profiles_repository = get_profiles_repository()
     try:
         return profiles_repository.merge_merchants(
