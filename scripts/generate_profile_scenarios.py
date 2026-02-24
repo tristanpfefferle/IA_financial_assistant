@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import argparse
 import json
+import random
+from datetime import date
 from pathlib import Path
 
 
@@ -25,201 +28,300 @@ def _one_turn_scenario(
         expect["update_equals"] = update_equals
     if no_llm:
         expect["no_llm"] = True
-    return {"id": scenario_id, "initial_profile": initial_profile, "turns": [{"user": user, "expect": expect}]}
+    return {
+        "id": scenario_id,
+        "initial_profile": initial_profile,
+        "turns": [{"user": user, "expect": expect}],
+    }
 
 
-def _build_scenarios() -> list[dict[str, object]]:
+def _title_case_name(raw: str) -> str:
+    chunks = [part.capitalize() for part in raw.split("-")]
+    return "-".join(chunks)
+
+
+def _iso_from_parts(day: int, month: int, year: int) -> str:
+    return date(year, month, day).isoformat()
+
+
+def _compute_distribution(total: int) -> dict[str, int]:
+    weights = {
+        "meta": 0.25,
+        "refusal": 0.20,
+        "typo": 0.15,
+        "mixed": 0.15,
+        "low_signal": 0.10,
+        "toxic": 0.10,
+        "birth_weird": 0.05,
+    }
+    counts = {key: int(total * weight) for key, weight in weights.items()}
+    remaining = total - sum(counts.values())
+    ordered = sorted(weights.items(), key=lambda item: item[1], reverse=True)
+    idx = 0
+    while remaining > 0:
+        counts[ordered[idx % len(ordered)][0]] += 1
+        idx += 1
+        remaining -= 1
+    return counts
+
+
+def _build_scenarios(count: int, seed: int) -> list[dict[str, object]]:
+    rng = random.Random(seed)
     scenarios: list[dict[str, object]] = []
+    distribution = _compute_distribution(count)
 
-    first_name_typos = [
-        ("Mon pernom c'est jake", "Jake"),
-        ("Mon pérnom c'est JAKE", "Jake"),
-        ("prenon: tristan", "Tristan"),
-        ("prénom: pfefferlé", "Pfefferlé"),
-        ("Je m'appel tristan", "Tristan"),
-        ("je m'appelle TRISTAN", "Tristan"),
-        ("moi cest pAUl", "Paul"),
-        ("moi c'est o'connor", "O'Connor"),
-        ("moi cest jean-paul", "Jean-Paul"),
-        ("c'est pfefferlé", "Pfefferlé"),
+    first_names = [
+        "jean", "marie", "thomas", "emma", "lucas", "lea", "nicolas", "camille", "antoine", "julie",
+        "hugo", "sarah", "mathis", "ines", "paul", "clara", "adrien", "manon", "olivier", "amelie",
+        "jake", "ethan", "zoe", "victor", "lina", "gabriel", "chloe", "arthur", "nora", "samuel",
     ]
-    for idx, (message, expected_first) in enumerate(first_name_typos, 1):
-        scenarios.append(
-            _one_turn_scenario(
-                f"typo-first-{idx:03d}",
-                {"first_name": "", "last_name": "", "birth_date": ""},
-                message,
-                ask_contains=["nom de famille"],
-                update_equals={"first_name": expected_first},
-            )
-        )
-
-    refusal_messages = ["je sais pas", "j'en ai pas", "non", "nop", "nan", "j'en sais rien", "aucune idee", "j'ai pas"]
-    for idx, refusal in enumerate(refusal_messages, 1):
-        scenarios.append(
-            _one_turn_scenario(
-                f"refusal-last-{idx:03d}",
-                {"first_name": "Paul", "last_name": "", "birth_date": ""},
-                refusal,
-                ask_contains=["nom de famille"],
-                no_reset=True,
-            )
-        )
+    last_names = [
+        "dupont", "martin", "bernard", "thomas", "robert", "richard", "petit", "durand", "leroy", "moreau",
+        "simon", "laurent", "lefebvre", "michel", "garcia", "david", "bertrand", "roux", "vincent", "fournier",
+        "o'connor", "fitzgerald", "miller", "walker", "harris", "delaunay", "la-fontaine", "mc-arthur",
+    ]
 
     meta_messages = [
-        "je t'ai déjà dit",
-        "tu connais",
-        "je viens de te le dire",
-        "t'es sérieux",
-        "blague",
-        "hein ?",
-        "quoi ?",
-        "sérieux ?",
+        "je te l'ai déjà dit", "tu l'as déjà", "on vient d'en parler", "relis plus haut stp", "t'es sérieux là ?",
+        "encore cette question ?", "tu fais exprès ?", "on boucle 😅", "je viens de répondre", "déjà mentionné",
     ]
-    for idx, message in enumerate(meta_messages, 1):
+    refusal_messages = [
+        "je sais pas", "aucune idée", "j'en ai pas", "non", "nop", "nan", "pass", "je préfère pas dire",
+        "impossible pour moi", "je ne peux pas répondre",
+    ]
+    typo_prefixes = ["mon pernom", "je m'appel", "prenon", "prénnom", "moi cest", "nomm", "prnom"]
+    low_signal_messages = ["??", "...", "ok", "hein", "🙂", "🤷", "👍", "euh", "hmm", "lol", "ptdr", "😶"]
+    toxic_messages = [
+        "ta gueule", "ftg", "tg", "connard", "pauvre nul", "ferme-la", "dégage", "espèce d'idiot",
+        "va te faire voir", "tu sers à rien",
+    ]
+    punctuation = ["", ".", "!", "!!", " ?", "...", " 🙃", " 😅"]
+
+    id_counter = 1
+
+    for _ in range(distribution["meta"]):
+        missing = rng.choice(["first_name", "last_name", "birth_date"])
+        if missing == "first_name":
+            profile = {"first_name": "", "last_name": "Durand", "birth_date": "1994-07-11"}
+            ask = ["prénom"]
+        elif missing == "last_name":
+            profile = {"first_name": "Camille", "last_name": "", "birth_date": "1994-07-11"}
+            ask = ["nom de famille"]
+        else:
+            profile = {"first_name": "Camille", "last_name": "Durand", "birth_date": ""}
+            ask = ["date de naissance"]
+        message = rng.choice(meta_messages) + rng.choice(punctuation)
         scenarios.append(
             _one_turn_scenario(
-                f"meta-last-{idx:03d}",
-                {"first_name": "Jake", "last_name": "", "birth_date": ""},
+                f"meta-{id_counter:04d}",
+                profile,
                 message,
-                ask_contains=["nom de famille"],
+                ask_contains=ask,
                 no_reset=True,
             )
         )
+        id_counter += 1
 
-    low_signal = ["??", "...", "ok", "hein", "🙂", "🤷", "👍", "😶", "🙃", "🤔"]
-    for idx, message in enumerate(low_signal, 1):
+    for _ in range(distribution["refusal"]):
+        missing = rng.choice(["first_name", "last_name", "birth_date"])
+        if missing == "first_name":
+            profile = {"first_name": "", "last_name": "Bernard", "birth_date": "1989-03-18"}
+            ask = ["prénom"]
+        elif missing == "last_name":
+            profile = {"first_name": "Thomas", "last_name": "", "birth_date": "1989-03-18"}
+            ask = ["nom de famille"]
+        else:
+            profile = {"first_name": "Thomas", "last_name": "Bernard", "birth_date": ""}
+            ask = ["date de naissance"]
         scenarios.append(
             _one_turn_scenario(
-                f"low-signal-{idx:03d}",
-                {"first_name": "", "last_name": "", "birth_date": ""},
-                message,
-                ask_contains=["prénom"],
+                f"refusal-{id_counter:04d}",
+                profile,
+                rng.choice(refusal_messages) + rng.choice(punctuation),
+                ask_contains=ask,
+                no_reset=True,
             )
         )
+        id_counter += 1
 
-    toxic_messages = ["ta gueule", "ftg", "tg", "connard", "pute", "ta gueule stp", "ftg sérieux", "espèce de connard"]
-    for idx, message in enumerate(toxic_messages, 1):
+    for _ in range(distribution["typo"]):
+        first_raw = rng.choice(first_names)
+        typo = rng.choice(typo_prefixes)
+        message = f"{typo} {first_raw}{rng.choice(punctuation)}"
         scenarios.append(
             _one_turn_scenario(
-                f"toxic-{idx:03d}",
+                f"typo-{id_counter:04d}",
                 {"first_name": "", "last_name": "", "birth_date": ""},
                 message,
-                ask_contains=["prénom"],
+                ask_contains=["nom de famille"],
+                update_equals={"first_name": _title_case_name(first_raw)},
+            )
+        )
+        id_counter += 1
+
+    for _ in range(distribution["mixed"]):
+        first_raw = rng.choice(first_names)
+        last_raw = rng.choice(last_names)
+        year = rng.randint(1972, 2005)
+        month = rng.randint(1, 12)
+        day_max = 28 if month == 2 else 30 if month in {4, 6, 9, 11} else 31
+        day = rng.randint(1, day_max)
+        iso = _iso_from_parts(day, month, year)
+        format_choice = rng.choice(["iso", "fr", "dots"])
+        if format_choice == "iso":
+            date_text = iso
+        elif format_choice == "fr":
+            date_text = f"{day:02d}/{month:02d}/{year}"
+        else:
+            date_text = f"{day:02d}.{month:02d}.{year}"
+        intro = rng.choice(["", "je m'appelle ", "coucou, moi c'est "])
+        message = f"{intro}{first_raw} {last_raw} {date_text}{rng.choice(punctuation)}".strip()
+        scenarios.append(
+            _one_turn_scenario(
+                f"mixed-{id_counter:04d}",
+                {"first_name": "", "last_name": "", "birth_date": ""},
+                message,
+                ask_contains=["récapitulatif", "tout est correct"],
+                update_equals={
+                    "first_name": _title_case_name(first_raw),
+                    "last_name": _title_case_name(last_raw),
+                    "birth_date": iso,
+                },
+            )
+        )
+        id_counter += 1
+
+    for _ in range(distribution["low_signal"]):
+        missing = rng.choice(["first_name", "last_name", "birth_date"])
+        if missing == "first_name":
+            profile = {"first_name": "", "last_name": "Miller", "birth_date": "1996-01-07"}
+            ask = ["prénom"]
+        elif missing == "last_name":
+            profile = {"first_name": "Emma", "last_name": "", "birth_date": "1996-01-07"}
+            ask = ["nom de famille"]
+        else:
+            profile = {"first_name": "Emma", "last_name": "Miller", "birth_date": ""}
+            ask = ["date de naissance"]
+        scenarios.append(
+            _one_turn_scenario(
+                f"low-signal-{id_counter:04d}",
+                profile,
+                rng.choice(low_signal_messages),
+                ask_contains=ask,
+                no_reset=True,
+            )
+        )
+        id_counter += 1
+
+    for _ in range(distribution["toxic"]):
+        missing = rng.choice(["first_name", "last_name", "birth_date"])
+        if missing == "first_name":
+            profile = {"first_name": "", "last_name": "Walker", "birth_date": "1992-05-30"}
+            ask = ["prénom"]
+        elif missing == "last_name":
+            profile = {"first_name": "Nicolas", "last_name": "", "birth_date": "1992-05-30"}
+            ask = ["nom de famille"]
+        else:
+            profile = {"first_name": "Nicolas", "last_name": "Walker", "birth_date": ""}
+            ask = ["date de naissance"]
+        scenarios.append(
+            _one_turn_scenario(
+                f"toxic-{id_counter:04d}",
+                profile,
+                rng.choice(toxic_messages) + rng.choice(punctuation),
+                ask_contains=ask,
+                no_reset=True,
                 no_llm=True,
             )
         )
+        id_counter += 1
 
-    mixed_inputs = [
-        ("Jean Dupont 1992-05-10", {"first_name": "Jean", "last_name": "Dupont", "birth_date": "1992-05-10"}),
-        ("je m'appelle marie durand 14/02/1998", {"first_name": "Marie", "last_name": "Durand", "birth_date": "1998-02-14"}),
-        ("pierre martin le 10.11.2001", {"first_name": "Pierre", "last_name": "Martin", "birth_date": "2001-11-10"}),
-        ("o'connor fitzgerald 2000-01-30", {"first_name": "O'Connor", "last_name": "Fitzgerald", "birth_date": "2000-01-30"}),
-        ("jean-paul sartre 12 mai 1994", {"first_name": "Jean-Paul", "last_name": "Sartre", "birth_date": "1994-05-12"}),
+    month_names = [
+        "janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre",
     ]
-    for idx, (message, expected_update) in enumerate(mixed_inputs, 1):
-        scenarios.append(
-            _one_turn_scenario(
-                f"mixed-full-{idx:03d}",
-                {"first_name": "", "last_name": "", "birth_date": ""},
-                message,
-                ask_contains=["récapitulatif", "tout est correct"],
-                update_equals=expected_update,
-            )
-        )
+    for _ in range(distribution["birth_weird"]):
+        first_raw = rng.choice(first_names)
+        last_raw = rng.choice(last_names)
+        year = rng.randint(1978, 2006)
+        month = rng.randint(1, 12)
+        day_max = 28 if month == 2 else 30 if month in {4, 6, 9, 11} else 31
+        day = rng.randint(1, day_max)
+        iso = _iso_from_parts(day, month, year)
 
-    birth_date_edges = [
-        ("2002-01-14", "2002-01-14"),
-        ("14/01/2002", "2002-01-14"),
-        ("14.01.2002", "2002-01-14"),
-        ("14 janvier 2002", "2002-01-14"),
-        ("29/02/2000", "2000-02-29"),
-        ("31/01/1999", "1999-01-31"),
-        ("01/12/1988", "1988-12-01"),
-        ("30.06.1997", "1997-06-30"),
-        ("7 mars 2004", "2004-03-07"),
-        ("2003-11-09", "2003-11-09"),
-    ]
-    for idx, (message, expected_date) in enumerate(birth_date_edges, 1):
-        scenarios.append(
-            _one_turn_scenario(
-                f"birth-edge-{idx:03d}",
-                {"first_name": "Tristan", "last_name": "Jadre", "birth_date": ""},
-                message,
-                ask_contains=["récapitulatif", "tout est correct"],
-                update_equals={"birth_date": expected_date},
-            )
-        )
+        weird_kind = rng.choice(["year_typo", "impossible_date"])
+        if weird_kind == "year_typo":
+            year_text = f"{year}0" if rng.random() < 0.5 else f"{year}{rng.randint(0, 9)}"
+            first_turn = {
+                "user": f"Je suis né le {day} {month_names[month - 1]} {year_text}",
+                "expect": {"ask_contains": ["confirmer", "année de naissance"]},
+            }
+            second_turn = {
+                "user": "oui",
+                "expect": {
+                    "ask_contains": ["récapitulatif", "tout est correct"],
+                    "update_equals": {"birth_date": iso},
+                },
+            }
+        else:
+            invalid_day = 31 if month in {4, 6, 9, 11} else 30
+            first_turn = {
+                "user": f"{invalid_day}/{month:02d}/{year}",
+                "expect": {"ask_contains": ["date invalide", "date de naissance"]},
+            }
+            second_turn = {
+                "user": f"{day:02d}/{month:02d}/{year}",
+                "expect": {
+                    "ask_contains": ["récapitulatif", "tout est correct"],
+                    "update_equals": {"birth_date": iso},
+                },
+            }
 
-    year_typo_sequences = [
-        ("Je suis né le 10 mai 20002", "2002-05-10"),
-        ("14 janvier 20008", "2008-01-14"),
-        ("29 fevrier 20004", "2004-02-29"),
-        ("1 decembre 20008", "2008-12-01"),
-        ("15 avril 20004", "2004-04-15"),
-    ]
-    for idx, (message, expected_date) in enumerate(year_typo_sequences, 1):
         scenarios.append(
             {
-                "id": f"year-typo-confirm-{idx:03d}",
-                "initial_profile": {"first_name": "Jake", "last_name": "Avassdd", "birth_date": ""},
-                "turns": [
-                    {
-                        "user": message,
-                        "expect": {
-                            "ask_contains": ["confirmer ton année de naissance"],
-                        },
-                    },
-                    {
-                        "user": "oui",
-                        "expect": {
-                            "ask_contains": ["récapitulatif", "tout est correct"],
-                            "update_equals": {"birth_date": expected_date},
-                        },
-                    },
-                ],
+                "id": f"birth-weird-{id_counter:04d}",
+                "initial_profile": {
+                    "first_name": _title_case_name(first_raw),
+                    "last_name": _title_case_name(last_raw),
+                    "birth_date": "",
+                },
+                "turns": [first_turn, second_turn],
             }
         )
+        id_counter += 1
 
-    last_names = ["Milsap", "o'connor", "JEAN-PAUL", "duPont", "mc'arthy", "delaunay", "PFEFFERLÉ", "la-fontaine"]
-    for idx, name in enumerate(last_names, 1):
-        scenarios.append(
-            _one_turn_scenario(
-                f"last-name-only-{idx:03d}",
-                {"first_name": "Paul", "last_name": "", "birth_date": ""},
-                name,
-                ask_contains=["date de naissance"],
-                no_reset=True,
-                update_equals={"last_name": name},
-            )
-        )
+    rng.shuffle(scenarios)
 
-    generic_first_names = [
-        "alain", "bernadette", "celine", "damien", "elise", "fabien", "gaelle", "hugo", "ines", "julien", "karim",
-        "lea", "mathis", "nadia", "olivier", "pauline", "quentin", "romain", "sarah", "thomas", "ulysse", "victor",
-    ]
-    for idx, first in enumerate(generic_first_names, 1):
-        scenarios.append(
-            _one_turn_scenario(
-                f"fallback-generic-{idx:03d}",
-                {"first_name": "", "last_name": "", "birth_date": ""},
-                f"moi cest {first}",
-                ask_contains=["nom de famille"],
-                update_equals={"first_name": first},
-            )
-        )
+    if len(scenarios) != count:
+        raise RuntimeError(f"expected {count} scenarios, got {len(scenarios)}")
+
+    ids = {scenario["id"] for scenario in scenarios}
+    if len(ids) != count:
+        raise RuntimeError("duplicate scenario ids detected")
 
     return scenarios
 
 
 def main() -> None:
-    scenarios = _build_scenarios()
-    out = Path("tests/fixtures/profile_scenarios.jsonl")
-    out.parent.mkdir(parents=True, exist_ok=True)
-    with out.open("w", encoding="utf-8") as handle:
+    parser = argparse.ArgumentParser(description="Generate onboarding profile scenarios JSONL")
+    parser.add_argument("--count", type=int, default=800, help="Number of scenarios to generate")
+    parser.add_argument("--seed", type=int, default=42, help="Deterministic random seed")
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=Path("tests/fixtures/profile_scenarios.jsonl"),
+        help="Output JSONL file",
+    )
+    args = parser.parse_args()
+
+    if args.count < 1:
+        raise ValueError("count must be >= 1")
+
+    scenarios = _build_scenarios(count=args.count, seed=args.seed)
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    with args.output.open("w", encoding="utf-8") as handle:
         for scenario in scenarios:
             handle.write(json.dumps(scenario, ensure_ascii=False) + "\n")
-    print(f"wrote {len(scenarios)} scenarios to {out}")
+    print(f"wrote {len(scenarios)} scenarios to {args.output} (seed={args.seed})")
 
 
 if __name__ == "__main__":
