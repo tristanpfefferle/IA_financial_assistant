@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 import agent.api as agent_api
 from agent.api import app, parse_shared_expense_confirmation
+from backend.db.supabase_client import SupabaseRequestError
 from backend.repositories.shared_expenses_repository import InMemorySharedExpensesRepository, SharedExpenseSuggestionRow
 
 
@@ -100,7 +101,16 @@ class _FailingUpsertRepo(_Repo):
             other_party_email=other_party_email,
             default_split_ratio_other=default_split_ratio_other,
         )
-        raise RuntimeError("Supabase 400: household_link insert violates RLS policy")
+        raise SupabaseRequestError(
+            status_code=400,
+            error_json={
+                "code": "23514",
+                "message": "new row for relation \"account_links\" violates check constraint",
+                "details": "Failing row contains (other_party_email=null)",
+                "hint": "Provide a valid email",
+            },
+            raw_text=None,
+        )
 
 
 class _SuggestionsRepository:
@@ -533,9 +543,17 @@ def test_agent_chat_account_link_setup_returns_debug_tool_result_on_upsert_error
     assert debug_payload["tool_result"] is not None
     assert debug_payload["tool_result"]["type"] == "error"
     assert debug_payload["tool_result"]["where"] == "upsert_household_link"
-    assert debug_payload["tool_result"]["exc_type"] == "RuntimeError"
-    assert "Supabase 400" in debug_payload["tool_result"]["message"]
+    assert "status 400" in debug_payload["tool_result"]["message"]
     assert debug_payload["tool_result"]["context"]["step"] == "shared_expense_link_setup"
+    assert debug_payload["tool_result"]["db_error"] == {
+        "status_code": 400,
+        "code": "23514",
+        "details": "Failing row contains (other_party_email=null)",
+        "hint": "Provide a valid email",
+        "message": 'new row for relation "account_links" violates check constraint',
+    }
+    assert isinstance(debug_payload["tool_result"]["error_id"], str)
+    assert debug_payload["tool_result"]["error_id"].startswith("HHL-")
 
     repo.chat_state = {}
     assert client.post("/agent/chat", json={"message": "je veux lier compte pour mon foyer"}, headers=_auth_headers()).status_code == 200

@@ -578,6 +578,11 @@ class SupabaseProfilesRepository:
             if self._looks_like_email(other_party_email)
             else self._email_placeholder(local_part=str(link_pair_id), domain="external.local")
         )
+        other_party_email_final = (
+            str(other_party_email)
+            if self._looks_like_email(other_party_email)
+            else (other_email_final if normalized_link_type == "external" else None)
+        )
 
         base_payload_insert: dict[str, Any] = {
             "status": "active",
@@ -586,7 +591,7 @@ class SupabaseProfilesRepository:
             "owner_user_id": str(owner_account_id) if owner_account_id else None,
             "other_profile_id": str(other_profile_id) if other_profile_id else None,
             "other_party_label": str(other_party_label) if other_party_label else None,
-            "other_party_email": str(other_party_email) if other_party_email else None,
+            "other_party_email": other_party_email_final,
             "default_split_ratio_other": str(default_split_ratio_other),
             "display_name": str(other_party_label) if other_party_label else None,
             "relationship_type": "household",
@@ -598,7 +603,7 @@ class SupabaseProfilesRepository:
         patch_payload: dict[str, Any] = {
             "other_profile_id": str(other_profile_id) if other_profile_id else None,
             "other_party_label": str(other_party_label) if other_party_label else None,
-            "other_party_email": str(other_party_email) if other_party_email else None,
+            "other_party_email": other_party_email_final,
             "default_split_ratio_other": str(default_split_ratio_other),
             "display_name": str(other_party_label) if other_party_label else None,
             "relationship_type": "household",
@@ -641,7 +646,7 @@ class SupabaseProfilesRepository:
             "link_type": normalized_link_type,
             "other_profile_id": str(other_profile_id) if other_profile_id else None,
             "other_party_label": str(other_party_label) if other_party_label else None,
-            "other_party_email": str(other_party_email) if other_party_email else None,
+            "other_party_email": other_party_email_final,
             "default_split_ratio_other": str(default_split_ratio_other),
         }
 

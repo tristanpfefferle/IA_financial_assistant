@@ -394,6 +394,9 @@ def test_upsert_household_link_external_without_email_uses_valid_placeholders() 
     assert "@" in payload["guest_email"] and "." in payload["guest_email"].split("@", 1)[1]
     assert "@" in payload["other_email"] and "." in payload["other_email"].split("@", 1)[1]
     assert payload["other_email"].strip() != ""
+    assert payload["other_party_email"] is not None
+    assert "@" in payload["other_party_email"] and "." in payload["other_party_email"].split("@", 1)[1]
+    assert payload["other_party_email"] == payload["other_email"]
 
 
 def test_get_profile_fields_reads_only_selected_columns() -> None:

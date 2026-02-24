@@ -17,12 +17,48 @@ class SupabaseSettings:
     anon_key: str | None = None
 
 
+class SupabaseRequestError(RuntimeError):
+    """Structured Supabase HTTP failure with parsed payload when available."""
+
+    def __init__(
+        self,
+        *,
+        status_code: int,
+        error_json: dict[str, Any] | None,
+        raw_text: str | None,
+    ) -> None:
+        self.status_code = status_code
+        self.error_json = error_json
+        self.raw_text = raw_text
+
+        detail = error_json if error_json is not None else raw_text
+        super().__init__(f"Supabase request failed with status {status_code}: {detail}")
+
+
 class SupabaseClient:
     def __init__(self, settings: SupabaseSettings) -> None:
         self.settings = settings
 
     def healthcheck(self) -> bool:
         return bool(self.settings.url and self.settings.service_role_key)
+
+    @staticmethod
+    def _raise_http_error(exc: HTTPError) -> None:
+        body = exc.read().decode("utf-8", errors="replace")
+        error_json: dict[str, Any] | None = None
+        raw_text = body[:3000] if body else None
+        if body:
+            try:
+                parsed = json.loads(body)
+            except json.JSONDecodeError:
+                parsed = None
+            if isinstance(parsed, dict):
+                error_json = parsed
+        raise SupabaseRequestError(
+            status_code=exc.code,
+            error_json=error_json,
+            raw_text=raw_text,
+        ) from exc
 
 
     def patch_rows(
@@ -55,10 +91,7 @@ class SupabaseClient:
             with urlopen(request) as response:  # noqa: S310 - URL comes from trusted env config
                 return json.loads(response.read().decode("utf-8"))
         except HTTPError as exc:
-            body = exc.read().decode("utf-8", errors="replace")[:500]
-            raise RuntimeError(
-                f"Supabase request failed with status {exc.code}: {body}"
-            ) from exc
+            self._raise_http_error(exc)
 
     def post_rows(
         self,
@@ -89,10 +122,7 @@ class SupabaseClient:
             with urlopen(request) as response:  # noqa: S310 - URL comes from trusted env config
                 return json.loads(response.read().decode("utf-8"))
         except HTTPError as exc:
-            body = exc.read().decode("utf-8", errors="replace")[:500]
-            raise RuntimeError(
-                f"Supabase request failed with status {exc.code}: {body}"
-            ) from exc
+            self._raise_http_error(exc)
 
     def delete_rows(
         self,
@@ -122,10 +152,7 @@ class SupabaseClient:
                 content = response.read().decode("utf-8")
                 return json.loads(content) if content else []
         except HTTPError as exc:
-            body = exc.read().decode("utf-8", errors="replace")[:500]
-            raise RuntimeError(
-                f"Supabase request failed with status {exc.code}: {body}"
-            ) from exc
+            self._raise_http_error(exc)
 
     def upsert_row(
         self,
@@ -158,10 +185,7 @@ class SupabaseClient:
             with urlopen(request) as response:  # noqa: S310 - URL comes from trusted env config
                 return json.loads(response.read().decode("utf-8"))
         except HTTPError as exc:
-            body = exc.read().decode("utf-8", errors="replace")[:500]
-            raise RuntimeError(
-                f"Supabase request failed with status {exc.code}: {body}"
-            ) from exc
+            self._raise_http_error(exc)
 
     def get_rows(
         self,
@@ -198,7 +222,4 @@ class SupabaseClient:
                         total = int(total_str)
                 return rows, total
         except HTTPError as exc:
-            body = exc.read().decode("utf-8", errors="replace")[:500]
-            raise RuntimeError(
-                f"Supabase request failed with status {exc.code}: {body}"
-            ) from exc
+            self._raise_http_error(exc)
