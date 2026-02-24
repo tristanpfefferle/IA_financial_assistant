@@ -460,7 +460,6 @@ export function ChatPage({ email }: ChatPageProps) {
     }
 
     localStorage.removeItem(CHAT_DEBUG_STORAGE_KEY)
-    setLoopDebug(null)
   }, [debugMode])
 
   function syncLoopDebug(payload: unknown): void {

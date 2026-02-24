@@ -35,6 +35,7 @@ from agent.merchant_cleanup import MerchantSuggestion, run_merchant_cleanup
 from agent.merchant_alias_resolver import resolve_pending_map_alias
 from agent.import_label_normalizer import extract_observed_alias_from_label
 from agent.loops import build_default_registry
+from agent.loops.registry import LoopRegistry
 from agent.loops.router import parse_loop_context, route_message, serialize_loop_context
 from backend.factory import build_backend_tool_service
 from backend.services.classification.decision_engine import normalize_merchant_alias
@@ -260,6 +261,43 @@ _ONBOARDING_SUBSTEP_TO_LOOP_ID: dict[str, str] = {
     "report_offer": "onboarding.report",
     "report_sent": "onboarding.report",
 }
+
+
+def _compute_debug_loop(
+    state_dict: dict[str, Any],
+    global_state: dict[str, Any] | None,
+    registry: LoopRegistry,
+) -> dict[str, Any]:
+    """Compute debug loop metadata from the final request state."""
+
+    current_loop = parse_loop_context(state_dict.get("loop"))
+    if current_loop is not None:
+        return {
+            "loop_id": current_loop.loop_id,
+            "step": current_loop.step,
+            "blocking": current_loop.blocking,
+        }
+
+    effective_global_state = state_dict.get("global_state") if isinstance(state_dict, dict) else None
+    if not _is_valid_global_state(effective_global_state):
+        effective_global_state = global_state
+
+    if _is_valid_global_state(effective_global_state) and effective_global_state.get("mode") == "onboarding":
+        onboarding_substep = effective_global_state.get("onboarding_substep")
+        mapped_loop_id = (
+            _ONBOARDING_SUBSTEP_TO_LOOP_ID.get(onboarding_substep)
+            if isinstance(onboarding_substep, str)
+            else None
+        )
+        if isinstance(mapped_loop_id, str):
+            mapped = registry.get(mapped_loop_id)
+            return {
+                "loop_id": mapped_loop_id,
+                "step": "start",
+                "blocking": mapped.blocking if mapped is not None else True,
+            }
+
+    return {"loop_id": None, "step": None, "blocking": None}
 
 
 def _build_system_categories_payload() -> list[dict[str, str]]:
@@ -2297,7 +2335,9 @@ def agent_chat(
 
     logger.info("agent_chat_received message_length=%s", len(payload.message))
     debug_enabled = _is_debug_request(request, x_debug)
-    loop_debug: dict[str, Any] = {"loop_id": None, "step": None, "blocking": None}
+    registry = get_loop_registry()
+    state_dict: dict[str, Any] = {}
+    global_state: dict[str, Any] | None = None
 
     def _chat_response(*, reply: str, tool_result: Any | None, plan: Any | None = None) -> JSONResponse:
         payload_dict: dict[str, Any] = {
@@ -2306,7 +2346,8 @@ def agent_chat(
             "plan": plan,
         }
         if debug_enabled:
-            payload_dict["debug"] = {"loop": loop_debug}
+            debug_loop = _compute_debug_loop(state_dict, global_state, registry)
+            payload_dict["debug"] = {"loop": debug_loop}
         return JSONResponse(content=payload_dict)
 
     profile_id: UUID | None = None
@@ -2320,7 +2361,7 @@ def agent_chat(
 
         active_task = chat_state.get("active_task")
         state = chat_state.get("state")
-        state_dict = dict(state) if isinstance(state, dict) else None
+        state_dict = dict(state) if isinstance(state, dict) else {}
         shared_expense_active_task = chat_state.get("active_task")
         account_link_active_task = chat_state.get("active_task")
         existing_global_state = state_dict.get("global_state") if isinstance(state_dict, dict) else None
@@ -2336,10 +2377,8 @@ def agent_chat(
                 state_dict["global_state"] = normalized
                 should_persist_global_state = True
 
-        state_dict = dict(state_dict) if isinstance(state_dict, dict) else {}
         current_loop = parse_loop_context(state_dict.get("loop"))
         loop_reply = None
-        registry = get_loop_registry()
         if current_loop is not None:
             loop_reply = route_message(
                 message=payload.message,
@@ -2358,12 +2397,6 @@ def agent_chat(
             else:
                 state_dict["loop"] = serialize_loop_context(resolved_loop)
                 should_persist_global_state = True
-
-            loop_debug = {
-                "loop_id": resolved_loop.loop_id if resolved_loop else None,
-                "step": resolved_loop.step if resolved_loop else None,
-                "blocking": resolved_loop.blocking if resolved_loop else None,
-            }
 
             should_persist_loop_state = (
                 should_persist_global_state
@@ -2384,20 +2417,6 @@ def agent_chat(
 
             if loop_reply.handled and loop_reply.reply.strip():
                 return _chat_response(reply=loop_reply.reply, tool_result=None, plan=None)
-        elif debug_enabled and _is_valid_global_state(global_state) and global_state.get("mode") == "onboarding":
-            onboarding_substep = global_state.get("onboarding_substep")
-            mapped_loop_id = (
-                _ONBOARDING_SUBSTEP_TO_LOOP_ID.get(onboarding_substep)
-                if isinstance(onboarding_substep, str)
-                else None
-            )
-            if isinstance(mapped_loop_id, str):
-                mapped_loop = registry.get(mapped_loop_id)
-                loop_debug = {
-                    "loop_id": mapped_loop_id,
-                    "step": "start",
-                    "blocking": mapped_loop.blocking if mapped_loop is not None else True,
-                }
 
         if global_state is None and hasattr(profiles_repository, "get_profile_fields"):
             try:
