@@ -338,3 +338,20 @@ def test_import_known_alias_key_norm_fallback_writes_merchant_entity_and_overrid
     assert all(row["merchant_entity_id"] == expected_entity_id for row in sumup_rows)
     assert all(row["category_id"] == expected_category_id for row in sumup_rows)
     assert all(row["meta"]["merchant_resolution"] == "resolved_deterministic_key_norm" for row in sumup_rows)
+
+
+def test_import_food_category_key_fallback_uses_profile_alimentation_category() -> None:
+    repository = InMemoryRelevesRepository()
+    profiles_repository = _ProfilesStub(with_autres=True)
+    service = RelevesImportService(releves_repository=repository, profiles_repository=profiles_repository)
+
+    result = service.import_releves(_build_request(_build_single_coop_csv()))
+
+    assert result.imported_count == 1
+
+    imported_rows = repository.list_releves_for_import(profile_id=PROFILE_ID, bank_account_id=None)
+    coop_row = [row for row in imported_rows if row.get("libelle") == "COOP MONTHEY"][0]
+    assert coop_row["merchant_entity_id"] is None
+    assert coop_row["category_id"] == UUID("22222222-2222-2222-2222-222222222222")
+    assert coop_row["category_id"] != UUID("99999999-9999-9999-9999-999999999999")
+    assert coop_row["meta"]["classification_source"] == "category_key_fallback"

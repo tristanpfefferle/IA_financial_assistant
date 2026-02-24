@@ -20,6 +20,7 @@ from backend.services.releves_import.dedup import compare_rows
 from backend.services.releves_import.routing import route_bank_parser
 from backend.services.shared_expenses.auto_share import apply_auto_share_suggestions_for_period
 from shared import config
+from shared.text_utils import normalize_category_name
 from backend.db.supabase_client import SupabaseClient, SupabaseSettings
 from shared.models import (
     RelevesImportError,
@@ -351,13 +352,15 @@ class RelevesImportService:
         if category_id is None and self.profiles_repository is not None:
             category_label = resolve_system_category_label(classification.category_key)
             if category_label:
-                category_id = self.profiles_repository.find_profile_category_id_by_name_norm(
-                    profile_id=profile_id,
-                    name_norm=normalize_merchant_alias(category_label),
-                )
-                if category_id is not None:
-                    meta_dict["classification_source"] = "category_key_fallback"
-                    meta_dict["classification_rationale"] = "category_key heuristique import"
+                category_name_norm = normalize_category_name(category_label)
+                if category_name_norm:
+                    category_id = self.profiles_repository.find_profile_category_id_by_name_norm(
+                        profile_id=profile_id,
+                        name_norm=category_name_norm,
+                    )
+                    if category_id is not None:
+                        meta_dict["classification_source"] = "category_key_fallback"
+                        meta_dict["classification_rationale"] = "category_key heuristique import"
 
         if merchant_resolution.startswith("resolved") and merchant_entity_id is None:
             logger.warning(
