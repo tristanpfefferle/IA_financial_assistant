@@ -118,7 +118,7 @@ _ONBOARDING_NAME_PREFIX_PATTERN = re.compile(
     r"^\s*([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'\-]+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'\-]+)\b"
 )
 _ONBOARDING_PROFILE_FIRST_NAME_HINT_PATTERN = re.compile(
-    r"\b(?:je\s+m[’']?\s*app(?:el|ell?e|elle)?|moi\s+c[’']?est|c[’']?est|(?:pr[ée]nom|pernom|p[ée]rnom|prenon|pr[ée]non)\s*:?)\s+([^,.;!?\n]+)",
+    r"\b(?:je\s+m[’']?\s*app(?:el|ell?e|elle)?|moi\s+c[’']?est|c[’']?est|(?:pr[ée]nom|pr[ée]n+om+|prnom|pernom|p[ée]rnom|prenon|pr[ée]non)\s*:?)\s+([^,.;!?\n]+)",
     flags=re.IGNORECASE,
 )
 _ONBOARDING_PROFILE_JE_MAPPELLE_TYPO_PATTERN = re.compile(
@@ -151,6 +151,7 @@ _ONBOARDING_PROFILE_STOP_WORDS = {
     "ma",
     "prenom",
     "prénom",
+    "prnom",
     "pernom",
     "pérnom",
     "prenon",
@@ -185,6 +186,7 @@ _ONBOARDING_PROFILE_TROLL_FIRST_NAMES = {
     "pas",
     "prenom",
     "prénom",
+    "prnom",
     "pernom",
     "pérnom",
     "prenon",
@@ -208,10 +210,13 @@ _ONBOARDING_PROFILE_REFUSAL_PATTERNS = (
     re.compile(r"pas\s+de\s+nom", flags=re.IGNORECASE),
     re.compile(r"aucun\s+nom", flags=re.IGNORECASE),
     re.compile(r"je\s+refuse", flags=re.IGNORECASE),
+    re.compile(r"pr[ée]f[èe]re\s+pas\s+dire", flags=re.IGNORECASE),
+    re.compile(r"pr[ée]f[èe]re\s+ne\s+pas\s+dire", flags=re.IGNORECASE),
 )
 _ONBOARDING_PROFILE_TOXIC_PATTERNS = (
     re.compile(r"\bta gueule\b", re.IGNORECASE),
     re.compile(r"\bftg\b", re.IGNORECASE),
+    re.compile(r"\bd[ée]gage\b", re.IGNORECASE),
     re.compile(r"\bconnard\b", re.IGNORECASE),
     re.compile(r"\bpute\b", re.IGNORECASE),
     re.compile(r"\bencul[ée]\b", re.IGNORECASE),
@@ -223,8 +228,10 @@ _ONBOARDING_PROFILE_META_ANSWER_PATTERNS = (
     re.compile(r"\bt['’]es\s+s[ée]rieux\b", re.IGNORECASE),
     re.compile(r"\b(s[ée]rieux|hein|quoi)\b", re.IGNORECASE),
     re.compile(r"\b(blague|dr[oô]le)\b", re.IGNORECASE),
+    re.compile(r"\btu\s+fais\s+expr[èe]s\b", re.IGNORECASE),
+    re.compile(r"\bon\s+boucle\b", re.IGNORECASE),
 )
-_ONBOARDING_PROFILE_META_VERBS = {"connais", "dis", "dit", "viens"}
+_ONBOARDING_PROFILE_META_VERBS = {"connais", "dis", "dit", "viens", "boucle"}
 _ONBOARDING_PROFILE_CANT_ANSWER_PATTERNS = (
     re.compile(r"^\s*je\s+sais\s+pas\s*[\!\.\?]*\s*$", re.IGNORECASE),
     re.compile(r"^\s*(non|nop|nan)\s*[\!\.\?]*\s*$", re.IGNORECASE),
@@ -2004,12 +2011,23 @@ def _is_meta_answer(message: str) -> bool:
     if not normalized:
         return False
     lowered = normalized.lower()
+    has_explicit_name_hint = bool(
+        _ONBOARDING_PROFILE_FIRST_NAME_HINT_PATTERN.search(normalized)
+        or _ONBOARDING_PROFILE_LAST_NAME_HINT_PATTERN.search(normalized)
+    )
+    if has_explicit_name_hint:
+        return False
     if any(pattern.search(normalized) for pattern in _ONBOARDING_PROFILE_META_ANSWER_PATTERNS):
         return True
     tokens = [token for token in _tokenize_profile_name_fragment(normalized) if token]
+    if len(tokens) <= 3 and tokens and tokens[0].lower() in {"tu", "on"} and _extract_birth_date_from_text(normalized) is None:
+        return True
+    meta_tokens = {"tu", "on", "encore", "deja", "déjà", "parler", "parlé", "serieux", "sérieux", "exprès", "expres"}
+    if ("?" in normalized or "!" in normalized) and any(token.lower() in meta_tokens for token in tokens):
+        return True
     if ("!" in normalized or "?" in normalized) and len(tokens) <= 2:
         return True
-    has_pronoun = any(pronoun in lowered.split() for pronoun in {"tu", "je"})
+    has_pronoun = any(pronoun in lowered.split() for pronoun in {"tu", "je", "on"})
     has_meta_verb = any(verb in lowered for verb in _ONBOARDING_PROFILE_META_VERBS)
     return has_pronoun and has_meta_verb
 
@@ -2115,7 +2133,7 @@ def _is_low_signal_message(message: str) -> bool:
         if any(char.isdigit() for char in normalized):
             return False
         return True
-    low_signal_tokens = {"serieux", "sérieux", "quoi", "hein", "ok", "okay", "lol", "es", "e"}
+    low_signal_tokens = {"serieux", "sérieux", "quoi", "hein", "ok", "okay", "lol", "es", "e", "hmm", "hum"}
     if len(tokens) == 1 and tokens[0].lower() in low_signal_tokens:
         return True
     if all(token.lower() in low_signal_tokens for token in tokens):
@@ -2151,6 +2169,10 @@ def extract_profile_fields_from_message(message: str) -> dict[str, Any]:
     }
     raw_message = str(message or "").strip()
     if not raw_message:
+        return extracted
+
+    if _is_meta_answer(raw_message) or _is_refusal_like_message(raw_message) or _is_cant_answer_message(raw_message):
+        extracted["reason"] = "meta_or_refusal_or_cant_answer"
         return extracted
 
     birth_date = _extract_birth_date_from_text(raw_message) or _extract_birth_date_from_message(raw_message)
@@ -2202,9 +2224,14 @@ def extract_profile_fields_from_message(message: str) -> dict[str, Any]:
 
     if extracted["first_name"] is None and extracted["last_name"] is None and not contains_non_name_hint:
         generic_tokens = _tokenize_profile_name_fragment(raw_message)
-        if generic_tokens and generic_tokens[0].lower() in {"pernom", "pérnom", "prenon", "prénon"}:
-            extracted["confidence"] = max(float(extracted["confidence"]), 0.1)
-            extracted["reason"] = "generic_name_typo_blocked"
+        if generic_tokens and generic_tokens[0].lower() in {"nom", "nomm", "prenom", "prénom", "prnom", "pernom", "pérnom", "prenon", "prénon"}:
+            if len(generic_tokens) >= 2:
+                extracted["first_name"] = generic_tokens[1]
+                extracted["confidence"] = max(float(extracted["confidence"]), 0.75)
+                extracted["reason"] = "generic_label_then_name"
+            else:
+                extracted["confidence"] = max(float(extracted["confidence"]), 0.1)
+                extracted["reason"] = "generic_name_typo_blocked"
         elif generic_tokens and generic_tokens[0].lower() in {"m", "m'appel", "mappel", "mappelle", "appel"}:
             extracted["confidence"] = max(float(extracted["confidence"]), 0.1)
             extracted["reason"] = "generic_prefix_blocked"
@@ -2279,6 +2306,25 @@ def _extract_profile_fields_with_llm(message: str) -> dict[str, Any] | None:
     }
 
 
+def _is_refusal_like_message(message: str) -> bool:
+    """Return whether message is a refusal-style answer for profile onboarding."""
+
+    normalized_message = f" {message.lower()} "
+    refusal_detected = any(pattern.search(message) for pattern in _ONBOARDING_PROFILE_REFUSAL_PATTERNS)
+    return refusal_detected and " mais " not in normalized_message
+
+
+def _is_cant_answer_message(message: str) -> bool:
+    """Return whether message matches explicit can't-answer patterns."""
+
+    if any(pattern.match(message) for pattern in _ONBOARDING_PROFILE_CANT_ANSWER_PATTERNS):
+        return True
+    tokens = [token.lower() for token in _ONBOARDING_PROFILE_TOKEN_PATTERN.findall(str(message or "")) if token]
+    if len(tokens) == 1 and tokens[0] in {"non", "nop", "nan", "pass"}:
+        return True
+    return False
+
+
 def _apply_field_gating(extraction: dict[str, Any], expected_field: str | None, raw_message: str) -> dict[str, Any]:
     """Apply expected-field gating while allowing explicit multi-field inputs."""
 
@@ -2298,6 +2344,7 @@ def _apply_field_gating(extraction: dict[str, Any], expected_field: str | None, 
             and last_name.strip()
             and (
                 str(gated.get("reason") or "") in {"full_name_pattern", "generic_multi_token_name"}
+                or str(gated.get("reason") or "") == "explicit_first_name"
                 or _extract_name_from_text_prefix(raw_message) is not None
                 or _extract_name_from_message(raw_message) is not None
             )
@@ -2310,7 +2357,27 @@ def _apply_field_gating(extraction: dict[str, Any], expected_field: str | None, 
         return gated
 
     if expected_field == "last_name":
-        gated["first_name"] = None
+        extracted_first_name = gated.get("first_name")
+        extracted_last_name = gated.get("last_name")
+        has_two_token_full_name = bool(
+            isinstance(extracted_first_name, str)
+            and extracted_first_name.strip()
+            and isinstance(extracted_last_name, str)
+            and extracted_last_name.strip()
+            and (
+                str(gated.get("reason") or "") in {"full_name_pattern", "generic_multi_token_name", "explicit_first_name"}
+                or _extract_name_from_text_prefix(raw_message) is not None
+                or _extract_name_from_message(raw_message) is not None
+            )
+        )
+        has_explicit_first_name_hint_only = bool(
+            isinstance(extracted_first_name, str)
+            and extracted_first_name.strip()
+            and not (isinstance(extracted_last_name, str) and extracted_last_name.strip())
+            and _ONBOARDING_PROFILE_FIRST_NAME_HINT_PATTERN.search(raw_message)
+        )
+        if not (has_two_token_full_name or has_explicit_first_name_hint_only):
+            gated["first_name"] = None
         if not explicit_birth_date:
             gated["birth_date"] = None
         return gated
@@ -2394,11 +2461,17 @@ def _maybe_fix_year_typo(message: str) -> tuple[str, str] | None:
         return None
 
     day_raw, month_raw, year_raw = match.groups()
-    if year_raw[0:2] not in {"19", "20"} or year_raw.count("0") < 2:
-        return None
+    candidate_years: list[str] = []
+    if year_raw[0:2] in {"19", "20"} and year_raw.count("0") >= 2:
+        candidate_years.append(year_raw.replace("0", "", 1))
+    candidate_years.extend([year_raw[:4], year_raw[1:]])
 
-    candidate_year = year_raw.replace("0", "", 1)
-    if not re.fullmatch(r"\d{4}", candidate_year):
+    filtered_candidate_years = [
+        candidate
+        for candidate in candidate_years
+        if re.fullmatch(r"\d{4}", candidate) and int(candidate) >= 1900 and int(candidate) <= 2099
+    ]
+    if not filtered_candidate_years:
         return None
 
     normalized_month = unicodedata.normalize("NFKD", month_raw.strip().lower()).encode("ascii", "ignore").decode("ascii")
@@ -2406,15 +2479,16 @@ def _maybe_fix_year_typo(message: str) -> tuple[str, str] | None:
     if mapped_month is None:
         return None
 
-    try:
-        parsed = date(year=int(candidate_year), month=mapped_month, day=int(day_raw))
-    except ValueError:
-        return None
+    for candidate_year in filtered_candidate_years:
+        try:
+            parsed = date(year=int(candidate_year), month=mapped_month, day=int(day_raw))
+        except ValueError:
+            continue
 
-    iso_value = parsed.isoformat()
-    if not _is_plausible_birth_date(iso_value):
-        return None
-    return iso_value, iso_value
+        iso_value = parsed.isoformat()
+        if _is_plausible_birth_date(iso_value):
+            return iso_value, iso_value
+    return None
 
 
 def _build_onboarding_global_state(
@@ -3094,12 +3168,10 @@ f"Salut 👋\n\nJe suis ton assistant financier. Je t’aide à analyser tes dé
                         existing_first_name = _format_person_name(str(profile_fields.get("first_name") or "").strip())
                         existing_last_name = str(profile_fields.get("last_name") or "").strip()
                         existing_birth_date = str(profile_fields.get("birth_date") or "").strip()
+                        expected_field = _next_missing_profile_field(profile_fields)
                         if _is_toxic_message(message):
-                            toxic_reply = (
-                                "Je peux t’aider, mais restons respectueux 🙂 Quel est ton prénom ?"
-                                if not _is_profile_field_completed(existing_first_name)
-                                else f"Ok {existing_first_name} 🙂 Et ton nom de famille ?"
-                            )
+                            missing_field_prompt = _missing_profile_field_question(profile_fields)
+                            toxic_reply = f"Je peux t’aider, mais restons respectueux 🙂 {missing_field_prompt}"
                             updated_global_state = _build_onboarding_global_state(
                                 global_state,
                                 onboarding_step="profile",
@@ -3115,15 +3187,20 @@ f"Salut 👋\n\nJe suis ton assistant financier. Je t’aide à analyser tes dé
                             )
                             return _chat_response(reply=toxic_reply, tool_result=None, plan=None)
 
-                        normalized_message = f" {message.lower()} "
-                        refusal_detected = any(pattern.search(message) for pattern in _ONBOARDING_PROFILE_REFUSAL_PATTERNS)
-                        if refusal_detected and " mais " not in normalized_message:
+                        if _is_refusal_like_message(message):
                             refusal_reply = (
                                 "Quel est ton prénom ?"
-                                if not _is_profile_field_completed(existing_first_name)
+                                if expected_field == "first_name"
                                 else (
-                                    f"Ok {existing_first_name} 🙂 J’ai besoin de ton nom de famille "
-                                    "(celui sur tes documents). Si tu préfères, tu peux mettre uniquement l’initiale."
+                                    (
+                                        f"Ok {existing_first_name} 🙂 J’ai besoin de ton nom de famille "
+                                        "(celui sur tes documents). Si tu préfères, tu peux mettre uniquement l’initiale."
+                                    )
+                                    if expected_field == "last_name"
+                                    else (
+                                        f"Merci {existing_first_name} 🙂 Peux-tu me donner ta date de naissance "
+                                        "au format YYYY-MM-DD ?"
+                                    )
                                 )
                             )
                             updated_global_state = _build_onboarding_global_state(
@@ -3257,8 +3334,7 @@ f"Salut 👋\n\nJe suis ton assistant financier. Je t’aide à analyser tes dé
                                 plan=None,
                             )
 
-                        expected_field = _next_missing_profile_field(profile_fields)
-                        if any(pattern.match(message) for pattern in _ONBOARDING_PROFILE_CANT_ANSWER_PATTERNS):
+                        if _is_cant_answer_message(message):
                             if expected_field == "last_name":
                                 reply = (
                                     f"Ok {existing_first_name} 🙂 J’ai besoin de ton nom de famille "

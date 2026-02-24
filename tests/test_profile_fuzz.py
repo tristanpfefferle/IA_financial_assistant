@@ -20,6 +20,8 @@ _NO_RESET_BANNED_SUBSTRINGS = (
     "prénom, ton nom et ta date",
 )
 
+_NO_UPDATE_INTENT_PREFIXES = ("meta-", "refusal-", "low-")
+
 
 def _load_scenarios() -> list[dict[str, Any]]:
     fixture_path = Path("tests/fixtures/profile_scenarios.jsonl")
@@ -92,6 +94,9 @@ def test_profile_collect_fuzz_scenarios(monkeypatch) -> None:
 
             if expected_field == "last_name":
                 assert all("first_name" not in call for call in new_calls), scenario["id"]
+
+            if scenario["id"].startswith(_NO_UPDATE_INTENT_PREFIXES):
+                assert new_calls == [], scenario["id"]
 
             expected_updates = expect.get("update_equals") or {}
             for key, raw_value in expected_updates.items():
