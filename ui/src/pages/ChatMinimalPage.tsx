@@ -169,6 +169,23 @@ function FormCard({ formUiAction, isSending, onSubmitForm }: FormCardProps) {
 }
 
 function buildUiFormHumanText(formUiAction: FormUiAction, values: Record<string, string>): string {
+  const getValue = (fieldId: string): string => (values[fieldId] ?? '').trim()
+
+  if (formUiAction.form_id === 'onboarding_profile_identity') {
+    const firstName = getValue('first_name')
+    const lastName = getValue('last_name')
+    const fullName = [firstName, lastName].filter(Boolean).join(' ').trim()
+    return fullName ? `Je m'appelle ${fullName}.` : "Je m'appelle."
+  }
+
+  if (formUiAction.form_id === 'onboarding_profile_birth_date' || formUiAction.form_id === 'onboarding_birth_date') {
+    return `Ma date de naissance est le ${getValue('birth_date')}.`
+  }
+
+  if (formUiAction.form_id === 'onboarding_bank_accounts') {
+    return `J'ai des comptes chez ${getValue('selected_banks')}.`
+  }
+
   const segments = formUiAction.fields.map((field) => `${field.label}: ${values[field.id] ?? ''}`)
   return segments.join(', ')
 }
