@@ -20,6 +20,41 @@ _SWITCH_KEYWORDS = {
     "foyer": "household_link.setup",
 }
 
+_HELP_MESSAGES = (
+    "quelle question",
+    "je dois répondre à quoi",
+    "je comprends pas",
+    "quelle étape",
+)
+
+
+def _is_help_message(message: str) -> bool:
+    lowered = message.strip().lower()
+    if lowered == "?":
+        return True
+    return any(token in lowered for token in _HELP_MESSAGES)
+
+
+def _onboarding_help_prompt(loop_id: str, *, services: Any, profile_id: Any) -> str | None:
+    if loop_id == "onboarding.profile_collect":
+        from agent.loops.onboarding_profile import OnboardingProfileCollectLoop
+
+        loop = OnboardingProfileCollectLoop()
+        return loop.expected_prompt_for_help(services=services, profile_id=profile_id)
+
+    prompts = {
+        "onboarding.profile_confirm": "Confirme ton profil (oui/non).",
+        "onboarding.bank_accounts_collect": "Quels comptes utilises-tu ?",
+        "onboarding.bank_accounts_confirm": "Confirme la liste des comptes (oui/non).",
+        "onboarding.import_select_account": "Sélectionne le compte à importer.",
+        "onboarding.import_wait_ready": "Ton CSV est-il prêt ? (oui/non)",
+        "onboarding.categories_intro": "On va préparer tes catégories personnalisées.",
+        "onboarding.categories_bootstrap": "Je crée les catégories système.",
+        "onboarding.report": "Veux-tu générer ton premier rapport ? (oui/non)",
+    }
+    return prompts.get(loop_id)
+
+
 
 class LLMJudge(Protocol):
     def __call__(self, *, message: str, current_loop_id: str | None, candidate_loop_ids: list[str]) -> str | None:
@@ -54,6 +89,14 @@ def route_message(
     if current_loop is not None:
         active_loop = registry.get(current_loop.loop_id)
         if active_loop is not None:
+            if current_loop.blocking and _is_help_message(message):
+                help_prompt = _onboarding_help_prompt(current_loop.loop_id, services=services, profile_id=profile_id)
+                if isinstance(help_prompt, str) and help_prompt.strip():
+                    return LoopReply(reply=help_prompt, next_loop=current_loop, updates={}, handled=True)
+
+            if current_loop.step == "active" and current_loop.loop_id.startswith("onboarding."):
+                return LoopReply(reply="", next_loop=current_loop, updates={}, handled=False)
+
             reply = active_loop.handle(
                 message,
                 current_loop,

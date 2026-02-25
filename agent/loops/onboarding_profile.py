@@ -244,6 +244,21 @@ class OnboardingProfileCollectLoop:
             handled=True,
         )
 
+    def expected_prompt_for_help(self, *, services: Any, profile_id: Any) -> str:
+        """Return the exact expected prompt for the current profile_collect substep."""
+
+        state_dict = (services or {}).get("state") if isinstance(services, dict) else None
+        profiles_repository = (services or {}).get("profiles_repository") if isinstance(services, dict) else None
+        probe_ctx = LoopContext(
+            loop_id=self.id,
+            step="active",
+            data=dict(state_dict) if isinstance(state_dict, dict) else {},
+            blocking=True,
+        )
+        current_fields = self._current_fields(ctx=probe_ctx, profiles_repository=profiles_repository, profile_id=profile_id)
+        missing_slot = self._first_missing_slot(current_fields)
+        return self._ask_for_slot(missing_slot)
+
     def _pick_slot_value(self, slot: str, parsed: dict[str, Any], current_fields: dict[str, Any]):
         if slot == "last_name":
             parsed_last_name = parsed.get("last_name")
