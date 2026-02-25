@@ -103,6 +103,30 @@ button:disabled {
   gap: 12px;
 }
 
+.chat-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.debug-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: #cbd5e1;
+}
+
+.debug-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid #f59e0b;
+  color: #fbbf24;
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.1rem 0.45rem;
+}
+
 
 .chat-header-actions {
   display: flex;

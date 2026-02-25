@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
-import { sendChatMessage } from '../api/agentApi'
+import { hardResetProfile, sendChatMessage } from '../api/agentApi'
 import { ConsolePanel } from '../chat/ConsolePanel'
 import type { ConsoleOption, ConsoleUiState } from '../chat/types'
 import { supabase } from '../lib/supabaseClient'
@@ -106,10 +106,13 @@ function extractConsoleState(messages: ChatMessage[]): ConsoleUiState {
 export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
   const navigate = useNavigate()
   const scrollRef = useRef<HTMLDivElement | null>(null)
+  const isDebugUiEnabled = import.meta.env.VITE_UI_DEBUG === 'true'
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [isSending, setIsSending] = useState(false)
   const [isAssistantTyping, setIsAssistantTyping] = useState(false)
   const [isNearBottom, setIsNearBottom] = useState(true)
+  const [debugMode, setDebugMode] = useState(false)
+  const [headerMessage, setHeaderMessage] = useState<string | null>(null)
 
   const consoleState = useMemo(() => extractConsoleState(messages), [messages])
 
@@ -140,13 +143,43 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
     }
   }, [messages.length, isAssistantTyping, isNearBottom])
 
+  async function startConversation() {
+    setHeaderMessage(null)
+    setMessages([])
+    setIsSending(false)
+    setIsAssistantTyping(true)
+    try {
+      const response = await sendChatMessage('', { debug: debugMode, requestGreeting: true })
+      setMessages([
+        {
+          id: createMessageId(),
+          role: 'assistant',
+          content: response.reply,
+          createdAt: Date.now(),
+          toolResult: response.tool_result,
+        },
+      ])
+    } catch {
+      setMessages([
+        {
+          id: createMessageId(),
+          role: 'assistant',
+          content: 'Impossible de charger le message de bienvenue.',
+          createdAt: Date.now(),
+        },
+      ])
+    } finally {
+      setIsAssistantTyping(false)
+    }
+  }
+
   useEffect(() => {
     let isMounted = true
 
     async function loadGreeting() {
       setIsAssistantTyping(true)
       try {
-        const response = await sendChatMessage('', { debug: false, requestGreeting: true })
+        const response = await sendChatMessage('', { debug: debugMode, requestGreeting: true })
         if (!isMounted) {
           return
         }
@@ -205,7 +238,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
     setIsAssistantTyping(true)
 
     try {
-      const response = await sendChatMessage(trimmed, { debug: false })
+      const response = await sendChatMessage(trimmed, { debug: debugMode })
       setMessages((current) => [
         ...current,
         {
@@ -237,6 +270,34 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
     void submitMessage(value, label ?? value)
   }
 
+  function resetLocalChatState() {
+    setMessages([])
+    setIsSending(false)
+    setIsAssistantTyping(false)
+    setIsNearBottom(true)
+
+    const chatStorageKeys = ['chat_messages', 'chat_debug_payload', 'chat_console_state']
+    for (const key of chatStorageKeys) {
+      window.localStorage.removeItem(key)
+    }
+  }
+
+  async function handleHardReset() {
+    if (!window.confirm('Confirmer le reset complet…')) {
+      return
+    }
+
+    setHeaderMessage(null)
+    try {
+      await hardResetProfile()
+      resetLocalChatState()
+      await startConversation()
+      setHeaderMessage('Reset terminé. Conversation redémarrée.')
+    } catch (error) {
+      setHeaderMessage(error instanceof Error ? error.message : 'Échec du reset complet.')
+    }
+  }
+
 
   async function handleLogout() {
     const { error } = await supabase.auth.signOut()
@@ -261,22 +322,53 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
       <div className="chat-frame">
         <div className="chat-stack">
           <header className="chat-min-header">
-            <strong>Assistant financier</strong>
+            <div className="chat-title-wrap">
+              <strong>Assistant financier</strong>
+              {isDebugUiEnabled && debugMode ? <span className="debug-badge">Debug</span> : null}
+            </div>
             <div className="chat-header-actions">
+              {isDebugUiEnabled ? (
+                <label className="debug-toggle" htmlFor="debug-mode-toggle">
+                  <input
+                    id="debug-mode-toggle"
+                    type="checkbox"
+                    checked={debugMode}
+                    onChange={(event) => setDebugMode(event.target.checked)}
+                  />
+                  Debug
+                </label>
+              ) : null}
+              {isDebugUiEnabled && debugMode ? (
+                <button type="button" className="secondary-button" onClick={() => { void handleHardReset() }}>
+                  Reset
+                </button>
+              ) : null}
               {email ? <span className="subtle-text">{email}</span> : null}
               <button type="button" className="secondary-button" onClick={() => { void handleLogout() }}>
                 Se déconnecter
               </button>
             </div>
           </header>
+          {headerMessage ? <p className="subtle-text">{headerMessage}</p> : null}
 
           <div className="message-area">
             <div ref={scrollRef} className="chat-scroll" onScroll={handleScroll}>
-              {messages.map((message) => (
-                <div key={message.id} className={message.role === 'user' ? 'msg msg-user' : 'msg msg-assistant'}>
-                  {message.content}
-                </div>
-              ))}
+              {messages.map((message, index) => {
+                const isLastAssistantMessage =
+                  message.role === 'assistant' && !messages.slice(index + 1).some((nextMessage) => nextMessage.role === 'assistant')
+
+                return (
+                  <div key={message.id} className={message.role === 'user' ? 'msg msg-user' : 'msg msg-assistant'}>
+                    {message.content}
+                    {isDebugUiEnabled && debugMode && isLastAssistantMessage ? (
+                      <details>
+                        <summary>Debug payload</summary>
+                        <pre>{JSON.stringify(message.toolResult ?? null, null, 2)}</pre>
+                      </details>
+                    ) : null}
+                  </div>
+                )
+              })}
               {isAssistantTyping ? <div className="msg msg-assistant">...</div> : null}
             </div>
           </div>
