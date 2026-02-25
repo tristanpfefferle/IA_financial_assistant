@@ -16,8 +16,9 @@ export function buildFormSubmitPayload(
   formUiAction: FormUiAction,
   values: Record<string, string>,
 ): { humanText: string; messageToBackend: string } {
-  const humanText = formUiAction.fields.map((field) => `${field.label}: ${values[field.id] ?? ''}`).join(', ')
-  const messageToBackend = `${humanText}\n${UI_FORM_SUBMIT_PREFIX}${JSON.stringify({
+  const backendHumanText = formUiAction.fields.map((field) => `${field.label}: ${values[field.id] ?? ''}`).join(', ')
+  const humanText = buildUiFormHumanText(formUiAction, values, backendHumanText)
+  const messageToBackend = `${backendHumanText}\n${UI_FORM_SUBMIT_PREFIX}${JSON.stringify({
     form_id: formUiAction.form_id,
     values,
   })}`
@@ -28,3 +29,26 @@ export function buildFormSubmitPayload(
   }
 }
 
+function buildUiFormHumanText(
+  formUiAction: FormUiAction,
+  values: Record<string, string>,
+  defaultText: string,
+): string {
+  if (formUiAction.form_id === 'onboarding_profile_identity') {
+    const firstName = values.first_name ?? ''
+    const lastName = values.last_name ?? ''
+    return `Je m'appelle ${firstName} ${lastName}.`
+  }
+
+  if (formUiAction.form_id === 'onboarding_profile_birth_date' || formUiAction.form_id === 'onboarding_birth_date') {
+    const birthDate = values.birth_date ?? ''
+    return `Ma date de naissance est le ${birthDate}.`
+  }
+
+  if (formUiAction.form_id === 'onboarding_bank_accounts') {
+    const bankAccounts = values.bank_accounts ?? ''
+    return `J'ai des comptes chez ${bankAccounts}.`
+  }
+
+  return defaultText
+}
