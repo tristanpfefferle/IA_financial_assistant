@@ -52,4 +52,16 @@ describe('installSessionResetOnPageExit', () => {
     window.dispatchEvent(new Event('pagehide'))
     expect(reset).toHaveBeenCalledTimes(1)
   })
+
+  it('ignores persisted pagehide events', () => {
+    const reset = vi.fn()
+
+    installSessionResetOnPageExit(reset)
+
+    const event = new Event('pagehide') as PageTransitionEvent
+    Object.defineProperty(event, 'persisted', { value: true })
+    window.dispatchEvent(event)
+
+    expect(reset).not.toHaveBeenCalled()
+  })
 })
