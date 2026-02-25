@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
-import { Virtuoso } from 'react-virtuoso'
+import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
 
 import {
   fetchPendingTransactions,
@@ -1358,6 +1358,9 @@ export function MessageList({
   onTypingDone,
   onActiveTypingChange,
 }: MessageListProps) {
+  const virtuosoRef = useRef<VirtuosoHandle | null>(null)
+  const [isAtBottom, setIsAtBottom] = useState(true)
+
   const activeTypingMessageId = useMemo(() => {
     const revealed = revealedMessageIdsRef.current
     for (const item of messages) {
@@ -1375,13 +1378,29 @@ export function MessageList({
     onActiveTypingChange?.(activeTypingMessageId)
   }, [activeTypingMessageId, onActiveTypingChange])
 
+  const canScrollToBottom = messages.length > 0
+
+  const handleScrollToBottom = () => {
+    if (!canScrollToBottom) {
+      return
+    }
+
+    virtuosoRef.current?.scrollToIndex({
+      index: messages.length - 1,
+      align: 'end',
+      behavior: 'smooth',
+    })
+  }
+
   return (
     <div className="messages-viewport card" aria-live="polite">
       {messages.length === 0 ? <p className="subtle-text">Initialisation…</p> : null}
       <Virtuoso
+        ref={virtuosoRef}
         className="messages"
         style={{ height: '100%' }}
         data={messages}
+        atBottomStateChange={setIsAtBottom}
         itemContent={(_index, chatMessage) => (
           <div className="message-row">
             <MessageRow
@@ -1395,7 +1414,7 @@ export function MessageList({
             />
           </div>
         )}
-        followOutput={false}
+        followOutput={(atBottom) => (atBottom ? 'smooth' : false)}
         components={{
           Header: () => <div style={{ height: 16 }} />,
           Footer: () => (
@@ -1406,11 +1425,22 @@ export function MessageList({
                   <p className="subtle-text">L’assistant réfléchit…</p>
                 </div>
               ) : null}
-              <div style={{ height: 24 }} />
+              <div style={{ height: 14 }} />
             </>
           ),
         }}
       />
+      {!isAtBottom && canScrollToBottom ? (
+        <button
+          type="button"
+          className="scroll-to-bottom-button"
+          onClick={handleScrollToBottom}
+          aria-label="Aller au dernier message"
+          title="Aller en bas"
+        >
+          ↓
+        </button>
+      ) : null}
     </div>
   )
 }
