@@ -3,7 +3,7 @@ import type { Session } from '@supabase/supabase-js'
 
 import './App.css'
 import { supabase } from './lib/supabaseClient'
-import { ChatPage } from './pages/ChatPage'
+import { ChatMinimalPage } from './pages/ChatMinimalPage'
 import { LoginPage } from './pages/LoginPage'
 
 function App() {
@@ -34,7 +34,7 @@ function App() {
     return <LoginPage />
   }
 
-  return <ChatPage email={session.user.email} />
+  return <ChatMinimalPage email={session.user.email} />
 }
 
 export default App
