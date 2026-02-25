@@ -5,7 +5,7 @@ import { sendChatMessage } from '../api/agentApi'
 import { ConsolePanel } from '../chat/ConsolePanel'
 import type { ConsoleOption, ConsoleUiState } from '../chat/types'
 import { supabase } from '../lib/supabaseClient'
-import { toQuickReplyYesNoUiAction } from './chatUiRequests'
+import { toFormUiAction, toQuickReplyYesNoUiAction } from './chatUiRequests'
 
 type ChatMessage = {
   id: string
@@ -97,10 +97,33 @@ function extractConsoleState(messages: ChatMessage[]): ConsoleUiState {
       }
     }
 
+    if (toFormUiAction(message.toolResult)) {
+      return { mode: 'none' }
+    }
+
     break
   }
 
-  return { mode: 'text' }
+  return { mode: 'none' }
+}
+
+type ComposerMode = 'console' | 'form'
+
+function extractComposerMode(messages: ChatMessage[]): ComposerMode {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (message.role !== 'assistant') {
+      continue
+    }
+
+    if (toFormUiAction(message.toolResult)) {
+      return 'form'
+    }
+
+    return 'console'
+  }
+
+  return 'console'
 }
 
 export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
@@ -112,6 +135,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
   const [isNearBottom, setIsNearBottom] = useState(true)
 
   const consoleState = useMemo(() => extractConsoleState(messages), [messages])
+  const composerMode = useMemo(() => extractComposerMode(messages), [messages])
 
   function handleScroll() {
     if (!scrollRef.current) {
@@ -289,7 +313,11 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
 
           <div className="console-area">
             <div className="console-area-inner">
-              <ConsolePanel uiState={consoleState} isSending={isSending} onChoose={handleQuickReply} onSubmitText={submitMessage} />
+              {composerMode === 'form' ? (
+                <p className="subtle-text">L’assistant prépare la prochaine étape…</p>
+              ) : (
+                <ConsolePanel uiState={consoleState} isSending={isSending} onChoose={handleQuickReply} />
+              )}
             </div>
           </div>
         </div>
