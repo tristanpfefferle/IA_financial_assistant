@@ -119,11 +119,7 @@ describe('MessageList sequential typing cursor', () => {
             apiBaseUrl="http://127.0.0.1:8000"
             typingCursor={typingCursor}
             revealedMessageIdsRef={revealedMessageIdsRef}
-            virtuosoRef={{ current: null }}
-            isAtBottom
-            onAtBottomStateChange={() => undefined}
             onImportNow={() => undefined}
-            onScrollToBottom={() => undefined}
             onTypingDone={() => setTypingCursor((value) => value + 1)}
           />
         )

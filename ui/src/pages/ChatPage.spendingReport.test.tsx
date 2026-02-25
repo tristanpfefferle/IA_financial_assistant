@@ -1,4 +1,4 @@
-import { act, createRef } from 'react'
+import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -121,11 +121,7 @@ describe('MessageList spending report summary', () => {
           apiBaseUrl="http://127.0.0.1:8000"
           typingCursor={0}
           revealedMessageIdsRef={{ current: new Set<string>() }}
-          virtuosoRef={createRef()}
-          isAtBottom
-          onAtBottomStateChange={() => undefined}
           onImportNow={() => undefined}
-          onScrollToBottom={() => undefined}
           onTypingDone={() => undefined}
         />,
       )
@@ -164,11 +160,7 @@ describe('MessageList spending report summary', () => {
           apiBaseUrl="http://127.0.0.1:8000"
           typingCursor={0}
           revealedMessageIdsRef={{ current: new Set<string>() }}
-          virtuosoRef={createRef()}
-          isAtBottom
-          onAtBottomStateChange={() => undefined}
           onImportNow={() => undefined}
-          onScrollToBottom={() => undefined}
           onTypingDone={() => undefined}
         />,
       )
