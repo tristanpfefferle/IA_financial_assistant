@@ -69,6 +69,11 @@ class OnboardingProfileCollectLoop:
         state_dict = (services or {}).get("state") if isinstance(services, dict) else None
         current_fields = self._current_fields(ctx=ctx, profiles_repository=profiles_repository, profile_id=profile_id)
         missing_slot = self._first_missing_slot(current_fields)
+        next_ctx = (
+            ctx
+            if ctx.step != "start"
+            else LoopContext(loop_id=ctx.loop_id, step="active", data=dict(ctx.data), blocking=ctx.blocking)
+        )
 
         pending_iso = None
         if isinstance(ctx.data, dict):
@@ -107,13 +112,13 @@ class OnboardingProfileCollectLoop:
                         "Ok 🙂 Peux-tu me redonner ta date de naissance ? Formats acceptés: "
                         "YYYY-MM-DD (ex 2001-05-10), DD.MM.YYYY (ex 10.05.2001), ou '10 mai 2001'."
                     ),
-                    next_loop=ctx,
+                    next_loop=next_ctx,
                     updates={"profile_birth_date_pending_iso": None},
                     handled=True,
                 )
             return LoopReply(
                 reply="Peux-tu répondre par oui ou non pour confirmer l'année de naissance ?",
-                next_loop=ctx,
+                next_loop=next_ctx,
                 updates={},
                 handled=True,
             )
@@ -141,19 +146,19 @@ class OnboardingProfileCollectLoop:
                         "Peux-tu confirmer ton année de naissance ? "
                         f"J'ai compris {typo_iso[:4]} (soit {typo_iso})."
                     ),
-                    next_loop=ctx,
+                    next_loop=next_ctx,
                     updates={"global_state": updated_state, "profile_birth_date_pending_iso": typo_iso},
                     handled=True,
                 )
 
         if slot_value is None:
             if missing_slot == "birth_date":
-                return LoopReply(reply=self._ask_birth_date_with_formats(), next_loop=ctx, updates={}, handled=True)
-            return LoopReply(reply=self._ask_for_slot(missing_slot), next_loop=ctx, updates={}, handled=True)
+                return LoopReply(reply=self._ask_birth_date_with_formats(), next_loop=next_ctx, updates={}, handled=True)
+            return LoopReply(reply=self._ask_for_slot(missing_slot), next_loop=next_ctx, updates={}, handled=True)
 
         should_fallback_to_legacy = ctx.step == "start" and missing_slot == "first_name"
         if should_fallback_to_legacy and not self._is_safe_start_capture(missing_slot, parsed):
-            return LoopReply(reply="", next_loop=ctx, updates={}, handled=False)
+            return LoopReply(reply="", next_loop=next_ctx, updates={}, handled=False)
 
         if slot_value.confidence == ConfidenceLevel.HIGH and slot_value.value:
             if missing_slot == "birth_date" and not is_plausible_birth_date(str(slot_value.value)):
@@ -162,7 +167,7 @@ class OnboardingProfileCollectLoop:
                         "Ça me paraît improbable 🙂 Peux-tu confirmer ta date de naissance ? Formats acceptés: "
                         "YYYY-MM-DD (ex 2001-05-10), DD.MM.YYYY (ex 10.05.2001), ou '10 mai 2001'."
                     ),
-                    next_loop=ctx,
+                    next_loop=next_ctx,
                     updates={"global_state": self._next_global_state(services, completed=False)},
                     handled=True,
                 )
@@ -199,47 +204,47 @@ class OnboardingProfileCollectLoop:
                 )
             return LoopReply(
                 reply=self._ask_for_slot(self._first_missing_slot(current_fields)),
-                next_loop=ctx,
+                next_loop=next_ctx,
                 updates={"global_state": updated_state},
                 handled=True,
             )
 
         if missing_slot == "birth_date" and not slot_value.value:
-            return LoopReply(reply=self._ask_birth_date_with_formats(), next_loop=ctx, updates={}, handled=True)
+            return LoopReply(reply=self._ask_birth_date_with_formats(), next_loop=next_ctx, updates={}, handled=True)
 
         if slot_value.confidence == ConfidenceLevel.MEDIUM:
             if missing_slot == "birth_date":
                 return LoopReply(
                     reply=self._ask_birth_date_with_formats(),
-                    next_loop=ctx,
+                    next_loop=next_ctx,
                     updates={},
                     handled=True,
                 )
             if should_fallback_to_legacy:
-                return LoopReply(reply="", next_loop=ctx, updates={}, handled=False)
+                return LoopReply(reply="", next_loop=next_ctx, updates={}, handled=False)
             return LoopReply(
                 reply=f"Tu peux me donner uniquement {self._slot_label(missing_slot)} ?",
-                next_loop=ctx,
+                next_loop=next_ctx,
                 updates={},
                 handled=True,
             )
 
         if should_fallback_to_legacy:
-            return LoopReply(reply="", next_loop=ctx, updates={}, handled=False)
+            return LoopReply(reply="", next_loop=next_ctx, updates={}, handled=False)
 
         if not any(parsed_item.value for parsed_item in parsed.values()):
             if missing_slot == "birth_date":
-                return LoopReply(reply=self._ask_birth_date_with_formats(), next_loop=ctx, updates={}, handled=True)
+                return LoopReply(reply=self._ask_birth_date_with_formats(), next_loop=next_ctx, updates={}, handled=True)
             return LoopReply(
                 reply=f"On continue d'abord ton profil : {self._ask_for_slot(missing_slot)}",
-                next_loop=ctx,
+                next_loop=next_ctx,
                 updates={},
                 handled=True,
             )
 
         return LoopReply(
             reply=f"J'ai besoin d'une réponse claire. Exemple : {self._slot_example(missing_slot)}",
-            next_loop=ctx,
+            next_loop=next_ctx,
             updates={},
             handled=True,
         )

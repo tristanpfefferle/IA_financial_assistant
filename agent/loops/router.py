@@ -122,7 +122,7 @@ def route_message(
 
     if current_loop is None and enterable:
         chosen = sorted(enterable, key=lambda item: item.id)[0]
-        next_ctx = LoopContext(loop_id=chosen.id, step="start", data={}, blocking=chosen.blocking)
+        next_ctx = LoopContext(loop_id=chosen.id, step="active", data={}, blocking=chosen.blocking)
         loop_reply = chosen.handle(
             message,
             next_ctx,
@@ -146,7 +146,7 @@ def route_message(
     if switch_target is not None:
         loop = registry.get(switch_target)
         if loop is not None:
-            new_ctx = LoopContext(loop_id=loop.id, step="start", data={}, blocking=loop.blocking)
+            new_ctx = LoopContext(loop_id=loop.id, step="active", data={}, blocking=loop.blocking)
             routed = loop.handle(message, new_ctx, services=services, profile_id=profile_id, user_id=user_id)
             if routed.next_loop is None:
                 routed.next_loop = new_ctx
