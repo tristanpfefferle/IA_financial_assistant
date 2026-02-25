@@ -230,7 +230,7 @@ export function toFormUiAction(value: unknown): FormUiAction | null {
   }
 
   const parsedFields = fields
-    .map((field) => {
+    .map((field): FormUiField | null => {
       if (!field || typeof field !== 'object') {
         return null
       }
@@ -243,12 +243,23 @@ export function toFormUiAction(value: unknown): FormUiAction | null {
       ) {
         return null
       }
+      const placeholder = typeof raw.placeholder === 'string' ? raw.placeholder : undefined
+
+      if (placeholder !== undefined) {
+        return {
+          id: raw.id,
+          label: raw.label,
+          type: raw.type,
+          required: raw.required,
+          placeholder,
+        }
+      }
+
       return {
         id: raw.id,
         label: raw.label,
         type: raw.type,
         required: raw.required,
-        placeholder: typeof raw.placeholder === 'string' ? raw.placeholder : undefined,
       }
     })
     .filter((field): field is FormUiField => field !== null)
