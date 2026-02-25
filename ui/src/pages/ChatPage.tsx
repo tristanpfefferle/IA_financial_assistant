@@ -24,6 +24,7 @@ import {
   toOpenImportPanelUiAction,
   toPdfUiRequest,
   toQuickReplyYesNoUiAction,
+  toFormUiAction,
 } from './chatUiRequests'
 import { resolvePdfReportUrl } from './pdfUrl'
 
@@ -324,6 +325,10 @@ function isImportErrorResult(x: unknown): x is { ok: false; type: 'error'; messa
   return candidate.ok === false && candidate.type === 'error'
 }
 
+function buildUiFormSubmitMessage(formId: string, values: Record<string, string>): string {
+  return `__ui_form_submit__:${JSON.stringify({ form_id: formId, values })}`
+}
+
 function toProgressUiAction(toolResult: ChatMessage['toolResult']): ProgressUiAction | null {
   if (!toolResult || typeof toolResult !== 'object') {
     return null
@@ -401,6 +406,7 @@ export function ChatPage({ email }: ChatPageProps) {
     return null
   }, [messages])
   const quickReplyAction = useMemo(() => toQuickReplyYesNoUiAction(latestAssistantMessage?.toolResult), [latestAssistantMessage])
+  const formUiAction = useMemo(() => toFormUiAction(latestAssistantMessage?.toolResult), [latestAssistantMessage])
   const activeTypingMessageId = useMemo(() => {
     const revealed = revealedMessageIdsRef.current
     for (const item of messages) {
@@ -413,8 +419,15 @@ export function ChatPage({ email }: ChatPageProps) {
     }
     return null
   }, [messages, typingCursor])
+  const shouldShowFormCard = Boolean(
+    formUiAction
+      && latestAssistantMessage
+      && revealedMessageIdsRef.current.has(latestAssistantMessage.id)
+      && activeTypingMessageId === null,
+  )
   const shouldShowQuickReplies = Boolean(
     quickReplyAction
+      && !shouldShowFormCard
       && latestAssistantMessage
       && revealedMessageIdsRef.current.has(latestAssistantMessage.id)
       && activeTypingMessageId === null,
@@ -765,6 +778,30 @@ export function ChatPage({ email }: ChatPageProps) {
     }
   }
 
+
+  async function submitForm(formId: string, values: Record<string, string>) {
+    if (isLoading || isImportRequired) {
+      return
+    }
+
+    setMessages((previous) => [...previous, { id: crypto.randomUUID(), role: 'user' as const, content: 'Valider', createdAt: Date.now() }])
+    setMessage('')
+    setError(null)
+    setIsLoading(true)
+
+    try {
+      const specialMessage = buildUiFormSubmitMessage(formId, values)
+      const response = await sendChatMessage(specialMessage, { debug: debugMode })
+      syncLoopDebug(response)
+      const segments = splitAssistantReply(response.reply)
+      enqueueAssistantMessages(segments, response.tool_result, response.plan, response)
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : 'Erreur inconnue')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const trimmedMessage = message.trim()
@@ -1022,12 +1059,20 @@ export function ChatPage({ email }: ChatPageProps) {
           }}
         />
 
+        <FormCard
+          formUiAction={shouldShowFormCard ? formUiAction : null}
+          isLoading={isLoading}
+          onSubmitForm={(formId, values) => {
+            void submitForm(formId, values)
+          }}
+        />
+
         <Composer
           message={message}
           setMessage={setMessage}
           onSubmit={handleSubmit}
           isLoading={isLoading}
-          disabled={isImportRequired}
+          disabled={isImportRequired || shouldShowFormCard}
         />
 
         {error ? <p className="error-text">{error}</p> : null}
@@ -1574,6 +1619,63 @@ function QuickReplyBar({
     </div>
   )
 }
+
+function FormCard({
+  formUiAction,
+  isLoading,
+  onSubmitForm,
+}: {
+  formUiAction: ReturnType<typeof toFormUiAction>
+  isLoading: boolean
+  onSubmitForm: (formId: string, values: Record<string, string>) => void
+}) {
+  if (!formUiAction) {
+    return null
+  }
+
+  return (
+    <form
+      className="card"
+      aria-label={`Formulaire ${formUiAction.form_id}`}
+      onSubmit={(event) => {
+        event.preventDefault()
+        if (isLoading) {
+          return
+        }
+        const formData = new FormData(event.currentTarget)
+        const values: Record<string, string> = {}
+        for (const field of formUiAction.fields) {
+          values[field.id] = String(formData.get(field.id) ?? '').trim()
+          if (field.required && values[field.id].length === 0) {
+            return
+          }
+        }
+        onSubmitForm(formUiAction.form_id, values)
+      }}
+    >
+      <h3>{formUiAction.title}</h3>
+      <div className="settings-grid">
+        {formUiAction.fields.map((field) => (
+          <label key={field.id} className="settings-field">
+            {field.label}
+            <input
+              name={field.id}
+              type={field.type}
+              required={field.required}
+              placeholder={field.placeholder}
+              defaultValue=""
+              disabled={isLoading}
+            />
+          </label>
+        ))}
+      </div>
+      <div className="message-actions">
+        <button type="submit" disabled={isLoading}>{formUiAction.submit_label}</button>
+      </div>
+    </form>
+  )
+}
+
 
 function Composer({
   message,

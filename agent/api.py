@@ -114,6 +114,7 @@ _GLOBAL_STATE_ONBOARDING_SUBSTEPS = {
     None,
 }
 _PROFILE_COMPLETION_FIELDS = ("first_name", "last_name", "birth_date")
+_UI_FORM_SUBMIT_PREFIX = "__ui_form_submit__:"
 _ONBOARDING_NAME_PATTERN = re.compile(
     r"^\s*([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'\-]+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'\-]+)\s*$"
 )
@@ -588,6 +589,87 @@ def _build_quick_reply_profile_fix_ui_action() -> dict[str, Any]:
             {"id": "fix_birth_date", "label": "Corriger date de naissance", "value": "corriger_date"},
         ],
     }
+
+
+def _build_profile_name_form_ui_action() -> dict[str, Any]:
+    """Return UI form payload for onboarding first/last name collection."""
+
+    return {
+        "type": "ui_action",
+        "action": "form",
+        "form_id": "onboarding_profile_name",
+        "title": "Ton profil",
+        "fields": [
+            {
+                "id": "first_name",
+                "label": "Prénom",
+                "type": "text",
+                "required": True,
+                "placeholder": "Tristan",
+            },
+            {
+                "id": "last_name",
+                "label": "Nom",
+                "type": "text",
+                "required": True,
+                "placeholder": "Pfefferlé",
+            },
+        ],
+        "submit_label": "Valider",
+    }
+
+
+def _build_profile_birth_date_form_ui_action() -> dict[str, Any]:
+    """Return UI form payload for onboarding birth date collection."""
+
+    return {
+        "type": "ui_action",
+        "action": "form",
+        "form_id": "onboarding_profile_birth_date",
+        "title": "Date de naissance",
+        "fields": [
+            {
+                "id": "birth_date",
+                "label": "Date de naissance",
+                "type": "date",
+                "required": True,
+            }
+        ],
+        "submit_label": "Valider",
+    }
+
+
+def _build_profile_collect_ui_action(profile_fields: dict[str, Any]) -> dict[str, Any]:
+    """Return the onboarding profile form action matching current missing fields."""
+
+    has_first_name = _is_profile_field_completed(profile_fields.get("first_name"))
+    has_last_name = _is_profile_field_completed(profile_fields.get("last_name"))
+    if not has_first_name or not has_last_name:
+        return _build_profile_name_form_ui_action()
+    return _build_profile_birth_date_form_ui_action()
+
+
+def _parse_ui_form_submit_message(message: str) -> dict[str, Any] | None:
+    """Parse deterministic UI form-submit envelope when present."""
+
+    if not isinstance(message, str) or not message.startswith(_UI_FORM_SUBMIT_PREFIX):
+        return None
+    raw_payload = message[len(_UI_FORM_SUBMIT_PREFIX) :].strip()
+    if not raw_payload:
+        raise ValueError("missing_form_payload")
+    parsed = json.loads(raw_payload)
+    if not isinstance(parsed, dict):
+        raise ValueError("invalid_form_payload")
+    return parsed
+
+
+def _extract_required_form_value(values: dict[str, Any], field_id: str) -> str:
+    """Return required form string value or raise for missing/invalid payload."""
+
+    raw = values.get(field_id)
+    if not isinstance(raw, str) or not raw.strip():
+        raise ValueError(f"missing_{field_id}")
+    return raw.strip()
 
 
 def _build_open_pdf_ui_request(url: str) -> dict[str, str]:
@@ -2926,6 +3008,99 @@ def agent_chat(
                     plan=None,
                 )
 
+        try:
+            ui_form_submit_payload = _parse_ui_form_submit_message(payload.message)
+        except (ValueError, json.JSONDecodeError):
+            return _chat_response(reply="Soumission de formulaire invalide.", tool_result=None, plan=None)
+        if ui_form_submit_payload is not None:
+            form_id = ui_form_submit_payload.get("form_id")
+            values = ui_form_submit_payload.get("values")
+            if not isinstance(form_id, str) or not isinstance(values, dict):
+                return _chat_response(reply="Soumission de formulaire invalide.", tool_result=None, plan=None)
+
+            if form_id == "onboarding_profile_name":
+                try:
+                    first_name = _extract_required_form_value(values, "first_name")
+                    last_name = _extract_required_form_value(values, "last_name")
+                except ValueError:
+                    return _chat_response(
+                        reply="Merci de renseigner ton prénom et ton nom.",
+                        tool_result=_build_profile_name_form_ui_action(),
+                        plan=None,
+                    )
+                profiles_repository.update_profile_fields(
+                    profile_id=profile_id,
+                    set_dict={"first_name": first_name, "last_name": last_name},
+                )
+                refreshed_fields = profiles_repository.get_profile_fields(
+                    profile_id=profile_id,
+                    fields=list(_PROFILE_COMPLETION_FIELDS),
+                )
+                updated_global_state = _build_onboarding_global_state(
+                    global_state,
+                    onboarding_step="profile",
+                    onboarding_substep="profile_collect",
+                )
+                updated_global_state["profile_confirmed"] = False
+                state_dict = dict(state_dict) if isinstance(state_dict, dict) else {}
+                state_dict["global_state"] = _normalize_onboarding_step_substep(updated_global_state)
+                chat_state_to_save = dict(chat_state) if isinstance(chat_state, dict) else {}
+                chat_state_to_save["state"] = state_dict
+                profiles_repository.update_chat_state(
+                    profile_id=profile_id,
+                    user_id=auth_user_id,
+                    chat_state=chat_state_to_save,
+                )
+                return _chat_response(
+                    reply="Quelle est ta date de naissance ?",
+                    tool_result=_build_profile_collect_ui_action(refreshed_fields),
+                    plan=None,
+                )
+
+            if form_id == "onboarding_profile_birth_date":
+                try:
+                    birth_date = _extract_birth_date_from_message(_extract_required_form_value(values, "birth_date"))
+                except ValueError:
+                    return _chat_response(
+                        reply="Merci de renseigner une date de naissance valide.",
+                        tool_result=_build_profile_birth_date_form_ui_action(),
+                        plan=None,
+                    )
+                if not isinstance(birth_date, str) or not birth_date.strip():
+                    return _chat_response(
+                        reply="Merci de renseigner une date de naissance valide.",
+                        tool_result=_build_profile_birth_date_form_ui_action(),
+                        plan=None,
+                    )
+                profiles_repository.update_profile_fields(profile_id=profile_id, set_dict={"birth_date": birth_date})
+                refreshed_fields = profiles_repository.get_profile_fields(
+                    profile_id=profile_id,
+                    fields=list(_PROFILE_COMPLETION_FIELDS),
+                )
+                updated_global_state = _build_onboarding_global_state(
+                    global_state,
+                    onboarding_step="profile",
+                    onboarding_substep="profile_confirm",
+                )
+                updated_global_state["profile_confirmed"] = False
+                global_state = _normalize_onboarding_step_substep(updated_global_state)
+                state_dict = dict(state_dict) if isinstance(state_dict, dict) else {}
+                state_dict["global_state"] = global_state
+                chat_state_to_save = dict(chat_state) if isinstance(chat_state, dict) else {}
+                chat_state_to_save["state"] = state_dict
+                profiles_repository.update_chat_state(
+                    profile_id=profile_id,
+                    user_id=auth_user_id,
+                    chat_state=chat_state_to_save,
+                )
+                return _chat_response(
+                    reply=_build_profile_recap_reply(refreshed_fields),
+                    tool_result=_build_quick_reply_yes_no_ui_action(),
+                    plan=None,
+                )
+
+            return _chat_response(reply="Formulaire inconnu.", tool_result=None, plan=None)
+
         persisted_loop = parse_loop_context(state_dict.get("loop"))
         current_loop = persisted_loop
         used_implicit_loop = False
@@ -3022,9 +3197,16 @@ def agent_chat(
                     isinstance(current_global_state, dict)
                     and current_global_state.get("mode") == "onboarding"
                     and current_global_state.get("onboarding_step") == "profile"
-                    and current_global_state.get("onboarding_substep") == "profile_confirm"
                 ):
-                    tool_result = _build_quick_reply_yes_no_ui_action()
+                    current_substep = current_global_state.get("onboarding_substep")
+                    if current_substep == "profile_confirm":
+                        tool_result = _build_quick_reply_yes_no_ui_action()
+                    elif current_substep == "profile_collect":
+                        profile_fields = profiles_repository.get_profile_fields(
+                            profile_id=profile_id,
+                            fields=list(_PROFILE_COMPLETION_FIELDS),
+                        )
+                        tool_result = _build_profile_collect_ui_action(profile_fields)
                 elif "peux-tu confirmer ton année de naissance" in lowered_reply:
                     tool_result = _build_quick_reply_yes_no_ui_action()
                 return _chat_response(reply=loop_reply.reply, tool_result=tool_result, plan=None)
@@ -3106,11 +3288,8 @@ f"Salut 👋\n\nJe suis ton assistant financier. Je t’aide à analyser tes dé
                     plan=None,
                 )
             return _chat_response(
-                reply=(
-                    "Avant de continuer, quel est ton prénom et ton nom ? "
-                    "(ex: Paul Murt)"
-                ),
-                tool_result=None,
+                reply="Renseigne ton prénom et ton nom.",
+                tool_result=_build_profile_name_form_ui_action(),
                 plan=None,
             )
 
@@ -3206,8 +3385,12 @@ f"Salut 👋\n\nJe suis ton assistant financier. Je t’aide à analyser tes dé
                         chat_state=updated_chat_state,
                     )
                     return _chat_response(
-                        reply="Complète la carte profil (prénom, nom, date de naissance) pour continuer 🙂",
-                        tool_result=None,
+                        reply=(
+                            "Renseigne ton prénom et ton nom."
+                            if not has_name
+                            else "Quelle est ta date de naissance ?"
+                        ),
+                        tool_result=_build_profile_collect_ui_action(profile_fields),
                         plan=None,
                     )
 
@@ -3233,7 +3416,7 @@ f"Salut 👋\n\nJe suis ton assistant financier. Je t’aide à analyser tes dé
                             user_id=auth_user_id,
                             chat_state=updated_chat_state,
                         )
-                        return _chat_response(reply="Ok 🙂 Mets à jour prénom/nom dans la carte profil.", tool_result=None, plan=None)
+                        return _chat_response(reply="Renseigne ton prénom et ton nom.", tool_result=_build_profile_name_form_ui_action(), plan=None)
                     if normalized_correction in {"corriger_date", "birth_date"}:
                         if hasattr(profiles_repository, "update_profile_fields"):
                             profiles_repository.update_profile_fields(profile_id=profile_id, set_dict={"birth_date": ""})
@@ -3254,7 +3437,7 @@ f"Salut 👋\n\nJe suis ton assistant financier. Je t’aide à analyser tes dé
                             user_id=auth_user_id,
                             chat_state=updated_chat_state,
                         )
-                        return _chat_response(reply="Ok 🙂 Mets à jour la date de naissance dans la carte profil.", tool_result=None, plan=None)
+                        return _chat_response(reply="Quelle est ta date de naissance ?", tool_result=_build_profile_birth_date_form_ui_action(), plan=None)
                     return _chat_response(
                         reply="Dis-moi ce que tu veux corriger.",
                         tool_result=_build_quick_reply_profile_fix_ui_action(),

@@ -1027,8 +1027,8 @@ def test_free_chat_re_gates_to_profile_when_profile_missing(monkeypatch) -> None
     assert persisted["mode"] == "onboarding"
     assert persisted["onboarding_step"] == "profile"
     assert persisted["onboarding_substep"] == "profile_collect"
-    assert "Avant de continuer" in response.json()["reply"]
-    assert "prénom" in response.json()["reply"]
+    assert response.json()["reply"] == "Renseigne ton prénom et ton nom."
+    assert response.json()["tool_result"]["form_id"] == "onboarding_profile_name"
 
 
 def test_profile_re_gate_message_asks_only_for_name(monkeypatch) -> None:
@@ -1169,7 +1169,7 @@ def test_free_chat_re_gates_to_bank_accounts_collect_when_no_accounts(monkeypatc
     assert persisted["mode"] == "onboarding"
     assert persisted["onboarding_step"] == "bank_accounts"
     assert persisted["onboarding_substep"] == "bank_accounts_collect"
-    assert "Avant de continuer" in response.json()["reply"]
+    assert response.json()["reply"] == "Avant de continuer, indique-moi ta/tes banques (ex: ‘UBS, Revolut’)."
 
 
 
@@ -1197,7 +1197,9 @@ def test_onboarding_profile_collect_ignores_free_text_updates(monkeypatch) -> No
     assert repo.profile_update_calls == []
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
     assert persisted["onboarding_substep"] == "profile_collect"
-    assert "carte profil" in response.json()["reply"].lower()
+    assert response.json()["reply"] == "Renseigne ton prénom et ton nom."
+    assert response.json()["tool_result"]["action"] == "form"
+    assert response.json()["tool_result"]["form_id"] == "onboarding_profile_name"
     assert loop.called is False
 
 
@@ -1273,7 +1275,8 @@ def test_profile_collect_with_missing_birth_date_stays_collect(monkeypatch) -> N
     assert repo.profile_update_calls == []
     persisted_collect = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
     assert persisted_collect["onboarding_substep"] == "profile_collect"
-    assert "carte profil" in response_collect.json()["reply"].lower()
+    assert response_collect.json()["reply"] == "Quelle est ta date de naissance ?"
+    assert response_collect.json()["tool_result"]["form_id"] == "onboarding_profile_birth_date"
 
     
 
@@ -1323,7 +1326,7 @@ def test_onboarding_bank_accounts_request_like_input_returns_blocking_help(monke
 
     assert response.status_code == 200
     assert repo.ensure_bank_accounts_calls == []
-    assert "Avant de continuer" in response.json()["reply"]
+    assert response.json()["reply"] == "Avant de continuer, indique-moi tes banques (ex: UBS, Revolut)."
 
 
 def test_onboarding_bank_accounts_creates_accounts_and_moves_to_import(monkeypatch) -> None:
@@ -1551,9 +1554,83 @@ def test_profile_collect_no_longer_persists_from_free_text(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert repo.profile_update_calls == []
-    assert "carte profil" in response.json()["reply"].lower()
+    assert response.json()["reply"] == "Renseigne ton prénom et ton nom."
+    assert response.json()["tool_result"]["action"] == "form"
+    assert response.json()["tool_result"]["form_id"] == "onboarding_profile_name"
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
     assert persisted["onboarding_substep"] == "profile_collect"
+
+
+def test_profile_form_submit_name_updates_repo_and_returns_birth_date_form(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "onboarding",
+                    "onboarding_step": "profile",
+                    "onboarding_substep": "profile_collect",
+                }
+            }
+        },
+        profile_fields={"first_name": "", "last_name": "", "birth_date": ""},
+    )
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
+
+    response = client.post(
+        "/agent/chat",
+        json={
+            "message": '__ui_form_submit__:{"form_id":"onboarding_profile_name","values":{"first_name":"Tristan","last_name":"Pfefferlé"}}'
+        },
+        headers=_auth_headers(),
+    )
+
+    assert response.status_code == 200
+    assert {"first_name": "Tristan", "last_name": "Pfefferlé"} in repo.profile_update_calls
+    payload = response.json()
+    assert payload["reply"] == "Quelle est ta date de naissance ?"
+    assert payload["tool_result"]["type"] == "ui_action"
+    assert payload["tool_result"]["action"] == "form"
+    assert payload["tool_result"]["form_id"] == "onboarding_profile_birth_date"
+
+
+def test_profile_form_submit_birth_date_moves_to_confirm_with_yes_no(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "onboarding",
+                    "onboarding_step": "profile",
+                    "onboarding_substep": "profile_collect",
+                }
+            }
+        },
+        profile_fields={"first_name": "Tristan", "last_name": "Pfefferlé", "birth_date": ""},
+    )
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
+
+    response = client.post(
+        "/agent/chat",
+        json={
+            "message": '__ui_form_submit__:{"form_id":"onboarding_profile_birth_date","values":{"birth_date":"2001-12-22"}}'
+        },
+        headers=_auth_headers(),
+    )
+
+    assert response.status_code == 200
+    assert {"birth_date": "2001-12-22"} in repo.profile_update_calls
+    payload = response.json()
+    assert "Récapitulatif de ton profil" in payload["reply"]
+    persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
+    assert persisted["onboarding_substep"] == "profile_confirm"
+    assert payload["tool_result"] == {
+        "type": "ui_action",
+        "action": "quick_replies",
+        "options": [{"id": "yes", "label": "✅", "value": "oui"}, {"id": "no", "label": "❌", "value": "non"}],
+    }
 
 
 def test_profile_collect_when_profile_complete_shows_recap(monkeypatch) -> None:
@@ -1640,7 +1717,8 @@ def test_profile_fix_select_name_resets_only_names(monkeypatch) -> None:
 
     assert {"first_name": "", "last_name": ""} in repo.profile_update_calls
     assert repo.profile_fields["birth_date"] == "1815-12-10"
-    assert second.json()["reply"] == "Ok 🙂 Mets à jour prénom/nom dans la carte profil."
+    assert second.json()["reply"] == "Renseigne ton prénom et ton nom."
+    assert second.json()["tool_result"]["form_id"] == "onboarding_profile_name"
 
 
 
@@ -1667,7 +1745,8 @@ def test_profile_fix_select_birth_date_resets_only_birth_date(monkeypatch) -> No
     assert {"birth_date": ""} in repo.profile_update_calls
     assert repo.profile_fields["first_name"] == "Ada"
     assert repo.profile_fields["last_name"] == "Lovelace"
-    assert second.json()["reply"] == "Ok 🙂 Mets à jour la date de naissance dans la carte profil."
+    assert second.json()["reply"] == "Quelle est ta date de naissance ?"
+    assert second.json()["tool_result"]["form_id"] == "onboarding_profile_birth_date"
 
 
 def test_after_bank_added_waits_ready_before_import_ui_request(monkeypatch) -> None:

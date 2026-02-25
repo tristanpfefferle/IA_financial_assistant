@@ -101,10 +101,10 @@ class OnboardingProfileCollectLoop:
 
     def _ask_for_slot(self, slot: str | None) -> str:
         if slot in {"first_name", "last_name"}:
-            return "Complète la carte profil avec ton prénom et ton nom pour continuer 🙂"
+            return "Renseigne ton prénom et ton nom."
         if slot == "birth_date":
-            return "Complète la carte profil avec ta date de naissance pour continuer 🙂"
-        return "Complète la carte profil pour continuer 🙂"
+            return "Quelle est ta date de naissance ?"
+        return "Renseigne les champs du profil."
 
     def _next_global_state(self, services: Any, *, completed: bool) -> dict[str, Any]:
         global_state = {}
