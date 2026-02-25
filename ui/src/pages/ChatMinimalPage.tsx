@@ -184,6 +184,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
   const [isSending, setIsSending] = useState(false)
   const [isAssistantTyping, setIsAssistantTyping] = useState(false)
   const [isNearBottom, setIsNearBottom] = useState(true)
+  const [canScroll, setCanScroll] = useState(false)
   const [debugUnlocked, setDebugUnlocked] = useState(() => localStorage.getItem('ui_debug_unlocked') === 'true')
   const [debugMode, setDebugMode] = useState(() => localStorage.getItem('ui_debug_mode') === 'true')
   const [headerMessage, setHeaderMessage] = useState<string | null>(null)
@@ -201,6 +202,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
     const { scrollHeight, scrollTop, clientHeight } = scrollRef.current
     const distanceBottom = scrollHeight - (scrollTop + clientHeight)
     setIsNearBottom(distanceBottom < 80)
+    setCanScroll(scrollHeight > clientHeight + 8)
   }
 
   function scrollToBottom() {
@@ -219,6 +221,15 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
       scrollToBottom()
     }
   }, [messages.length, isAssistantTyping, isNearBottom])
+
+  useEffect(() => {
+    if (!scrollRef.current) {
+      return
+    }
+
+    const { scrollHeight, clientHeight } = scrollRef.current
+    setCanScroll(scrollHeight > clientHeight + 8)
+  }, [messages.length, isAssistantTyping])
 
   useEffect(() => {
     localStorage.setItem('ui_debug_mode', String(debugMode))
@@ -495,13 +506,12 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
               })}
               {isAssistantTyping ? <div className="msg msg-assistant">...</div> : null}
             </div>
+            {canScroll && !isNearBottom ? (
+              <button type="button" className="scroll-down-btn" onClick={scrollToBottom} aria-label="Aller en bas">
+                ↓
+              </button>
+            ) : null}
           </div>
-
-          {!isNearBottom ? (
-            <button type="button" className="scroll-down-btn" onClick={scrollToBottom} aria-label="Aller en bas">
-              ↓
-            </button>
-          ) : null}
 
           <div className="console-area">
             <div className="console-area-inner">
