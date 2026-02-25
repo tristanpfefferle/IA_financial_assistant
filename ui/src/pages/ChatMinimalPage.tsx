@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 
 import { hardResetProfile, importReleves, sendChatMessage } from '../api/agentApi'
 import { ConsolePanel } from '../chat/ConsolePanel'
+import { ProgressIndicator } from '../chat/ProgressIndicator'
 import { buildFormSubmitPayload } from '../chat/formSubmit'
 import type { ConsoleOption, ConsoleUiState } from '../chat/types'
 import { supabase } from '../lib/supabaseClient'
@@ -725,6 +726,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
               </button>
             </div>
           </header>
+          <ProgressIndicator messages={messages} formUiAction={formUiAction} />
           {headerMessage ? <p className="subtle-text">{headerMessage}</p> : null}
 
           <div className="message-area">
@@ -764,7 +766,12 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
           <div className="console-area">
             <div className="console-area-inner">
               {composerMode === 'form' ? (
-                formUiAction ? <FormCard formUiAction={formUiAction} isBusy={isSending || isAssistantTyping} onSubmitForm={handleFormSubmit} /> : null
+                formUiAction ? (
+                  <div className="profile-card">
+                    <p className="profile-card-title">Ton profil</p>
+                    <FormCard formUiAction={formUiAction} isBusy={isSending || isAssistantTyping} onSubmitForm={handleFormSubmit} />
+                  </div>
+                ) : null
               ) : (
                 <ConsolePanel uiState={consoleState} isSending={isSending} onChoose={handleQuickReply} onImportFile={handleImportFile} />
               )}
