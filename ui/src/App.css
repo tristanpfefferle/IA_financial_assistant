@@ -272,14 +272,47 @@ button:disabled {
   color: #cbd5e1;
 }
 
+
+.form-multi-select-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.form-multi-select-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #334155;
+  border-radius: 10px;
+  background: #18233a;
+  color: #e2e8f0;
+  padding: 8px 10px;
+}
+
+.form-multi-select-option input {
+  margin: 0;
+}
+
 @media (max-width: 980px) {
   .console-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .form-multi-select-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 640px) {
   .console-grid {
+    grid-template-columns: repeat(1, minmax(0, 1fr));
+  }
+
+  .form-multi-select-grid {
     grid-template-columns: repeat(1, minmax(0, 1fr));
   }
 }
