@@ -48,10 +48,78 @@ class DeterministicLoop:
         return LoopReply(reply=reply_text, next_loop=next_loop, updates={"last_message": message}, handled=True)
 
 
+@dataclass(slots=True)
+class OnboardingProfileFixSelectLoop:
+    """Handle profile correction target selection after a negative confirmation."""
+
+    id: str = "onboarding.profile_fix_select"
+    blocking: bool = True
+
+    def can_enter(self, global_state: dict[str, Any], services: Any, profile_id: Any, user_id: Any) -> bool:
+        if not isinstance(global_state, dict):
+            return False
+        return (
+            global_state.get("mode") == "onboarding"
+            and global_state.get("onboarding_substep") == "profile_fix_select"
+        )
+
+    def handle(self, message: str, ctx: LoopContext, *, services: Any, profile_id: Any, user_id: Any) -> LoopReply:
+        normalized = message.strip().lower()
+        profiles_repository = (services or {}).get("profiles_repository") if isinstance(services, dict) else None
+        current_global_state = (services or {}).get("global_state") if isinstance(services, dict) else {}
+
+        if normalized in {"corriger_nom", "name"}:
+            if profiles_repository is not None and hasattr(profiles_repository, "update_profile_fields"):
+                profiles_repository.update_profile_fields(
+                    profile_id=profile_id,
+                    set_dict={"first_name": "", "last_name": ""},
+                )
+            updated_global_state = dict(current_global_state) if isinstance(current_global_state, dict) else {}
+            updated_global_state.update(
+                {
+                    "mode": "onboarding",
+                    "onboarding_step": "profile",
+                    "onboarding_substep": "profile_collect",
+                    "profile_confirmed": False,
+                }
+            )
+            return LoopReply(
+                reply="Ok 🙂 Dis-moi ton prénom puis ton nom de famille.",
+                next_loop=None,
+                updates={"global_state": updated_global_state},
+                handled=True,
+            )
+
+        if normalized in {"corriger_date", "birth_date"}:
+            if profiles_repository is not None and hasattr(profiles_repository, "update_profile_fields"):
+                profiles_repository.update_profile_fields(
+                    profile_id=profile_id,
+                    set_dict={"birth_date": ""},
+                )
+            updated_global_state = dict(current_global_state) if isinstance(current_global_state, dict) else {}
+            updated_global_state.update(
+                {
+                    "mode": "onboarding",
+                    "onboarding_step": "profile",
+                    "onboarding_substep": "profile_collect",
+                    "profile_confirmed": False,
+                }
+            )
+            return LoopReply(
+                reply="Ok 🙂 Quelle est ta date de naissance ?",
+                next_loop=None,
+                updates={"global_state": updated_global_state},
+                handled=True,
+            )
+
+        return LoopReply(reply="Choisis une option proposée (prénom/nom ou date de naissance).", next_loop=ctx, updates={}, handled=True)
+
+
 def build_default_loops() -> list[Any]:
     yes_no = ("oui", "non")
     return [
         OnboardingProfileCollectLoop(),
+        OnboardingProfileFixSelectLoop(),
         DeterministicLoop("onboarding.profile_confirm", True, "Confirme ton profil (oui/non).", yes_no, ("profile_confirm",), "onboarding.bank_accounts_collect"),
         DeterministicLoop("onboarding.bank_accounts_collect", True, "Quels comptes utilises-tu ?", enter_when_substeps=("bank_accounts_collect",)),
         DeterministicLoop("onboarding.bank_accounts_confirm", True, "Confirme la liste des comptes (oui/non).", yes_no, ("bank_accounts_confirm",), "onboarding.import_select_account"),
