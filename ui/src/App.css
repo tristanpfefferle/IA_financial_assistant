@@ -76,6 +76,7 @@ button:disabled {
   min-height: 0;
   display: flex;
   flex-direction: column;
+  position: relative;
 }
 
 .console-area {
@@ -171,8 +172,8 @@ button:disabled {
 
 .scroll-down-btn {
   position: absolute;
-  right: 28px;
-  bottom: 116px;
+  right: 16px;
+  bottom: 16px;
   width: 40px;
   height: 40px;
   border-radius: 999px;
