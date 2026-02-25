@@ -1,5 +1,6 @@
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
+import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { LoginPage } from './LoginPage'
@@ -36,12 +37,11 @@ describe('LoginPage', () => {
 
   it('creates account via supabase signUp and renders success message', async () => {
     await act(async () => {
-      createRoot(container).render(<LoginPage />)
-    })
-
-    const createButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.includes('Créer un compte'))
-    await act(async () => {
-      createButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      createRoot(container).render(
+        <MemoryRouter>
+          <LoginPage />
+        </MemoryRouter>,
+      )
     })
 
     const [emailInput, passwordInput] = Array.from(container.querySelectorAll('input')) as HTMLInputElement[]
@@ -53,9 +53,9 @@ describe('LoginPage', () => {
       passwordInput.dispatchEvent(new Event('input', { bubbles: true }))
     })
 
-    const form = container.querySelector('form') as HTMLFormElement
+    const createButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.includes('Créer un compte'))
     await act(async () => {
-      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+      createButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
       await Promise.resolve()
     })
 

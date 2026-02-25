@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 
 import { sendChatMessage } from '../api/agentApi'
 import { ConsolePanel } from '../chat/ConsolePanel'
 import type { ConsoleOption, ConsoleUiState } from '../chat/types'
+import { supabase } from '../lib/supabaseClient'
 import { toQuickReplyYesNoUiAction } from './chatUiRequests'
 
 type ChatMessage = {
@@ -102,6 +104,7 @@ function extractConsoleState(messages: ChatMessage[]): ConsoleUiState {
 }
 
 export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
+  const navigate = useNavigate()
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [isSending, setIsSending] = useState(false)
@@ -234,13 +237,37 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
     void submitMessage(value, label ?? value)
   }
 
+
+  async function handleLogout() {
+    const { error } = await supabase.auth.signOut()
+    if (error) {
+      setMessages((current) => [
+        ...current,
+        {
+          id: createMessageId(),
+          role: 'assistant',
+          content: `Erreur lors de la déconnexion: ${error.message}`,
+          createdAt: Date.now(),
+        },
+      ])
+      return
+    }
+
+    navigate('/login', { replace: true })
+  }
+
   return (
     <main className="chat-layout" aria-label="Chat minimal">
       <div className="chat-frame">
         <div className="chat-stack">
           <header className="chat-min-header">
             <strong>Assistant financier</strong>
-            {email ? <span className="subtle-text">{email}</span> : null}
+            <div className="chat-header-actions">
+              {email ? <span className="subtle-text">{email}</span> : null}
+              <button type="button" className="secondary-button" onClick={() => { void handleLogout() }}>
+                Se déconnecter
+              </button>
+            </div>
           </header>
 
           <div className="message-area">

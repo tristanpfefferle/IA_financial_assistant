@@ -1,40 +1,66 @@
-import { useEffect, useState } from 'react'
-import type { Session } from '@supabase/supabase-js'
+import { useEffect, useState, type ReactNode } from 'react'
+import { Navigate, Route, Routes, useNavigate } from 'react-router-dom'
 
 import './App.css'
 import { supabase } from './lib/supabaseClient'
 import { ChatMinimalPage } from './pages/ChatMinimalPage'
 import { LoginPage } from './pages/LoginPage'
 
-function App() {
-  const [session, setSession] = useState<Session | null>(null)
+function ProtectedRoute({ children }: { children: ReactNode }) {
+  const navigate = useNavigate()
+  const [isLoading, setIsLoading] = useState(true)
+  const [isAuthenticated, setIsAuthenticated] = useState(false)
 
   useEffect(() => {
     let isMounted = true
 
-    supabase.auth.getSession().then(({ data }) => {
-      if (isMounted) {
-        setSession(data.session)
+    async function checkSession() {
+      const { data } = await supabase.auth.getSession()
+      if (!isMounted) {
+        return
       }
-    })
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      setSession(nextSession)
-    })
+      const hasSession = Boolean(data.session)
+      setIsAuthenticated(hasSession)
+      if (!hasSession) {
+        navigate('/login', { replace: true })
+      }
+      setIsLoading(false)
+    }
+
+    void checkSession()
 
     return () => {
       isMounted = false
-      subscription.unsubscribe()
     }
-  }, [])
+  }, [navigate])
 
-  if (!session) {
-    return <LoginPage />
+  if (isLoading) {
+    return null
   }
 
-  return <ChatMinimalPage email={session.user.email} />
+  if (!isAuthenticated) {
+    return null
+  }
+
+  return <>{children}</>
+}
+
+function App() {
+  return (
+    <Routes>
+      <Route path="/login" element={<LoginPage />} />
+      <Route
+        path="/chat"
+        element={
+          <ProtectedRoute>
+            <ChatMinimalPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route path="/" element={<Navigate to="/chat" replace />} />
+    </Routes>
+  )
 }
 
 export default App

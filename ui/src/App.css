@@ -103,6 +103,12 @@ button:disabled {
   gap: 12px;
 }
 
+
+.chat-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
 .chat-scroll {
   flex: 1;
   min-height: 0;
