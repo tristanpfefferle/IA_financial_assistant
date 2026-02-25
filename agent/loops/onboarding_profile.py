@@ -49,7 +49,7 @@ class OnboardingProfileCollectLoop:
             )
 
         parsed = parse_profile_collect_message(message)
-        slot_value = self._pick_slot_value(missing_slot, parsed)
+        slot_value = self._pick_slot_value(missing_slot, parsed, current_fields)
         if slot_value is None:
             return LoopReply(reply=self._ask_for_slot(missing_slot), next_loop=ctx, updates={}, handled=True)
 
@@ -115,12 +115,24 @@ class OnboardingProfileCollectLoop:
             handled=True,
         )
 
-    def _pick_slot_value(self, slot: str, parsed: dict[str, Any]):
+    def _pick_slot_value(self, slot: str, parsed: dict[str, Any], current_fields: dict[str, Any]):
         if slot == "last_name":
             parsed_last_name = parsed.get("last_name")
             if parsed_last_name is not None and parsed_last_name.value:
                 return parsed_last_name
-            return parsed.get("first_name")
+            parsed_first_name = parsed.get("first_name")
+            if (
+                parsed_first_name is not None
+                and parsed_first_name.value
+                and parsed_first_name.confidence == ConfidenceLevel.HIGH
+            ):
+                current_first_name = current_fields.get("first_name")
+                if isinstance(current_first_name, str) and (
+                    parsed_first_name.value.strip().casefold() == current_first_name.strip().casefold()
+                ):
+                    return None
+                return parsed_first_name
+            return None
         return parsed.get(slot)
 
     def _is_safe_start_capture(self, slot: str, parsed: dict[str, Any]) -> bool:
