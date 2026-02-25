@@ -16,6 +16,13 @@ npm install
 npm run dev
 ```
 
+## Checklist auth (flow login/logout)
+
+- [ ] login ok
+- [ ] signup ok
+- [ ] refresh page sur `/chat` garde session
+- [ ] logout renvoie à `/login`
+
 ## Vérifications manuelles recommandées
 
 - [ ] Login OK avec email/mot de passe Supabase valides.

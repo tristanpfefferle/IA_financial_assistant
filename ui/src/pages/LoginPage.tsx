@@ -1,28 +1,28 @@
 import { useState, type FormEvent } from 'react'
+import { useNavigate } from 'react-router-dom'
 
 import { supabase } from '../lib/supabaseClient'
 
 export function LoginPage() {
+  const navigate = useNavigate()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
-  const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin')
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
+  async function runAuthAction(action: 'signin' | 'signup') {
     setError(null)
     setSuccess(null)
     setIsLoading(true)
 
-    if (authMode === 'signup') {
+    if (action === 'signup') {
       const { data, error: signUpError } = await supabase.auth.signUp({ email, password })
 
       if (signUpError) {
         setError(signUpError.message)
       } else if (data.session) {
-        setSuccess('Compte créé et connecté ✅')
+        navigate('/chat', { replace: true })
       } else {
         setSuccess('Compte créé ✅ Vérifie tes emails pour confirmer ton compte.')
       }
@@ -31,43 +31,26 @@ export function LoginPage() {
       return
     }
 
-    const { error: authError } = await supabase.auth.signInWithPassword({ email, password })
+    const { error: signInError } = await supabase.auth.signInWithPassword({ email, password })
 
-    if (authError) {
-      setError(authError.message)
+    if (signInError) {
+      setError(signInError.message)
+    } else {
+      navigate('/chat', { replace: true })
     }
 
     setIsLoading(false)
   }
 
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    void runAuthAction('signin')
+  }
+
   return (
     <main className="chat-shell">
       <section className="chat-card auth-card">
-        <h1>{authMode === 'signin' ? 'Connexion' : 'Créer un compte'}</h1>
-        <div className="message-actions" role="tablist" aria-label="Mode authentification">
-          <button
-            type="button"
-            className={authMode === 'signin' ? undefined : 'secondary-button'}
-            onClick={() => {
-              setAuthMode('signin')
-              setError(null)
-              setSuccess(null)
-            }}
-          >
-            Se connecter
-          </button>
-          <button
-            type="button"
-            className={authMode === 'signup' ? undefined : 'secondary-button'}
-            onClick={() => {
-              setAuthMode('signup')
-              setError(null)
-              setSuccess(null)
-            }}
-          >
-            Créer un compte
-          </button>
-        </div>
+        <h1>Connexion</h1>
         <form onSubmit={handleSubmit} className="chat-form auth-form">
           <input
             type="email"
@@ -82,12 +65,25 @@ export function LoginPage() {
             value={password}
             onChange={(event) => setPassword(event.target.value)}
             placeholder="Mot de passe"
-            autoComplete={authMode === 'signin' ? 'current-password' : 'new-password'}
+            autoComplete="current-password"
             required
           />
-          <button type="submit" disabled={isLoading}>
-            {isLoading ? (authMode === 'signin' ? 'Connexion...' : 'Création...') : authMode === 'signin' ? 'Se connecter' : 'Créer mon compte'}
-          </button>
+
+          <div className="message-actions">
+            <button type="submit" disabled={isLoading}>
+              {isLoading ? 'Connexion...' : 'Se connecter'}
+            </button>
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={isLoading}
+              onClick={() => {
+                void runAuthAction('signup')
+              }}
+            >
+              {isLoading ? 'Création...' : 'Créer un compte'}
+            </button>
+          </div>
         </form>
 
         {error ? <p className="error-text">{error}</p> : null}
