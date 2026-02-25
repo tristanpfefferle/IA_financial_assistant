@@ -313,6 +313,39 @@ def test_session_resume_allons_y_downgrades_profile_confirm_when_birth_date_miss
     assert persisted_state["global_state"]["onboarding_substep"] == "profile_collect"
 
 
+def test_session_resume_allons_y_from_profile_fix_returns_profile_confirm_recap(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "onboarding",
+                    "onboarding_step": "profile",
+                    "onboarding_substep": "profile_fix_select",
+                },
+                "session_resume_pending": True,
+            }
+        },
+        profile_fields={"first_name": "Ada", "last_name": "Lovelace", "birth_date": "1815-12-10"},
+    )
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
+
+    response = client.post("/agent/chat", json={"message": "allons-y"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "Récapitulatif de ton profil" in payload["reply"]
+    assert "Tout est correct" in payload["reply"]
+    assert payload["tool_result"]["options"] == [
+        {"id": "yes", "label": "✅", "value": "oui"},
+        {"id": "no", "label": "❌", "value": "non"},
+    ]
+    persisted_state = repo.update_calls[-1]["chat_state"]["state"]
+    assert persisted_state["session_resume_pending"] is False
+    assert persisted_state["global_state"]["onboarding_substep"] == "profile_confirm"
+
+
 def test_bank_accounts_collect_creates_then_moves_to_confirm(monkeypatch) -> None:
     _mock_auth(monkeypatch)
     repo = _Repo(
