@@ -56,6 +56,12 @@ class ProfilesRepository(Protocol):
     def ensure_bank_accounts(self, *, profile_id: UUID, names: list[str]) -> dict[str, Any]:
         """Create missing bank accounts while preserving uniqueness by lowercase name."""
 
+    def remove_bank_accounts(self, *, profile_id: UUID, names: list[str]) -> dict[str, Any]:
+        """Delete bank accounts matching provided names (case-insensitive)."""
+
+    def sync_bank_accounts(self, *, profile_id: UUID, names: list[str]) -> dict[str, Any]:
+        """Replace profile bank accounts with the provided normalized list."""
+
     def list_profile_categories(self, *, profile_id: UUID) -> list[dict[str, Any]]:
         """Return categories for a profile and personal scope."""
 
@@ -803,6 +809,57 @@ class SupabaseProfilesRepository:
             existing_by_lower[lowered_name] = {"name": name}
 
         return {"created": created, "existing": existing, "all": normalized_names}
+
+    def remove_bank_accounts(self, *, profile_id: UUID, names: list[str]) -> dict[str, Any]:
+        normalized_names = self._normalize_bank_account_names(names)
+        if not normalized_names:
+            return {"deleted": []}
+
+        existing_rows = self.list_bank_accounts(profile_id=profile_id)
+        existing_by_lower = {
+            str(row.get("name", "")).strip().lower(): str(row.get("name", "")).strip()
+            for row in existing_rows
+            if row.get("name")
+        }
+
+        deleted: list[str] = []
+        for name in normalized_names:
+            lowered_name = name.lower()
+            existing_name = existing_by_lower.get(lowered_name)
+            if not existing_name:
+                continue
+            self._client.delete_rows(
+                table="bank_accounts",
+                query={
+                    "profile_id": f"eq.{profile_id}",
+                    "name": f"eq.{existing_name}",
+                },
+                use_anon_key=False,
+            )
+            deleted.append(existing_name)
+
+        return {"deleted": deleted}
+
+    def sync_bank_accounts(self, *, profile_id: UUID, names: list[str]) -> dict[str, Any]:
+        normalized_names = self._normalize_bank_account_names(names)
+        existing_rows = self.list_bank_accounts(profile_id=profile_id)
+        existing_by_lower = {
+            str(row.get("name", "")).strip().lower(): str(row.get("name", "")).strip()
+            for row in existing_rows
+            if row.get("name")
+        }
+        desired_lower = {name.lower() for name in normalized_names}
+
+        to_remove = [name for lowered, name in existing_by_lower.items() if lowered not in desired_lower]
+        removed = self.remove_bank_accounts(profile_id=profile_id, names=to_remove)
+        ensured = self.ensure_bank_accounts(profile_id=profile_id, names=normalized_names)
+
+        return {
+            "all": normalized_names,
+            "removed": removed.get("deleted", []),
+            "created": ensured.get("created", []),
+            "existing": ensured.get("existing", []),
+        }
 
     @staticmethod
     def _normalize_name_norm(value: str) -> str:

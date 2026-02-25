@@ -135,7 +135,7 @@ describe('ChatPage import intent rendering', () => {
         await Promise.resolve()
       })
 
-      expect(sendChatMessage).toHaveBeenCalledWith('', { debug: false })
+      expect(sendChatMessage).toHaveBeenCalledWith('', { debug: false, requestGreeting: true })
 
       await act(async () => {
         vi.advanceTimersByTime(300)
@@ -460,10 +460,10 @@ describe('ChatPage import intent rendering', () => {
 
     expect(sendChatMessage).toHaveBeenNthCalledWith(
       2,
-      'Je suis né le 2001-12-22.\n__ui_form_submit__:{"form_id":"onboarding_profile_birth_date","values":{"birth_date":"2001-12-22"}}',
+      'Je suis né le 22 décembre 2001.\n__ui_form_submit__:{"form_id":"onboarding_profile_birth_date","values":{"birth_date":"2001-12-22"}}',
       { debug: false },
     )
-    expect(container.textContent).toContain('Je suis né le 2001-12-22.')
+    expect(container.textContent).toContain('Je suis né le 22 décembre 2001.')
     expect(container.textContent).not.toContain('__ui_form_submit__:')
   })
 
