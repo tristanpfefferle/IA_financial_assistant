@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from agent.loops.onboarding_profile import OnboardingProfileCollectLoop
 from agent.loops.types import LoopContext, LoopReply
 
 
@@ -47,10 +48,10 @@ class DeterministicLoop:
         return LoopReply(reply=reply_text, next_loop=next_loop, updates={"last_message": message}, handled=True)
 
 
-def build_default_loops() -> list[DeterministicLoop]:
+def build_default_loops() -> list[Any]:
     yes_no = ("oui", "non")
     return [
-        DeterministicLoop("onboarding.profile_collect", True, "Donne ton prénom, nom et date de naissance (YYYY-MM-DD).", enter_when_substeps=("profile_collect",)),
+        OnboardingProfileCollectLoop(),
         DeterministicLoop("onboarding.profile_confirm", True, "Confirme ton profil (oui/non).", yes_no, ("profile_confirm",), "onboarding.bank_accounts_collect"),
         DeterministicLoop("onboarding.bank_accounts_collect", True, "Quels comptes utilises-tu ?", enter_when_substeps=("bank_accounts_collect",)),
         DeterministicLoop("onboarding.bank_accounts_confirm", True, "Confirme la liste des comptes (oui/non).", yes_no, ("bank_accounts_confirm",), "onboarding.import_select_account"),

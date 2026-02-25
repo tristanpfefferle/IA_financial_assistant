@@ -2851,47 +2851,6 @@ def agent_chat(
                 state_dict["global_state"] = normalized
                 should_persist_global_state = True
 
-        current_loop = parse_loop_context(state_dict.get("loop"))
-        loop_reply = None
-        if current_loop is not None:
-            loop_reply = route_message(
-                message=payload.message,
-                current_loop=current_loop,
-                global_state=global_state or {},
-                services=None,
-                profile_id=profile_id,
-                user_id=auth_user_id,
-                llm_judge=None,
-                registry=registry,
-            )
-
-            resolved_loop = loop_reply.next_loop if loop_reply.handled else current_loop
-            if resolved_loop is None:
-                state_dict.pop("loop", None)
-            else:
-                state_dict["loop"] = serialize_loop_context(resolved_loop)
-                should_persist_global_state = True
-
-            should_persist_loop_state = (
-                should_persist_global_state
-                or resolved_loop != current_loop
-            )
-
-            if should_persist_loop_state:
-                updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
-                if state_dict:
-                    updated_chat_state["state"] = state_dict
-                else:
-                    updated_chat_state.pop("state", None)
-                profiles_repository.update_chat_state(
-                    profile_id=profile_id,
-                    user_id=auth_user_id,
-                    chat_state=updated_chat_state,
-                )
-
-            if loop_reply.handled and loop_reply.reply.strip():
-                return _chat_response(reply=loop_reply.reply, tool_result=None, plan=None)
-
         if global_state is None and hasattr(profiles_repository, "get_profile_fields"):
             try:
                 profile_fields = profiles_repository.get_profile_fields(
@@ -2926,6 +2885,62 @@ def agent_chat(
                     tool_result=_build_quick_reply_yes_no_ui_action(),
                     plan=None,
                 )
+
+        current_loop = parse_loop_context(state_dict.get("loop"))
+        should_route_loop = current_loop is not None or (
+            _is_valid_global_state(global_state)
+            and global_state.get("mode") == "onboarding"
+            and global_state.get("onboarding_step") == "profile"
+            and global_state.get("onboarding_substep") == "profile_collect"
+        )
+        if should_route_loop:
+            tool_router = get_tool_router()
+            loop_services = {
+                "profiles_repository": profiles_repository,
+                "tool_router": tool_router,
+            }
+            loop_reply = route_message(
+                message=payload.message,
+                current_loop=current_loop,
+                global_state=global_state or {},
+                services=loop_services,
+                profile_id=profile_id,
+                user_id=auth_user_id,
+                llm_judge=None,
+                registry=registry,
+            )
+
+            resolved_loop = loop_reply.next_loop if loop_reply.handled else current_loop
+            state_updates = loop_reply.updates if isinstance(loop_reply.updates, dict) else {}
+            if resolved_loop is None:
+                state_dict.pop("loop", None)
+            else:
+                state_dict["loop"] = serialize_loop_context(resolved_loop)
+
+            if state_updates:
+                if "global_state" in state_updates and _is_valid_global_state(state_updates["global_state"]):
+                    global_state = _normalize_onboarding_step_substep(dict(state_updates["global_state"]))
+                    state_dict["global_state"] = global_state
+                for update_key, update_value in state_updates.items():
+                    if update_key == "global_state":
+                        continue
+                    state_dict[update_key] = update_value
+
+            should_persist_loop_state = bool(state_updates) or resolved_loop != current_loop
+            if should_persist_loop_state:
+                updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                if state_dict:
+                    updated_chat_state["state"] = state_dict
+                else:
+                    updated_chat_state.pop("state", None)
+                profiles_repository.update_chat_state(
+                    profile_id=profile_id,
+                    user_id=auth_user_id,
+                    chat_state=updated_chat_state,
+                )
+
+            if loop_reply.handled and loop_reply.reply.strip():
+                return _chat_response(reply=loop_reply.reply, tool_result=None, plan=None)
 
         import_context = state_dict.get("import_context") if isinstance(state_dict, dict) else None
         pending_files = import_context.get("pending_files") if isinstance(import_context, dict) else None
