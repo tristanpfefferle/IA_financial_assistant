@@ -775,7 +775,17 @@ def _update_profile_fields_safe(
 
 
 def _parse_ui_form_submit_message(message: str) -> dict[str, Any] | None:
-    """Parse deterministic UI form-submit envelope when present."""
+    """Parse deterministic UI form-submit envelope when present.
+
+    Expected message format:
+    - free-form human line for transcript readability
+    - followed by ``
+__ui_form_submit__:{"form_id":"...","values":{...}}``
+
+    Example:
+    ``Prénom: Ada, Nom: Lovelace
+__ui_form_submit__:{"form_id":"onboarding_profile_name","values":{"first_name":"Ada","last_name":"Lovelace"}}``
+    """
 
     if not isinstance(message, str):
         return None
