@@ -2967,7 +2967,7 @@ def agent_chat(
             if used_implicit_loop and not loop_reply.handled:
                 resolved_loop = None
             state_updates = loop_reply.updates if isinstance(loop_reply.updates, dict) else {}
-            if used_implicit_loop and resolved_loop == current_loop and not state_updates:
+            if used_implicit_loop and not loop_reply.handled and resolved_loop == current_loop and not state_updates:
                 resolved_loop = None
             if resolved_loop is None:
                 state_dict.pop("loop", None)

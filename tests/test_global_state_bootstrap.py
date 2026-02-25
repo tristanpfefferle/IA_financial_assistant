@@ -1611,6 +1611,41 @@ def test_profile_collect_accepts_je_m_appelle_first_name(monkeypatch) -> None:
     assert "prénom et ton nom" not in response.json()["reply"].lower()
 
 
+def test_profile_collect_persists_active_loop_step_after_first_handled_message(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "onboarding",
+                    "onboarding_step": "profile",
+                    "onboarding_substep": "profile_collect",
+                },
+                "loop": {
+                    "loop_id": "onboarding.profile_collect",
+                    "step": "start",
+                    "data": {},
+                    "blocking": True,
+                },
+            }
+        },
+        profile_fields={"first_name": "", "last_name": "", "birth_date": ""},
+    )
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
+
+    first = client.post("/agent/chat", json={"message": "Je m'appelle Tristan"}, headers=_auth_headers())
+
+    assert first.status_code == 200
+    persisted_after_first = repo.update_calls[-1]["chat_state"]["state"]["loop"]
+    assert persisted_after_first["loop_id"] == "onboarding.profile_collect"
+    assert persisted_after_first["step"] == "active"
+
+    second = client.post("/agent/chat", json={"message": "Pfefferlé"}, headers=_auth_headers())
+
+    assert second.status_code == 200
+
+
 
 
 def test_profile_collect_je_mappel_typo_sets_first_name_tristan_not_mappel(monkeypatch) -> None:
