@@ -5,6 +5,7 @@ import { hardResetProfile, sendChatMessage } from '../api/agentApi'
 import { ConsolePanel } from '../chat/ConsolePanel'
 import type { ConsoleOption, ConsoleUiState } from '../chat/types'
 import { supabase } from '../lib/supabaseClient'
+import type { FormUiAction } from './chatUiRequests'
 import { toFormUiAction, toQuickReplyYesNoUiAction } from './chatUiRequests'
 
 type ChatMessage = {
@@ -109,21 +110,71 @@ function extractConsoleState(messages: ChatMessage[]): ConsoleUiState {
 
 type ComposerMode = 'console' | 'form'
 
-function extractComposerMode(messages: ChatMessage[]): ComposerMode {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index]
-    if (message.role !== 'assistant') {
-      continue
-    }
+type FormCardProps = {
+  formUiAction: FormUiAction
+  isSending: boolean
+  onSubmitForm: (formId: FormUiAction['form_id'], values: Record<string, string>) => void
+}
 
-    if (toFormUiAction(message.toolResult)) {
-      return 'form'
+function FormCard({ formUiAction, isSending, onSubmitForm }: FormCardProps) {
+  const [values, setValues] = useState<Record<string, string>>(() => {
+    const initialValues: Record<string, string> = {}
+    for (const field of formUiAction.fields) {
+      initialValues[field.id] = field.value ?? field.default_value ?? ''
     }
+    return initialValues
+  })
 
-    return 'console'
+  useEffect(() => {
+    const nextValues: Record<string, string> = {}
+    for (const field of formUiAction.fields) {
+      nextValues[field.id] = field.value ?? field.default_value ?? ''
+    }
+    setValues(nextValues)
+  }, [formUiAction])
+
+  function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    onSubmitForm(formUiAction.form_id, values)
   }
 
-  return 'console'
+  return (
+    <form className="form-card" onSubmit={handleSubmit}>
+      <p className="form-title">{formUiAction.title}</p>
+      <div className="form-fields">
+        {formUiAction.fields.map((field) => (
+          <label key={field.id} className="form-field">
+            <span>{field.label}</span>
+            <input
+              type={field.type === 'date' ? 'date' : field.type}
+              value={values[field.id] ?? ''}
+              required={field.required}
+              placeholder={field.placeholder}
+              onChange={(event) => {
+                const nextValue = event.target.value
+                setValues((current) => ({
+                  ...current,
+                  [field.id]: nextValue,
+                }))
+              }}
+            />
+          </label>
+        ))}
+      </div>
+      <button type="submit" disabled={isSending}>
+        {formUiAction.submit_label || 'Continuer'}
+      </button>
+    </form>
+  )
+}
+
+function buildUiFormHumanText(formUiAction: FormUiAction, values: Record<string, string>): string {
+  const segments = formUiAction.fields.map((field) => `${field.label}: ${values[field.id] ?? ''}`)
+  return segments.join(', ')
+}
+
+function buildUiFormSubmitMessage(formId: FormUiAction['form_id'], humanText: string, values: Record<string, string>): string {
+  return `${humanText}\n[ui_form:${formId}] ${JSON.stringify(values)}`
 }
 
 export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
@@ -138,7 +189,9 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
   const [headerMessage, setHeaderMessage] = useState<string | null>(null)
 
   const consoleState = useMemo(() => extractConsoleState(messages), [messages])
-  const composerMode = useMemo(() => extractComposerMode(messages), [messages])
+  const latestAssistant = useMemo(() => [...messages].reverse().find((message) => message.role === 'assistant') ?? null, [messages])
+  const formUiAction = useMemo(() => toFormUiAction(latestAssistant?.toolResult), [latestAssistant])
+  const composerMode: ComposerMode = formUiAction ? 'form' : 'console'
 
   function handleScroll() {
     if (!scrollRef.current) {
@@ -323,6 +376,16 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
     void submitMessage(value, label ?? value)
   }
 
+  function handleFormSubmit(formId: FormUiAction['form_id'], values: Record<string, string>) {
+    if (!formUiAction) {
+      return
+    }
+
+    const humanText = buildUiFormHumanText(formUiAction, values)
+    const backendMessage = buildUiFormSubmitMessage(formId, humanText, values)
+    void submitMessage(backendMessage, humanText)
+  }
+
   function resetLocalChatState() {
     setMessages([])
     setIsSending(false)
@@ -443,7 +506,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
           <div className="console-area">
             <div className="console-area-inner">
               {composerMode === 'form' ? (
-                <p className="subtle-text">L’assistant prépare la prochaine étape…</p>
+                formUiAction ? <FormCard formUiAction={formUiAction} isSending={isSending} onSubmitForm={handleFormSubmit} /> : null
               ) : (
                 <ConsolePanel uiState={consoleState} isSending={isSending} onChoose={handleQuickReply} />
               )}

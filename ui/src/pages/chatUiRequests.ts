@@ -38,7 +38,12 @@ export type FormUiField = {
 export type FormUiAction = {
   type: 'ui_action'
   action: 'form'
-  form_id: 'onboarding_profile_name' | 'onboarding_profile_birth_date' | 'onboarding_bank_accounts'
+  form_id:
+    | 'onboarding_profile_name'
+    | 'onboarding_profile_birth_date'
+    | 'onboarding_profile_identity'
+    | 'onboarding_birth_date'
+    | 'onboarding_bank_accounts'
   title: string
   fields: FormUiField[]
   submit_label: string
@@ -224,7 +229,13 @@ export function toFormUiAction(value: unknown): FormUiAction | null {
   const submitLabel = record.submit_label
   const fields = record.fields
   if (
-    (formId !== 'onboarding_profile_name' && formId !== 'onboarding_profile_birth_date' && formId !== 'onboarding_bank_accounts')
+    (
+      formId !== 'onboarding_profile_name'
+      && formId !== 'onboarding_profile_birth_date'
+      && formId !== 'onboarding_profile_identity'
+      && formId !== 'onboarding_birth_date'
+      && formId !== 'onboarding_bank_accounts'
+    )
     || typeof title !== 'string'
     || typeof submitLabel !== 'string'
     || !Array.isArray(fields)
