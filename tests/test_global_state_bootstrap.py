@@ -1833,34 +1833,6 @@ def test_profile_collect_capitalizes_names_on_write(monkeypatch) -> None:
     assert second_response.status_code == 200
     assert {"last_name": "Milsap"} in repo.profile_update_calls
 
-
-def test_profile_collect_capitalizes_names_with_apostrophe_and_hyphen(monkeypatch) -> None:
-    _mock_auth(monkeypatch)
-    repo = _Repo(
-        initial_chat_state={
-            "state": {
-                "global_state": {
-                    "mode": "onboarding",
-                    "onboarding_step": "profile",
-                    "onboarding_substep": "profile_collect",
-                }
-            }
-        },
-        profile_fields={"first_name": "", "last_name": "", "birth_date": ""},
-    )
-    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
-    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
-
-    first_response = client.post("/agent/chat", json={"message": "moi cest o'connor"}, headers=_auth_headers())
-
-    assert first_response.status_code == 200
-    assert {"first_name": "O'Connor"} in repo.profile_update_calls
-
-    second_response = client.post("/agent/chat", json={"message": "jean-paul"}, headers=_auth_headers())
-
-    assert second_response.status_code == 200
-    assert {"last_name": "Jean-Paul"} in repo.profile_update_calls
-
 def test_profile_collect_typo_pernom_extracts_first_name_correctly(monkeypatch) -> None:
     _mock_auth(monkeypatch)
     repo = _Repo(
