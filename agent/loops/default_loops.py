@@ -84,7 +84,7 @@ class OnboardingProfileFixSelectLoop:
                 }
             )
             return LoopReply(
-                reply="Ok 🙂 Dis-moi ton prénom puis ton nom de famille.",
+                reply="Ok 🙂 Mets à jour prénom/nom dans la carte profil.",
                 next_loop=None,
                 updates={"global_state": updated_global_state},
                 handled=True,
@@ -106,7 +106,7 @@ class OnboardingProfileFixSelectLoop:
                 }
             )
             return LoopReply(
-                reply="Ok 🙂 Quelle est ta date de naissance ?",
+                reply="Ok 🙂 Mets à jour la date de naissance dans la carte profil.",
                 next_loop=None,
                 updates={"global_state": updated_global_state},
                 handled=True,
@@ -116,7 +116,7 @@ class OnboardingProfileFixSelectLoop:
 
 
 def build_default_loops() -> list[Any]:
-    yes_no = ("oui", "non")
+    yes_no = ("oui", "non", "✅", "❌")
     return [
         OnboardingProfileCollectLoop(),
         OnboardingProfileFixSelectLoop(),
