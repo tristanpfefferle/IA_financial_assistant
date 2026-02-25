@@ -35,10 +35,16 @@ jobs:
       - name: Force public npm registry (no auth)
         run: |
           npm config set registry https://registry.npmjs.org/
-          npm config set always-auth false
+
+      - name: npm diagnostics
+        run: |
+          node -v
+          npm -v
+          npm config get registry
+          npm config list
 
       - name: Install UI dependencies (npm ci)
-        run: cd ui && npm ci
+        run: cd ui && npm ci --no-audit --no-fund
 
       - name: Build UI
         run: cd ui && npm run build
