@@ -1340,7 +1340,6 @@ export function MessageList({
   onImportNow,
 }: MessageListProps) {
   const virtuosoRef = useRef<VirtuosoHandle | null>(null)
-  const shouldAutoScrollRef = useRef(true)
   const [isAtBottom, setIsAtBottom] = useState(true)
 
   const canScrollToBottom = messages.length > 0
@@ -1367,20 +1366,11 @@ export function MessageList({
     })
   }
 
-  useEffect(() => {
-    if (!shouldAutoScrollRef.current || messages.length === 0) {
-      return
-    }
-
-    scrollToBottomWithRetry('auto')
-  }, [messages.length, isAssistantTyping])
-
   const handleScrollToBottom = () => {
     if (!canScrollToBottom) {
       return
     }
 
-    shouldAutoScrollRef.current = true
     scrollToBottomWithRetry('smooth')
   }
 
@@ -1392,10 +1382,9 @@ export function MessageList({
         className="messages"
         style={{ height: '100%' }}
         data={messages}
-        atBottomStateChange={(atBottom) => {
-          shouldAutoScrollRef.current = atBottom
-          setIsAtBottom(atBottom)
-        }}
+        atBottomStateChange={(atBottom) => setIsAtBottom(atBottom)}
+        increaseViewportBy={{ top: 200, bottom: 400 }}
+        initialTopMostItemIndex={messages.length > 0 ? messages.length - 1 : undefined}
         itemContent={(_index, chatMessage) => (
           <div className="message-row">
             <MessageRow
@@ -1406,7 +1395,7 @@ export function MessageList({
             />
           </div>
         )}
-        followOutput={(atBottom) => (atBottom ? 'smooth' : false)}
+        followOutput="smooth"
         components={{
           Header: () => <div style={{ height: 16 }} />,
           Footer: () => (
