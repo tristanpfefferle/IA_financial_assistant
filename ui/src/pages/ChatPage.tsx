@@ -1340,7 +1340,14 @@ export function MessageList({
   onImportNow,
 }: MessageListProps) {
   const virtuosoRef = useRef<VirtuosoHandle | null>(null)
+  const initialIndexRef = useRef<number | null>(null)
   const [isAtBottom, setIsAtBottom] = useState(true)
+
+  useEffect(() => {
+    if (initialIndexRef.current === null && messages.length > 0) {
+      initialIndexRef.current = messages.length - 1
+    }
+  }, [messages.length])
 
   const canScrollToBottom = messages.length > 0
 
@@ -1384,7 +1391,7 @@ export function MessageList({
         data={messages}
         atBottomStateChange={(atBottom) => setIsAtBottom(atBottom)}
         increaseViewportBy={{ top: 200, bottom: 400 }}
-        initialTopMostItemIndex={messages.length > 0 ? messages.length - 1 : undefined}
+        initialTopMostItemIndex={initialIndexRef.current ?? undefined}
         itemContent={(_index, chatMessage) => (
           <div className="message-row">
             <MessageRow
@@ -1395,7 +1402,7 @@ export function MessageList({
             />
           </div>
         )}
-        followOutput="smooth"
+        followOutput={(atBottom) => (atBottom ? 'smooth' : false)}
         components={{
           Header: () => <div style={{ height: 16 }} />,
           Footer: () => (
