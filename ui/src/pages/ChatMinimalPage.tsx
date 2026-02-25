@@ -15,6 +15,7 @@ type ChatMessage = {
   content: string
   createdAt: number
   toolResult?: Record<string, unknown> | null
+  fromQuickReply?: boolean
 }
 
 type ChatMinimalPageProps = {
@@ -454,7 +455,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
     }
   }, [])
 
-  async function submitMessage(text: string, displayContent?: string) {
+  async function submitMessage(text: string, displayContent?: string, fromQuickReply = false) {
     const trimmed = text.trim()
     if (!trimmed || isSending) {
       return
@@ -465,6 +466,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
       role: 'user',
       content: displayContent?.trim().length ? displayContent : trimmed,
       createdAt: Date.now(),
+      fromQuickReply,
     }
 
     setMessages((current) => [...current, userMessage])
@@ -504,7 +506,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
 
   function handleQuickReply(value: string, label?: string) {
     const displayContent = normalizeQuickReplyDisplay(label, value)
-    void submitMessage(value, displayContent || value)
+    void submitMessage(value, displayContent || value, true)
   }
 
   function handleFormSubmit(formId: FormUiAction['form_id'], values: Record<string, string | string[]>) {
@@ -616,9 +618,16 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
               {messages.map((message, index) => {
                 const isLastAssistantMessage =
                   message.role === 'assistant' && !messages.slice(index + 1).some((nextMessage) => nextMessage.role === 'assistant')
+                const isShort = message.content.trim().length <= 18 && message.content.indexOf('\n') === -1
+                const messageClasses = [
+                  'msg',
+                  message.role === 'user' ? 'msg-user' : 'msg-assistant',
+                  ...(isShort ? ['msg-short'] : []),
+                  ...(message.role === 'user' && message.fromQuickReply ? ['msg-chip'] : []),
+                ].join(' ')
 
                 return (
-                  <div key={message.id} className={message.role === 'user' ? 'msg msg-user' : 'msg msg-assistant'}>
+                  <div key={message.id} className={messageClasses}>
                     {message.content}
                     {debugUnlocked && debugMode && isLastAssistantMessage ? (
                       <details>
