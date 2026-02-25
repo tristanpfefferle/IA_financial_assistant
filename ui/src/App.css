@@ -170,6 +170,25 @@ button:disabled {
   border: 1px solid #1f2a44;
 }
 
+.msg-short {
+  max-width: fit-content;
+  padding: 8px 12px;
+  border-radius: 999px;
+}
+
+.msg-user.msg-short {
+  align-self: flex-end;
+}
+
+.msg-assistant.msg-short {
+  align-self: flex-start;
+}
+
+.msg-chip {
+  border-radius: 999px;
+  padding: 7px 11px;
+}
+
 .scroll-down-btn {
   position: absolute;
   right: 16px;
