@@ -1,6 +1,17 @@
 import { describe, expect, it } from 'vitest'
 
+import { formatFrenchDate } from './formatters'
 import { buildFormSubmitPayload } from './formSubmit'
+
+describe('formatFrenchDate', () => {
+  it('formats an ISO date in french', () => {
+    expect(formatFrenchDate('1995-05-10')).toBe('10 mai 1995')
+  })
+
+  it('returns input when ISO parsing is invalid', () => {
+    expect(formatFrenchDate('10/05/1995')).toBe('10/05/1995')
+  })
+})
 
 describe('buildFormSubmitPayload', () => {
   it('builds deterministic backend envelope for onboarding profile name', () => {
@@ -32,7 +43,7 @@ describe('buildFormSubmitPayload', () => {
       },
     )
 
-    expect(payload.humanText).toBe('Prénom: Ada, Nom: Lovelace')
+    expect(payload.humanText).toBe("Je m'appelle Ada Lovelace.")
     expect(payload.messageToBackend).toBe(
       'Prénom: Ada, Nom: Lovelace\n__ui_form_submit__:{"form_id":"onboarding_profile_name","values":{"first_name":"Ada","last_name":"Lovelace"}}',
     )
@@ -70,6 +81,34 @@ describe('buildFormSubmitPayload', () => {
     expect(payload.humanText).toBe("Je m'appelle Ada Lovelace.")
     expect(payload.messageToBackend).toBe(
       'Prénom: Ada, Nom: Lovelace\n__ui_form_submit__:{"form_id":"onboarding_profile_identity","values":{"first_name":"Ada","last_name":"Lovelace"}}',
+    )
+  })
+
+  it('formats birth date in french for chat bubble text', () => {
+    const payload = buildFormSubmitPayload(
+      {
+        type: 'ui_action',
+        action: 'form',
+        form_id: 'onboarding_birth_date',
+        title: 'Date de naissance',
+        submit_label: 'Valider',
+        fields: [
+          {
+            id: 'birth_date',
+            label: 'Date de naissance',
+            type: 'date',
+            required: true,
+          },
+        ],
+      },
+      {
+        birth_date: '1995-05-10',
+      },
+    )
+
+    expect(payload.humanText).toBe('Ma date de naissance est le 10 mai 1995.')
+    expect(payload.messageToBackend).toBe(
+      'Date de naissance: 1995-05-10\n__ui_form_submit__:{"form_id":"onboarding_birth_date","values":{"birth_date":"1995-05-10"}}',
     )
   })
 })
