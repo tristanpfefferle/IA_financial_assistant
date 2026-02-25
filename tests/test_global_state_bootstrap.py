@@ -1553,7 +1553,7 @@ def test_onboarding_reminder_ignores_invalid_memory_update_state(monkeypatch) ->
 
 
 
-def test_onboarding_request_greeting_returns_intro_without_user_message(monkeypatch) -> None:
+def test_onboarding_request_greeting_returns_profile_intro_without_session_resume(monkeypatch) -> None:
     _mock_auth(monkeypatch)
     repo = _Repo(
         initial_chat_state={
@@ -1578,9 +1578,9 @@ def test_onboarding_request_greeting_returns_intro_without_user_message(monkeypa
     )
 
     assert response.status_code == 200
-    assert response.json()["reply"] == "Salut 👋 Es-tu prêt à reprendre où nous en étions ?"
+    assert "Je suis ton assistant financier" in response.json()["reply"]
     assert response.json()["tool_result"]["options"] == [{"id": "start", "label": "Allons-y !", "value": "allons-y"}]
-    assert repo.update_calls[-1]["chat_state"]["state"]["session_resume_pending"] is True
+    assert "session_resume_pending" not in repo.chat_state.get("state", {})
     assert loop.called is False
 
 
@@ -1608,6 +1608,34 @@ def test_profile_intro_allons_y_returns_name_form(monkeypatch) -> None:
     assert payload["tool_result"]["form_id"] == "onboarding_profile_name"
     assert repo.update_calls[-1]["chat_state"]["state"]["global_state"]["onboarding_substep"] == "profile_collect"
 
+
+
+def test_onboarding_resume_pending_allons_y_profile_confirm_returns_recap(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "onboarding",
+                    "onboarding_step": "profile",
+                    "onboarding_substep": "profile_confirm",
+                },
+                "session_resume_pending": True,
+            }
+        },
+        profile_fields={"first_name": "Ada", "last_name": "Lovelace", "birth_date": "1815-12-10"},
+    )
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
+
+    response = client.post("/agent/chat", json={"message": "allons-y"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "Récapitulatif de ton profil" in payload["reply"]
+    assert "Tout est correct" in payload["reply"]
+    assert payload["tool_result"]["options"] == [{"id": "yes", "label": "✅", "value": "oui"}, {"id": "no", "label": "❌", "value": "non"}]
+    assert repo.update_calls[-1]["chat_state"]["state"]["session_resume_pending"] is False
 
 
 def test_onboarding_resume_pending_allons_y_resumes_profile_collect(monkeypatch) -> None:

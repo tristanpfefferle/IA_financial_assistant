@@ -574,6 +574,19 @@ def test_hard_reset_profile_deletes_only_filtered_by_profile_id() -> None:
                 "conversation_id": str(profile_id),
                 "user_id": str(user_id),
                 "profile_id": str(profile_id),
+                "active_task": None,
+                "state": {
+                    "global_state": {
+                        "mode": "onboarding",
+                        "onboarding_step": "profile",
+                        "onboarding_substep": "profile_intro",
+                        "profile_confirmed": False,
+                        "bank_accounts_confirmed": False,
+                        "has_bank_accounts": False,
+                        "has_imported_transactions": False,
+                        "budget_created": False,
+                    }
+                },
             },
             "on_conflict": "conversation_id",
             "use_anon_key": False,
