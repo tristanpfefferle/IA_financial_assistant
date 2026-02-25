@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { sendChatMessage } from '../api/agentApi'
-import { ActionPanel } from '../chat/ActionPanel'
-import type { ChatUiState } from '../chat/types'
+import { ConsolePanel } from '../chat/ConsolePanel'
+import type { ConsoleOption, ConsoleUiState } from '../chat/types'
 import { toQuickReplyYesNoUiAction } from './chatUiRequests'
 
 type ChatMessage = {
@@ -21,7 +21,29 @@ function createMessageId(): string {
   return typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`
 }
 
-function extractUiState(messages: ChatMessage[]): ChatUiState {
+function normalizeReplyValue(option: { label: string; value: string }): string {
+  const normalizedValue = option.value.trim().toLowerCase()
+  if (normalizedValue.length > 0) {
+    return normalizedValue
+  }
+  return option.label.trim().toLowerCase()
+}
+
+function mapQuickReplyOption(option: { id: string; label: string; value: string }, tone?: ConsoleOption['tone']): ConsoleOption {
+  return {
+    ...option,
+    tone: tone ?? 'neutral',
+  }
+}
+
+function extractPrompt(toolResult: Record<string, unknown> | null | undefined): string | undefined {
+  if (!toolResult) {
+    return undefined
+  }
+  return typeof toolResult.prompt === 'string' && toolResult.prompt.trim().length > 0 ? toolResult.prompt : undefined
+}
+
+function extractConsoleState(messages: ChatMessage[]): ConsoleUiState {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index]
     if (message.role !== 'assistant') {
@@ -30,9 +52,46 @@ function extractUiState(messages: ChatMessage[]): ChatUiState {
 
     const action = toQuickReplyYesNoUiAction(message.toolResult)
     if (action) {
+      const prompt = extractPrompt(message.toolResult)
+      if (action.options.length === 1) {
+        return {
+          mode: 'single_primary',
+          prompt,
+          option: mapQuickReplyOption(action.options[0], 'positive'),
+        }
+      }
+
+      if (action.options.length === 2) {
+        const [firstOption, secondOption] = action.options
+        const normalizedFirst = normalizeReplyValue(firstOption)
+        const normalizedSecond = normalizeReplyValue(secondOption)
+        const hasYesNo = [normalizedFirst, normalizedSecond].includes('oui') && [normalizedFirst, normalizedSecond].includes('non')
+
+        if (hasYesNo) {
+          const yesSource = normalizedFirst === 'oui' ? firstOption : secondOption
+          const noSource = normalizedFirst === 'non' ? firstOption : secondOption
+
+          return {
+            mode: 'yes_no',
+            prompt,
+            yes: mapQuickReplyOption(yesSource, 'positive'),
+            no: mapQuickReplyOption(noSource, 'negative'),
+          }
+        }
+      }
+
+      if (action.options.length <= 12) {
+        return {
+          mode: 'options_grid',
+          prompt,
+          options: action.options.map((option) => mapQuickReplyOption(option)),
+        }
+      }
+
       return {
-        mode: 'quick_replies',
-        options: action.options,
+        mode: 'options_list',
+        prompt,
+        options: action.options.map((option) => mapQuickReplyOption(option)),
       }
     }
 
@@ -49,7 +108,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
   const [isAssistantTyping, setIsAssistantTyping] = useState(false)
   const [isNearBottom, setIsNearBottom] = useState(true)
 
-  const uiState = useMemo(() => extractUiState(messages), [messages])
+  const consoleState = useMemo(() => extractConsoleState(messages), [messages])
 
   function handleScroll() {
     if (!scrollRef.current) {
@@ -203,7 +262,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
 
           <div className="console-area">
             <div className="console-area-inner">
-              <ActionPanel uiState={uiState} isSending={isSending} onQuickReply={handleQuickReply} onSubmitText={submitMessage} />
+              <ConsolePanel uiState={consoleState} isSending={isSending} onChoose={handleQuickReply} onSubmitText={submitMessage} />
             </div>
           </div>
         </div>

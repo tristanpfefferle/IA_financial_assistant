@@ -1,13 +1,15 @@
-export type QuickReplyOption = { id: string; label: string; value: string; disabled?: boolean }
+export type ConsoleOption = {
+  id: string
+  label: string
+  value: string
+  tone?: 'positive' | 'negative' | 'neutral'
+  disabled?: boolean
+}
 
-export type ChatUiState =
+export type ConsoleUiState =
   | { mode: 'none' }
-  | { mode: 'quick_replies'; prompt?: string; options: QuickReplyOption[] }
-  | { mode: 'text'; placeholder?: string; submitLabel?: string }
-  | {
-      mode: 'quick_replies_text'
-      prompt?: string
-      options: QuickReplyOption[]
-      placeholder?: string
-      submitLabel?: string
-    }
+  | { mode: 'yes_no'; prompt?: string; yes: ConsoleOption; no: ConsoleOption }
+  | { mode: 'single_primary'; prompt?: string; option: ConsoleOption }
+  | { mode: 'options_grid'; prompt?: string; options: ConsoleOption[] }
+  | { mode: 'options_list'; prompt?: string; options: ConsoleOption[] }
+  | { mode: 'text'; prompt?: string; placeholder?: string; submitLabel?: string }
