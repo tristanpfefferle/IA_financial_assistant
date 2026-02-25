@@ -12,4 +12,3 @@ export type ConsoleUiState =
   | { mode: 'single_primary'; prompt?: string; option: ConsoleOption }
   | { mode: 'options_grid'; prompt?: string; options: ConsoleOption[] }
   | { mode: 'options_list'; prompt?: string; options: ConsoleOption[] }
-  | { mode: 'text'; prompt?: string; placeholder?: string; submitLabel?: string }

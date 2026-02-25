@@ -1,12 +1,9 @@
-import { useState, type FormEvent } from 'react'
-
 import type { ConsoleOption, ConsoleUiState } from './types'
 
 type ConsolePanelProps = {
   uiState: ConsoleUiState
   isSending: boolean
   onChoose: (value: string, label?: string) => void
-  onSubmitText: (text: string) => void
 }
 
 function toneClassName(option: ConsoleOption): string {
@@ -33,25 +30,14 @@ function OptionButton({ option, isSending, onChoose }: { option: ConsoleOption; 
   )
 }
 
-export function ConsolePanel({ uiState, isSending, onChoose, onSubmitText }: ConsolePanelProps) {
-  const [text, setText] = useState('')
-
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const trimmedText = text.trim()
-    if (!trimmedText || isSending) {
-      return
-    }
-
-    onSubmitText(trimmedText)
-    setText('')
-  }
-
+export function ConsolePanel({ uiState, isSending, onChoose }: ConsolePanelProps) {
   const showPrompt = 'prompt' in uiState && typeof uiState.prompt === 'string' && uiState.prompt.trim().length > 0
 
   return (
     <div className="console-panel" aria-label={`Console panel mode ${uiState.mode}`}>
       {showPrompt ? <p className="subtle-text">{uiState.prompt}</p> : null}
+
+      {uiState.mode === 'none' ? <p className="subtle-text">Choisis une option ci-dessous pour continuer.</p> : null}
 
       {uiState.mode === 'yes_no' ? (
         <div className="console-split" role="group" aria-label="Réponse oui/non">
@@ -78,21 +64,6 @@ export function ConsolePanel({ uiState, isSending, onChoose, onSubmitText }: Con
             <OptionButton key={option.id} option={option} isSending={isSending} onChoose={onChoose} />
           ))}
         </div>
-      ) : null}
-
-      {uiState.mode === 'text' ? (
-        <form onSubmit={handleSubmit} className="composer">
-          <input
-            value={text}
-            onChange={(event) => setText(event.target.value)}
-            placeholder={uiState.placeholder ?? 'Pose une question sur tes finances…'}
-            aria-label="Message"
-            disabled={isSending}
-          />
-          <button type="submit" className="console-btn console-btn-positive" disabled={isSending || text.trim().length === 0}>
-            {uiState.submitLabel ?? 'Envoyer'}
-          </button>
-        </form>
       ) : null}
     </div>
   )
