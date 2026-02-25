@@ -466,7 +466,7 @@ export function ChatPage({ email }: ChatPageProps) {
     }
     return 'text'
   }, [formUiAction, isGuidedMode, quickReplyAction])
-  const shouldShowGuidedPlaceholder = composerMode === 'quick_replies' && !quickReplyAction
+  const shouldShowGuidedPlaceholder = isGuidedMode && !formUiAction && !quickReplyAction
   const hasUnauthorizedError = useMemo(() => error?.includes('(401)') ?? false, [error])
   const statusBadge = debugMode ? 'Debug' : isImportRequired ? 'Onboarding' : 'Prêt'
 
@@ -887,7 +887,7 @@ export function ChatPage({ email }: ChatPageProps) {
     setIsLoading(true)
     setError(null)
     try {
-      const response = await sendChatMessage('', { debug: debugMode })
+      const response = await sendChatMessage('', { debug: debugMode, requestGreeting: true })
       syncLoopDebug(response)
       const segments = splitAssistantReply(response.reply)
       enqueueAssistantMessages(segments, response.tool_result, response.plan, response)
@@ -1007,7 +1007,7 @@ export function ChatPage({ email }: ChatPageProps) {
 
         setToast({ type: 'success', message: 'Import terminé. Analyse automatique en cours…' })
         setIsLoading(true)
-        const response = await sendChatMessage('', { debug: debugMode })
+        const response = await sendChatMessage('', { debug: debugMode, requestGreeting: true })
         syncLoopDebug(response)
         const segments = splitAssistantReply(response.reply)
         enqueueAssistantMessages(segments, response.tool_result, response.plan, response)
@@ -1663,7 +1663,7 @@ function ComposerArea({
       {composerMode === 'text' && !isGuidedMode ? (
         <Composer message={message} setMessage={setMessage} onSubmit={onSubmit} isLoading={isLoading} disabled={isImportRequired} />
       ) : null}
-      {showGuidedPlaceholder ? <div className="guided-placeholder subtle-text">…</div> : null}
+      {showGuidedPlaceholder ? <div className="guided-placeholder subtle-text">Suis les boutons ci-dessous pour continuer.</div> : null}
     </div>
   )
 }
@@ -1745,7 +1745,7 @@ function FormCard({
               type={field.type}
               required={field.required}
               placeholder={field.placeholder}
-              defaultValue=""
+              defaultValue={field.default_value ?? field.value ?? ''}
               disabled={isLoading}
             />
           </label>

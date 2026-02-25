@@ -395,6 +395,8 @@ _ONBOARDING_PROFILE_INTRO_REPLY = (
     "Commençons 🙂"
 )
 
+_ONBOARDING_SESSION_RESUME_REPLY = "Salut 👋 Es-tu prêt à reprendre où nous en étions ?"
+
 _ONBOARDING_SUBSTEP_TO_LOOP_ID: dict[str, str] = {
     "profile_collect": "onboarding.profile_collect",
     "profile_confirm": "onboarding.profile_confirm",
@@ -610,7 +612,7 @@ def _build_onboarding_intro_quick_replies_ui_action() -> dict[str, Any]:
     return {
         "type": "ui_action",
         "action": "quick_replies",
-        "options": [{"id": "start", "label": "Allons-y", "value": "allons_y"}],
+        "options": [{"id": "start", "label": "Allons-y !", "value": "allons-y"}],
     }
 
 
@@ -632,7 +634,7 @@ def _build_profile_name_form_ui_action(profile_fields: dict[str, Any] | None = N
                 "label": "Prénom",
                 "type": "text",
                 "required": True,
-                "placeholder": "Tristan",
+                "placeholder": "Prénom",
                 "default_value": first_name,
             },
             {
@@ -640,7 +642,7 @@ def _build_profile_name_form_ui_action(profile_fields: dict[str, Any] | None = N
                 "label": "Nom",
                 "type": "text",
                 "required": True,
-                "placeholder": "Pfefferlé",
+                "placeholder": "Nom",
                 "default_value": last_name,
             },
         ],
@@ -665,6 +667,7 @@ def _build_profile_birth_date_form_ui_action(profile_fields: dict[str, Any] | No
                 "label": "Date de naissance",
                 "type": "date",
                 "required": True,
+                "placeholder": "Date de naissance",
                 "default_value": birth_date,
             }
         ],
@@ -1873,6 +1876,11 @@ def _is_no(message: str) -> bool:
     return normalized in _NO_VALUES or "❌" in message
 
 
+def _is_allons_y(message: str) -> bool:
+    normalized = _normalize_text(message)
+    return normalized in {"allons-y", "allons y", "allons_y"}
+
+
 def _pick_category_for_merchant_name(name: str) -> str:
     normalized_name = _normalize_text(name)
     for keywords, category_name in _MERCHANT_CATEGORY_RULES:
@@ -2298,7 +2306,7 @@ def _is_plausible_birth_date(value_iso: str) -> bool:
         return False
 
     age = today.year - parsed.year - ((today.month, today.day) < (parsed.month, parsed.day))
-    return 10 <= age <= 110
+    return age <= 110
 
 
 def extract_profile_fields_from_message(message: str) -> dict[str, Any]:
@@ -2583,7 +2591,7 @@ def _build_onboarding_global_state(
     existing_global_state: dict[str, Any] | None,
     *,
     onboarding_step: str = "profile",
-    onboarding_substep: str | None = "profile_collect",
+    onboarding_substep: str | None = "profile_intro",
 ) -> dict[str, Any]:
     return {
         "mode": "onboarding",
@@ -3082,6 +3090,51 @@ def agent_chat(
                     plan=None,
                 )
 
+        should_offer_session_resume = (
+            _is_valid_global_state(global_state)
+            and global_state.get("mode") == "onboarding"
+            and global_state.get("onboarding_step") == "profile"
+            and isinstance(global_state.get("onboarding_substep"), str)
+            and global_state.get("onboarding_substep")
+            in {"profile_intro", "profile_collect", "profile_confirm", "profile_fix_select", "profile_fix_name", "profile_fix_birth_date"}
+        )
+        session_resume_pending = bool(state_dict.get("session_resume_pending")) if isinstance(state_dict, dict) else False
+
+        if session_resume_pending:
+            if _is_allons_y(payload.message):
+                state_dict = dict(state_dict) if isinstance(state_dict, dict) else {}
+                state_dict["session_resume_pending"] = False
+                updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                updated_chat_state["state"] = state_dict
+                profiles_repository.update_chat_state(
+                    profile_id=profile_id,
+                    user_id=auth_user_id,
+                    chat_state=updated_chat_state,
+                )
+                payload = payload.model_copy(update={"message": ""})
+            else:
+                return _chat_response(
+                    reply=_ONBOARDING_SESSION_RESUME_REPLY,
+                    tool_result=_build_onboarding_intro_quick_replies_ui_action(),
+                    plan=None,
+                )
+
+        if payload.request_greeting and should_offer_session_resume and not session_resume_pending:
+            state_dict = dict(state_dict) if isinstance(state_dict, dict) else {}
+            state_dict["session_resume_pending"] = True
+            updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+            updated_chat_state["state"] = state_dict
+            profiles_repository.update_chat_state(
+                profile_id=profile_id,
+                user_id=auth_user_id,
+                chat_state=updated_chat_state,
+            )
+            return _chat_response(
+                reply=_ONBOARDING_SESSION_RESUME_REPLY,
+                tool_result=_build_onboarding_intro_quick_replies_ui_action(),
+                plan=None,
+            )
+
         try:
             ui_form_submit_payload = _parse_ui_form_submit_message(payload.message)
         except (ValueError, json.JSONDecodeError):
@@ -3148,12 +3201,24 @@ def agent_chat(
 
             if form_id == "onboarding_profile_birth_date":
                 try:
-                    birth_date = _extract_required_form_value(values, "birth_date")
+                    birth_date_raw = _extract_required_form_value(values, "birth_date")
+                    birth_date = _extract_birth_date_from_message(birth_date_raw) or birth_date_raw
                     datetime.strptime(birth_date, "%Y-%m-%d")
                 except ValueError:
                     return _chat_response(
                         reply="Merci de renseigner une date de naissance valide.",
                         tool_result=_build_profile_birth_date_form_ui_action(),
+                        plan=None,
+                    )
+                if not _is_plausible_birth_date(birth_date):
+                    return _chat_response(
+                        reply="Cette date me paraît étrange. Peux-tu vérifier ?",
+                        tool_result=_build_profile_birth_date_form_ui_action(
+                            profiles_repository.get_profile_fields(
+                                profile_id=profile_id,
+                                fields=list(_PROFILE_COMPLETION_FIELDS),
+                            )
+                        ),
                         plan=None,
                     )
                 _update_profile_fields_safe(
@@ -3427,7 +3492,7 @@ def agent_chat(
 
                 if substep == "profile_intro":
                     normalized_message = _normalize_text(payload.message)
-                    if normalized_message == "allons_y":
+                    if _is_allons_y(payload.message):
                         updated_global_state = _build_onboarding_global_state(
                             global_state,
                             onboarding_step="profile",

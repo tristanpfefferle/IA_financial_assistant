@@ -30,6 +30,8 @@ export type FormUiField = {
   type: 'text' | 'date'
   required: boolean
   placeholder?: string
+  default_value?: string
+  value?: string
 }
 
 export type FormUiAction = {
@@ -244,22 +246,17 @@ export function toFormUiAction(value: unknown): FormUiAction | null {
         return null
       }
       const placeholder = typeof raw.placeholder === 'string' ? raw.placeholder : undefined
-
-      if (placeholder !== undefined) {
-        return {
-          id: raw.id,
-          label: raw.label,
-          type: raw.type,
-          required: raw.required,
-          placeholder,
-        }
-      }
+      const defaultValue = typeof raw.default_value === 'string' ? raw.default_value : undefined
+      const value = typeof raw.value === 'string' ? raw.value : undefined
 
       return {
         id: raw.id,
         label: raw.label,
         type: raw.type,
         required: raw.required,
+        ...(placeholder ? { placeholder } : {}),
+        ...(defaultValue !== undefined ? { default_value: defaultValue } : {}),
+        ...(value !== undefined ? { value } : {}),
       }
     })
     .filter((field): field is FormUiField => field !== null)
