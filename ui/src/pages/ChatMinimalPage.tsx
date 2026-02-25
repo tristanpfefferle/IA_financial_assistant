@@ -176,29 +176,37 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
   }
 
   return (
-    <main className="chat-min-root" aria-label="Chat minimal">
-      <header className="chat-min-header">
-        <strong>Assistant financier</strong>
-        {email ? <span className="subtle-text">{email}</span> : null}
-      </header>
+    <main className="chat-layout" aria-label="Chat minimal">
+      <div className="chat-frame">
+        <div className="chat-stack">
+          <header className="chat-min-header">
+            <strong>Assistant financier</strong>
+            {email ? <span className="subtle-text">{email}</span> : null}
+          </header>
 
-      <div ref={scrollRef} className="chat-scroll" onScroll={handleScroll}>
-        {messages.map((message) => (
-          <div key={message.id} className={message.role === 'user' ? 'msg msg-user' : 'msg msg-assistant'}>
-            {message.content}
+          <div className="message-area">
+            <div ref={scrollRef} className="chat-scroll" onScroll={handleScroll}>
+              {messages.map((message) => (
+                <div key={message.id} className={message.role === 'user' ? 'msg msg-user' : 'msg msg-assistant'}>
+                  {message.content}
+                </div>
+              ))}
+              {isAssistantTyping ? <div className="msg msg-assistant">...</div> : null}
+            </div>
           </div>
-        ))}
-        {isAssistantTyping ? <div className="msg msg-assistant">...</div> : null}
-      </div>
 
-      {!isNearBottom ? (
-        <button type="button" className="scroll-down-btn" onClick={scrollToBottom} aria-label="Aller en bas">
-          ↓
-        </button>
-      ) : null}
+          {!isNearBottom ? (
+            <button type="button" className="scroll-down-btn" onClick={scrollToBottom} aria-label="Aller en bas">
+              ↓
+            </button>
+          ) : null}
 
-      <div className="chat-bottom">
-        <ActionPanel uiState={uiState} isSending={isSending} onQuickReply={handleQuickReply} onSubmitText={submitMessage} />
+          <div className="console-area">
+            <div className="console-area-inner">
+              <ActionPanel uiState={uiState} isSending={isSending} onQuickReply={handleQuickReply} onSubmitText={submitMessage} />
+            </div>
+          </div>
+        </div>
       </div>
     </main>
   )
