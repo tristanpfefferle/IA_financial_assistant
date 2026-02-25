@@ -23,45 +23,48 @@ class _ProfilesRepoStub:
         return dict(set_dict)
 
 
-def test_collect_first_name_updates_profile_and_asks_last_name() -> None:
+def test_collect_waits_for_structured_profile_card() -> None:
     repo = _ProfilesRepoStub({"first_name": None, "last_name": None, "birth_date": None})
     loop = OnboardingProfileCollectLoop()
 
     reply = loop.handle(
         "Paul",
         LoopContext(loop_id=loop.id, step="active", data={}, blocking=True),
-        services={"profiles_repository": repo},
+        services={"profiles_repository": repo, "global_state": {}},
         profile_id=uuid4(),
         user_id=uuid4(),
     )
 
     assert reply.handled is True
-    assert repo.update_calls == [{"first_name": "Paul"}]
-    assert "nom de famille" in reply.reply
+    assert repo.update_calls == []
+    assert "carte profil" in reply.reply
+    assert isinstance(reply.updates.get("global_state"), dict)
+    assert reply.updates["global_state"]["onboarding_substep"] == "profile_collect"
 
 
-def test_collect_birth_date_moves_to_profile_confirm() -> None:
-    repo = _ProfilesRepoStub({"first_name": "Paul", "last_name": "Murt", "birth_date": None})
+def test_collect_completed_profile_moves_to_profile_confirm_with_recap() -> None:
+    repo = _ProfilesRepoStub({"first_name": "Paul", "last_name": "Murt", "birth_date": "1990-01-01"})
     loop = OnboardingProfileCollectLoop()
 
     reply = loop.handle(
-        "1990-01-01",
+        "n'importe quoi",
         LoopContext(loop_id=loop.id, step="active", data={}, blocking=True),
-        services={"profiles_repository": repo},
+        services={"profiles_repository": repo, "global_state": {}},
         profile_id=uuid4(),
         user_id=uuid4(),
     )
 
     assert reply.handled is True
-    assert repo.update_calls == [{"birth_date": "1990-01-01"}]
+    assert repo.update_calls == []
     assert isinstance(reply.updates.get("global_state"), dict)
     assert reply.updates["global_state"]["onboarding_substep"] == "profile_confirm"
+    assert "Récapitulatif de ton profil" in reply.reply
 
 
-def test_expected_prompt_for_birth_date_is_short() -> None:
+def test_expected_prompt_for_birth_date_is_form_prompt() -> None:
     repo = _ProfilesRepoStub({"first_name": "Paul", "last_name": "Murt", "birth_date": None})
     loop = OnboardingProfileCollectLoop()
 
     prompt = loop.expected_prompt_for_help(services={"profiles_repository": repo, "state": {}}, profile_id=uuid4())
 
-    assert prompt == "Quelle est ta date de naissance ?"
+    assert "carte profil" in prompt

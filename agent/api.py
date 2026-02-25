@@ -3157,537 +3157,21 @@ f"Salut 👋\n\nJe suis ton assistant financier. Je t’aide à analyser tes dé
                     substep = "profile_confirm" if _is_profile_complete(profile_fields) else "profile_collect"
 
                 if substep == "profile_collect":
-                    message = payload.message.strip()
-                    if hasattr(profiles_repository, "update_profile_fields"):
-                        existing_first_name = str(profile_fields.get("first_name") or "").strip()
-                        existing_last_name = str(profile_fields.get("last_name") or "").strip()
-                        existing_birth_date = str(profile_fields.get("birth_date") or "").strip()
-                        if _is_toxic_message(message):
-                            toxic_reply = (
-                                "Je peux t’aider, mais restons respectueux 🙂 Quel est ton prénom ?"
-                                if not _is_profile_field_completed(existing_first_name)
-                                else f"Ok {existing_first_name} 🙂 Et ton nom de famille ?"
-                            )
-                            updated_global_state = _build_onboarding_global_state(
-                                global_state,
-                                onboarding_step="profile",
-                                onboarding_substep="profile_collect",
-                            )
-                            state_dict["global_state"] = updated_global_state
-                            updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
-                            updated_chat_state["state"] = state_dict
-                            profiles_repository.update_chat_state(
-                                profile_id=profile_id,
-                                user_id=auth_user_id,
-                                chat_state=updated_chat_state,
-                            )
-                            return _chat_response(reply=toxic_reply, tool_result=None, plan=None)
-
-                        normalized_message = f" {message.lower()} "
-                        refusal_detected = any(pattern.search(message) for pattern in _ONBOARDING_PROFILE_REFUSAL_PATTERNS)
-                        if refusal_detected and " mais " not in normalized_message:
-                            refusal_reply = (
-                                "Quel est ton prénom ?"
-                                if not _is_profile_field_completed(existing_first_name)
-                                else (
-                                    f"Ok {existing_first_name} 🙂 J’ai besoin de ton nom de famille "
-                                    "(celui sur tes documents). Si tu préfères, tu peux mettre uniquement l’initiale."
-                                )
-                            )
-                            updated_global_state = _build_onboarding_global_state(
-                                global_state,
-                                onboarding_step="profile",
-                                onboarding_substep="profile_collect",
-                            )
-                            state_dict["global_state"] = updated_global_state
-                            updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
-                            updated_chat_state["state"] = state_dict
-                            profiles_repository.update_chat_state(
-                                profile_id=profile_id,
-                                user_id=auth_user_id,
-                                chat_state=updated_chat_state,
-                            )
-                            return _chat_response(reply=refusal_reply, tool_result=None, plan=None)
-
-                        pending_birth_iso = state_dict.get("profile_birth_date_pending_iso")
-                        if isinstance(pending_birth_iso, str) and pending_birth_iso.strip():
-                            pending_birth_iso = pending_birth_iso.strip()
-                            if _is_yes(payload.message):
-                                if not existing_birth_date:
-                                    profiles_repository.update_profile_fields(
-                                        profile_id=profile_id,
-                                        set_dict={"birth_date": pending_birth_iso},
-                                    )
-                                state_dict.pop("profile_birth_date_pending_iso", None)
-                                state_dict.pop("profile_birth_date_pending_source", None)
-                                try:
-                                    profile_fields = profiles_repository.get_profile_fields(
-                                        profile_id=profile_id,
-                                        fields=list(_PROFILE_COMPLETION_FIELDS),
-                                    )
-                                except Exception:
-                                    logger.exception(
-                                        "onboarding_profile_refetch_after_birth_date_confirmation_failed profile_id=%s",
-                                        profile_id,
-                                    )
-                                    profile_fields = {}
-                                has_name = _is_profile_field_completed(profile_fields.get("first_name")) and _is_profile_field_completed(
-                                    profile_fields.get("last_name")
-                                )
-                                has_birth_date = _is_profile_field_completed(profile_fields.get("birth_date"))
-                                if has_name and has_birth_date:
-                                    first_name = str(profile_fields.get("first_name", "")).strip()
-                                    last_name = str(profile_fields.get("last_name", "")).strip()
-                                    birth_date_iso = str(profile_fields.get("birth_date", "")).strip()
-                                    updated_global_state = _build_onboarding_global_state(
-                                        global_state,
-                                        onboarding_step="profile",
-                                        onboarding_substep="profile_confirm",
-                                    )
-                                    updated_global_state["profile_confirmed"] = False
-                                    state_dict["global_state"] = updated_global_state
-                                    updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
-                                    updated_chat_state["state"] = state_dict
-                                    profiles_repository.update_chat_state(
-                                        profile_id=profile_id,
-                                        user_id=auth_user_id,
-                                        chat_state=updated_chat_state,
-                                    )
-                                    return _chat_response(
-                                        reply=(
-                                            "Parfait ✅\n\nRécapitulatif de ton profil :\n"
-                                            f"- Prénom: {first_name}\n- Nom: {last_name}\n- Date de naissance: {birth_date_iso}\n\n"
-                                            "Tout est correct ?"
-                                        ),
-                                        tool_result=_build_quick_reply_yes_no_ui_action(),
-                                        plan=None,
-                                    )
-
-                                updated_global_state = _build_onboarding_global_state(
-                                    global_state,
-                                    onboarding_step="profile",
-                                    onboarding_substep="profile_collect",
-                                )
-                                state_dict["global_state"] = updated_global_state
-                                updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
-                                updated_chat_state["state"] = state_dict
-                                profiles_repository.update_chat_state(
-                                    profile_id=profile_id,
-                                    user_id=auth_user_id,
-                                    chat_state=updated_chat_state,
-                                )
-                                return _chat_response(
-                                    reply=_missing_profile_field_question(profile_fields),
-                                    tool_result=None,
-                                    plan=None,
-                                )
-                            elif _is_no(payload.message):
-                                state_dict.pop("profile_birth_date_pending_iso", None)
-                                state_dict.pop("profile_birth_date_pending_source", None)
-                                updated_global_state = _build_onboarding_global_state(
-                                    global_state,
-                                    onboarding_step="profile",
-                                    onboarding_substep="profile_collect",
-                                )
-                                state_dict["global_state"] = updated_global_state
-                                updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
-                                updated_chat_state["state"] = state_dict
-                                profiles_repository.update_chat_state(
-                                    profile_id=profile_id,
-                                    user_id=auth_user_id,
-                                    chat_state=updated_chat_state,
-                                )
-                                return _chat_response(
-                                    reply="Ok 🙂 Peux-tu me redonner ta date de naissance au format YYYY-MM-DD ?",
-                                    tool_result=None,
-                                    plan=None,
-                                )
-                            else:
-                                return _chat_response(reply="Réponds par oui ou non 🙂", tool_result=None, plan=None)
-
-                        if _is_low_signal_message(message):
-                            updated_global_state = _build_onboarding_global_state(
-                                global_state,
-                                onboarding_step="profile",
-                                onboarding_substep="profile_collect",
-                            )
-                            state_dict["global_state"] = updated_global_state
-                            updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
-                            updated_chat_state["state"] = state_dict
-                            profiles_repository.update_chat_state(
-                                profile_id=profile_id,
-                                user_id=auth_user_id,
-                                chat_state=updated_chat_state,
-                            )
-                            return _chat_response(
-                                reply=_missing_profile_field_question(profile_fields),
-                                tool_result=None,
-                                plan=None,
-                            )
-
-                        expected_field = _next_missing_profile_field(profile_fields)
-                        if any(pattern.match(message) for pattern in _ONBOARDING_PROFILE_CANT_ANSWER_PATTERNS):
-                            if expected_field == "last_name":
-                                if existing_first_name:
-                                    reply = (
-                                        f"Ok {existing_first_name} 🙂 J’ai besoin de ton nom de famille "
-                                        "(celui sur tes documents). Si tu préfères, tu peux mettre uniquement l’initiale."
-                                    )
-                                else:
-                                    reply = "Quel est ton prénom et ton nom ?"
-                            elif expected_field == "birth_date":
-                                reply = (
-                                    f"Merci {existing_first_name} 🙂 Peux-tu me donner ta date de naissance "
-                                    "au format YYYY-MM-DD ?"
-                                )
-                            else:
-                                reply = "Quel est ton prénom ?"
-
-                            updated_global_state = _build_onboarding_global_state(
-                                global_state,
-                                onboarding_step="profile",
-                                onboarding_substep="profile_collect",
-                            )
-                            state_dict["global_state"] = updated_global_state
-                            updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
-                            updated_chat_state["state"] = state_dict
-                            profiles_repository.update_chat_state(
-                                profile_id=profile_id,
-                                user_id=auth_user_id,
-                                chat_state=updated_chat_state,
-                            )
-                            return _chat_response(
-                                reply=reply,
-                                tool_result=None,
-                                plan=None,
-                            )
-
-                        if _is_meta_answer(message):
-                            updated_global_state = _build_onboarding_global_state(
-                                global_state,
-                                onboarding_step="profile",
-                                onboarding_substep="profile_collect",
-                            )
-                            state_dict["global_state"] = updated_global_state
-                            updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
-                            updated_chat_state["state"] = state_dict
-                            profiles_repository.update_chat_state(
-                                profile_id=profile_id,
-                                user_id=auth_user_id,
-                                chat_state=updated_chat_state,
-                            )
-                            return _chat_response(
-                                reply=_missing_profile_field_question(profile_fields),
-                                tool_result=None,
-                                plan=None,
-                            )
-
-                        extraction = extract_profile_fields_from_message(message)
-
-                        extracted_first_name = extraction.get("first_name")
-                        extracted_last_name = extraction.get("last_name")
-                        extracted_birth_date = extraction.get("birth_date")
-                        invalid_first_name_detected = False
-                        invalid_last_name_detected = False
-
-                        if isinstance(extracted_first_name, str) and extracted_first_name.strip() and not _is_plausible_first_name(
-                            extracted_first_name
-                        ):
-                            extraction["first_name"] = None
-                            extracted_first_name = None
-                            invalid_first_name_detected = True
-
-                        if isinstance(extracted_last_name, str) and extracted_last_name.strip() and not _is_plausible_last_name(
-                            extracted_last_name
-                        ):
-                            extraction["last_name"] = None
-                            extracted_last_name = None
-                            invalid_last_name_detected = True
-
-                        if isinstance(extracted_birth_date, str) and extracted_birth_date.strip() and not _is_plausible_birth_date(
-                            extracted_birth_date
-                        ):
-                            updated_global_state = _build_onboarding_global_state(
-                                global_state,
-                                onboarding_step="profile",
-                                onboarding_substep="profile_collect",
-                            )
-                            state_dict["global_state"] = updated_global_state
-                            updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
-                            updated_chat_state["state"] = state_dict
-                            profiles_repository.update_chat_state(
-                                profile_id=profile_id,
-                                user_id=auth_user_id,
-                                chat_state=updated_chat_state,
-                            )
-                            return _chat_response(
-                                reply="Ça me paraît improbable 🙂 Peux-tu confirmer ta date de naissance au format YYYY-MM-DD ?",
-                                tool_result=None,
-                                plan=None,
-                            )
-
-                        if extracted_birth_date is None:
-                            year_typo_fix = _maybe_fix_year_typo(message)
-                            if year_typo_fix is not None:
-                                proposed_iso, proposed_display = year_typo_fix
-                                year_typo_match = _ONBOARDING_BIRTH_DATE_YEAR_TYPO_PATTERN.search(message)
-                                year5_value = year_typo_match.group(3) if year_typo_match else ""
-                                state_dict["profile_birth_date_pending_iso"] = proposed_iso
-                                state_dict["profile_birth_date_pending_source"] = year5_value
-                                updated_global_state = _build_onboarding_global_state(
-                                    global_state,
-                                    onboarding_step="profile",
-                                    onboarding_substep="profile_collect",
-                                )
-                                state_dict["global_state"] = updated_global_state
-                                updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
-                                updated_chat_state["state"] = state_dict
-                                profiles_repository.update_chat_state(
-                                    profile_id=profile_id,
-                                    user_id=auth_user_id,
-                                    chat_state=updated_chat_state,
-                                )
-                                return _chat_response(
-                                    reply=(
-                                        "Peux-tu confirmer ton année de naissance ? "
-                                        f"Tu as écrit « {year5_value} » : est-ce {proposed_display[:4]} "
-                                        f"(donc {proposed_display}) ?"
-                                    ),
-                                    tool_result=_build_quick_reply_yes_no_ui_action(),
-                                    plan=None,
-                                )
-
-                        extracted_any = any(
-                            extraction.get(field_name)
-                            for field_name in ("first_name", "last_name", "birth_date")
+                    try:
+                        profile_fields = profiles_repository.get_profile_fields(
+                            profile_id=profile_id,
+                            fields=list(_PROFILE_COMPLETION_FIELDS),
                         )
-                        ambiguous_message = bool(
-                            extraction.get("first_name")
-                            and extraction.get("last_name") is None
-                            and "nom" in message.lower()
-                        )
-                        suspicious_first_name = False
-                        suspicious_first_name_value = extraction.get("first_name")
-                        if isinstance(suspicious_first_name_value, str) and suspicious_first_name_value.strip():
-                            suspicious_first_name_normalized = suspicious_first_name_value.strip().lower()
-                            suspicious_first_name = bool(
-                                ("'" in suspicious_first_name_normalized and suspicious_first_name_normalized.startswith("m"))
-                                or suspicious_first_name_normalized in {"m'appel", "mappel", "mappelle", "appel"}
-                            )
-                        extraction_source = "heuristic"
-                        mismatch_expected_field = (
-                            expected_field == "last_name"
-                            and extraction.get("last_name") is None
-                            and extraction.get("first_name") is not None
-                        ) or (
-                            expected_field == "birth_date"
-                            and extraction.get("birth_date") is None
-                            and (extraction.get("first_name") or extraction.get("last_name"))
-                        )
-                        last_name_message_tokens = _tokenize_profile_name_fragment(message)
-                        last_name_stopwords = _ONBOARDING_PROFILE_STOP_WORDS | {"ton", "tes", "te", "le", "la", "les"}
-                        last_name_useful_tokens = [
-                            token
-                            for token in last_name_message_tokens
-                            if token.lower() not in last_name_stopwords
-                        ]
-                        contains_last_name_verb = any(
-                            verb in message.lower() for verb in {"connais", "sais", "viens", "dis", "dit"}
-                        )
-                        invalid_last_name_phrase = bool(
-                            expected_field == "last_name"
-                            and (
-                                len(last_name_useful_tokens) >= 3
-                                or contains_last_name_verb
-                            )
-                        )
-                        if invalid_last_name_phrase:
-                            extraction["last_name"] = None
-                            invalid_last_name_detected = True
-                        should_try_llm = bool(
-                            message
-                            and (
-                                (not extracted_any)
-                                or ambiguous_message
-                                or invalid_first_name_detected
-                                or invalid_last_name_detected
-                                or suspicious_first_name
-                                or mismatch_expected_field
-                                or invalid_last_name_phrase
-                            )
-                        )
-                        if should_try_llm:
-                            try:
-                                llm_extraction = _extract_profile_fields_with_llm(message)
-                            except Exception:
-                                logger.exception("profile_collect_llm_extraction_failed profile_id=%s", profile_id)
-                                llm_extraction = None
-                            if llm_extraction is not None:
-                                invalid_first_name_detected = False
-                                invalid_last_name_detected = False
-                                llm_first_name = llm_extraction.get("first_name")
-                                if isinstance(llm_first_name, str) and llm_first_name.strip() and not _is_plausible_first_name(
-                                    llm_first_name
-                                ):
-                                    llm_extraction["first_name"] = None
-                                    invalid_first_name_detected = True
+                    except Exception:
+                        logger.exception("onboarding_profile_refetch_failed profile_id=%s", profile_id)
+                        profile_fields = {}
 
-                                llm_last_name = llm_extraction.get("last_name")
-                                if isinstance(llm_last_name, str) and llm_last_name.strip() and not _is_plausible_last_name(
-                                    llm_last_name
-                                ):
-                                    llm_extraction["last_name"] = None
-                                    invalid_last_name_detected = True
-
-                                llm_birth_date = llm_extraction.get("birth_date")
-                                if isinstance(llm_birth_date, str) and llm_birth_date.strip() and not _is_plausible_birth_date(
-                                    llm_birth_date
-                                ):
-                                    updated_global_state = _build_onboarding_global_state(
-                                        global_state,
-                                        onboarding_step="profile",
-                                        onboarding_substep="profile_collect",
-                                    )
-                                    state_dict["global_state"] = updated_global_state
-                                    updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
-                                    updated_chat_state["state"] = state_dict
-                                    profiles_repository.update_chat_state(
-                                        profile_id=profile_id,
-                                        user_id=auth_user_id,
-                                        chat_state=updated_chat_state,
-                                    )
-                                    return _chat_response(
-                                        reply="Ça me paraît improbable 🙂 Peux-tu confirmer ta date de naissance au format YYYY-MM-DD ?",
-                                        tool_result=None,
-                                        plan=None,
-                                    )
-
-                                if llm_extraction.get("needs_clarification") and llm_extraction.get("clarification_question"):
-                                    updated_global_state = _build_onboarding_global_state(
-                                        global_state,
-                                        onboarding_step="profile",
-                                        onboarding_substep="profile_collect",
-                                    )
-                                    state_dict["global_state"] = updated_global_state
-                                    updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
-                                    updated_chat_state["state"] = state_dict
-                                    profiles_repository.update_chat_state(
-                                        profile_id=profile_id,
-                                        user_id=auth_user_id,
-                                        chat_state=updated_chat_state,
-                                    )
-                                    return _chat_response(
-                                        reply=str(llm_extraction["clarification_question"]),
-                                        tool_result=None,
-                                        plan=None,
-                                    )
-                                extraction = llm_extraction
-                                extraction_source = "llm"
-
-                        extraction = _apply_field_gating(extraction, expected_field, message)
-
-                        logger.info(
-                            "profile_collect_extraction source=%s confidence=%.3f fields=%s",
-                            extraction_source,
-                            float(extraction.get("confidence") or 0.0),
-                            {
-                                "first_name": extraction.get("first_name"),
-                                "last_name": extraction.get("last_name"),
-                                "birth_date": extraction.get("birth_date"),
-                            },
-                        )
-
-                        name_update_payload: dict[str, str] = {}
-                        extracted_first_name = extraction.get("first_name")
-                        if isinstance(extracted_first_name, str) and extracted_first_name.strip() and not existing_first_name:
-                            name_update_payload["first_name"] = extracted_first_name.strip()
-
-                        extracted_last_name = extraction.get("last_name")
-                        if isinstance(extracted_last_name, str) and extracted_last_name.strip() and not existing_last_name:
-                            name_update_payload["last_name"] = extracted_last_name.strip()
-
-                        if invalid_first_name_detected and not _is_profile_field_completed(existing_first_name):
-                            updated_global_state = _build_onboarding_global_state(
-                                global_state,
-                                onboarding_step="profile",
-                                onboarding_substep="profile_collect",
-                            )
-                            state_dict["global_state"] = updated_global_state
-                            updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
-                            updated_chat_state["state"] = state_dict
-                            profiles_repository.update_chat_state(
-                                profile_id=profile_id,
-                                user_id=auth_user_id,
-                                chat_state=updated_chat_state,
-                            )
-                            return _chat_response(
-                                reply="Je n’ai pas bien compris ton prénom 🙂 Quel est ton prénom ?",
-                                tool_result=None,
-                                plan=None,
-                            )
-
-                        if invalid_last_name_detected and not _is_profile_field_completed(existing_last_name):
-                            updated_global_state = _build_onboarding_global_state(
-                                global_state,
-                                onboarding_step="profile",
-                                onboarding_substep="profile_collect",
-                            )
-                            state_dict["global_state"] = updated_global_state
-                            updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
-                            updated_chat_state["state"] = state_dict
-                            profiles_repository.update_chat_state(
-                                profile_id=profile_id,
-                                user_id=auth_user_id,
-                                chat_state=updated_chat_state,
-                            )
-                            if _is_profile_field_completed(existing_first_name):
-                                last_name_prompt = (
-                                    f"Ok {existing_first_name} 🙂 J’ai besoin de ton nom de famille "
-                                    "(celui sur tes documents). Si tu préfères, tu peux mettre uniquement l’initiale."
-                                )
-                            else:
-                                last_name_prompt = "Quel est ton prénom et ton nom ?"
-                            return _chat_response(reply=last_name_prompt, tool_result=None, plan=None)
-
-                        birth_date_update_payload: dict[str, str] = {}
-                        extracted_birth_date = extraction.get("birth_date")
-                        if isinstance(extracted_birth_date, str) and extracted_birth_date.strip() and not existing_birth_date:
-                            birth_date_update_payload["birth_date"] = extracted_birth_date.strip()
-
-                        if name_update_payload:
-                            profiles_repository.update_profile_fields(
-                                profile_id=profile_id,
-                                set_dict=name_update_payload,
-                            )
-
-                        if birth_date_update_payload:
-                            profiles_repository.update_profile_fields(
-                                profile_id=profile_id,
-                                set_dict=birth_date_update_payload,
-                            )
-
-                        if name_update_payload or birth_date_update_payload:
-                            try:
-                                profile_fields = profiles_repository.get_profile_fields(
-                                    profile_id=profile_id,
-                                    fields=list(_PROFILE_COMPLETION_FIELDS),
-                                )
-                            except Exception:
-                                logger.exception(
-                                    "onboarding_profile_refetch_after_profile_update_failed profile_id=%s",
-                                    profile_id,
-                                )
-                                profile_fields = {}
-
-                    first_name = str(profile_fields.get("first_name", "")).strip()
-                    last_name = str(profile_fields.get("last_name", "")).strip()
                     has_name = _is_profile_field_completed(profile_fields.get("first_name")) and _is_profile_field_completed(
                         profile_fields.get("last_name")
                     )
                     has_birth_date = _is_profile_field_completed(profile_fields.get("birth_date"))
 
                     if has_name and has_birth_date:
-                        birth_date_iso = str(profile_fields.get("birth_date", "")).strip()
                         updated_global_state = _build_onboarding_global_state(
                             global_state,
                             onboarding_step="profile",
@@ -3703,15 +3187,10 @@ f"Salut 👋\n\nJe suis ton assistant financier. Je t’aide à analyser tes dé
                             chat_state=updated_chat_state,
                         )
                         return _chat_response(
-                            reply=(
-                                f"Parfait ✅\n\nRécapitulatif de ton profil :\n- Prénom: {first_name}\n- Nom: {last_name}\n- Date de naissance: {birth_date_iso}\n\n"
-                                "Tout est correct ?"
-                            ),
+                            reply=_build_profile_recap_reply(profile_fields),
                             tool_result=_build_quick_reply_yes_no_ui_action(),
                             plan=None,
                         )
-
-                    reply = _missing_profile_field_question(profile_fields)
 
                     updated_global_state = _build_onboarding_global_state(
                         global_state,
@@ -3726,7 +3205,11 @@ f"Salut 👋\n\nJe suis ton assistant financier. Je t’aide à analyser tes dé
                         user_id=auth_user_id,
                         chat_state=updated_chat_state,
                     )
-                    return _chat_response(reply=reply, tool_result=None, plan=None)
+                    return _chat_response(
+                        reply="Complète la carte profil (prénom, nom, date de naissance) pour continuer 🙂",
+                        tool_result=None,
+                        plan=None,
+                    )
 
                 if substep == "profile_fix_select":
                     normalized_correction = _normalize_text(payload.message)
@@ -3750,7 +3233,7 @@ f"Salut 👋\n\nJe suis ton assistant financier. Je t’aide à analyser tes dé
                             user_id=auth_user_id,
                             chat_state=updated_chat_state,
                         )
-                        return _chat_response(reply="Ok 🙂 Dis-moi ton prénom puis ton nom de famille.", tool_result=None, plan=None)
+                        return _chat_response(reply="Ok 🙂 Mets à jour prénom/nom dans la carte profil.", tool_result=None, plan=None)
                     if normalized_correction in {"corriger_date", "birth_date"}:
                         if hasattr(profiles_repository, "update_profile_fields"):
                             profiles_repository.update_profile_fields(profile_id=profile_id, set_dict={"birth_date": ""})
@@ -3771,7 +3254,7 @@ f"Salut 👋\n\nJe suis ton assistant financier. Je t’aide à analyser tes dé
                             user_id=auth_user_id,
                             chat_state=updated_chat_state,
                         )
-                        return _chat_response(reply="Ok 🙂 Quelle est ta date de naissance ?", tool_result=None, plan=None)
+                        return _chat_response(reply="Ok 🙂 Mets à jour la date de naissance dans la carte profil.", tool_result=None, plan=None)
                     return _chat_response(
                         reply="Dis-moi ce que tu veux corriger.",
                         tool_result=_build_quick_reply_profile_fix_ui_action(),
