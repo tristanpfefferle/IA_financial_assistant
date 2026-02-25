@@ -34,6 +34,7 @@ from agent.bank_catalog import extract_canonical_banks
 from agent.merchant_cleanup import MerchantSuggestion, run_merchant_cleanup
 from agent.merchant_alias_resolver import resolve_pending_map_alias
 from agent.import_label_normalizer import extract_observed_alias_from_label
+from agent.onboarding.profile_recap import build_profile_recap_reply
 from agent.loops import build_default_registry
 from agent.loops.registry import LoopRegistry
 from agent.loops.router import parse_loop_context, route_message, serialize_loop_context
@@ -529,14 +530,7 @@ def _should_prompt_household_link_setup(
 
 def _build_profile_recap_reply(profile_fields: dict[str, Any]) -> str:
     """Build onboarding profile recap confirmation prompt."""
-
-    first_name = str(profile_fields.get("first_name", "")).strip()
-    last_name = str(profile_fields.get("last_name", "")).strip()
-    birth_date_iso = str(profile_fields.get("birth_date", "")).strip()
-    return (
-        f"Parfait ✅\n\nRécapitulatif de ton profil :\n- Prénom: {first_name}\n- Nom: {last_name}\n- Date de naissance: {birth_date_iso}\n\n"
-        "Tout est correct ?"
-    )
+    return build_profile_recap_reply(profile_fields)
 
 
 def _build_quick_reply_yes_no_ui_action() -> dict[str, Any]:
@@ -2899,6 +2893,7 @@ def agent_chat(
                 "profiles_repository": profiles_repository,
                 "tool_router": tool_router,
                 "global_state": global_state or {},
+                "state": state_dict,
             }
             loop_reply = route_message(
                 message=payload.message,
@@ -2925,7 +2920,21 @@ def agent_chat(
                 for update_key, update_value in state_updates.items():
                     if update_key == "global_state":
                         continue
-                    state_dict[update_key] = update_value
+                    if update_value is None:
+                        state_dict.pop(update_key, None)
+                    else:
+                        state_dict[update_key] = update_value
+            resolved_global_state = state_dict.get("global_state") if isinstance(state_dict, dict) else None
+            if (
+                isinstance(resolved_global_state, dict)
+                and resolved_global_state.get("mode") == "onboarding"
+                and resolved_global_state.get("onboarding_step") == "profile"
+                and resolved_global_state.get("onboarding_substep") != "profile_collect"
+            ):
+                loop_state = state_dict.get("loop") if isinstance(state_dict, dict) else None
+                if isinstance(loop_state, dict) and loop_state.get("loop_id") == "onboarding.profile_collect":
+                    state_dict.pop("loop", None)
+                    resolved_loop = None
 
             should_persist_loop_state = (
                 should_persist_global_state
@@ -2945,7 +2954,19 @@ def agent_chat(
                 )
 
             if loop_reply.handled and loop_reply.reply.strip():
-                return _chat_response(reply=loop_reply.reply, tool_result=None, plan=None)
+                tool_result = None
+                lowered_reply = loop_reply.reply.lower()
+                current_global_state = state_dict.get("global_state") if isinstance(state_dict, dict) else None
+                if (
+                    isinstance(current_global_state, dict)
+                    and current_global_state.get("mode") == "onboarding"
+                    and current_global_state.get("onboarding_step") == "profile"
+                    and current_global_state.get("onboarding_substep") == "profile_confirm"
+                ):
+                    tool_result = _build_quick_reply_yes_no_ui_action()
+                elif "peux-tu confirmer ton année de naissance" in lowered_reply:
+                    tool_result = _build_quick_reply_yes_no_ui_action()
+                return _chat_response(reply=loop_reply.reply, tool_result=tool_result, plan=None)
 
         import_context = state_dict.get("import_context") if isinstance(state_dict, dict) else None
         pending_files = import_context.get("pending_files") if isinstance(import_context, dict) else None

@@ -2,13 +2,44 @@
 
 from __future__ import annotations
 
+from datetime import date
+import re
 from typing import Any
 
 from agent.loops.confidence import ConfidenceLevel, parse_profile_collect_message
 from agent.loops.types import LoopContext, LoopReply
+from agent.onboarding.profile_recap import build_profile_recap_reply
 
 
 _PROFILE_FIELDS: tuple[str, ...] = ("first_name", "last_name", "birth_date")
+_YES_VALUES = {"oui", "ouais", "yes", "y", "ok", "daccord", "d'accord", "je confirme"}
+_NO_VALUES = {"non", "no", "nop", "nope", "nan"}
+
+_YEAR_TYPO_MONTH_TEXT_PATTERN = re.compile(
+    r"\b(\d{1,2})\s+([A-Za-zÀ-ÖØ-öø-ÿ]+)\s+(\d{5})\b",
+    re.IGNORECASE,
+)
+_YEAR_TYPO_DOT_PATTERN = re.compile(r"\b(\d{1,2})\.(\d{1,2})\.(\d{5})\b")
+_YEAR_TYPO_ISO_PATTERN = re.compile(r"\b(\d{5})-(\d{2})-(\d{2})\b")
+_MONTHS = {
+    "janvier": 1,
+    "janv": 1,
+    "fevrier": 2,
+    "février": 2,
+    "fev": 2,
+    "mars": 3,
+    "avril": 4,
+    "mai": 5,
+    "juin": 6,
+    "juillet": 7,
+    "aout": 8,
+    "août": 8,
+    "septembre": 9,
+    "octobre": 10,
+    "novembre": 11,
+    "decembre": 12,
+    "décembre": 12,
+}
 
 
 class OnboardingProfileCollectLoop:
@@ -35,22 +66,89 @@ class OnboardingProfileCollectLoop:
         user_id: Any,
     ) -> LoopReply:
         profiles_repository = (services or {}).get("profiles_repository") if isinstance(services, dict) else None
+        state_dict = (services or {}).get("state") if isinstance(services, dict) else None
         current_fields = self._current_fields(ctx=ctx, profiles_repository=profiles_repository, profile_id=profile_id)
         missing_slot = self._first_missing_slot(current_fields)
-        if missing_slot is None:
-            if ctx.step == "start":
-                return LoopReply(reply="", next_loop=ctx, updates={}, handled=False)
-            updated_state = self._next_global_state(services, completed=True)
+
+        pending_iso = None
+        if isinstance(ctx.data, dict):
+            pending_iso = ctx.data.get("profile_birth_date_pending_iso")
+        if not isinstance(pending_iso, str) and isinstance(state_dict, dict):
+            pending_iso = state_dict.get("profile_birth_date_pending_iso")
+        if isinstance(pending_iso, str) and pending_iso.strip() and missing_slot == "birth_date":
+            pending_iso = pending_iso.strip()
+            lowered = message.strip().lower()
+            if lowered in _YES_VALUES:
+                if profiles_repository is not None and hasattr(profiles_repository, "update_profile_fields"):
+                    try:
+                        profiles_repository.update_profile_fields(
+                            profile_id=profile_id,
+                            user_id=user_id,
+                            set_dict={"birth_date": pending_iso},
+                        )
+                    except TypeError:
+                        profiles_repository.update_profile_fields(
+                            profile_id=profile_id,
+                            set_dict={"birth_date": pending_iso},
+                        )
+                updated_state = self._next_global_state(services, completed=True)
+                updated_state["profile_confirmed"] = False
+                profile_fields = self._current_fields(ctx=ctx, profiles_repository=profiles_repository, profile_id=profile_id)
+                profile_fields["birth_date"] = pending_iso
+                return LoopReply(
+                    reply=build_profile_recap_reply(profile_fields),
+                    next_loop=None,
+                    updates={"global_state": updated_state, "profile_birth_date_pending_iso": None},
+                    handled=True,
+                )
+            if lowered in _NO_VALUES:
+                return LoopReply(
+                    reply=(
+                        "Ok 🙂 Peux-tu me redonner ta date de naissance ? Formats acceptés: "
+                        "YYYY-MM-DD (ex 2001-05-10), DD.MM.YYYY (ex 10.05.2001), ou '10 mai 2001'."
+                    ),
+                    next_loop=ctx,
+                    updates={"profile_birth_date_pending_iso": None},
+                    handled=True,
+                )
             return LoopReply(
-                reply="Top, ton profil est complet. Tu confirmes ces informations ?",
+                reply="Peux-tu répondre par oui ou non pour confirmer l'année de naissance ?",
                 next_loop=ctx,
+                updates={},
+                handled=True,
+            )
+
+        if missing_slot is None:
+            updated_state = self._next_global_state(services, completed=True)
+            updated_state["profile_confirmed"] = False
+            profile_fields = self._current_fields(ctx=ctx, profiles_repository=profiles_repository, profile_id=profile_id)
+            return LoopReply(
+                reply=build_profile_recap_reply(profile_fields),
+                next_loop=None,
                 updates={"global_state": updated_state},
                 handled=True,
             )
 
         parsed = parse_profile_collect_message(message)
         slot_value = self._pick_slot_value(missing_slot, parsed, current_fields)
+
+        if missing_slot == "birth_date":
+            typo_iso = detect_year_typo(message)
+            if typo_iso is not None:
+                updated_state = self._next_global_state(services, completed=False)
+                return LoopReply(
+                    reply=(
+                        "Peux-tu confirmer ton année de naissance ? "
+                        f"J'ai compris {typo_iso[:4]} (soit {typo_iso})."
+                    ),
+                    next_loop=ctx,
+                    updates={"global_state": updated_state, "profile_birth_date_pending_iso": typo_iso},
+                    handled=True,
+                )
+
         if slot_value is None:
+            if missing_slot == "birth_date":
+                return LoopReply(reply=self._ask_birth_date_with_formats(), next_loop=ctx, updates={}, handled=True)
             return LoopReply(reply=self._ask_for_slot(missing_slot), next_loop=ctx, updates={}, handled=True)
 
         should_fallback_to_legacy = ctx.step == "start" and missing_slot == "first_name"
@@ -58,6 +156,16 @@ class OnboardingProfileCollectLoop:
             return LoopReply(reply="", next_loop=ctx, updates={}, handled=False)
 
         if slot_value.confidence == ConfidenceLevel.HIGH and slot_value.value:
+            if missing_slot == "birth_date" and not is_plausible_birth_date(str(slot_value.value)):
+                return LoopReply(
+                    reply=(
+                        "Ça me paraît improbable 🙂 Peux-tu confirmer ta date de naissance ? Formats acceptés: "
+                        "YYYY-MM-DD (ex 2001-05-10), DD.MM.YYYY (ex 10.05.2001), ou '10 mai 2001'."
+                    ),
+                    next_loop=ctx,
+                    updates={"global_state": self._next_global_state(services, completed=False)},
+                    handled=True,
+                )
             if profiles_repository is not None and hasattr(profiles_repository, "update_profile_fields"):
                 try:
                     profiles_repository.update_profile_fields(
@@ -74,10 +182,19 @@ class OnboardingProfileCollectLoop:
             completed = self._first_missing_slot(current_fields) is None
             updated_state = self._next_global_state(services, completed=completed)
             if completed:
+                try:
+                    profile_fields = (
+                        profiles_repository.get_profile_fields(profile_id=profile_id, fields=list(_PROFILE_FIELDS))
+                        if profiles_repository is not None and hasattr(profiles_repository, "get_profile_fields")
+                        else current_fields
+                    )
+                except Exception:
+                    profile_fields = current_fields
+                updated_state["profile_confirmed"] = False
                 return LoopReply(
-                    reply="Parfait ✅ Ton profil est complet. Tu confirmes ces infos ?",
-                    next_loop=ctx,
-                    updates={"global_state": updated_state},
+                    reply=build_profile_recap_reply(profile_fields),
+                    next_loop=None,
+                    updates={"global_state": updated_state, "profile_birth_date_pending_iso": None},
                     handled=True,
                 )
             return LoopReply(
@@ -87,7 +204,17 @@ class OnboardingProfileCollectLoop:
                 handled=True,
             )
 
+        if missing_slot == "birth_date" and not slot_value.value:
+            return LoopReply(reply=self._ask_birth_date_with_formats(), next_loop=ctx, updates={}, handled=True)
+
         if slot_value.confidence == ConfidenceLevel.MEDIUM:
+            if missing_slot == "birth_date":
+                return LoopReply(
+                    reply=self._ask_birth_date_with_formats(),
+                    next_loop=ctx,
+                    updates={},
+                    handled=True,
+                )
             if should_fallback_to_legacy:
                 return LoopReply(reply="", next_loop=ctx, updates={}, handled=False)
             return LoopReply(
@@ -101,6 +228,8 @@ class OnboardingProfileCollectLoop:
             return LoopReply(reply="", next_loop=ctx, updates={}, handled=False)
 
         if not any(parsed_item.value for parsed_item in parsed.values()):
+            if missing_slot == "birth_date":
+                return LoopReply(reply=self._ask_birth_date_with_formats(), next_loop=ctx, updates={}, handled=True)
             return LoopReply(
                 reply=f"On continue d'abord ton profil : {self._ask_for_slot(missing_slot)}",
                 next_loop=ctx,
@@ -183,7 +312,13 @@ class OnboardingProfileCollectLoop:
             return "Tu peux me donner uniquement ton prénom ?"
         if slot == "last_name":
             return "Super. Maintenant, ton nom de famille ?"
-        return "Top. Quelle est ta date de naissance au format YYYY-MM-DD ?"
+        return self._ask_birth_date_with_formats()
+
+    def _ask_birth_date_with_formats(self) -> str:
+        return (
+            "Quelle est ta date de naissance ? Formats acceptés: "
+            "YYYY-MM-DD (ex 2001-05-10), DD.MM.YYYY (ex 10.05.2001), ou '10 mai 2001'."
+        )
 
     def _slot_label(self, slot: str) -> str:
         if slot == "first_name":
@@ -207,3 +342,72 @@ class OnboardingProfileCollectLoop:
         global_state["onboarding_step"] = "profile"
         global_state["onboarding_substep"] = "profile_confirm" if completed else "profile_collect"
         return global_state
+
+
+def is_plausible_birth_date(iso: str) -> bool:
+    """Return whether a birth date is plausible for onboarding."""
+
+    try:
+        parsed = date.fromisoformat(iso)
+    except ValueError:
+        return False
+    today = date.today()
+    if parsed > today:
+        return False
+    return (today.year - parsed.year) <= 110
+
+
+def detect_year_typo(message: str) -> str | None:
+    """Detect 5-digit year typo and return plausible corrected ISO date."""
+
+    def _fix_year(year5: str) -> int | None:
+        if year5.count("0") == 0:
+            return None
+        year4 = year5.replace("0", "", 1)
+        if len(year4) != 4 or not year4.isdigit():
+            return None
+        year = int(year4)
+        if is_plausible_birth_date(f"{year:04d}-01-01"):
+            return year
+        return None
+
+    month_text = _YEAR_TYPO_MONTH_TEXT_PATTERN.search(message)
+    if month_text is not None:
+        day = int(month_text.group(1))
+        month = _MONTHS.get(month_text.group(2).lower())
+        year = _fix_year(month_text.group(3))
+        if month is not None and year is not None:
+            try:
+                iso = date(year, month, day).isoformat()
+            except ValueError:
+                iso = None
+            if isinstance(iso, str) and is_plausible_birth_date(iso):
+                return iso
+
+    dot_match = _YEAR_TYPO_DOT_PATTERN.search(message)
+    if dot_match is not None:
+        day = int(dot_match.group(1))
+        month = int(dot_match.group(2))
+        year = _fix_year(dot_match.group(3))
+        if year is not None:
+            try:
+                iso = date(year, month, day).isoformat()
+            except ValueError:
+                iso = None
+            if isinstance(iso, str) and is_plausible_birth_date(iso):
+                return iso
+
+    iso_match = _YEAR_TYPO_ISO_PATTERN.search(message)
+    if iso_match is not None:
+        year = _fix_year(iso_match.group(1))
+        month = int(iso_match.group(2))
+        day = int(iso_match.group(3))
+        if year is not None:
+            try:
+                iso = date(year, month, day).isoformat()
+            except ValueError:
+                iso = None
+            if isinstance(iso, str) and is_plausible_birth_date(iso):
+                return iso
+
+    return None
