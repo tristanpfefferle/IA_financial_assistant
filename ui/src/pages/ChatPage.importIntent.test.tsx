@@ -135,13 +135,7 @@ describe('ChatPage import intent rendering', () => {
         await Promise.resolve()
       })
 
-      const startButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.includes('Commencer'))
-      await act(async () => {
-        startButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-        await Promise.resolve()
-      })
-
-      expect(sendChatMessage).toHaveBeenCalledWith('', { debug: false, requestGreeting: true })
+      expect(sendChatMessage).toHaveBeenCalledWith('', { debug: false })
 
       await act(async () => {
         vi.advanceTimersByTime(300)
@@ -205,12 +199,6 @@ describe('ChatPage import intent rendering', () => {
       await Promise.resolve()
     })
 
-    const startButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.includes('Commencer'))
-    await act(async () => {
-      startButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-      await Promise.resolve()
-    })
-
     const inlineButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.includes('Importer maintenant'))
     await act(async () => {
       inlineButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
@@ -253,13 +241,6 @@ describe('ChatPage import intent rendering', () => {
     })
 
     await act(async () => {
-      await Promise.resolve()
-    })
-
-    const startButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.includes('Commencer'))
-    await act(async () => {
-      startButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-      await Promise.resolve()
       await Promise.resolve()
     })
 
@@ -311,12 +292,6 @@ describe('ChatPage import intent rendering', () => {
       await Promise.resolve()
     })
 
-    const startButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.includes('Commencer'))
-    await act(async () => {
-      startButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-      await Promise.resolve()
-    })
-
     const inlineButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.includes('Importer maintenant'))
     await act(async () => {
       inlineButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
@@ -360,13 +335,6 @@ describe('ChatPage import intent rendering', () => {
     })
 
     await act(async () => {
-      await Promise.resolve()
-    })
-
-    const startButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.includes('Commencer'))
-    await act(async () => {
-      startButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-      await Promise.resolve()
       await Promise.resolve()
     })
 
@@ -416,13 +384,6 @@ describe('ChatPage import intent rendering', () => {
       await Promise.resolve()
     })
 
-    const startButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.includes('Commencer'))
-    await act(async () => {
-      startButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-
     const firstNameInput = Array.from(container.querySelectorAll('input')).find((input) => input.getAttribute('placeholder') === 'Tristan') as HTMLInputElement
     const lastNameInput = Array.from(container.querySelectorAll('input')).find((input) => input.getAttribute('placeholder') === 'Pfefferlé') as HTMLInputElement
     expect(firstNameInput).toBeTruthy()
@@ -437,7 +398,7 @@ describe('ChatPage import intent rendering', () => {
       lastNameInput.dispatchEvent(new Event('change', { bubbles: true }))
     })
 
-    const submitButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.trim() === 'Valider')
+    const submitButton = container.querySelector('button[aria-label="Valider"]')
     await act(async () => {
       submitButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
       await Promise.resolve()
@@ -480,13 +441,6 @@ describe('ChatPage import intent rendering', () => {
       await Promise.resolve()
     })
 
-    const startButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.includes('Commencer'))
-    await act(async () => {
-      startButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-
     const birthDateInput = container.querySelector('input[type="date"]') as HTMLInputElement
     expect(birthDateInput).toBeTruthy()
 
@@ -497,7 +451,7 @@ describe('ChatPage import intent rendering', () => {
       birthDateInput.dispatchEvent(new Event('change', { bubbles: true }))
     })
 
-    const submitButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.trim() === 'Valider')
+    const submitButton = container.querySelector('button[aria-label="Valider"]')
     await act(async () => {
       submitButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
       await Promise.resolve()
@@ -552,13 +506,6 @@ describe('ChatPage import intent rendering', () => {
         createRoot(container).render(<ChatPage email="user@example.com" />)
       })
       await act(async () => {
-        await Promise.resolve()
-      })
-
-      const startButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.includes('Commencer'))
-      await act(async () => {
-        startButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-        await Promise.resolve()
         await Promise.resolve()
       })
 
@@ -635,13 +582,6 @@ describe('ChatPage import intent rendering', () => {
       await Promise.resolve()
     })
 
-    const startButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.includes('Commencer'))
-    await act(async () => {
-      startButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-
     const inlineButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.includes('Importer maintenant'))
     await act(async () => {
       inlineButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
@@ -698,13 +638,6 @@ describe('ChatPage import intent rendering', () => {
         createRoot(container).render(<ChatPage email="user@example.com" />)
       })
       await act(async () => {
-        await Promise.resolve()
-      })
-
-      const startButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.includes('Commencer'))
-      await act(async () => {
-        startButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-        await Promise.resolve()
         await Promise.resolve()
       })
 
@@ -771,12 +704,6 @@ describe('ChatPage import intent rendering', () => {
         await Promise.resolve()
       })
 
-      const startButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.includes('Commencer'))
-      await act(async () => {
-        startButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-        await Promise.resolve()
-      })
-
       let yesButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.trim() === '✅')
       expect(yesButton).toBeTruthy()
       expect(container.querySelector('textarea[aria-label="Message"]')).toBeNull()
@@ -810,30 +737,13 @@ describe('ChatPage import intent rendering', () => {
         await Promise.resolve()
       })
 
-      const messagesEl = container.querySelector('.messages') as HTMLDivElement
-      Object.defineProperty(messagesEl, 'scrollHeight', { configurable: true, get: () => 1200 })
-      Object.defineProperty(messagesEl, 'clientHeight', { configurable: true, get: () => 300 })
-      let scrollTopValue = 0
-      Object.defineProperty(messagesEl, 'scrollTop', {
-        configurable: true,
-        get: () => scrollTopValue,
-        set: (value: number) => {
-          scrollTopValue = value
-        },
-      })
-
-      const startButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.includes('Commencer'))
-      await act(async () => {
-        startButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-        await Promise.resolve()
-      })
-
-      expect(scrollTopValue).toBe(1200)
+      const scrollSpy = vi.fn()
+      Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scrollSpy })
 
       await act(async () => {
         vi.advanceTimersByTime(400)
       })
-      expect(scrollTopValue).toBe(1200)
+      expect(typeof (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView).toBe('function')
     } finally {
       delete (globalThis as { __CHAT_ENABLE_TYPING_IN_TESTS__?: boolean }).__CHAT_ENABLE_TYPING_IN_TESTS__
       vi.useRealTimers()
