@@ -116,6 +116,7 @@ _GLOBAL_STATE_ONBOARDING_SUBSTEPS = {
     "report_sent",
     None,
 }
+_PROFILE_FIX_SUBSTEPS = {"profile_fix_select", "profile_fix_name", "profile_fix_birth_date"}
 _PROFILE_COMPLETION_FIELDS = ("first_name", "last_name", "birth_date")
 _UI_FORM_SUBMIT_PREFIX = "__ui_form_submit__:"
 _ONBOARDING_NAME_PATTERN = re.compile(
@@ -3076,6 +3077,36 @@ def agent_chat(
                 state_dict["global_state"] = normalized
                 should_persist_global_state = True
 
+        if (
+            _is_valid_global_state(global_state)
+            and global_state.get("mode") == "onboarding"
+            and global_state.get("onboarding_step") == "profile"
+            and global_state.get("onboarding_substep") in _PROFILE_FIX_SUBSTEPS
+            and (
+                bool(state_dict.get("session_resume_pending"))
+                or payload.request_greeting
+            )
+        ):
+            updated_global_state = _build_onboarding_global_state(
+                {
+                    **global_state,
+                    "profile_confirmed": False,
+                },
+                onboarding_step="profile",
+                onboarding_substep="profile_confirm",
+            )
+            updated_global_state["profile_confirmed"] = False
+            global_state = _normalize_onboarding_step_substep(updated_global_state)
+            state_dict = dict(state_dict) if isinstance(state_dict, dict) else {}
+            state_dict["global_state"] = global_state
+            loop_state = state_dict.get("loop")
+            if isinstance(loop_state, dict) and loop_state.get("loop_id") in {
+                "onboarding.profile_fix_select",
+                "onboarding.profile_fix_name",
+            }:
+                state_dict.pop("loop", None)
+            should_persist_global_state = True
+
         if global_state is None and hasattr(profiles_repository, "get_profile_fields"):
             try:
                 profile_fields = profiles_repository.get_profile_fields(
@@ -3117,7 +3148,7 @@ def agent_chat(
             and global_state.get("onboarding_step") == "profile"
             and isinstance(global_state.get("onboarding_substep"), str)
             and global_state.get("onboarding_substep")
-            in {"profile_collect", "profile_confirm", "profile_fix_select", "profile_fix_name", "profile_fix_birth_date"}
+            in {"profile_collect", "profile_confirm"}
         )
         session_resume_pending = bool(state_dict.get("session_resume_pending")) if isinstance(state_dict, dict) else False
 
