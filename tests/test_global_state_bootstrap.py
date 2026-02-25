@@ -258,6 +258,61 @@ def test_profile_confirm_unrecognized_answer_stays_on_confirm_with_yes_no_quick_
     assert persisted["onboarding_substep"] == "profile_confirm"
 
 
+def test_profile_confirm_substep_is_downgraded_when_birth_date_missing(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "onboarding",
+                    "onboarding_step": "profile",
+                    "onboarding_substep": "profile_confirm",
+                }
+            }
+        },
+        profile_fields={"first_name": "Ada", "last_name": "Lovelace", "birth_date": None},
+    )
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
+
+    response = client.post("/agent/chat", json={"message": "Salut"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["reply"] == "Merci Ada 🙂\n\nQuelle est ta date de naissance ?"
+    assert payload["tool_result"]["form_id"] == "onboarding_profile_birth_date"
+    persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
+    assert persisted["onboarding_substep"] == "profile_collect"
+
+
+def test_session_resume_allons_y_downgrades_profile_confirm_when_birth_date_missing(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "onboarding",
+                    "onboarding_step": "profile",
+                    "onboarding_substep": "profile_confirm",
+                },
+                "session_resume_pending": True,
+            }
+        },
+        profile_fields={"first_name": "Ada", "last_name": "Lovelace", "birth_date": None},
+    )
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
+
+    response = client.post("/agent/chat", json={"message": "allons-y"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["tool_result"]["form_id"] == "onboarding_profile_birth_date"
+    persisted_state = repo.update_calls[-1]["chat_state"]["state"]
+    assert persisted_state["session_resume_pending"] is False
+    assert persisted_state["global_state"]["onboarding_substep"] == "profile_collect"
+
+
 def test_bank_accounts_collect_creates_then_moves_to_confirm(monkeypatch) -> None:
     _mock_auth(monkeypatch)
     repo = _Repo(

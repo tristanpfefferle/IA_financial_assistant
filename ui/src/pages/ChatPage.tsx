@@ -67,6 +67,7 @@ type LoopDebugState = {
 type GlobalStateMode = 'onboarding' | 'free_chat' | string
 
 const CHAT_DEBUG_STORAGE_KEY = 'chat_debug'
+const CHAT_LOCAL_STORAGE_KEYS = [CHAT_DEBUG_STORAGE_KEY]
 
 function isChatDebugEnabledByEnv(): boolean {
   return import.meta.env.VITE_CHAT_DEBUG === '1'
@@ -533,9 +534,31 @@ export function ChatPage({ email }: ChatPageProps) {
     if (!hasToken) {
       return
     }
-    return installSessionResetOnPageExit(() => {
+
+    let logoutTriggered = false
+    const bestEffortLogout = () => {
+      if (logoutTriggered) {
+        return
+      }
+      logoutTriggered = true
+
       void resetSession({ keepalive: true, timeoutMs: 1500 })
-    })
+      void supabase.auth.signOut().catch(() => {
+        // best-effort logout on tab close
+      })
+    }
+
+    const removeSessionResetListeners = installSessionResetOnPageExit(bestEffortLogout)
+    const handleBeforeUnload = () => {
+      bestEffortLogout()
+    }
+
+    window.addEventListener('beforeunload', handleBeforeUnload)
+
+    return () => {
+      removeSessionResetListeners()
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+    }
   }, [hasToken])
 
   useEffect(() => {
@@ -735,16 +758,48 @@ export function ChatPage({ email }: ChatPageProps) {
     }
   }
 
+  function resetLocalChatState(): void {
+    setMessages([])
+    setMessage('')
+    setError(null)
+    setToast(null)
+    setLoopDebug(null)
+    setGlobalStateMode(null)
+    setIsImportDialogOpen(false)
+    setAutoOpenImportPicker(false)
+    setAwaitingPendingCategorizationReply(false)
+    setPendingCategorizationCount(0)
+    setResolvePendingAliasesFeedback(null)
+    setTypingCursor((value) => value + 1)
+
+    executedPdfMessageIdsRef.current.clear()
+    revealedMessageIdsRef.current.clear()
+    assistantQueueRef.current = []
+    uploadMessageGuardsRef.current.clear()
+    hasPromptedPendingCategorizationRef.current = false
+    lastPromptedPendingCategorizationCountRef.current = 0
+    previousIntentMessageIdRef.current = null
+    shouldAutoScrollRef.current = true
+
+    for (const storageKey of CHAT_LOCAL_STORAGE_KEYS) {
+      localStorage.removeItem(storageKey)
+    }
+  }
+
   async function handleHardReset() {
     if (!window.confirm('Confirmer le reset complet des données de votre profil de test ?')) return
     if (!window.confirm('Dernière confirmation: cette action est irréversible. Continuer ?')) return
 
     setError(null)
+    resetLocalChatState()
+    didInitConversationRef.current = true
+
     try {
       await hardResetProfile()
-      setMessages([])
       await resetSession({ timeoutMs: 1500 })
-      window.location.reload()
+      if (hasToken) {
+        await startConversation()
+      }
     } catch (caughtError) {
       const errorMessage = caughtError instanceof Error ? caughtError.message : 'Erreur inconnue'
       if (caughtError instanceof Error && (errorMessage.includes('(404)') || errorMessage.includes('Not found'))) {
