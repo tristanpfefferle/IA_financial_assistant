@@ -132,7 +132,13 @@ button:disabled {
   display: flex;
   align-items: center;
   gap: 0.75rem;
+  flex-wrap: wrap;
 }
+
+.unlock-button {
+  border-color: #334155;
+}
+
 .chat-scroll {
   flex: 1;
   min-height: 0;

@@ -129,12 +129,12 @@ function extractComposerMode(messages: ChatMessage[]): ComposerMode {
 export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
   const navigate = useNavigate()
   const scrollRef = useRef<HTMLDivElement | null>(null)
-  const isDebugUiEnabled = import.meta.env.VITE_UI_DEBUG === 'true'
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [isSending, setIsSending] = useState(false)
   const [isAssistantTyping, setIsAssistantTyping] = useState(false)
   const [isNearBottom, setIsNearBottom] = useState(true)
-  const [debugMode, setDebugMode] = useState(false)
+  const [debugUnlocked, setDebugUnlocked] = useState(() => localStorage.getItem('ui_debug_unlocked') === 'true')
+  const [debugMode, setDebugMode] = useState(() => localStorage.getItem('ui_debug_mode') === 'true')
   const [headerMessage, setHeaderMessage] = useState<string | null>(null)
 
   const consoleState = useMemo(() => extractConsoleState(messages), [messages])
@@ -166,6 +166,35 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
       scrollToBottom()
     }
   }, [messages.length, isAssistantTyping, isNearBottom])
+
+  useEffect(() => {
+    localStorage.setItem('ui_debug_mode', String(debugMode))
+  }, [debugMode])
+
+  useEffect(() => {
+    localStorage.setItem('ui_debug_unlocked', String(debugUnlocked))
+  }, [debugUnlocked])
+
+  function handleUnlockDebug() {
+    // TODO: move PIN to a secure/configurable source (backend or runtime config).
+    const DEBUG_UNLOCK_PIN = '1234'
+    const enteredPin = window.prompt('Entrer le code PIN debug')
+
+    if (enteredPin === DEBUG_UNLOCK_PIN) {
+      setHeaderMessage(null)
+      setDebugUnlocked(true)
+      return
+    }
+
+    setHeaderMessage('Code incorrect')
+  }
+
+  function handleLockDebug() {
+    setDebugUnlocked(false)
+    setDebugMode(false)
+    localStorage.removeItem('ui_debug_unlocked')
+    localStorage.removeItem('ui_debug_mode')
+  }
 
   async function startConversation() {
     setHeaderMessage(null)
@@ -348,21 +377,29 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
           <header className="chat-min-header">
             <div className="chat-title-wrap">
               <strong>Assistant financier</strong>
-              {isDebugUiEnabled && debugMode ? <span className="debug-badge">Debug</span> : null}
+              {debugUnlocked && debugMode ? <span className="debug-badge">Debug</span> : null}
             </div>
             <div className="chat-header-actions">
-              {isDebugUiEnabled ? (
-                <label className="debug-toggle" htmlFor="debug-mode-toggle">
-                  <input
-                    id="debug-mode-toggle"
-                    type="checkbox"
-                    checked={debugMode}
-                    onChange={(event) => setDebugMode(event.target.checked)}
-                  />
-                  Debug
-                </label>
-              ) : null}
-              {isDebugUiEnabled && debugMode ? (
+              <label className="debug-toggle" htmlFor="debug-mode-toggle">
+                <input
+                  id="debug-mode-toggle"
+                  type="checkbox"
+                  checked={debugMode}
+                  onChange={(event) => setDebugMode(event.target.checked)}
+                  disabled={!debugUnlocked}
+                />
+                Debug
+              </label>
+              {!debugUnlocked ? (
+                <button type="button" className="secondary-button unlock-button" onClick={handleUnlockDebug}>
+                  Déverrouiller
+                </button>
+              ) : (
+                <button type="button" className="secondary-button" onClick={handleLockDebug}>
+                  Verrouiller
+                </button>
+              )}
+              {debugUnlocked && debugMode ? (
                 <button type="button" className="secondary-button" onClick={() => { void handleHardReset() }}>
                   Reset
                 </button>
@@ -384,7 +421,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
                 return (
                   <div key={message.id} className={message.role === 'user' ? 'msg msg-user' : 'msg msg-assistant'}>
                     {message.content}
-                    {isDebugUiEnabled && debugMode && isLastAssistantMessage ? (
+                    {debugUnlocked && debugMode && isLastAssistantMessage ? (
                       <details>
                         <summary>Debug payload</summary>
                         <pre>{JSON.stringify(message.toolResult ?? null, null, 2)}</pre>
