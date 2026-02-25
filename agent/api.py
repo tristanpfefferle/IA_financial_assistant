@@ -121,7 +121,7 @@ _PROFILE_FIX_SUBSTEPS = {"profile_fix_select", "profile_fix_name", "profile_fix_
 _BANK_ACCOUNTS_FIX_SUBSTEP_PATTERN = re.compile(r"^bank_accounts_fix_")
 _PROFILE_COMPLETION_FIELDS = ("first_name", "last_name", "birth_date")
 _UI_FORM_SUBMIT_PREFIX = "__ui_form_submit__:"
-_ONBOARDING_BANK_ACCOUNT_PRESET_OPTIONS: tuple[str, ...] = ("UBS", "Raiffeisen", "BCV", "Banque cantonale", "PostFinance", "Revolut", "Neon", "Yuh", "Zak", "Wise", "Autre")
+_ONBOARDING_BANK_ACCOUNT_PRESET_OPTIONS: tuple[str, ...] = ("UBS", "Raiffeisen", "BCV", "Banque cantonale", "PostFinance", "Revolut", "Neon", "Yuh", "Zak", "Wise")
 _ONBOARDING_NAME_PATTERN = re.compile(
     r"^\s*([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'\-]+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'\-]+)\s*$"
 )
@@ -695,13 +695,6 @@ def _build_bank_accounts_form_ui_action() -> dict[str, Any]:
                 "required": True,
                 "options": [{"id": option, "label": option, "value": option} for option in _ONBOARDING_BANK_ACCOUNT_PRESET_OPTIONS],
             },
-            {
-                "id": "other_bank_name",
-                "label": "Nom de la banque",
-                "type": "text",
-                "required": False,
-                "placeholder": "Ex: Banque X",
-            },
         ],
         "submit_label": "Valider",
     }
@@ -719,17 +712,10 @@ def _extract_submitted_bank_account_names(values: dict[str, Any]) -> list[str]:
             parsed = [part.strip() for part in raw_selected.split(",") if part.strip()]
         if isinstance(parsed, list):
             selected = [str(item).strip() for item in parsed if str(item).strip()]
+        elif isinstance(parsed, str) and parsed.strip():
+            selected = [part.strip() for part in parsed.split(",") if part.strip()]
 
-    other_name = str(values.get("other_bank_name") or "").strip()
-    names: list[str] = []
-    has_other = False
-    for name in selected:
-        if _normalize_text(name) == "autre":
-            has_other = True
-            continue
-        names.append(name)
-    if has_other and other_name:
-        names.append(other_name)
+    names = selected
 
     normalized: list[str] = []
     for name in names:
@@ -747,7 +733,7 @@ def _extract_submitted_bank_account_names(values: dict[str, Any]) -> list[str]:
 
 
 def _build_bank_accounts_confirm_recap(accounts: list[dict[str, Any]]) -> str:
-    return f"J’ai noté: {_format_accounts_for_reply(accounts)}.\n\nTout est correct ?"
+    return f"Tu as des comptes bancaires chez : {_format_accounts_for_reply(accounts)}.\n\nTout est correct ?"
 
 
 def _build_profile_collect_ui_action(profile_fields: dict[str, Any]) -> dict[str, Any]:
@@ -3259,14 +3245,34 @@ def agent_chat(
                             )
                     if global_state.get("onboarding_step") == "bank_accounts":
                         substep = global_state.get("onboarding_substep")
+                        if hasattr(profiles_repository, "list_bank_accounts"):
+                            existing_accounts = profiles_repository.list_bank_accounts(profile_id=profile_id)
+                        else:
+                            existing_accounts = []
+
+                        if substep == "bank_accounts_confirm" and not existing_accounts:
+                            substep = "bank_accounts_collect"
+                            updated_global_state = _build_bank_accounts_onboarding_global_state(
+                                global_state,
+                                onboarding_substep="bank_accounts_collect",
+                            )
+                            updated_global_state["bank_accounts_confirmed"] = False
+                            updated_global_state["has_bank_accounts"] = False
+                            state_dict["global_state"] = updated_global_state
+                            updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                            updated_chat_state["state"] = state_dict
+                            profiles_repository.update_chat_state(
+                                profile_id=profile_id,
+                                user_id=auth_user_id,
+                                chat_state=updated_chat_state,
+                            )
                         if substep == "bank_accounts_collect":
                             return _chat_response(
-                                reply="Sélectionne ta ou tes banques pour continuer.",
+                                reply="Sélectionne les banques où tu as un compte. Tu peux en choisir plusieurs.",
                                 tool_result=_build_bank_accounts_form_ui_action(),
                                 plan=None,
                             )
-                        if substep == "bank_accounts_confirm" and hasattr(profiles_repository, "list_bank_accounts"):
-                            existing_accounts = profiles_repository.list_bank_accounts(profile_id=profile_id)
+                        if substep == "bank_accounts_confirm":
                             return _chat_response(
                                 reply=_build_bank_accounts_confirm_recap(existing_accounts),
                                 tool_result=_build_quick_reply_yes_no_ui_action(),
@@ -4042,7 +4048,7 @@ def agent_chat(
                         )
 
                     return _chat_response(
-                        reply="Sélectionne ta ou tes banques pour continuer.",
+                        reply="Sélectionne les banques où tu as un compte. Tu peux en choisir plusieurs.",
                         tool_result=_build_bank_accounts_form_ui_action(),
                         plan=None,
                     )
@@ -4065,7 +4071,7 @@ def agent_chat(
                                 chat_state=updated_chat_state,
                             )
                             return _chat_response(
-                                reply=f"J’ai noté: {accounts_display}.\n\nC’est correct ?",
+                                reply=_build_bank_accounts_confirm_recap(existing_accounts),
                                 tool_result=_build_quick_reply_yes_no_ui_action(),
                                 plan=None,
                             )
@@ -4092,7 +4098,7 @@ def agent_chat(
                             chat_state=updated_chat_state,
                         )
                         return _chat_response(
-                            reply=f"J’ai noté: {accounts_display}.\n\nC’est correct ?",
+                            reply=_build_bank_accounts_confirm_recap(existing_accounts),
                             tool_result=_build_quick_reply_yes_no_ui_action(),
                             plan=None,
                         )
@@ -4144,12 +4150,32 @@ def agent_chat(
                     )
 
                     return _chat_response(
-                        reply=f"J’ai noté: {accounts_display}.\n\nC’est correct ?",
+                        reply=_build_bank_accounts_confirm_recap(refreshed_accounts),
                         tool_result=_build_quick_reply_yes_no_ui_action(),
                         plan=None,
                     )
 
                 if substep == "bank_accounts_confirm":
+                    if not existing_accounts:
+                        updated_global_state = _build_bank_accounts_onboarding_global_state(
+                            global_state,
+                            onboarding_substep="bank_accounts_collect",
+                        )
+                        updated_global_state["bank_accounts_confirmed"] = False
+                        updated_global_state["has_bank_accounts"] = False
+                        state_dict["global_state"] = updated_global_state
+                        updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                        updated_chat_state["state"] = state_dict
+                        profiles_repository.update_chat_state(
+                            profile_id=profile_id,
+                            user_id=auth_user_id,
+                            chat_state=updated_chat_state,
+                        )
+                        return _chat_response(
+                            reply="Sélectionne les banques où tu as un compte. Tu peux en choisir plusieurs.",
+                            tool_result=_build_bank_accounts_form_ui_action(),
+                            plan=None,
+                        )
                     if _is_no(payload.message):
                         updated_global_state = _build_bank_accounts_onboarding_global_state(
                             global_state,
@@ -4166,7 +4192,7 @@ def agent_chat(
                             chat_state=updated_chat_state,
                         )
                         return _chat_response(
-                            reply="D'accord, corrige la liste de tes banques.",
+                            reply="Ok 🙂 Modifie ta sélection.",
                             tool_result=_build_bank_accounts_form_ui_action(),
                             plan=None,
                         )

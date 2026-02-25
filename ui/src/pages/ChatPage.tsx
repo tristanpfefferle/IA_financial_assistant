@@ -348,19 +348,15 @@ function buildUiFormHumanText(formId: string, values: Record<string, unknown>): 
     const selectedBanks = Array.isArray(values.selected_banks)
       ? values.selected_banks.map((item) => String(item).trim()).filter((item) => item.length > 0)
       : []
-    const otherBankName = String(values.other_bank_name ?? '').trim()
-    const visibleBanks = selectedBanks
-      .filter((item) => item.toLowerCase() !== 'autre')
-      .concat(otherBankName ? [`Autre: ${otherBankName}`] : [])
 
-    if (visibleBanks.length === 0) {
+    if (selectedBanks.length === 0) {
       return "Je valide mes banques."
     }
-    if (visibleBanks.length === 1) {
-      return `J'utilise ${visibleBanks[0]}.`
+    if (selectedBanks.length === 1) {
+      return `J'ai un compte chez ${selectedBanks[0]}.`
     }
-    const head = visibleBanks.slice(0, -1).join(', ')
-    return `J'utilise ${head} et ${visibleBanks[visibleBanks.length - 1]}.`
+    const head = selectedBanks.slice(0, -1).join(', ')
+    return `J'ai des comptes chez ${head} et ${selectedBanks[selectedBanks.length - 1]}.`
   }
 
   return 'Je valide le formulaire.'
@@ -437,6 +433,7 @@ export function ChatPage({ email }: ChatPageProps) {
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false)
   const [autoOpenImportPicker, setAutoOpenImportPicker] = useState(false)
   const [awaitingPendingCategorizationReply, setAwaitingPendingCategorizationReply] = useState(false)
+  const [isOptimisticallySubmittingForm, setIsOptimisticallySubmittingForm] = useState(false)
   const [typingCursor, setTypingCursor] = useState(0)
   const envDebugEnabled = import.meta.env.VITE_UI_DEBUG === 'true'
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(import.meta.env.VITE_API_URL), [])
@@ -475,6 +472,9 @@ export function ChatPage({ email }: ChatPageProps) {
   const formUiAction = useMemo(() => toFormUiAction(latestAssistantMessage?.toolResult), [latestAssistantMessage])
   const isGuidedMode = globalStateMode !== 'free_chat'
   const composerMode: ComposerMode = useMemo(() => {
+    if (isOptimisticallySubmittingForm) {
+      return 'text'
+    }
     if (formUiAction) {
       return 'form'
     }
@@ -485,7 +485,7 @@ export function ChatPage({ email }: ChatPageProps) {
       return 'quick_replies'
     }
     return 'text'
-  }, [formUiAction, isGuidedMode, quickReplyAction])
+  }, [formUiAction, isGuidedMode, isOptimisticallySubmittingForm, quickReplyAction])
   const shouldShowGuidedPlaceholder = isGuidedMode && !formUiAction && !quickReplyAction
   const hasUnauthorizedError = useMemo(() => error?.includes('(401)') ?? false, [error])
   const statusBadge = debugMode ? 'Debug' : isImportRequired ? 'Onboarding' : 'Prêt'
@@ -914,6 +914,8 @@ export function ChatPage({ email }: ChatPageProps) {
     setError(null)
     setIsLoading(true)
 
+    setIsOptimisticallySubmittingForm(true)
+
     try {
       const response = await sendChatMessage(messageToBackend, { debug: debugMode })
       syncLoopDebug(response)
@@ -922,6 +924,7 @@ export function ChatPage({ email }: ChatPageProps) {
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Erreur inconnue')
     } finally {
+      setIsOptimisticallySubmittingForm(false)
       setIsLoading(false)
     }
   }
@@ -1792,9 +1795,6 @@ function FormCard({
   const bankSelectField = formUiAction.form_id === 'onboarding_bank_accounts'
     ? formUiAction.fields.find((field) => field.id === 'selected_banks' && field.type === 'multi_select')
     : null
-  const otherBankField = formUiAction.form_id === 'onboarding_bank_accounts'
-    ? formUiAction.fields.find((field) => field.id === 'other_bank_name')
-    : null
 
   return (
     <form
@@ -1811,14 +1811,11 @@ function FormCard({
           const selectedBanks = (bankSelectField?.options ?? [])
             .map((option) => option.value)
             .filter((optionValue) => formData.get(`bank_${optionValue}`) === 'on')
-          const otherBankName = String(formData.get('other_bank_name') ?? '').trim()
-          const hasOther = selectedBanks.some((item) => item.toLowerCase() === 'autre')
-          if (selectedBanks.length === 0 || (hasOther && otherBankName.length === 0)) {
+          if (selectedBanks.length === 0) {
             return
           }
           onSubmitForm(formUiAction.form_id, {
             selected_banks: selectedBanks,
-            other_bank_name: otherBankName,
           })
           return
         }
@@ -1847,16 +1844,6 @@ function FormCard({
               ))}
             </div>
           </fieldset>
-          <label className="form-field">
-            {otherBankField?.label ?? 'Nom de la banque'}
-            <input
-              name="other_bank_name"
-              type="text"
-              placeholder={otherBankField?.placeholder}
-              defaultValue={otherBankField?.default_value ?? otherBankField?.value ?? ''}
-              disabled={isLoading}
-            />
-          </label>
         </div>
       ) : (
         <div className={`form-fields ${formUiAction.fields.length > 1 ? 'form-fields-inline' : ''}`}>

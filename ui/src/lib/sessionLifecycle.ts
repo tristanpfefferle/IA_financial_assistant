@@ -1,10 +1,6 @@
 export function installSessionResetOnPageExit(reset: () => void): () => void {
-  const handlePageHide = () => {
-    reset()
-  }
-
-  const handleVisibilityChange = () => {
-    if (document.visibilityState !== 'hidden') {
+  const handlePageHide = (event: PageTransitionEvent) => {
+    if (event.persisted) {
       return
     }
 
@@ -12,11 +8,9 @@ export function installSessionResetOnPageExit(reset: () => void): () => void {
   }
 
   window.addEventListener('pagehide', handlePageHide)
-  document.addEventListener('visibilitychange', handleVisibilityChange)
 
   return () => {
     window.removeEventListener('pagehide', handlePageHide)
-    document.removeEventListener('visibilitychange', handleVisibilityChange)
   }
 }
 
