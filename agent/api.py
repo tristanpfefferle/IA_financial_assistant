@@ -216,15 +216,22 @@ _ONBOARDING_PROFILE_REFUSAL_PATTERNS = (
 _ONBOARDING_PROFILE_TOXIC_PATTERNS = (
     re.compile(r"\bta gueule\b", re.IGNORECASE),
     re.compile(r"\bftg\b", re.IGNORECASE),
+    re.compile(r"\btg\b", re.IGNORECASE),
     re.compile(r"\bd[ée]gage\b", re.IGNORECASE),
     re.compile(r"\bconnard\b", re.IGNORECASE),
     re.compile(r"\bpute\b", re.IGNORECASE),
     re.compile(r"\bencul[ée]\b", re.IGNORECASE),
+    re.compile(r"\b(sert|sers)\s+[àa]\s+rien\b", re.IGNORECASE),
+    re.compile(r"\bferme[-\s]?la\b", re.IGNORECASE),
+    re.compile(r"\bnul(?:le)?\b", re.IGNORECASE),
+    re.compile(r"\bva\s+te\s+faire\s+voir\b", re.IGNORECASE),
+    re.compile(r"\bidiot(?:e)?\b", re.IGNORECASE),
 )
 _ONBOARDING_PROFILE_META_ANSWER_PATTERNS = (
     re.compile(r"\btu\s+connais\b", re.IGNORECASE),
     re.compile(r"\bje\s+viens\s+de\s+te\s+le\s+dire\b", re.IGNORECASE),
     re.compile(r"\bje\s+l['’]ai\s+deja\s+dit\b", re.IGNORECASE),
+    re.compile(r"\bd[ée]j[àa]\s+mentionn[ée]\b", re.IGNORECASE),
     re.compile(r"\bt['’]es\s+s[ée]rieux\b", re.IGNORECASE),
     re.compile(r"\b(s[ée]rieux|hein|quoi)\b", re.IGNORECASE),
     re.compile(r"\b(blague|dr[oô]le)\b", re.IGNORECASE),
@@ -238,7 +245,8 @@ _ONBOARDING_PROFILE_CANT_ANSWER_PATTERNS = (
     re.compile(r"^\s*j[’']?en\s+sais\s+rien\s*[\!\.\?]*\s*$", re.IGNORECASE),
     re.compile(r"^\s*j[’']?en\s+ai\s+pas(?:\s+(?:mdr|lol|ptdr|haha|xd))?\s*[\!\.\?]*\s*$", re.IGNORECASE),
     re.compile(r"^\s*j[’']?ai\s+pas(?:\s+de\s+nom)?(?:\s+(?:mdr|lol|ptdr|haha|xd))?\s*[\!\.\?]*\s*$", re.IGNORECASE),
-    re.compile(r"^\s*aucun(?:e\s+idee)?(?:\s+(?:mdr|lol|ptdr|haha|xd))?\s*[\!\.\?]*\s*$", re.IGNORECASE),
+    re.compile(r"^\s*aucun(?:e\s+id(?:ee|[ée]e))?(?:\s+(?:mdr|lol|ptdr|haha|xd))?\s*[\!\.\?]*\s*$", re.IGNORECASE),
+    re.compile(r"^\s*impossible(?:\s+pour\s+moi)?\s*[\!\.\?]*\s*$", re.IGNORECASE),
 )
 _ONBOARDING_FIRST_NAME_ALLOWED_CHARS_PATTERN = re.compile(r"^[A-Za-zÀ-ÖØ-öø-ÿ'\- ]+$")
 _ONBOARDING_LAST_NAME_ALLOWED_CHARS_PATTERN = re.compile(r"^[A-Za-zÀ-ÖØ-öø-ÿ'\- ]+$")
@@ -2025,8 +2033,6 @@ def _is_meta_answer(message: str) -> bool:
     meta_tokens = {"tu", "on", "encore", "deja", "déjà", "parler", "parlé", "serieux", "sérieux", "exprès", "expres"}
     if ("?" in normalized or "!" in normalized) and any(token.lower() in meta_tokens for token in tokens):
         return True
-    if ("!" in normalized or "?" in normalized) and len(tokens) <= 2:
-        return True
     has_pronoun = any(pronoun in lowered.split() for pronoun in {"tu", "je", "on"})
     has_meta_verb = any(verb in lowered for verb in _ONBOARDING_PROFILE_META_VERBS)
     return has_pronoun and has_meta_verb
@@ -2037,6 +2043,8 @@ def _extract_name_from_message(message: str) -> tuple[str, str] | None:
     if not match:
         return None
     first_name, last_name = match.groups()
+    if first_name.strip().lower() in {"nom", "nomm", "prenom", "prénom", "prnom", "pernom", "pérnom", "prenon", "prénon"}:
+        return None
     return first_name, last_name
 
 
@@ -2133,7 +2141,7 @@ def _is_low_signal_message(message: str) -> bool:
         if any(char.isdigit() for char in normalized):
             return False
         return True
-    low_signal_tokens = {"serieux", "sérieux", "quoi", "hein", "ok", "okay", "lol", "es", "e", "hmm", "hum"}
+    low_signal_tokens = {"serieux", "sérieux", "quoi", "hein", "ok", "okay", "lol", "es", "e", "hmm", "hum", "euh"}
     if len(tokens) == 1 and tokens[0].lower() in low_signal_tokens:
         return True
     if all(token.lower() in low_signal_tokens for token in tokens):
@@ -2320,7 +2328,13 @@ def _is_cant_answer_message(message: str) -> bool:
     if any(pattern.match(message) for pattern in _ONBOARDING_PROFILE_CANT_ANSWER_PATTERNS):
         return True
     tokens = [token.lower() for token in _ONBOARDING_PROFILE_TOKEN_PATTERN.findall(str(message or "")) if token]
-    if len(tokens) == 1 and tokens[0] in {"non", "nop", "nan", "pass"}:
+    if len(tokens) == 1 and tokens[0] in {"non", "nop", "nan", "pass", "impossible"}:
+        return True
+    if len(tokens) >= 3 and tokens[0:3] == ["impossible", "pour", "moi"]:
+        return True
+    if tokens[0:3] == ["je", "sais", "pas"] or tokens[0:2] == ["sais", "pas"]:
+        return True
+    if tokens[0:2] in (["aucune", "idee"], ["aucune", "idée"], ["aucun", "idee"], ["aucun", "idée"]):
         return True
     return False
 
@@ -2400,6 +2414,8 @@ def _extract_name_from_text_prefix(message: str) -> tuple[str, str] | None:
         return None
 
     first_name, last_name = match.groups()
+    if first_name.strip().lower() in {"nom", "nomm", "prenom", "prénom", "prnom", "pernom", "pérnom", "prenon", "prénon"}:
+        return None
     return first_name, last_name
 
 
@@ -2455,16 +2471,37 @@ def _extract_birth_date_from_text(message: str) -> str | None:
     return None
 
 
+def _looks_like_birth_date(message: str) -> bool:
+    raw_message = str(message or "")
+    return any(pattern.search(raw_message) for pattern in _ONBOARDING_BIRTH_DATE_IN_TEXT_PATTERNS)
+
+
+def _has_suspicious_numeric_birth_date_day(message: str) -> bool:
+    normalized = str(message or "").strip().rstrip("?!.")
+    slash_match = _ONBOARDING_BIRTH_DATE_SLASH_PATTERN.match(normalized)
+    if slash_match:
+        day, _month, _year = (int(chunk) for chunk in slash_match.groups())
+        return day >= 30
+
+    dot_match = _ONBOARDING_BIRTH_DATE_DOT_PATTERN.match(normalized)
+    if dot_match:
+        day, _month, _year = (int(chunk) for chunk in dot_match.groups())
+        return day >= 30
+
+    return False
+
+
 def _maybe_fix_year_typo(message: str) -> tuple[str, str] | None:
     match = _ONBOARDING_BIRTH_DATE_YEAR_TYPO_PATTERN.search(str(message or ""))
     if not match:
         return None
 
     day_raw, month_raw, year_raw = match.groups()
-    candidate_years: list[str] = []
+    candidate_years: list[str] = [year_raw[:4], year_raw[1:]]
+    if year_raw[0:2] in {"19", "20"} and year_raw[2:4] == "00" and year_raw[4] != "0":
+        candidate_years.insert(0, f"{year_raw[:2]}{year_raw[3:]}")
     if year_raw[0:2] in {"19", "20"} and year_raw.count("0") >= 2:
         candidate_years.append(year_raw.replace("0", "", 1))
-    candidate_years.extend([year_raw[:4], year_raw[1:]])
 
     filtered_candidate_years = [
         candidate
@@ -3394,6 +3431,28 @@ f"Salut 👋\n\nJe suis ton assistant financier. Je t’aide à analyser tes dé
                         extracted_birth_date = extraction.get("birth_date")
                         invalid_first_name_detected = False
                         invalid_last_name_detected = False
+
+                        if expected_field == "birth_date" and _looks_like_birth_date(message) and (
+                            extracted_birth_date is None or _has_suspicious_numeric_birth_date_day(message)
+                        ):
+                            updated_global_state = _build_onboarding_global_state(
+                                global_state,
+                                onboarding_step="profile",
+                                onboarding_substep="profile_collect",
+                            )
+                            state_dict["global_state"] = updated_global_state
+                            updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                            updated_chat_state["state"] = state_dict
+                            profiles_repository.update_chat_state(
+                                profile_id=profile_id,
+                                user_id=auth_user_id,
+                                chat_state=updated_chat_state,
+                            )
+                            return _chat_response(
+                                reply="Cette date invalide 🙂 Peux-tu me redonner ta date de naissance ? (YYYY-MM-DD)",
+                                tool_result=None,
+                                plan=None,
+                            )
 
                         if isinstance(extracted_first_name, str) and extracted_first_name.strip() and not _is_plausible_first_name(
                             extracted_first_name
