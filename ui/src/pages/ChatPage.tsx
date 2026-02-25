@@ -1331,20 +1331,48 @@ export function MessageList({
   onImportNow,
 }: MessageListProps) {
   const virtuosoRef = useRef<VirtuosoHandle | null>(null)
+  const shouldAutoScrollRef = useRef(true)
   const [isAtBottom, setIsAtBottom] = useState(true)
 
   const canScrollToBottom = messages.length > 0
+
+  const scrollToBottomWithRetry = (firstBehavior: 'auto' | 'smooth' = 'auto') => {
+    if (messages.length === 0) {
+      return
+    }
+
+    const lastMessageIndex = messages.length - 1
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        virtuosoRef.current?.scrollToIndex({
+          index: lastMessageIndex,
+          align: 'end',
+          behavior: firstBehavior,
+        })
+        virtuosoRef.current?.scrollToIndex({
+          index: lastMessageIndex,
+          align: 'end',
+          behavior: 'auto',
+        })
+      })
+    })
+  }
+
+  useEffect(() => {
+    if (!shouldAutoScrollRef.current || messages.length === 0) {
+      return
+    }
+
+    scrollToBottomWithRetry('auto')
+  }, [messages.length, isAssistantTyping])
 
   const handleScrollToBottom = () => {
     if (!canScrollToBottom) {
       return
     }
 
-    virtuosoRef.current?.scrollToIndex({
-      index: messages.length - 1,
-      align: 'end',
-      behavior: 'smooth',
-    })
+    shouldAutoScrollRef.current = true
+    scrollToBottomWithRetry('smooth')
   }
 
   return (
@@ -1355,7 +1383,10 @@ export function MessageList({
         className="messages"
         style={{ height: '100%' }}
         data={messages}
-        atBottomStateChange={setIsAtBottom}
+        atBottomStateChange={(atBottom) => {
+          shouldAutoScrollRef.current = atBottom
+          setIsAtBottom(atBottom)
+        }}
         itemContent={(_index, chatMessage) => (
           <div className="message-row">
             <MessageRow
@@ -1366,7 +1397,7 @@ export function MessageList({
             />
           </div>
         )}
-        followOutput={isAtBottom ? 'smooth' : false}
+        followOutput={(atBottom) => (atBottom ? 'smooth' : false)}
         components={{
           Header: () => <div style={{ height: 16 }} />,
           Footer: () => (
@@ -1375,7 +1406,9 @@ export function MessageList({
                 <div className="message-row message-row-typing" aria-live="polite" aria-label="L’assistant écrit…">
                   <article className="message message-assistant message-typing-indicator">
                     <p className="message-role">Assistant</p>
-                    <p className="message-content">L’assistant écrit<span className="typing-dots" aria-hidden="true">...</span></p>
+                    <p className="message-content">
+                      <span className="typing-dots" aria-label="L’assistant écrit" />
+                    </p>
                   </article>
                 </div>
               ) : null}
@@ -1385,7 +1418,7 @@ export function MessageList({
                   <p className="subtle-text">L’assistant réfléchit…</p>
                 </div>
               ) : null}
-              <div style={{ height: 22 }} />
+              <div style={{ height: 12 }} />
             </>
           ),
         }}

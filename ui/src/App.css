@@ -246,8 +246,14 @@ button:disabled {
 
 .typing-dots {
   display: inline-block;
-  min-width: 0.95rem;
-  margin-left: 0.15rem;
+  min-width: 1.1rem;
+  margin-left: 0;
+  line-height: 1;
+}
+
+.typing-dots::before {
+  content: '...';
+  display: inline-block;
   letter-spacing: 0.08rem;
   animation: typingDotsPulse 1.2s ease-in-out infinite;
 }

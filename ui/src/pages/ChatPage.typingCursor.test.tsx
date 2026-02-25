@@ -110,7 +110,10 @@ describe('MessageList typing indicator behavior', () => {
       )
     })
 
-    expect(container.textContent).toContain('L’assistant écrit')
+    const typingDots = container.querySelector('.typing-dots')
+    expect(typingDots).not.toBeNull()
+    expect(typingDots?.getAttribute('aria-label')).toBe('L’assistant écrit')
+    expect(container.textContent).not.toContain('L’assistant écrit')
   })
 
   it('hides typing indicator and renders the complete assistant message at once', async () => {
