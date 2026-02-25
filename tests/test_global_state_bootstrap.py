@@ -2113,7 +2113,7 @@ def test_profile_collect_llm_fallback_handles_weird_input(monkeypatch) -> None:
 
 
 
-def test_profile_confirmation_no_then_choose_1_resets_name_prompt(monkeypatch) -> None:
+def test_profile_confirmation_no_returns_profile_fix_quick_replies(monkeypatch) -> None:
     _mock_auth(monkeypatch)
     repo = _Repo(
         initial_chat_state={
@@ -2130,14 +2130,26 @@ def test_profile_confirmation_no_then_choose_1_resets_name_prompt(monkeypatch) -
     monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
     monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
 
-    first = client.post("/agent/chat", json={"message": "non"}, headers=_auth_headers())
-    second = client.post("/agent/chat", json={"message": "1"}, headers=_auth_headers())
+    response = client.post("/agent/chat", json={"message": "❌"}, headers=_auth_headers())
+    payload = response.json()
 
-    assert "Réponds simplement par 1 ou 2" in first.json()["reply"]
-    assert second.json()["reply"] == "Ok. Quel est ton prénom et ton nom ?"
+    assert payload["reply"] == "Pas de souci 🙂 Dis-moi ce que tu veux corriger."
+    assert "Réponds simplement par 1 ou 2" not in payload["reply"]
+    assert payload["tool_result"] is not None
+    assert payload["tool_result"]["type"] == "ui_action"
+    assert payload["tool_result"]["action"] == "quick_replies"
+    assert [opt["label"] for opt in payload["tool_result"]["options"]] == [
+        "Corriger prénom/nom",
+        "Corriger date de naissance",
+    ]
+    assert [opt["value"] for opt in payload["tool_result"]["options"]] == ["corriger_nom", "corriger_date"]
+
+    persisted_global = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
+    assert persisted_global["onboarding_substep"] == "profile_fix_select"
 
 
-def test_profile_confirmation_no_then_choose_2_resets_birth_prompt(monkeypatch) -> None:
+
+def test_profile_fix_select_name_resets_only_names(monkeypatch) -> None:
     _mock_auth(monkeypatch)
     repo = _Repo(
         initial_chat_state={
@@ -2155,9 +2167,38 @@ def test_profile_confirmation_no_then_choose_2_resets_birth_prompt(monkeypatch) 
     monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
 
     client.post("/agent/chat", json={"message": "non"}, headers=_auth_headers())
-    second = client.post("/agent/chat", json={"message": "2"}, headers=_auth_headers())
+    second = client.post("/agent/chat", json={"message": "corriger_nom"}, headers=_auth_headers())
 
-    assert second.json()["reply"] == "Ok. Quelle est ta date de naissance ?"
+    assert {"first_name": "", "last_name": ""} in repo.profile_update_calls
+    assert repo.profile_fields["birth_date"] == "1815-12-10"
+    assert second.json()["reply"] == "Ok 🙂 Dis-moi ton prénom puis ton nom de famille."
+
+
+
+def test_profile_fix_select_birth_date_resets_only_birth_date(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "onboarding",
+                    "onboarding_step": "profile",
+                    "onboarding_substep": "profile_confirm",
+                }
+            }
+        },
+        profile_fields={"first_name": "Ada", "last_name": "Lovelace", "birth_date": "1815-12-10"},
+    )
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
+
+    client.post("/agent/chat", json={"message": "non"}, headers=_auth_headers())
+    second = client.post("/agent/chat", json={"message": "corriger_date"}, headers=_auth_headers())
+
+    assert {"birth_date": ""} in repo.profile_update_calls
+    assert repo.profile_fields["first_name"] == "Ada"
+    assert repo.profile_fields["last_name"] == "Lovelace"
+    assert second.json()["reply"] == "Ok 🙂 Quelle est ta date de naissance ?"
 
 
 def test_after_bank_added_waits_ready_before_import_ui_request(monkeypatch) -> None:

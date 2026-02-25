@@ -327,7 +327,7 @@ class OnboardingProfileCollectLoop:
             return "Tu peux me donner uniquement ton prénom ?"
         if slot == "last_name":
             return "Super. Maintenant, ton nom de famille ?"
-        return self._ask_birth_date_with_formats()
+        return "Quelle est ta date de naissance ?"
 
     def _ask_birth_date_with_formats(self) -> str:
         return (

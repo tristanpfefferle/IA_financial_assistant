@@ -43,7 +43,7 @@ def test_loop_blocking_reorients_on_digression() -> None:
     )
 
     assert result.handled is True
-    assert "On continue" in result.reply
+    assert result.reply == "Confirme ton profil (oui/non)."
     assert result.next_loop is not None
     assert result.next_loop.loop_id == "onboarding.profile_confirm"
 

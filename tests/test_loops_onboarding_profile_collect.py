@@ -56,3 +56,12 @@ def test_collect_birth_date_moves_to_profile_confirm() -> None:
     assert repo.update_calls == [{"birth_date": "1990-01-01"}]
     assert isinstance(reply.updates.get("global_state"), dict)
     assert reply.updates["global_state"]["onboarding_substep"] == "profile_confirm"
+
+
+def test_expected_prompt_for_birth_date_is_short() -> None:
+    repo = _ProfilesRepoStub({"first_name": "Paul", "last_name": "Murt", "birth_date": None})
+    loop = OnboardingProfileCollectLoop()
+
+    prompt = loop.expected_prompt_for_help(services={"profiles_repository": repo, "state": {}}, profile_id=uuid4())
+
+    assert prompt == "Quelle est ta date de naissance ?"

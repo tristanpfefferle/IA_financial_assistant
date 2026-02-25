@@ -44,6 +44,7 @@ def _onboarding_help_prompt(loop_id: str, *, services: Any, profile_id: Any) -> 
 
     prompts = {
         "onboarding.profile_confirm": "Confirme ton profil (oui/non).",
+        "onboarding.profile_fix_select": "Dis-moi ce que tu veux corriger : prénom/nom ou date de naissance.",
         "onboarding.bank_accounts_collect": "Quels comptes utilises-tu ?",
         "onboarding.bank_accounts_confirm": "Confirme la liste des comptes (oui/non).",
         "onboarding.import_select_account": "Sélectionne le compte à importer.",
@@ -107,8 +108,11 @@ def route_message(
             if reply.handled:
                 return reply
             if current_loop.blocking:
+                help_prompt = _onboarding_help_prompt(current_loop.loop_id, services=services, profile_id=profile_id)
+                fallback_prompt = "On continue cette étape. Réponds à la question en cours."
+                reply_text = help_prompt if isinstance(help_prompt, str) and help_prompt.strip() else fallback_prompt
                 return LoopReply(
-                    reply="On continue d'abord cette étape. Réponds à la question en cours.",
+                    reply=reply_text,
                     next_loop=current_loop,
                     updates={},
                     handled=True,

@@ -102,6 +102,7 @@ _GLOBAL_STATE_ONBOARDING_STEPS = {"profile", "bank_accounts", "import", "categor
 _GLOBAL_STATE_ONBOARDING_SUBSTEPS = {
     "profile_collect",
     "profile_confirm",
+    "profile_fix_select",
     "bank_accounts_collect",
     "bank_accounts_confirm",
     "import_select_account",
@@ -383,6 +384,7 @@ _HOUSEHOLD_LINK_AUTO_PROMPT_REPLY = (
 _ONBOARDING_SUBSTEP_TO_LOOP_ID: dict[str, str] = {
     "profile_collect": "onboarding.profile_collect",
     "profile_confirm": "onboarding.profile_confirm",
+    "profile_fix_select": "onboarding.profile_fix_select",
     "bank_accounts_collect": "onboarding.bank_accounts_collect",
     "bank_accounts_confirm": "onboarding.bank_accounts_confirm",
     "import_select_account": "onboarding.import_select_account",
@@ -571,6 +573,19 @@ def _build_quick_reply_yes_no_ui_action() -> dict[str, Any]:
         "options": [
             {"id": "yes", "label": "✅", "value": "oui"},
             {"id": "no", "label": "❌", "value": "non"},
+        ],
+    }
+
+
+def _build_quick_reply_profile_fix_ui_action() -> dict[str, Any]:
+    """Return a UI payload for onboarding profile correction target selection."""
+
+    return {
+        "type": "ui_action",
+        "action": "quick_replies",
+        "options": [
+            {"id": "fix_name", "label": "Corriger prénom/nom", "value": "corriger_nom"},
+            {"id": "fix_birth_date", "label": "Corriger date de naissance", "value": "corriger_date"},
         ],
     }
 
@@ -1464,7 +1479,7 @@ def _normalize_onboarding_step_substep(global_state: dict[str, Any]) -> dict[str
         return normalized
 
     valid_substeps_by_step = {
-        "profile": {"profile_collect", "profile_confirm"},
+        "profile": {"profile_collect", "profile_confirm", "profile_fix_select"},
         "bank_accounts": {"bank_accounts_collect", "bank_accounts_confirm"},
         "import": {"import_select_account", "import_wait_ready"},
         "categories": {"categories_intro", "categories_bootstrap"},
@@ -1695,11 +1710,13 @@ def _canonicalize_merchant(candidate: str) -> tuple[str, str, str] | None:
 
 
 def _is_yes(message: str) -> bool:
-    return _normalize_text(message) in _YES_VALUES
+    normalized = _normalize_text(message)
+    return normalized in _YES_VALUES or "✅" in message
 
 
 def _is_no(message: str) -> bool:
-    return _normalize_text(message) in _NO_VALUES
+    normalized = _normalize_text(message)
+    return normalized in _NO_VALUES or "❌" in message
 
 
 def _pick_category_for_merchant_name(name: str) -> str:
@@ -3711,8 +3728,57 @@ f"Salut 👋\n\nJe suis ton assistant financier. Je t’aide à analyser tes dé
                     )
                     return _chat_response(reply=reply, tool_result=None, plan=None)
 
+                if substep == "profile_fix_select":
+                    normalized_correction = _normalize_text(payload.message)
+                    if normalized_correction in {"corriger_nom", "name"}:
+                        if hasattr(profiles_repository, "update_profile_fields"):
+                            profiles_repository.update_profile_fields(profile_id=profile_id, set_dict={"first_name": "", "last_name": ""})
+                        updated_global_state = _build_onboarding_global_state(
+                            {
+                                **global_state,
+                                "profile_confirmed": False,
+                            },
+                            onboarding_step="profile",
+                            onboarding_substep="profile_collect",
+                        )
+                        updated_global_state["profile_confirmed"] = False
+                        state_dict["global_state"] = updated_global_state
+                        updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                        updated_chat_state["state"] = state_dict
+                        profiles_repository.update_chat_state(
+                            profile_id=profile_id,
+                            user_id=auth_user_id,
+                            chat_state=updated_chat_state,
+                        )
+                        return _chat_response(reply="Ok 🙂 Dis-moi ton prénom puis ton nom de famille.", tool_result=None, plan=None)
+                    if normalized_correction in {"corriger_date", "birth_date"}:
+                        if hasattr(profiles_repository, "update_profile_fields"):
+                            profiles_repository.update_profile_fields(profile_id=profile_id, set_dict={"birth_date": ""})
+                        updated_global_state = _build_onboarding_global_state(
+                            {
+                                **global_state,
+                                "profile_confirmed": False,
+                            },
+                            onboarding_step="profile",
+                            onboarding_substep="profile_collect",
+                        )
+                        updated_global_state["profile_confirmed"] = False
+                        state_dict["global_state"] = updated_global_state
+                        updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                        updated_chat_state["state"] = state_dict
+                        profiles_repository.update_chat_state(
+                            profile_id=profile_id,
+                            user_id=auth_user_id,
+                            chat_state=updated_chat_state,
+                        )
+                        return _chat_response(reply="Ok 🙂 Quelle est ta date de naissance ?", tool_result=None, plan=None)
+                    return _chat_response(
+                        reply="Dis-moi ce que tu veux corriger.",
+                        tool_result=_build_quick_reply_profile_fix_ui_action(),
+                        plan=None,
+                    )
+
                 if substep == "profile_confirm":
-                    correction_pending = bool(state_dict.get("profile_correction_choice_pending", False))
                     if _is_yes(payload.message):
                         state_dict.pop("profile_correction_choice_pending", None)
                         updated_global_state = _build_bank_accounts_onboarding_global_state(
@@ -3740,14 +3806,14 @@ f"Salut 👋\n\nJe suis ton assistant financier. Je t’aide à analyser tes dé
                             plan=None,
                         )
                     if _is_no(payload.message):
-                        state_dict["profile_correction_choice_pending"] = True
+                        state_dict.pop("profile_correction_choice_pending", None)
                         updated_global_state = _build_onboarding_global_state(
                             {
                                 **global_state,
                                 "profile_confirmed": False,
                             },
                             onboarding_step="profile",
-                            onboarding_substep="profile_confirm",
+                            onboarding_substep="profile_fix_select",
                         )
                         updated_global_state["profile_confirmed"] = False
                         state_dict["global_state"] = updated_global_state
@@ -3759,60 +3825,12 @@ f"Salut 👋\n\nJe suis ton assistant financier. Je t’aide à analyser tes dé
                             chat_state=updated_chat_state,
                         )
                         return _chat_response(
-                            reply=(
-                                "Pas de souci 🙂\n\nDis-moi ce que tu veux corriger :\n1) prénom/nom\n2) date de naissance\n\nRéponds simplement par 1 ou 2."
-                            ),
-                            tool_result=None,
+                            reply="Pas de souci 🙂 Dis-moi ce que tu veux corriger.",
+                            tool_result=_build_quick_reply_profile_fix_ui_action(),
                             plan=None,
                         )
-                    normalized_confirmation = _normalize_text(payload.message)
-                    if correction_pending and normalized_confirmation == "1":
-                        if hasattr(profiles_repository, "update_profile_fields"):
-                            profiles_repository.update_profile_fields(profile_id=profile_id, set_dict={"first_name": "", "last_name": ""})
-                        state_dict.pop("profile_correction_choice_pending", None)
-                        updated_global_state = _build_onboarding_global_state(
-                            {
-                                **global_state,
-                                "profile_confirmed": False,
-                            },
-                            onboarding_step="profile",
-                            onboarding_substep="profile_collect",
-                        )
-                        updated_global_state["profile_confirmed"] = False
-                        state_dict["global_state"] = updated_global_state
-                        updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
-                        updated_chat_state["state"] = state_dict
-                        profiles_repository.update_chat_state(
-                            profile_id=profile_id,
-                            user_id=auth_user_id,
-                            chat_state=updated_chat_state,
-                        )
-                        return _chat_response(reply="Ok. Quel est ton prénom et ton nom ?", tool_result=None, plan=None)
-                    if correction_pending and normalized_confirmation == "2":
-                        if hasattr(profiles_repository, "update_profile_fields"):
-                            profiles_repository.update_profile_fields(profile_id=profile_id, set_dict={"birth_date": ""})
-                        state_dict.pop("profile_correction_choice_pending", None)
-                        updated_global_state = _build_onboarding_global_state(
-                            {
-                                **global_state,
-                                "profile_confirmed": False,
-                            },
-                            onboarding_step="profile",
-                            onboarding_substep="profile_collect",
-                        )
-                        updated_global_state["profile_confirmed"] = False
-                        state_dict["global_state"] = updated_global_state
-                        updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
-                        updated_chat_state["state"] = state_dict
-                        profiles_repository.update_chat_state(
-                            profile_id=profile_id,
-                            user_id=auth_user_id,
-                            chat_state=updated_chat_state,
-                        )
-                        return _chat_response(reply="Ok. Quelle est ta date de naissance ?", tool_result=None, plan=None)
-                    if correction_pending:
-                        return _chat_response(reply="Réponds par 1 ou 2.", tool_result=None, plan=None)
                     return _chat_response(reply="Tout est correct ?", tool_result=_build_quick_reply_yes_no_ui_action(), plan=None)
+
 
             mode = global_state.get("mode")
             onboarding_step = global_state.get("onboarding_step")
