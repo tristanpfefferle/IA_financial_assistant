@@ -32,6 +32,22 @@ _DOT_DATE_PATTERN = re.compile(r"\b(\d{1,2})\.(\d{1,2})\.(\d{4})\b")
 _SLASH_DATE_PATTERN = re.compile(r"\b(\d{1,2})/(\d{1,2})/(\d{4})\b")
 _CONDITIONAL_CONNECTORS = ("mais", "sauf", "uniquement", "et au fait")
 _NON_NAME_TOKENS = {"bonjour", "salut", "hello", "coucou", "pernom", "prenom", "nom"}
+_STOPWORDS = {
+    "je",
+    "moi",
+    "suis",
+    "me",
+    "m",
+    "appelle",
+    "m'appelle",
+    "cest",
+    "c'est",
+    "prenom",
+    "prénom",
+    "nom",
+    "mon",
+    "ma",
+}
 
 
 def _to_iso(year: int, month: int, day: int) -> str | None:
@@ -71,7 +87,8 @@ def parse_profile_collect_message(message: str) -> dict[str, ParsedValue]:
         name_source = _DOT_DATE_PATTERN.sub(" ", name_source)
         name_source = _SLASH_DATE_PATTERN.sub(" ", name_source)
 
-    tokens = _ALPHA_TOKEN_PATTERN.findall(name_source)
+    raw_tokens = _ALPHA_TOKEN_PATTERN.findall(name_source)
+    tokens = [token for token in raw_tokens if token.lower() not in _STOPWORDS]
 
     first_name_value = tokens[0] if tokens else None
     last_name_value = tokens[1] if len(tokens) > 1 else None

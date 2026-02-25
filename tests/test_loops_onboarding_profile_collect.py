@@ -15,8 +15,9 @@ class _ProfilesRepoStub:
         _ = profile_id
         return {field: self.profile_fields.get(field) for field in fields}
 
-    def update_profile_fields(self, *, profile_id, set_dict):
+    def update_profile_fields(self, *, profile_id, set_dict, user_id=None):
         _ = profile_id
+        _ = user_id
         self.update_calls.append(dict(set_dict))
         self.profile_fields.update(set_dict)
         return dict(set_dict)

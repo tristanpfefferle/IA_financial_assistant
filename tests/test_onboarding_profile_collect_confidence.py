@@ -40,3 +40,10 @@ def test_parse_long_message_with_conditions_low_confidence() -> None:
 
     assert parsed["first_name"].confidence == ConfidenceLevel.LOW
     assert "contains_conditions" in parsed["first_name"].reasons
+
+
+def test_parse_natural_french_intro_extracts_first_name_high_confidence() -> None:
+    parsed = parse_profile_collect_message("Je m'appelle Paul")
+
+    assert parsed["first_name"].value == "Paul"
+    assert parsed["first_name"].confidence == ConfidenceLevel.HIGH
