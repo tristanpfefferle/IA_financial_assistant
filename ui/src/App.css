@@ -174,6 +174,31 @@ button:disabled {
 .messages {
   flex: 1;
   min-height: 0;
+  padding-bottom: 12px;
+}
+
+.scroll-to-bottom-button {
+  position: absolute;
+  right: 0.9rem;
+  bottom: 0.9rem;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.55);
+  background: rgba(15, 23, 42, 0.9);
+  color: #e2e8f0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  z-index: 2;
+  box-shadow: 0 8px 24px rgba(2, 6, 23, 0.35);
+}
+
+.scroll-to-bottom-button:hover {
+  background: rgba(30, 41, 59, 0.95);
 }
 
 .message-row {
