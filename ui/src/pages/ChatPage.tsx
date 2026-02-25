@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
-import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
+import { Virtuoso } from 'react-virtuoso'
 
 import {
   fetchPendingTransactions,
@@ -458,7 +458,6 @@ export function ChatPage({ email }: ChatPageProps) {
   const [typingCursor, setTypingCursor] = useState(0)
   const envDebugEnabled = import.meta.env.VITE_UI_DEBUG === 'true'
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(import.meta.env.VITE_API_URL), [])
-  const virtuosoRef = useRef<VirtuosoHandle>(null)
   const executedPdfMessageIdsRef = useRef<Set<string>>(new Set())
   const revealedMessageIdsRef = useRef<Set<string>>(new Set())
   const assistantQueueRef = useRef<
@@ -471,13 +470,11 @@ export function ChatPage({ email }: ChatPageProps) {
     }>
   >([])
   const isDrainingAssistantQueueRef = useRef(false)
-  const [isAtBottom, setIsAtBottom] = useState(true)
   const previousIntentMessageIdRef = useRef<string | null>(null)
   const uploadMessageGuardsRef = useRef<Set<string>>(new Set())
   const hasPromptedPendingCategorizationRef = useRef(false)
   const lastPromptedPendingCategorizationCountRef = useRef<number>(0)
   const didInitConversationRef = useRef(false)
-  const lastTypingAutoScrollAtRef = useRef(0)
 
   const pendingImportIntent = useMemo(() => findPendingImportIntent(messages), [messages])
   const isImportRequired = pendingImportIntent !== null
@@ -511,35 +508,6 @@ export function ChatPage({ email }: ChatPageProps) {
   const hasUnauthorizedError = useMemo(() => error?.includes('(401)') ?? false, [error])
   const statusBadge = debugMode ? 'Debug' : isImportRequired ? 'Onboarding' : 'Prêt'
 
-  const scrollToLatestMessage = useCallback(
-    (behavior: 'auto' | 'smooth' = 'smooth') => {
-      if (messages.length === 0) {
-        return
-      }
-
-      virtuosoRef.current?.scrollToIndex({
-        index: messages.length - 1,
-        align: 'end',
-        behavior,
-      })
-    },
-    [messages.length],
-  )
-
-  const handleTypingProgress = useCallback(() => {
-    if (!isAtBottom || messages.length === 0) {
-      return
-    }
-
-    const now = Date.now()
-    if (now - lastTypingAutoScrollAtRef.current < 100) {
-      return
-    }
-
-    lastTypingAutoScrollAtRef.current = now
-    scrollToLatestMessage('smooth')
-  }, [isAtBottom, messages.length, scrollToLatestMessage])
-
   useEffect(() => {
     if (!toast) {
       return
@@ -547,14 +515,6 @@ export function ChatPage({ email }: ChatPageProps) {
     const timeoutId = window.setTimeout(() => setToast(null), 3500)
     return () => window.clearTimeout(timeoutId)
   }, [toast])
-
-  useEffect(() => {
-    if (!isAtBottom || messages.length === 0) {
-      return
-    }
-
-    scrollToLatestMessage('smooth')
-  }, [isAtBottom, messages.length, scrollToLatestMessage])
 
   useEffect(() => {
     setDebugMode(readChatDebugMode())
@@ -839,7 +799,6 @@ export function ChatPage({ email }: ChatPageProps) {
     hasPromptedPendingCategorizationRef.current = false
     lastPromptedPendingCategorizationCountRef.current = 0
     previousIntentMessageIdRef.current = null
-    setIsAtBottom(true)
 
     for (const storageKey of CHAT_LOCAL_STORAGE_KEYS) {
       localStorage.removeItem(storageKey)
@@ -1174,9 +1133,6 @@ export function ChatPage({ email }: ChatPageProps) {
           apiBaseUrl={apiBaseUrl}
           typingCursor={typingCursor}
           revealedMessageIdsRef={revealedMessageIdsRef}
-          virtuosoRef={virtuosoRef}
-          isAtBottom={isAtBottom}
-          onAtBottomStateChange={setIsAtBottom}
           onImportNow={(intent) => {
             setIsImportDialogOpen(true)
             setAutoOpenImportPicker(true)
@@ -1204,11 +1160,7 @@ export function ChatPage({ email }: ChatPageProps) {
               )
             }
           }}
-          onScrollToBottom={() => {
-            scrollToLatestMessage('smooth')
-          }}
           onTypingDone={(_messageId) => setTypingCursor((value) => value + 1)}
-          onTypingProgress={handleTypingProgress}
         />
 
         <ComposerArea
@@ -1355,14 +1307,9 @@ type MessageListProps = {
   apiBaseUrl: string
   typingCursor: number
   revealedMessageIdsRef: RefObject<Set<string>>
-  virtuosoRef: RefObject<VirtuosoHandle | null>
-  isAtBottom: boolean
-  onAtBottomStateChange: (isBottom: boolean) => void
   onImportNow: (intent: ImportIntent) => void
-  onScrollToBottom: () => void
   onTypingDone: (messageId: string) => void
   onActiveTypingChange?: (messageId: string | null) => void
-  onTypingProgress?: () => void
 }
 
 function MessageRow({
@@ -1373,7 +1320,6 @@ function MessageRow({
   apiBaseUrl,
   revealedMessageIdsRef,
   onTypingDone,
-  onTypingProgress,
 }: {
   chatMessage: ChatMessage
   activeTypingMessageId: string | null
@@ -1382,7 +1328,6 @@ function MessageRow({
   apiBaseUrl: string
   revealedMessageIdsRef: RefObject<Set<string>>
   onTypingDone: (messageId: string) => void
-  onTypingProgress?: () => void
 }) {
   const isRevealed = revealedMessageIdsRef.current?.has(chatMessage.id) ?? false
   if (chatMessage.role === 'assistant' && !isRevealed && chatMessage.id !== activeTypingMessageId) {
@@ -1398,7 +1343,6 @@ function MessageRow({
       revealedMessageIdsRef={revealedMessageIdsRef}
       isActiveTyping={chatMessage.id === activeTypingMessageId}
       onTypingDone={onTypingDone}
-      onTypingProgress={onTypingProgress}
     />
   )
 }
@@ -1410,14 +1354,9 @@ export function MessageList({
   apiBaseUrl,
   typingCursor,
   revealedMessageIdsRef,
-  virtuosoRef,
-  isAtBottom,
-  onAtBottomStateChange,
   onImportNow,
-  onScrollToBottom,
   onTypingDone,
   onActiveTypingChange,
-  onTypingProgress,
 }: MessageListProps) {
   const activeTypingMessageId = useMemo(() => {
     const revealed = revealedMessageIdsRef.current
@@ -1440,7 +1379,6 @@ export function MessageList({
     <div className="messages-viewport card" aria-live="polite">
       {messages.length === 0 ? <p className="subtle-text">Initialisation…</p> : null}
       <Virtuoso
-        ref={virtuosoRef}
         className="messages"
         style={{ height: '100%' }}
         data={messages}
@@ -1454,12 +1392,10 @@ export function MessageList({
               apiBaseUrl={apiBaseUrl}
               revealedMessageIdsRef={revealedMessageIdsRef}
               onTypingDone={onTypingDone}
-              onTypingProgress={onTypingProgress}
             />
           </div>
         )}
-        followOutput={(atBottom) => (atBottom || isAtBottom ? 'smooth' : false)}
-        atBottomStateChange={onAtBottomStateChange}
+        followOutput={false}
         components={{
           Header: () => <div style={{ height: 16 }} />,
           Footer: () => (
@@ -1475,11 +1411,6 @@ export function MessageList({
           ),
         }}
       />
-      {!isAtBottom ? (
-        <button type="button" className="scroll-to-bottom-button" onClick={onScrollToBottom} aria-label="Revenir en bas">
-          ↓
-        </button>
-      ) : null}
     </div>
   )
 }
@@ -1498,14 +1429,12 @@ export function TypingText({
   revealedMessageIdsRef,
   isActiveTyping,
   onTypingDone,
-  onTypingProgress,
 }: {
   message: ChatMessage
   apiBaseUrl: string
   revealedMessageIdsRef: RefObject<Set<string>>
   isActiveTyping: boolean
   onTypingDone: (messageId: string) => void
-  onTypingProgress?: () => void
 }) {
   const shouldBypassTyping = shouldBypassTypingInTests()
   const completionNotifiedRef = useRef(false)
@@ -1566,10 +1495,6 @@ export function TypingText({
           return message.content.length
         }
 
-        if (next > previous) {
-          onTypingProgress?.()
-        }
-
         const delay = previous > 120 ? 14 : 20
         timerId = window.setTimeout(step, delay)
         return next
@@ -1584,7 +1509,7 @@ export function TypingText({
         window.clearTimeout(timerId)
       }
     }
-  }, [isActiveTyping, onTypingProgress, shouldBypassTyping, message.id, message.content, onTypingDone, revealedMessageIdsRef])
+  }, [isActiveTyping, shouldBypassTyping, message.id, message.content, onTypingDone, revealedMessageIdsRef])
 
 
   useEffect(() => {
@@ -1616,7 +1541,6 @@ function MessageBubble({
   revealedMessageIdsRef,
   isActiveTyping,
   onTypingDone,
-  onTypingProgress,
 }: {
   message: ChatMessage
   debugMode: boolean
@@ -1625,7 +1549,6 @@ function MessageBubble({
   revealedMessageIdsRef: RefObject<Set<string>>
   isActiveTyping: boolean
   onTypingDone: (messageId: string) => void
-  onTypingProgress?: () => void
 }) {
   const dateLabel = new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   const pdfUiRequest = toPdfUiRequest(message.toolResult)
@@ -1708,7 +1631,6 @@ function MessageBubble({
             revealedMessageIdsRef={revealedMessageIdsRef}
             isActiveTyping={isActiveTyping}
             onTypingDone={onTypingDone}
-            onTypingProgress={onTypingProgress}
           />
         ) : (
           renderContentWithLinks(message.content, apiBaseUrl)

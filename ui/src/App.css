@@ -180,24 +180,6 @@ button:disabled {
   padding: 0 1rem;
 }
 
-.scroll-to-bottom-button {
-  position: absolute;
-  right: 1rem;
-  bottom: 1rem;
-  width: 2rem;
-  height: 2rem;
-  border-radius: 999px;
-  border: 1px solid #475569;
-  background: rgba(15, 23, 42, 0.9);
-  color: #e2e8f0;
-  font-size: 1.1rem;
-  line-height: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-}
-
 .message {
   max-width: min(78%, 760px);
   margin-bottom: 0.9rem;
