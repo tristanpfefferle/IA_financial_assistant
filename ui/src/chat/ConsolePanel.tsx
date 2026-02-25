@@ -54,66 +54,81 @@ export function ConsolePanel({ uiState, isSending, onChoose, onImportFile }: Con
   }, [uiState])
 
   return (
-    <div className="console-panel" aria-label={`Console panel mode ${uiState.mode}`}>
-      {showPrompt ? <p className="subtle-text">{uiState.prompt}</p> : null}
+    <div className="action-dock" aria-label={`Console panel mode ${uiState.mode}`}>
+      <div className="console-panel">
+        {uiState.mode !== 'none' ? (
+          <div className="action-dock-header">
+            <p className="action-dock-title">{showPrompt ? uiState.prompt : 'Étape suivante'}</p>
+          </div>
+        ) : null}
 
-      {uiState.mode === 'none' ? <p className="subtle-text">Choisis une option ci-dessous pour continuer.</p> : null}
+        {uiState.mode === 'none' ? (
+          <p className="dock-idle-text">
+            <span aria-hidden="true">ℹ</span>
+            <span>À toi de jouer.</span>
+          </p>
+        ) : null}
 
-      {uiState.mode === 'yes_no' ? (
-        <div className="console-split" role="group" aria-label="Réponse oui/non">
-          <OptionButton option={uiState.yes} isSending={isSending} onChoose={onChoose} />
-          <OptionButton option={uiState.no} isSending={isSending} onChoose={onChoose} />
-        </div>
-      ) : null}
+        {uiState.mode === 'yes_no' ? (
+          <div className="console-split" role="group" aria-label="Réponse oui/non">
+            <OptionButton option={uiState.yes} isSending={isSending} onChoose={onChoose} />
+            <OptionButton option={uiState.no} isSending={isSending} onChoose={onChoose} />
+          </div>
+        ) : null}
 
-      {uiState.mode === 'single_primary' ? (
-        <OptionButton option={{ ...uiState.option, tone: 'positive' }} isSending={isSending} onChoose={onChoose} />
-      ) : null}
+        {uiState.mode === 'single_primary' ? (
+          <OptionButton option={{ ...uiState.option, tone: 'positive' }} isSending={isSending} onChoose={onChoose} />
+        ) : null}
 
-      {uiState.mode === 'options_grid' ? (
-        <div className="console-grid" role="group" aria-label="Options">
-          {uiState.options.map((option) => (
-            <OptionButton key={option.id} option={option} isSending={isSending} onChoose={onChoose} />
-          ))}
-        </div>
-      ) : null}
+        {uiState.mode === 'options_grid' ? (
+          <div className="console-grid" role="group" aria-label="Options">
+            {uiState.options.map((option) => (
+              <OptionButton key={option.id} option={option} isSending={isSending} onChoose={onChoose} />
+            ))}
+          </div>
+        ) : null}
 
-      {uiState.mode === 'options_list' ? (
-        <div className="console-list" role="group" aria-label="Options">
-          {uiState.options.map((option) => (
-            <OptionButton key={option.id} option={option} isSending={isSending} onChoose={onChoose} />
-          ))}
-        </div>
-      ) : null}
+        {uiState.mode === 'options_list' ? (
+          <div className="console-list" role="group" aria-label="Options">
+            {uiState.options.map((option) => (
+              <OptionButton key={option.id} option={option} isSending={isSending} onChoose={onChoose} />
+            ))}
+          </div>
+        ) : null}
 
-      {uiState.mode === 'import_file' ? (
-        <>
-          <button
-            type="button"
-            className="console-btn console-btn-positive"
-            disabled={isSending}
-            onClick={() => {
-              inputRef.current?.click()
-            }}
-          >
-            {uiState.buttonLabel ?? 'Importer maintenant'}
-          </button>
-          <input
-            ref={inputRef}
-            type="file"
-            hidden
-            accept={acceptedFileTypes}
-            onChange={(event) => {
-              const file = event.target.files?.[0]
-              if (file) {
-                onImportFile(file)
-              }
-              event.target.value = ''
-            }}
-          />
-          <p className="subtle-text">Formats acceptés: csv</p>
-        </>
-      ) : null}
+        {uiState.mode === 'import_file' ? (
+          <div className="import-card">
+            <p className="import-card-title">
+              <span aria-hidden="true">📂</span>
+              <span>Relevé bancaire CSV</span>
+            </p>
+            <button
+              type="button"
+              className="console-btn console-btn-positive"
+              disabled={isSending}
+              onClick={() => {
+                inputRef.current?.click()
+              }}
+            >
+              {uiState.buttonLabel ?? 'Importer maintenant'}
+            </button>
+            <input
+              ref={inputRef}
+              type="file"
+              hidden
+              accept={acceptedFileTypes}
+              onChange={(event) => {
+                const file = event.target.files?.[0]
+                if (file) {
+                  onImportFile(file)
+                }
+                event.target.value = ''
+              }}
+            />
+            <p className="subtle-text">Ajoute ton CSV pour lancer l’analyse automatique.</p>
+          </div>
+        ) : null}
+      </div>
     </div>
   )
 }
