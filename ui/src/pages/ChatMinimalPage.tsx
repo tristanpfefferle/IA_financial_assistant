@@ -33,6 +33,28 @@ function normalizeReplyValue(option: { label: string; value: string }): string {
   return option.label.trim().toLowerCase()
 }
 
+function normalizeQuickReplyDisplay(label?: string, value?: string): string {
+  const candidate = (label ?? value ?? '').trim()
+  if (!candidate) {
+    return ''
+  }
+
+  if (candidate === '✅') {
+    return 'Oui.'
+  }
+
+  if (candidate === '❌') {
+    return 'Non.'
+  }
+
+  const capitalized = candidate.charAt(0).toLocaleUpperCase('fr-CH') + candidate.slice(1)
+  if (/[.!?…]$/.test(capitalized)) {
+    return capitalized
+  }
+
+  return `${capitalized}.`
+}
+
 function mapQuickReplyOption(option: { id: string; label: string; value: string }, tone?: ConsoleOption['tone']): ConsoleOption {
   return {
     ...option,
@@ -481,7 +503,8 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
   }
 
   function handleQuickReply(value: string, label?: string) {
-    void submitMessage(value, label ?? value)
+    const displayContent = normalizeQuickReplyDisplay(label, value)
+    void submitMessage(value, displayContent || value)
   }
 
   function handleFormSubmit(formId: FormUiAction['form_id'], values: Record<string, string | string[]>) {

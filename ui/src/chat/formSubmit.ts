@@ -1,4 +1,5 @@
 import type { FormUiAction } from '../pages/chatUiRequests'
+import { formatFrenchDate } from './formatters'
 
 const UI_FORM_SUBMIT_PREFIX = '__ui_form_submit__:'
 
@@ -36,14 +37,14 @@ function buildUiFormHumanText(
   values: Record<string, string | string[]>,
   defaultText: string,
 ): string {
-  if (formUiAction.form_id === 'onboarding_profile_identity') {
+  if (formUiAction.form_id === 'onboarding_profile_identity' || formUiAction.form_id === 'onboarding_profile_name') {
     const firstName = values.first_name ?? ''
     const lastName = values.last_name ?? ''
     return `Je m'appelle ${firstName} ${lastName}.`
   }
 
   if (formUiAction.form_id === 'onboarding_profile_birth_date' || formUiAction.form_id === 'onboarding_birth_date') {
-    const birthDate = values.birth_date ?? ''
+    const birthDate = typeof values.birth_date === 'string' ? formatFrenchDate(values.birth_date) : ''
     return `Ma date de naissance est le ${birthDate}.`
   }
 
@@ -52,7 +53,30 @@ function buildUiFormHumanText(
     return `J’ai des comptes chez: ${bankAccounts}.`
   }
 
+  const yesNoText = normalizeYesNoValue(values)
+  if (yesNoText) {
+    return yesNoText
+  }
+
   return defaultText
+}
+
+function normalizeYesNoValue(values: Record<string, string | string[]>): string | null {
+  for (const value of Object.values(values)) {
+    if (typeof value !== 'string') {
+      continue
+    }
+
+    const normalized = value.trim().toLowerCase()
+    if (normalized === 'oui') {
+      return 'Oui.'
+    }
+    if (normalized === 'non') {
+      return 'Non.'
+    }
+  }
+
+  return null
 }
 
 function formatFieldValue(value: string | string[] | undefined): string {
