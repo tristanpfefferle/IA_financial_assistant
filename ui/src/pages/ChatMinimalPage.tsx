@@ -114,7 +114,7 @@ type ComposerMode = 'console' | 'form'
 type FormCardProps = {
   formUiAction: FormUiAction
   isBusy: boolean
-  onSubmitForm: (formId: FormUiAction['form_id'], values: Record<string, string>) => void
+  onSubmitForm: (formId: FormUiAction['form_id'], values: Record<string, string | string[]>) => void
 }
 
 function FormCard({ formUiAction, isBusy, onSubmitForm }: FormCardProps) {
@@ -125,44 +125,146 @@ function FormCard({ formUiAction, isBusy, onSubmitForm }: FormCardProps) {
     }
     return initialValues
   })
+  const [selectedMultiValues, setSelectedMultiValues] = useState<Record<string, Set<string>>>(() => {
+    const initialSelected: Record<string, Set<string>> = {}
+    for (const field of formUiAction.fields) {
+      if (field.type !== 'multi_select' && field.type !== 'multi-select') {
+        continue
+      }
+      const rawSelection = field.value ?? field.default_value ?? ''
+      const selectedValues = rawSelection
+        .split(',')
+        .map((item) => item.trim())
+        .filter((item) => item.length > 0)
+      initialSelected[field.id] = new Set(selectedValues)
+    }
+    return initialSelected
+  })
 
   useEffect(() => {
     const nextValues: Record<string, string> = {}
+    const nextSelected: Record<string, Set<string>> = {}
     for (const field of formUiAction.fields) {
       nextValues[field.id] = field.value ?? field.default_value ?? ''
+      if (field.type === 'multi_select' || field.type === 'multi-select') {
+        const rawSelection = field.value ?? field.default_value ?? ''
+        nextSelected[field.id] = new Set(
+          rawSelection
+            .split(',')
+            .map((item) => item.trim())
+            .filter((item) => item.length > 0),
+        )
+      }
     }
     setValues(nextValues)
+    setSelectedMultiValues(nextSelected)
   }, [formUiAction])
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    onSubmitForm(formUiAction.form_id, values)
+
+    const submitValues: Record<string, string | string[]> = { ...values }
+    for (const field of formUiAction.fields) {
+      if (field.type !== 'multi_select' && field.type !== 'multi-select') {
+        continue
+      }
+      submitValues[field.id] = Array.from(selectedMultiValues[field.id] ?? new Set<string>())
+    }
+
+    onSubmitForm(formUiAction.form_id, submitValues)
   }
+
+  useEffect(() => {
+    for (const field of formUiAction.fields) {
+      if ((field.type === 'multi_select' || field.type === 'multi-select') && (!field.options || field.options.length === 0)) {
+        console.debug('[FormCard] multi_select field without options. Falling back to text input.', {
+          formId: formUiAction.form_id,
+          fieldId: field.id,
+        })
+      }
+    }
+  }, [formUiAction])
+
+  const isRequiredMultiSelectMissing = formUiAction.fields.some((field) => {
+    if (!field.required || (field.type !== 'multi_select' && field.type !== 'multi-select')) {
+      return false
+    }
+    return (selectedMultiValues[field.id]?.size ?? 0) === 0
+  })
 
   return (
     <form className="form-card" onSubmit={handleSubmit}>
       <p className="form-title">{formUiAction.title}</p>
       <div className="form-fields">
         {formUiAction.fields.map((field) => (
-          <label key={field.id} className="form-field">
+          <div key={field.id} className="form-field">
             <span>{field.label}</span>
-            <input
-              type={field.type === 'date' ? 'date' : field.type}
-              value={values[field.id] ?? ''}
-              required={field.required}
-              placeholder={field.placeholder}
-              onChange={(event) => {
-                const nextValue = event.target.value
-                setValues((current) => ({
-                  ...current,
-                  [field.id]: nextValue,
-                }))
-              }}
-            />
-          </label>
+            {field.type === 'multi_select' || field.type === 'multi-select' ? (
+              field.options && field.options.length > 0 ? (
+                <div className="form-multi-select-grid" role="group" aria-label={field.label}>
+                  {field.options.map((option) => {
+                    const selected = selectedMultiValues[field.id]?.has(option.value) ?? false
+                    return (
+                      <label key={option.id ?? `${field.id}-${option.value}`} className="form-multi-select-option">
+                        <input
+                          type="checkbox"
+                          checked={selected}
+                          onChange={(event) => {
+                            setSelectedMultiValues((current) => {
+                              const nextSet = new Set(current[field.id] ?? [])
+                              if (event.target.checked) {
+                                nextSet.add(option.value)
+                              } else {
+                                nextSet.delete(option.value)
+                              }
+                              return {
+                                ...current,
+                                [field.id]: nextSet,
+                              }
+                            })
+                          }}
+                        />
+                        <span>{option.label}</span>
+                      </label>
+                    )
+                  })}
+                </div>
+              ) : (
+                <input
+                  id={`form-field-${field.id}`}
+                  type="text"
+                  value={values[field.id] ?? ''}
+                  required={field.required}
+                  placeholder={field.placeholder}
+                  onChange={(event) => {
+                    const nextValue = event.target.value
+                    setValues((current) => ({
+                      ...current,
+                      [field.id]: nextValue,
+                    }))
+                  }}
+                />
+              )
+            ) : (
+              <input
+                id={`form-field-${field.id}`}
+                type={field.type === 'date' ? 'date' : field.type}
+                value={values[field.id] ?? ''}
+                required={field.required}
+                placeholder={field.placeholder}
+                onChange={(event) => {
+                  const nextValue = event.target.value
+                  setValues((current) => ({
+                    ...current,
+                    [field.id]: nextValue,
+                  }))
+                }}
+              />
+            )}
+          </div>
         ))}
       </div>
-      <button type="submit" disabled={isBusy}>
+      <button type="submit" disabled={isBusy || isRequiredMultiSelectMissing}>
         {formUiAction.submit_label || 'Continuer'}
       </button>
     </form>
@@ -382,7 +484,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
     void submitMessage(value, label ?? value)
   }
 
-  function handleFormSubmit(formId: FormUiAction['form_id'], values: Record<string, string>) {
+  function handleFormSubmit(formId: FormUiAction['form_id'], values: Record<string, string | string[]>) {
     if (!formUiAction) {
       return
     }

@@ -14,9 +14,11 @@ const UI_FORM_SUBMIT_PREFIX = '__ui_form_submit__:'
  */
 export function buildFormSubmitPayload(
   formUiAction: FormUiAction,
-  values: Record<string, string>,
+  values: Record<string, string | string[]>,
 ): { humanText: string; messageToBackend: string } {
-  const backendHumanText = formUiAction.fields.map((field) => `${field.label}: ${values[field.id] ?? ''}`).join(', ')
+  const backendHumanText = formUiAction.fields
+    .map((field) => `${field.label}: ${formatFieldValue(values[field.id])}`)
+    .join(', ')
   const humanText = buildUiFormHumanText(formUiAction, values, backendHumanText)
   const messageToBackend = `${backendHumanText}\n${UI_FORM_SUBMIT_PREFIX}${JSON.stringify({
     form_id: formUiAction.form_id,
@@ -31,7 +33,7 @@ export function buildFormSubmitPayload(
 
 function buildUiFormHumanText(
   formUiAction: FormUiAction,
-  values: Record<string, string>,
+  values: Record<string, string | string[]>,
   defaultText: string,
 ): string {
   if (formUiAction.form_id === 'onboarding_profile_identity') {
@@ -46,9 +48,16 @@ function buildUiFormHumanText(
   }
 
   if (formUiAction.form_id === 'onboarding_bank_accounts') {
-    const bankAccounts = values.bank_accounts ?? ''
-    return `J'ai des comptes chez ${bankAccounts}.`
+    const bankAccounts = formatFieldValue(values.bank_accounts)
+    return `J’ai des comptes chez: ${bankAccounts}.`
   }
 
   return defaultText
+}
+
+function formatFieldValue(value: string | string[] | undefined): string {
+  if (Array.isArray(value)) {
+    return value.join(', ')
+  }
+  return value ?? ''
 }
