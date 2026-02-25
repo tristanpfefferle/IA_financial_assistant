@@ -49,8 +49,7 @@ function buildUiFormHumanText(
   }
 
   if (formUiAction.form_id === 'onboarding_bank_accounts') {
-    const bankAccounts = formatFieldValue(values.bank_accounts)
-    return `J’ai des comptes chez: ${bankAccounts}.`
+    return buildBankAccountsHumanText(formUiAction, values)
   }
 
   const yesNoText = normalizeYesNoValue(values)
@@ -84,4 +83,38 @@ function formatFieldValue(value: string | string[] | undefined): string {
     return value.join(', ')
   }
   return value ?? ''
+}
+
+function buildBankAccountsHumanText(
+  formUiAction: FormUiAction,
+  values: Record<string, string | string[]>,
+): string {
+  const multiSelectField = formUiAction.fields.find((field) => field.type === 'multi_select' || field.type === 'multi-select')
+  if (!multiSelectField) {
+    return 'Je n’ai pas encore choisi mes banques.'
+  }
+
+  const selectedValues = values[multiSelectField.id]
+  if (!Array.isArray(selectedValues) || selectedValues.length === 0) {
+    return 'Je n’ai pas encore choisi mes banques.'
+  }
+
+  const labels = selectedValues.map((selectedValue) => {
+    const option = multiSelectField.options?.find((candidate) => candidate.value === selectedValue)
+    return option?.label ?? selectedValue
+  })
+
+  return `J’ai des comptes chez ${formatFrenchList(labels)}.`
+}
+
+function formatFrenchList(items: string[]): string {
+  if (items.length <= 1) {
+    return items[0] ?? ''
+  }
+
+  if (items.length === 2) {
+    return `${items[0]} et ${items[1]}`
+  }
+
+  return `${items.slice(0, -1).join(', ')} et ${items[items.length - 1]}`
 }
