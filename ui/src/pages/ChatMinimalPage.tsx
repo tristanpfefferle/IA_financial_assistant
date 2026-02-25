@@ -1,13 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
-import { hardResetProfile, sendChatMessage } from '../api/agentApi'
+import { hardResetProfile, importReleves, sendChatMessage } from '../api/agentApi'
 import { ConsolePanel } from '../chat/ConsolePanel'
 import { buildFormSubmitPayload } from '../chat/formSubmit'
 import type { ConsoleOption, ConsoleUiState } from '../chat/types'
 import { supabase } from '../lib/supabaseClient'
 import type { FormUiAction } from './chatUiRequests'
-import { toFormUiAction, toQuickReplyYesNoUiAction } from './chatUiRequests'
+import {
+  toFormUiAction,
+  toLegacyImportUiRequest,
+  toOpenImportPanelUiAction,
+  toQuickReplyYesNoUiAction,
+} from './chatUiRequests'
 
 type ChatMessage = {
   id: string
@@ -70,7 +75,7 @@ function extractPrompt(toolResult: Record<string, unknown> | null | undefined): 
   return typeof toolResult.prompt === 'string' && toolResult.prompt.trim().length > 0 ? toolResult.prompt : undefined
 }
 
-function extractConsoleState(messages: ChatMessage[]): ConsoleUiState {
+function extractConsoleState(messages: ChatMessage[], isSending: boolean): ConsoleUiState {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index]
     if (message.role !== 'assistant') {
@@ -124,6 +129,20 @@ function extractConsoleState(messages: ChatMessage[]): ConsoleUiState {
 
     if (toFormUiAction(message.toolResult)) {
       return { mode: 'none' }
+    }
+
+    if (!isSending) {
+      const openImportPanel = toOpenImportPanelUiAction(message.toolResult)
+      const legacyImportRequest = toLegacyImportUiRequest(message.toolResult)
+      const acceptedTypes = openImportPanel?.accepted_types ?? legacyImportRequest?.accepted_types ?? ['csv']
+      if (openImportPanel || legacyImportRequest) {
+        return {
+          mode: 'import_file',
+          prompt: extractPrompt(message.toolResult) ?? 'Sélectionne ton fichier CSV.',
+          acceptedTypes,
+          buttonLabel: 'Importer maintenant',
+        }
+      }
     }
 
     break
@@ -307,7 +326,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
   const [headerMessage, setHeaderMessage] = useState<string | null>(null)
   const [submitErrorMessage, setSubmitErrorMessage] = useState<string | null>(null)
 
-  const consoleState = useMemo(() => extractConsoleState(messages), [messages])
+  const consoleState = useMemo(() => extractConsoleState(messages, isSending), [isSending, messages])
   const latestAssistant = useMemo(() => [...messages].reverse().find((message) => message.role === 'assistant') ?? null, [messages])
   const formUiAction = useMemo(() => toFormUiAction(latestAssistant?.toolResult), [latestAssistant])
   const composerMode: ComposerMode = formUiAction ? 'form' : 'console'
@@ -504,6 +523,101 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
     }
   }
 
+  async function toBase64(file: File): Promise<string> {
+    const bytes = await file.arrayBuffer()
+    let binary = ''
+    const chunkSize = 0x8000
+    const uint8Array = new Uint8Array(bytes)
+    for (let index = 0; index < uint8Array.length; index += chunkSize) {
+      const chunk = uint8Array.subarray(index, index + chunkSize)
+      binary += String.fromCharCode(...chunk)
+    }
+    return btoa(binary)
+  }
+
+  async function handleImportFile(file: File) {
+    if (isSending) {
+      return
+    }
+
+    setSubmitErrorMessage(null)
+    setMessages((current) => [
+      ...current,
+      {
+        id: createMessageId(),
+        role: 'user',
+        content: 'J’importe mon relevé bancaire.',
+        createdAt: Date.now(),
+      },
+    ])
+
+    setIsSending(true)
+    setIsAssistantTyping(true)
+
+    try {
+      const contentBase64 = await toBase64(file)
+      const importResult = await importReleves({
+        files: [
+          {
+            filename: file.name,
+            content_base64: contentBase64,
+          },
+        ],
+      })
+
+      if ('type' in importResult && importResult.type === 'clarification') {
+        setMessages((current) => [
+          ...current,
+          {
+            id: createMessageId(),
+            role: 'assistant',
+            content: importResult.message,
+            createdAt: Date.now(),
+          },
+        ])
+        return
+      }
+
+      setMessages((current) => [
+        ...current,
+        {
+          id: createMessageId(),
+          role: 'assistant',
+          content: 'Import terminé.',
+          createdAt: Date.now(),
+          toolResult: importResult as unknown as Record<string, unknown>,
+        },
+      ])
+
+      const response = await sendChatMessage('', { debug: debugMode, requestGreeting: true })
+      setMessages((current) => [
+        ...current,
+        {
+          id: createMessageId(),
+          role: 'assistant',
+          content: response.reply,
+          createdAt: Date.now(),
+          toolResult: response.tool_result,
+        },
+      ])
+    } catch (error) {
+      const content = error instanceof Error ? error.message : 'Erreur inconnue.'
+      setSubmitErrorMessage(content)
+      setMessages((current) => [
+        ...current,
+        {
+          id: createMessageId(),
+          role: 'assistant',
+          content,
+          createdAt: Date.now(),
+        },
+      ])
+    } finally {
+      setIsSending(false)
+      setIsAssistantTyping(false)
+    }
+  }
+
   function handleQuickReply(value: string, label?: string) {
     const displayContent = normalizeQuickReplyDisplay(label, value)
     void submitMessage(value, displayContent || value, true)
@@ -652,7 +766,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
               {composerMode === 'form' ? (
                 formUiAction ? <FormCard formUiAction={formUiAction} isBusy={isSending || isAssistantTyping} onSubmitForm={handleFormSubmit} /> : null
               ) : (
-                <ConsolePanel uiState={consoleState} isSending={isSending} onChoose={handleQuickReply} />
+                <ConsolePanel uiState={consoleState} isSending={isSending} onChoose={handleQuickReply} onImportFile={handleImportFile} />
               )}
             </div>
             {submitErrorMessage ? <p className="subtle-text">{submitErrorMessage}</p> : null}
