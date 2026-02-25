@@ -1340,16 +1340,10 @@ export function MessageList({
 }: MessageListProps) {
   const virtuosoRef = useRef<VirtuosoHandle | null>(null)
   const viewportRef = useRef<HTMLDivElement | null>(null)
-  const initialIndexRef = useRef<number | null>(null)
+  const didInitialScrollRef = useRef(false)
   const [isAtBottom, setIsAtBottom] = useState(true)
   const [debugViewportMetrics, setDebugViewportMetrics] = useState<string | null>(null)
   const uiDebugEnabled = import.meta.env.VITE_UI_DEBUG === 'true' || import.meta.env.VITE_UI_DEBUG === '1'
-
-  useEffect(() => {
-    if (initialIndexRef.current === null && messages.length > 0) {
-      initialIndexRef.current = messages.length - 1
-    }
-  }, [messages.length])
 
   const canScrollToBottom = messages.length > 0
 
@@ -1382,6 +1376,13 @@ export function MessageList({
 
     scrollToBottomWithRetry('smooth')
   }
+
+  useEffect(() => {
+    if (!didInitialScrollRef.current && messages.length > 0) {
+      didInitialScrollRef.current = true
+      requestAnimationFrame(() => scrollToBottomWithRetry('auto'))
+    }
+  }, [messages.length])
 
   useEffect(() => {
     if (!uiDebugEnabled) {
@@ -1422,17 +1423,22 @@ export function MessageList({
         data={messages}
         atBottomStateChange={(atBottom) => setIsAtBottom(atBottom)}
         increaseViewportBy={{ top: 200, bottom: 400 }}
-        initialTopMostItemIndex={initialIndexRef.current ?? undefined}
-        itemContent={(_index, chatMessage) => (
-          <div className="message-row">
-            <MessageRow
-              message={chatMessage}
-              debugMode={debugMode}
-              onImportNow={onImportNow}
-              apiBaseUrl={apiBaseUrl}
-            />
-          </div>
-        )}
+        itemContent={(_index, chatMessage) => {
+          if (!chatMessage) {
+            return null
+          }
+
+          return (
+            <div className="message-row">
+              <MessageRow
+                message={chatMessage}
+                debugMode={debugMode}
+                onImportNow={onImportNow}
+                apiBaseUrl={apiBaseUrl}
+              />
+            </div>
+          )
+        }}
         followOutput={(atBottom) => (atBottom ? 'smooth' : false)}
         components={{
           Header: () => <div style={{ height: 16 }} />,
