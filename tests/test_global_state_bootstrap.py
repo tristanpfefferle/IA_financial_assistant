@@ -220,8 +220,8 @@ def test_profile_confirm_no_moves_to_profile_fix_select(monkeypatch) -> None:
     assert payload["tool_result"]["type"] == "ui_action"
     assert payload["tool_result"]["action"] == "quick_replies"
     assert [opt["label"] for opt in payload["tool_result"]["options"]] == [
-        "Corriger prénom/nom",
-        "Corriger date de naissance",
+        "Prénom / Nom",
+        "Date de naissance",
     ]
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
     assert persisted["onboarding_substep"] == "profile_fix_select"
@@ -681,7 +681,7 @@ def test_bootstrap_profile_incomplete_routes_to_profile_collect(monkeypatch) -> 
     assert response.status_code == 200
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
     assert persisted["onboarding_step"] == "profile"
-    assert persisted["onboarding_substep"] == "profile_collect"
+    assert persisted["onboarding_substep"] == "profile_intro"
     assert loop.called is False
 
 
@@ -931,7 +931,7 @@ def test_onboarding_profile_get_profile_fields_failure_does_not_crash(monkeypatc
                 "global_state": {
                     "mode": "onboarding",
                     "onboarding_step": "profile",
-                    "onboarding_substep": "profile_collect",
+                    "onboarding_substep": "profile_intro",
                 }
             }
         },
@@ -942,7 +942,7 @@ def test_onboarding_profile_get_profile_fields_failure_does_not_crash(monkeypatc
     response = client.post("/agent/chat", json={"message": "Salut"}, headers=_auth_headers())
 
     assert response.status_code == 200
-    assert "prénom" in response.json()["reply"].lower()
+    assert "assistant financier" in response.json()["reply"].lower()
 
 
 class _LoopWithoutGlobal:
@@ -1026,9 +1026,9 @@ def test_free_chat_re_gates_to_profile_when_profile_missing(monkeypatch) -> None
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
     assert persisted["mode"] == "onboarding"
     assert persisted["onboarding_step"] == "profile"
-    assert persisted["onboarding_substep"] == "profile_collect"
-    assert response.json()["reply"] == "Renseigne ton prénom et ton nom."
-    assert response.json()["tool_result"]["form_id"] == "onboarding_profile_name"
+    assert persisted["onboarding_substep"] == "profile_intro"
+    assert "assistant financier" in response.json()["reply"].lower()
+    assert response.json()["tool_result"]["options"] == [{"id": "start", "label": "Allons-y", "value": "allons_y"}]
 
 
 def test_profile_re_gate_message_asks_only_for_name(monkeypatch) -> None:
@@ -1053,8 +1053,7 @@ def test_profile_re_gate_message_asks_only_for_name(monkeypatch) -> None:
 
     assert response.status_code == 200
     reply = response.json()["reply"].lower()
-    assert "prénom" in reply
-    assert "nom" in reply
+    assert "assistant financier" in reply
     assert "date de naissance" not in reply
 
 
@@ -1082,7 +1081,7 @@ def test_onboarding_import_re_gates_to_profile_when_profile_missing(monkeypatch)
     assert loop.called is False
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
     assert persisted["onboarding_step"] == "profile"
-    assert persisted["onboarding_substep"] == "profile_collect"
+    assert persisted["onboarding_substep"] == "profile_intro"
 
 
 def test_profile_check_is_skipped_when_repo_has_no_get_profile_fields(monkeypatch) -> None:
@@ -1139,7 +1138,7 @@ def test_profile_confirmed_is_reset_when_profile_missing(monkeypatch) -> None:
     assert loop.called is False
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
     assert persisted["onboarding_step"] == "profile"
-    assert persisted["onboarding_substep"] == "profile_collect"
+    assert persisted["onboarding_substep"] == "profile_intro"
     assert persisted["profile_confirmed"] is False
 
 
@@ -1249,7 +1248,7 @@ def test_onboarding_profile_non_profile_message_returns_help_and_skips_loop(monk
     response = client.post("/agent/chat", json={"message": "Liste mes catégories"}, headers=_auth_headers())
 
     assert response.status_code == 200
-    assert "prénom" in response.json()["reply"].lower()
+    assert response.json()["reply"] == "Renseigne ton prénom et ton nom."
     assert loop.called is False
 
 
@@ -1507,7 +1506,7 @@ def test_onboarding_request_greeting_returns_intro_without_user_message(monkeypa
                 "global_state": {
                     "mode": "onboarding",
                     "onboarding_step": "profile",
-                    "onboarding_substep": "profile_collect",
+                    "onboarding_substep": "profile_intro",
                 }
             }
         },
@@ -1527,9 +1526,97 @@ def test_onboarding_request_greeting_returns_intro_without_user_message(monkeypa
     assert "salut" in response.json()["reply"].lower()
     assert "assistant financier" in response.json()["reply"].lower()
     assert "3 étapes" in response.json()["reply"]
-    assert "Quel est ton prénom et ton nom ?" in response.json()["reply"]
+    assert response.json()["tool_result"]["options"] == [{"id": "start", "label": "Allons-y", "value": "allons_y"}]
     assert "avant de continuer" not in response.json()["reply"].lower()
     assert loop.called is False
+
+
+def test_profile_intro_allons_y_returns_name_form(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "onboarding",
+                    "onboarding_step": "profile",
+                    "onboarding_substep": "profile_intro",
+                }
+            }
+        },
+        profile_fields={"first_name": "", "last_name": "", "birth_date": ""},
+    )
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
+
+    response = client.post("/agent/chat", json={"message": "allons_y"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["tool_result"]["form_id"] == "onboarding_profile_name"
+    assert repo.update_calls[-1]["chat_state"]["state"]["global_state"]["onboarding_substep"] == "profile_collect"
+
+
+def test_profile_fix_name_submit_keeps_birth_date_and_returns_recap(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "onboarding",
+                    "onboarding_step": "profile",
+                    "onboarding_substep": "profile_confirm",
+                }
+            }
+        },
+        profile_fields={"first_name": "Ada", "last_name": "Lovelace", "birth_date": "1815-12-10"},
+    )
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
+
+    client.post("/agent/chat", json={"message": "non"}, headers=_auth_headers())
+    client.post("/agent/chat", json={"message": "corriger_nom"}, headers=_auth_headers())
+    submit = client.post(
+        "/agent/chat",
+        json={
+            "message": '__ui_form_submit__:{"form_id":"onboarding_profile_name","values":{"first_name":"Augusta","last_name":"King"}}'
+        },
+        headers=_auth_headers(),
+    )
+
+    assert submit.status_code == 200
+    payload = submit.json()
+    assert payload["tool_result"]["action"] == "quick_replies"
+    assert "Quelle est ta date de naissance ?" not in payload["reply"]
+    assert "Date de naissance: 10 décembre 1815" in payload["reply"]
+
+
+def test_profile_recap_formats_birth_date_in_french(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "onboarding",
+                    "onboarding_step": "profile",
+                    "onboarding_substep": "profile_collect",
+                }
+            }
+        },
+        profile_fields={"first_name": "Ada", "last_name": "Lovelace", "birth_date": ""},
+    )
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
+
+    response = client.post(
+        "/agent/chat",
+        json={
+            "message": '__ui_form_submit__:{"form_id":"onboarding_profile_birth_date","values":{"birth_date":"1995-05-10"}}'
+        },
+        headers=_auth_headers(),
+    )
+
+    assert response.status_code == 200
+    assert "Date de naissance: 10 mai 1995" in response.json()["reply"]
 
 
 
@@ -1709,14 +1796,14 @@ def test_profile_confirmation_no_returns_profile_fix_quick_replies(monkeypatch) 
     response = client.post("/agent/chat", json={"message": "❌"}, headers=_auth_headers())
     payload = response.json()
 
-    assert payload["reply"] == "Pas de souci 🙂 Dis-moi ce que tu veux corriger."
+    assert payload["reply"] == "Pas de souci 🙂 Qu’est-ce que tu veux corriger ?"
     assert "Réponds simplement par 1 ou 2" not in payload["reply"]
     assert payload["tool_result"] is not None
     assert payload["tool_result"]["type"] == "ui_action"
     assert payload["tool_result"]["action"] == "quick_replies"
     assert [opt["label"] for opt in payload["tool_result"]["options"]] == [
-        "Corriger prénom/nom",
-        "Corriger date de naissance",
+        "Prénom / Nom",
+        "Date de naissance",
     ]
     assert [opt["value"] for opt in payload["tool_result"]["options"]] == ["corriger_nom", "corriger_date"]
 
@@ -1745,7 +1832,7 @@ def test_profile_fix_select_name_resets_only_names(monkeypatch) -> None:
     client.post("/agent/chat", json={"message": "non"}, headers=_auth_headers())
     second = client.post("/agent/chat", json={"message": "corriger_nom"}, headers=_auth_headers())
 
-    assert {"first_name": "", "last_name": ""} in repo.profile_update_calls
+    assert {"first_name": "", "last_name": ""} not in repo.profile_update_calls
     assert repo.profile_fields["birth_date"] == "1815-12-10"
     assert second.json()["reply"] == "Renseigne ton prénom et ton nom."
     assert second.json()["tool_result"]["form_id"] == "onboarding_profile_name"
@@ -1772,7 +1859,7 @@ def test_profile_fix_select_birth_date_resets_only_birth_date(monkeypatch) -> No
     client.post("/agent/chat", json={"message": "non"}, headers=_auth_headers())
     second = client.post("/agent/chat", json={"message": "corriger_date"}, headers=_auth_headers())
 
-    assert {"birth_date": ""} in repo.profile_update_calls
+    assert {"birth_date": ""} not in repo.profile_update_calls
     assert repo.profile_fields["first_name"] == "Ada"
     assert repo.profile_fields["last_name"] == "Lovelace"
     assert second.json()["reply"] == "Quelle est ta date de naissance ?"
