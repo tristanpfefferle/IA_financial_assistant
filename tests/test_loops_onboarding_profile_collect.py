@@ -37,7 +37,7 @@ def test_collect_waits_for_structured_profile_card() -> None:
 
     assert reply.handled is True
     assert repo.update_calls == []
-    assert "carte profil" in reply.reply
+    assert reply.reply == "Renseigne ton prénom et ton nom."
     assert isinstance(reply.updates.get("global_state"), dict)
     assert reply.updates["global_state"]["onboarding_substep"] == "profile_collect"
 
@@ -67,4 +67,4 @@ def test_expected_prompt_for_birth_date_is_form_prompt() -> None:
 
     prompt = loop.expected_prompt_for_help(services={"profiles_repository": repo, "state": {}}, profile_id=uuid4())
 
-    assert "carte profil" in prompt
+    assert prompt == "Quelle est ta date de naissance ?"

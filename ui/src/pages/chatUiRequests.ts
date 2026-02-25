@@ -23,6 +23,24 @@ export type QuickReplyYesNoUiAction = {
   }>
 }
 
+
+export type FormUiField = {
+  id: string
+  label: string
+  type: 'text' | 'date'
+  required: boolean
+  placeholder?: string
+}
+
+export type FormUiAction = {
+  type: 'ui_action'
+  action: 'form'
+  form_id: 'onboarding_profile_name' | 'onboarding_profile_birth_date'
+  title: string
+  fields: FormUiField[]
+  submit_label: string
+}
+
 function parseQuickReplies(value: unknown): QuickReplyYesNoUiAction | null {
   if (!Array.isArray(value)) {
     return null
@@ -185,4 +203,66 @@ export function claimPdfUiRequestExecution(
 
   executedMessageIds.add(messageId)
   return request
+}
+
+
+export function toFormUiAction(value: unknown): FormUiAction | null {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+
+  const record = value as Record<string, unknown>
+  if (record.type !== 'ui_action' || record.action !== 'form') {
+    return null
+  }
+
+  const formId = record.form_id
+  const title = record.title
+  const submitLabel = record.submit_label
+  const fields = record.fields
+  if (
+    (formId !== 'onboarding_profile_name' && formId !== 'onboarding_profile_birth_date')
+    || typeof title !== 'string'
+    || typeof submitLabel !== 'string'
+    || !Array.isArray(fields)
+  ) {
+    return null
+  }
+
+  const parsedFields = fields
+    .map((field) => {
+      if (!field || typeof field !== 'object') {
+        return null
+      }
+      const raw = field as Record<string, unknown>
+      if (
+        typeof raw.id !== 'string'
+        || typeof raw.label !== 'string'
+        || (raw.type !== 'text' && raw.type !== 'date')
+        || typeof raw.required !== 'boolean'
+      ) {
+        return null
+      }
+      return {
+        id: raw.id,
+        label: raw.label,
+        type: raw.type,
+        required: raw.required,
+        placeholder: typeof raw.placeholder === 'string' ? raw.placeholder : undefined,
+      }
+    })
+    .filter((field): field is FormUiField => field !== null)
+
+  if (parsedFields.length === 0) {
+    return null
+  }
+
+  return {
+    type: 'ui_action',
+    action: 'form',
+    form_id: formId,
+    title,
+    fields: parsedFields,
+    submit_label: submitLabel,
+  }
 }

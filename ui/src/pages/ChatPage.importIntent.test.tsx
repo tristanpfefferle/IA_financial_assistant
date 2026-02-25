@@ -385,6 +385,132 @@ describe('ChatPage import intent rendering', () => {
     expect(container.textContent).toContain('✅')
   })
 
+
+  it('renders onboarding name form card and submits deterministic special message', async () => {
+    sendChatMessage
+      .mockResolvedValueOnce({
+        reply: 'Renseigne ton prénom et ton nom.',
+        tool_result: {
+          type: 'ui_action',
+          action: 'form',
+          form_id: 'onboarding_profile_name',
+          title: 'Ton profil',
+          fields: [
+            { id: 'first_name', label: 'Prénom', type: 'text', required: true, placeholder: 'Tristan' },
+            { id: 'last_name', label: 'Nom', type: 'text', required: true, placeholder: 'Pfefferlé' },
+          ],
+          submit_label: 'Valider',
+        },
+        plan: null,
+      })
+      .mockResolvedValueOnce({
+        reply: 'Quelle est ta date de naissance ?',
+        tool_result: null,
+        plan: null,
+      })
+
+    await act(async () => {
+      createRoot(container).render(<ChatPage email="user@example.com" />)
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    const startButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.includes('Commencer'))
+    await act(async () => {
+      startButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    const firstNameInput = Array.from(container.querySelectorAll('input')).find((input) => input.getAttribute('placeholder') === 'Tristan') as HTMLInputElement
+    const lastNameInput = Array.from(container.querySelectorAll('input')).find((input) => input.getAttribute('placeholder') === 'Pfefferlé') as HTMLInputElement
+    expect(firstNameInput).toBeTruthy()
+    expect(lastNameInput).toBeTruthy()
+
+    const chatTextbox = container.querySelector('textarea[aria-label="Message"]') as HTMLTextAreaElement
+    expect(chatTextbox.disabled).toBe(true)
+
+    await act(async () => {
+      firstNameInput.value = 'Tristan'
+      firstNameInput.dispatchEvent(new Event('change', { bubbles: true }))
+      lastNameInput.value = 'Pfefferlé'
+      lastNameInput.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+
+    const submitButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.trim() === 'Valider')
+    await act(async () => {
+      submitButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(sendChatMessage).toHaveBeenNthCalledWith(
+      2,
+      '__ui_form_submit__:{"form_id":"onboarding_profile_name","values":{"first_name":"Tristan","last_name":"Pfefferlé"}}',
+      { debug: false },
+    )
+  })
+
+  it('renders onboarding birth-date form card and submits deterministic special message', async () => {
+    sendChatMessage
+      .mockResolvedValueOnce({
+        reply: 'Quelle est ta date de naissance ?',
+        tool_result: {
+          type: 'ui_action',
+          action: 'form',
+          form_id: 'onboarding_profile_birth_date',
+          title: 'Date de naissance',
+          fields: [{ id: 'birth_date', label: 'Date de naissance', type: 'date', required: true }],
+          submit_label: 'Valider',
+        },
+        plan: null,
+      })
+      .mockResolvedValueOnce({
+        reply: 'Parfait ✅',
+        tool_result: null,
+        plan: null,
+      })
+
+    await act(async () => {
+      createRoot(container).render(<ChatPage email="user@example.com" />)
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    const startButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.includes('Commencer'))
+    await act(async () => {
+      startButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    const birthDateInput = container.querySelector('input[type="date"]') as HTMLInputElement
+    expect(birthDateInput).toBeTruthy()
+
+    const chatTextbox = container.querySelector('textarea[aria-label="Message"]') as HTMLTextAreaElement
+    expect(chatTextbox.disabled).toBe(true)
+
+    await act(async () => {
+      birthDateInput.value = '2001-12-22'
+      birthDateInput.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+
+    const submitButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.trim() === 'Valider')
+    await act(async () => {
+      submitButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(sendChatMessage).toHaveBeenNthCalledWith(
+      2,
+      '__ui_form_submit__:{"form_id":"onboarding_profile_birth_date","values":{"birth_date":"2001-12-22"}}',
+      { debug: false },
+    )
+  })
+
   it('shows local upload message before assistant import acknowledgement', async () => {
     vi.useFakeTimers()
     try {
