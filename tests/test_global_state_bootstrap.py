@@ -2218,6 +2218,32 @@ def test_report_offer_flow_no_keeps_state(monkeypatch) -> None:
     assert response.json()["reply"] == "Ok 🙂 Dis-moi quand tu veux le voir."
     assert repo.update_calls == []
 
+
+
+def test_reconnect_onboarding_substep_without_loop_answers_expected_question(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "onboarding",
+                    "onboarding_step": "profile",
+                    "onboarding_substep": "profile_confirm",
+                }
+            }
+        },
+        profile_fields={"first_name": "Ada", "last_name": "Lovelace", "birth_date": "1815-12-10"},
+    )
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
+
+    response = client.post("/agent/chat", json={"message": "Quelle question ?"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    reply = response.json()["reply"]
+    assert "Confirme ton profil" in reply
+    assert "On continue d'abord cette étape" not in reply
+
 def test_loop_persistence_roundtrip_in_chat_state(monkeypatch) -> None:
     _mock_auth(monkeypatch)
     repo = _Repo(

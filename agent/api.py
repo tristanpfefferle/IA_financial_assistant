@@ -38,6 +38,7 @@ from agent.onboarding.profile_recap import build_profile_recap_reply
 from agent.loops import build_default_registry
 from agent.loops.registry import LoopRegistry
 from agent.loops.router import parse_loop_context, route_message, serialize_loop_context
+from agent.loops.types import LoopContext
 from backend.factory import build_backend_tool_service
 from backend.services.classification.decision_engine import normalize_merchant_alias
 from backend.services.releves_import.bank_detector import detect_bank_from_csv_bytes
@@ -391,6 +392,34 @@ _ONBOARDING_SUBSTEP_TO_LOOP_ID: dict[str, str] = {
     "report_offer": "onboarding.report",
     "report_sent": "onboarding.report",
 }
+
+_ONBOARDING_ROUTEABLE_SUBSTEPS: frozenset[str] = frozenset(_ONBOARDING_SUBSTEP_TO_LOOP_ID.keys())
+
+
+def _build_implicit_loop_context(
+    *,
+    global_state: dict[str, Any] | None,
+    state_dict: dict[str, Any],
+    registry: LoopRegistry,
+) -> LoopContext | None:
+    """Infer an active loop context from onboarding global state when loop context is missing."""
+
+    if not _is_valid_global_state(global_state):
+        return None
+    if global_state.get("mode") != "onboarding":
+        return None
+
+    onboarding_substep = global_state.get("onboarding_substep")
+    if not isinstance(onboarding_substep, str):
+        return None
+
+    mapped_loop_id = _ONBOARDING_SUBSTEP_TO_LOOP_ID.get(onboarding_substep)
+    if not isinstance(mapped_loop_id, str):
+        return None
+
+    mapped_loop = registry.get(mapped_loop_id)
+    blocking = mapped_loop.blocking if mapped_loop is not None else True
+    return LoopContext(loop_id=mapped_loop_id, step="active", data=dict(state_dict or {}), blocking=blocking)
 
 
 def _compute_debug_loop(
@@ -2880,12 +2909,23 @@ def agent_chat(
                     plan=None,
                 )
 
-        current_loop = parse_loop_context(state_dict.get("loop"))
+        persisted_loop = parse_loop_context(state_dict.get("loop"))
+        current_loop = persisted_loop
+        used_implicit_loop = False
+        if current_loop is None:
+            current_loop = _build_implicit_loop_context(
+                global_state=global_state,
+                state_dict=state_dict,
+                registry=registry,
+            )
+            used_implicit_loop = current_loop is not None
+
+        onboarding_substep = global_state.get("onboarding_substep") if _is_valid_global_state(global_state) else None
         should_route_loop = current_loop is not None or (
             _is_valid_global_state(global_state)
             and global_state.get("mode") == "onboarding"
-            and global_state.get("onboarding_step") == "profile"
-            and global_state.get("onboarding_substep") == "profile_collect"
+            and isinstance(onboarding_substep, str)
+            and onboarding_substep in _ONBOARDING_ROUTEABLE_SUBSTEPS
         )
         if should_route_loop:
             tool_router = get_tool_router()
@@ -2907,7 +2947,11 @@ def agent_chat(
             )
 
             resolved_loop = loop_reply.next_loop if loop_reply.handled else current_loop
+            if used_implicit_loop and not loop_reply.handled:
+                resolved_loop = None
             state_updates = loop_reply.updates if isinstance(loop_reply.updates, dict) else {}
+            if used_implicit_loop and resolved_loop == current_loop and not state_updates:
+                resolved_loop = None
             if resolved_loop is None:
                 state_dict.pop("loop", None)
             else:
@@ -2939,7 +2983,7 @@ def agent_chat(
             should_persist_loop_state = (
                 should_persist_global_state
                 or bool(state_updates)
-                or resolved_loop != current_loop
+                or resolved_loop != persisted_loop
             )
             if should_persist_loop_state:
                 updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
