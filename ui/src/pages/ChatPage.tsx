@@ -1191,7 +1191,6 @@ export function ChatPage({ email }: ChatPageProps) {
           isLoading={isLoading}
           uiState={uiState}
           isImportRequired={isImportRequired}
-          isGuidedMode={isGuidedMode}
           showGuidedPlaceholder={shouldShowGuidedPlaceholder}
           onSubmitText={(text) => {
             void handleSubmitText(text)
@@ -1632,7 +1631,6 @@ type ComposerAreaProps = {
   uiState: ChatUiState
   isLoading: boolean
   isImportRequired: boolean
-  isGuidedMode: boolean
   showGuidedPlaceholder: boolean
   onSubmitText: (text: string) => void
   onSubmitQuickReply: (value: string, label?: string) => void
@@ -1645,7 +1643,6 @@ function ComposerArea({
   uiState,
   isLoading,
   isImportRequired,
-  isGuidedMode,
   showGuidedPlaceholder,
   onSubmitText,
   onSubmitQuickReply,
@@ -1656,7 +1653,7 @@ function ComposerArea({
       {composerMode === 'form' ? (
         <FormCard formUiAction={formUiAction} isLoading={isLoading} onSubmitForm={onSubmitForm} />
       ) : null}
-      {composerMode === 'action_panel' && !isGuidedMode ? (
+      {composerMode === 'action_panel' ? (
         <ActionPanel uiState={uiState} isSending={isLoading || isImportRequired} onQuickReply={onSubmitQuickReply} onSubmitText={onSubmitText} />
       ) : null}
       {showGuidedPlaceholder ? <div className="guided-placeholder subtle-text">Suis les boutons ci-dessous pour continuer.</div> : null}
