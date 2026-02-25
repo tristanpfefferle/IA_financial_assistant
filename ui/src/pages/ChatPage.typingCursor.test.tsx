@@ -102,7 +102,7 @@ describe('MessageList typing indicator behavior', () => {
         <MessageList
           messages={[]}
           isLoading={true}
-          typingDotsVisible={true}
+          isAssistantTyping={true}
           debugMode={false}
           apiBaseUrl="http://127.0.0.1:8000"
           onImportNow={() => undefined}
@@ -112,7 +112,7 @@ describe('MessageList typing indicator behavior', () => {
 
     const typingDots = container.querySelector('.typing-dots')
     expect(typingDots).not.toBeNull()
-    expect(typingDots?.getAttribute('aria-hidden')).toBe('true')
+    expect(typingDots?.getAttribute('aria-label')).toBe('L’assistant écrit')
     expect(container.textContent).not.toContain('L’assistant écrit')
   })
 
@@ -124,7 +124,7 @@ describe('MessageList typing indicator behavior', () => {
         <MessageList
           messages={[{ id: 'assistant-1', role: 'assistant', content: fullMessage, createdAt: Date.now() }]}
           isLoading={false}
-          typingDotsVisible={false}
+          isAssistantTyping={false}
           debugMode={false}
           apiBaseUrl="http://127.0.0.1:8000"
           onImportNow={() => undefined}

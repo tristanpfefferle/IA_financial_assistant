@@ -117,7 +117,7 @@ describe('MessageList spending report summary', () => {
             },
           ]}
           isLoading={false}
-          typingDotsVisible={false}
+          isAssistantTyping={false}
           debugMode={false}
           apiBaseUrl="http://127.0.0.1:8000"
           onImportNow={() => undefined}
@@ -154,7 +154,7 @@ describe('MessageList spending report summary', () => {
             },
           ]}
           isLoading={false}
-          typingDotsVisible={false}
+          isAssistantTyping={false}
           debugMode={false}
           apiBaseUrl="http://127.0.0.1:8000"
           onImportNow={() => undefined}
