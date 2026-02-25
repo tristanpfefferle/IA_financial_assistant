@@ -53,7 +53,7 @@ class OnboardingProfileCollectLoop:
         if slot_value is None:
             return LoopReply(reply=self._ask_for_slot(missing_slot), next_loop=ctx, updates={}, handled=True)
 
-        should_fallback_to_legacy = ctx.step == "start"
+        should_fallback_to_legacy = ctx.step == "start" and missing_slot == "first_name"
         if should_fallback_to_legacy and not self._is_safe_start_capture(missing_slot, parsed):
             return LoopReply(reply="", next_loop=ctx, updates={}, handled=False)
 

@@ -47,3 +47,10 @@ def test_parse_natural_french_intro_extracts_first_name_high_confidence() -> Non
 
     assert parsed["first_name"].value == "Paul"
     assert parsed["first_name"].confidence == ConfidenceLevel.HIGH
+
+
+def test_parse_natural_french_birth_date() -> None:
+    parsed = parse_profile_collect_message("10 mai 2001")
+
+    assert parsed["birth_date"].value == "2001-05-10"
+    assert parsed["birth_date"].confidence == ConfidenceLevel.HIGH
