@@ -161,17 +161,38 @@ button:disabled {
   z-index: 3;
 }
 
-.messages {
-  overflow-y: auto;
-  scroll-behavior: smooth;
-  padding: 1rem 1rem 1.25rem;
+.messages-viewport {
+  position: relative;
   min-height: 0;
   flex: 1;
+  overflow: hidden;
+  padding: 0;
 }
 
-.messages-end-spacer {
-  height: 1px;
-  scroll-margin-bottom: 1rem;
+.messages {
+  min-height: 0;
+}
+
+.message-row {
+  padding: 0 1rem;
+}
+
+.scroll-to-bottom-button {
+  position: absolute;
+  right: 1rem;
+  bottom: 1rem;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 999px;
+  border: 1px solid #475569;
+  background: rgba(15, 23, 42, 0.9);
+  color: #e2e8f0;
+  font-size: 1.1rem;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
 }
 
 .message {

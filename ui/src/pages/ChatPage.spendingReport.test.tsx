@@ -81,10 +81,11 @@ describe('MessageList spending report summary', () => {
           apiBaseUrl="http://127.0.0.1:8000"
           typingCursor={0}
           revealedMessageIdsRef={{ current: new Set<string>() }}
-          messagesRef={createRef<HTMLDivElement>()}
-          messagesEndRef={createRef<HTMLDivElement>()}
+          virtuosoRef={createRef()}
+          isAtBottom
+          onAtBottomStateChange={() => undefined}
           onImportNow={() => undefined}
-          onScroll={() => undefined}
+          onScrollToBottom={() => undefined}
           onTypingDone={() => undefined}
         />,
       )
@@ -123,10 +124,11 @@ describe('MessageList spending report summary', () => {
           apiBaseUrl="http://127.0.0.1:8000"
           typingCursor={0}
           revealedMessageIdsRef={{ current: new Set<string>() }}
-          messagesRef={createRef<HTMLDivElement>()}
-          messagesEndRef={createRef<HTMLDivElement>()}
+          virtuosoRef={createRef()}
+          isAtBottom
+          onAtBottomStateChange={() => undefined}
           onImportNow={() => undefined}
-          onScroll={() => undefined}
+          onScrollToBottom={() => undefined}
           onTypingDone={() => undefined}
         />,
       )
