@@ -196,7 +196,7 @@ def test_profile_confirm_yes_moves_to_bank_accounts_collect(monkeypatch) -> None
     assert persisted["profile_confirmed"] is True
 
 
-def test_profile_confirm_no_moves_back_to_collect(monkeypatch) -> None:
+def test_profile_confirm_no_moves_to_profile_fix_select(monkeypatch) -> None:
     _mock_auth(monkeypatch)
     repo = _Repo(
         initial_chat_state={
@@ -216,7 +216,45 @@ def test_profile_confirm_no_moves_back_to_collect(monkeypatch) -> None:
     response = client.post("/agent/chat", json={"message": "non"}, headers=_auth_headers())
 
     assert response.status_code == 200
+    payload = response.json()
+    assert payload["tool_result"]["type"] == "ui_action"
+    assert payload["tool_result"]["action"] == "quick_replies"
+    assert [opt["label"] for opt in payload["tool_result"]["options"]] == [
+        "Corriger prénom/nom",
+        "Corriger date de naissance",
+    ]
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
+    assert persisted["onboarding_substep"] == "profile_fix_select"
+
+
+def test_profile_confirm_unrecognized_answer_stays_on_confirm_with_yes_no_quick_replies(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "onboarding",
+                    "onboarding_step": "profile",
+                    "onboarding_substep": "profile_confirm",
+                }
+            }
+        },
+        profile_fields={"first_name": "Ada", "last_name": "Lovelace", "birth_date": "1815-12-10"},
+    )
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
+
+    response = client.post("/agent/chat", json={"message": "peut-être"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["tool_result"]["type"] == "ui_action"
+    assert payload["tool_result"]["action"] == "quick_replies"
+    assert [opt["label"] for opt in payload["tool_result"]["options"]] == ["✅", "❌"]
+    if repo.update_calls:
+        persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
+    else:
+        persisted = repo.chat_state["state"]["global_state"]
     assert persisted["onboarding_substep"] == "profile_confirm"
 
 
