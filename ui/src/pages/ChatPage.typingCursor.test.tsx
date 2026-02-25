@@ -1,4 +1,4 @@
-import { act, useRef, useState } from 'react'
+import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -81,7 +81,7 @@ vi.mock('react-virtuoso', async () => {
 
 import { MessageList } from './ChatPage'
 
-describe('MessageList sequential typing cursor', () => {
+describe('MessageList typing indicator behavior', () => {
   let container: HTMLDivElement
 
   beforeEach(() => {
@@ -90,73 +90,46 @@ describe('MessageList sequential typing cursor', () => {
     document.body.appendChild(container)
     getPendingMerchantAliasesCount.mockReset()
     getPendingMerchantAliasesCount.mockResolvedValue({ pending_total_count: 0 })
-    ;(globalThis as { __CHAT_ENABLE_TYPING_IN_TESTS__?: boolean }).__CHAT_ENABLE_TYPING_IN_TESTS__ = true
   })
 
   afterEach(() => {
-    delete (globalThis as { __CHAT_ENABLE_TYPING_IN_TESTS__?: boolean }).__CHAT_ENABLE_TYPING_IN_TESTS__
     document.body.removeChild(container)
   })
 
-  it('starts second assistant message only after first typing completion', async () => {
-    vi.useFakeTimers()
-    try {
-      const root = createRoot(container)
-      const messages = [
-        { id: 'a1', role: 'assistant' as const, content: 'Premier message très long pour prendre un peu de temps.', createdAt: Date.now() },
-        { id: 'a2', role: 'assistant' as const, content: 'Deuxième message.', createdAt: Date.now() + 1 },
-      ]
+  it('shows typing indicator while waiting for assistant response', async () => {
+    await act(async () => {
+      createRoot(container).render(
+        <MessageList
+          messages={[]}
+          isLoading={true}
+          isAssistantTyping={true}
+          debugMode={false}
+          apiBaseUrl="http://127.0.0.1:8000"
+          onImportNow={() => undefined}
+        />,
+      )
+    })
 
-      function Harness() {
-        const [typingCursor, setTypingCursor] = useState(0)
-        const revealedMessageIdsRef = useRef<Set<string>>(new Set())
+    expect(container.textContent).toContain('L’assistant écrit')
+  })
 
-        return (
-          <MessageList
-            messages={messages}
-            isLoading={false}
-            debugMode={false}
-            apiBaseUrl="http://127.0.0.1:8000"
-            typingCursor={typingCursor}
-            revealedMessageIdsRef={revealedMessageIdsRef}
-            onImportNow={() => undefined}
-            onTypingDone={() => setTypingCursor((value) => value + 1)}
-          />
-        )
-      }
+  it('hides typing indicator and renders the complete assistant message at once', async () => {
+    const fullMessage = 'Message final complet sans rendu progressif.'
 
-      await act(async () => {
-        root.render(<Harness />)
-      })
+    await act(async () => {
+      createRoot(container).render(
+        <MessageList
+          messages={[{ id: 'assistant-1', role: 'assistant', content: fullMessage, createdAt: Date.now() }]}
+          isLoading={false}
+          isAssistantTyping={false}
+          debugMode={false}
+          apiBaseUrl="http://127.0.0.1:8000"
+          onImportNow={() => undefined}
+        />,
+      )
+    })
 
-      const getContents = () => Array.from(container.querySelectorAll('.message-content')).map((node) => node.textContent ?? '')
-
-      await act(async () => {
-        vi.advanceTimersByTime(20)
-      })
-      let contents = getContents()
-      expect(contents).toHaveLength(1)
-      expect(contents[0]?.length).toBeGreaterThan(0)
-      const emptyBubbles = Array.from(container.querySelectorAll('.message-content')).filter((node) => (node.textContent ?? '').trim().length === 0)
-      expect(emptyBubbles).toHaveLength(0)
-      expect(contents[0]).not.toContain('Premier message très long pour prendre un peu de temps.')
-
-      for (let index = 0; index < 200; index += 1) {
-        await act(async () => {
-          vi.advanceTimersByTime(50)
-        })
-      }
-      contents = getContents()
-      expect(contents[0]).toContain('Premier message très long pour prendre un peu de temps.')
-
-      await act(async () => {
-        vi.advanceTimersByTime(200)
-      })
-      contents = getContents()
-      expect(contents).toHaveLength(2)
-      expect(contents[1]?.length).toBeGreaterThan(0)
-    } finally {
-      vi.useRealTimers()
-    }
+    expect(container.textContent).toContain(fullMessage)
+    expect(container.textContent).not.toContain('L’assistant écrit')
   })
 })

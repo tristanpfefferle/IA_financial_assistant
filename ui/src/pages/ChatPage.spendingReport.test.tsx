@@ -117,12 +117,10 @@ describe('MessageList spending report summary', () => {
             },
           ]}
           isLoading={false}
+          isAssistantTyping={false}
           debugMode={false}
           apiBaseUrl="http://127.0.0.1:8000"
-          typingCursor={0}
-          revealedMessageIdsRef={{ current: new Set<string>() }}
           onImportNow={() => undefined}
-          onTypingDone={() => undefined}
         />,
       )
     })
@@ -156,12 +154,10 @@ describe('MessageList spending report summary', () => {
             },
           ]}
           isLoading={false}
+          isAssistantTyping={false}
           debugMode={false}
           apiBaseUrl="http://127.0.0.1:8000"
-          typingCursor={0}
-          revealedMessageIdsRef={{ current: new Set<string>() }}
           onImportNow={() => undefined}
-          onTypingDone={() => undefined}
         />,
       )
     })
