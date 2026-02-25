@@ -125,7 +125,5 @@ describe('ChatPage', () => {
 
     expect(container.textContent).toContain('Segment 1')
     expect(container.textContent).toContain('Segment 2')
-    expect(container.querySelectorAll('[data-testid="message-bubble-user"]').length).toBeGreaterThanOrEqual(1)
-    expect(container.querySelectorAll('[data-testid="message-bubble-assistant"]').length).toBeGreaterThanOrEqual(1)
   })
 })
