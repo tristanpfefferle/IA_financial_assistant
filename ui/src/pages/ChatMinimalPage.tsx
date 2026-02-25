@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 
 import { hardResetProfile, sendChatMessage } from '../api/agentApi'
 import { ConsolePanel } from '../chat/ConsolePanel'
+import { buildFormSubmitPayload } from '../chat/formSubmit'
 import type { ConsoleOption, ConsoleUiState } from '../chat/types'
 import { supabase } from '../lib/supabaseClient'
 import type { FormUiAction } from './chatUiRequests'
@@ -112,11 +113,11 @@ type ComposerMode = 'console' | 'form'
 
 type FormCardProps = {
   formUiAction: FormUiAction
-  isSending: boolean
+  isBusy: boolean
   onSubmitForm: (formId: FormUiAction['form_id'], values: Record<string, string>) => void
 }
 
-function FormCard({ formUiAction, isSending, onSubmitForm }: FormCardProps) {
+function FormCard({ formUiAction, isBusy, onSubmitForm }: FormCardProps) {
   const [values, setValues] = useState<Record<string, string>>(() => {
     const initialValues: Record<string, string> = {}
     for (const field of formUiAction.fields) {
@@ -161,20 +162,11 @@ function FormCard({ formUiAction, isSending, onSubmitForm }: FormCardProps) {
           </label>
         ))}
       </div>
-      <button type="submit" disabled={isSending}>
+      <button type="submit" disabled={isBusy}>
         {formUiAction.submit_label || 'Continuer'}
       </button>
     </form>
   )
-}
-
-function buildUiFormHumanText(formUiAction: FormUiAction, values: Record<string, string>): string {
-  const segments = formUiAction.fields.map((field) => `${field.label}: ${values[field.id] ?? ''}`)
-  return segments.join(', ')
-}
-
-function buildUiFormSubmitMessage(formId: FormUiAction['form_id'], humanText: string, values: Record<string, string>): string {
-  return `${humanText}\n[ui_form:${formId}] ${JSON.stringify(values)}`
 }
 
 export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
@@ -188,6 +180,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
   const [debugUnlocked, setDebugUnlocked] = useState(() => localStorage.getItem('ui_debug_unlocked') === 'true')
   const [debugMode, setDebugMode] = useState(() => localStorage.getItem('ui_debug_mode') === 'true')
   const [headerMessage, setHeaderMessage] = useState<string | null>(null)
+  const [submitErrorMessage, setSubmitErrorMessage] = useState<string | null>(null)
 
   const consoleState = useMemo(() => extractConsoleState(messages), [messages])
   const latestAssistant = useMemo(() => [...messages].reverse().find((message) => message.role === 'assistant') ?? null, [messages])
@@ -351,6 +344,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
     }
 
     setMessages((current) => [...current, userMessage])
+    setSubmitErrorMessage(null)
     setIsSending(true)
     setIsAssistantTyping(true)
 
@@ -368,6 +362,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
       ])
     } catch (error) {
       const content = error instanceof Error ? error.message : 'Erreur inconnue.'
+      setSubmitErrorMessage(content)
       setMessages((current) => [
         ...current,
         {
@@ -392,9 +387,14 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
       return
     }
 
-    const humanText = buildUiFormHumanText(formUiAction, values)
-    const backendMessage = buildUiFormSubmitMessage(formId, humanText, values)
-    void submitMessage(backendMessage, humanText)
+    const payload = buildFormSubmitPayload(
+      {
+        ...formUiAction,
+        form_id: formId,
+      },
+      values,
+    )
+    void submitMessage(payload.messageToBackend, payload.humanText)
   }
 
   function resetLocalChatState() {
@@ -516,11 +516,12 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
           <div className="console-area">
             <div className="console-area-inner">
               {composerMode === 'form' ? (
-                formUiAction ? <FormCard formUiAction={formUiAction} isSending={isSending} onSubmitForm={handleFormSubmit} /> : null
+                formUiAction ? <FormCard formUiAction={formUiAction} isBusy={isSending || isAssistantTyping} onSubmitForm={handleFormSubmit} /> : null
               ) : (
                 <ConsolePanel uiState={consoleState} isSending={isSending} onChoose={handleQuickReply} />
               )}
             </div>
+            {submitErrorMessage ? <p className="subtle-text">{submitErrorMessage}</p> : null}
           </div>
         </div>
       </div>
