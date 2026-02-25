@@ -370,7 +370,7 @@ def test_session_resume_allons_y_from_profile_fix_returns_profile_confirm_recap(
     assert response.status_code == 200
     payload = response.json()
     assert "Récapitulatif de ton profil" in payload["reply"]
-    assert "Tout est correct" in payload["reply"]
+    assert "Est-ce bien correct" in payload["reply"]
     assert payload["tool_result"]["options"] == [
         {"id": "yes", "label": "✅", "value": "oui"},
         {"id": "no", "label": "❌", "value": "non"},
@@ -402,7 +402,7 @@ def test_session_resume_allons_y_from_bank_fix_returns_bank_confirm_recap(monkey
     assert response.status_code == 200
     payload = response.json()
     assert "Tu as des comptes bancaires chez" in payload["reply"]
-    assert "Tout est correct" in payload["reply"]
+    assert "Est-ce bien correct" in payload["reply"]
     assert payload["tool_result"]["action"] == "quick_replies"
     persisted_state = repo.update_calls[-1]["chat_state"]["state"]
     assert persisted_state["session_resume_pending"] is False
@@ -1675,7 +1675,7 @@ def test_onboarding_resume_pending_allons_y_profile_confirm_returns_recap(monkey
     assert response.status_code == 200
     payload = response.json()
     assert "Récapitulatif de ton profil" in payload["reply"]
-    assert "Tout est correct" in payload["reply"]
+    assert "Est-ce bien correct" in payload["reply"]
     assert payload["tool_result"]["options"] == [{"id": "yes", "label": "✅", "value": "oui"}, {"id": "no", "label": "❌", "value": "non"}]
     assert repo.update_calls[-1]["chat_state"]["state"]["session_resume_pending"] is False
 
