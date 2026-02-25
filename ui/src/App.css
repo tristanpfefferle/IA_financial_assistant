@@ -163,11 +163,12 @@ button:disabled {
 
 .messages-viewport {
   flex: 1;
+  height: 100%;
   min-height: 0;
   display: flex;
   flex-direction: column;
   position: relative;
-  overflow: hidden;
+  overflow: visible;
   padding: 0;
 }
 
@@ -199,6 +200,20 @@ button:disabled {
 
 .scroll-to-bottom-button:hover {
   background: rgba(30, 41, 59, 0.95);
+}
+
+.messages-debug-metrics {
+  position: absolute;
+  left: 0.6rem;
+  bottom: 0.6rem;
+  z-index: 3;
+  font-size: 0.72rem;
+  padding: 0.2rem 0.45rem;
+  border-radius: 0.4rem;
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid rgba(100, 116, 139, 0.55);
+  color: #cbd5e1;
+  pointer-events: none;
 }
 
 .message-row {

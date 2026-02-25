@@ -1339,8 +1339,11 @@ export function MessageList({
   onImportNow,
 }: MessageListProps) {
   const virtuosoRef = useRef<VirtuosoHandle | null>(null)
+  const viewportRef = useRef<HTMLDivElement | null>(null)
   const initialIndexRef = useRef<number | null>(null)
   const [isAtBottom, setIsAtBottom] = useState(true)
+  const [debugViewportMetrics, setDebugViewportMetrics] = useState<string | null>(null)
+  const uiDebugEnabled = import.meta.env.VITE_UI_DEBUG === 'true' || import.meta.env.VITE_UI_DEBUG === '1'
 
   useEffect(() => {
     if (initialIndexRef.current === null && messages.length > 0) {
@@ -1380,13 +1383,42 @@ export function MessageList({
     scrollToBottomWithRetry('smooth')
   }
 
+  useEffect(() => {
+    if (!uiDebugEnabled) {
+      return
+    }
+
+    const updateMetrics = () => {
+      const viewportElement = viewportRef.current
+      if (!viewportElement) {
+        setDebugViewportMetrics('viewport: n/a')
+        return
+      }
+
+      const scroller = viewportElement.querySelector<HTMLElement>('[data-virtuoso-scroller="true"], .virtuoso-scroller')
+      if (scroller) {
+        setDebugViewportMetrics(`scroller cH:${scroller.clientHeight}px sH:${scroller.scrollHeight}px`)
+        return
+      }
+
+      const viewportHeight = Math.round(viewportElement.getBoundingClientRect().height)
+      setDebugViewportMetrics(`viewport h:${viewportHeight}px (scroller introuvable)`)
+    }
+
+    updateMetrics()
+    window.addEventListener('resize', updateMetrics)
+
+    return () => {
+      window.removeEventListener('resize', updateMetrics)
+    }
+  }, [uiDebugEnabled, messages.length, isAssistantTyping, isLoading])
+
   return (
-    <div className="messages-viewport card" aria-live="polite">
+    <div ref={viewportRef} className="messages-viewport card" aria-live="polite">
       {messages.length === 0 ? <p className="subtle-text">Initialisation…</p> : null}
       <Virtuoso
         ref={virtuosoRef}
         className="messages"
-        style={{ height: '100%' }}
         data={messages}
         atBottomStateChange={(atBottom) => setIsAtBottom(atBottom)}
         increaseViewportBy={{ top: 200, bottom: 400 }}
@@ -1438,6 +1470,7 @@ export function MessageList({
           ↓
         </button>
       ) : null}
+      {uiDebugEnabled && debugViewportMetrics ? <div className="messages-debug-metrics">{debugViewportMetrics}</div> : null}
     </div>
   )
 }
