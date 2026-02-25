@@ -328,6 +328,23 @@ button:disabled {
   padding: 0.45rem 0.65rem;
 }
 
+.checkbox-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.35rem 0.55rem;
+}
+
+.checkbox-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.78rem;
+}
+
+.checkbox-option input {
+  min-height: auto;
+}
+
 .form-actions {
   align-self: end;
 }

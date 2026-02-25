@@ -27,17 +27,18 @@ export type QuickReplyYesNoUiAction = {
 export type FormUiField = {
   id: string
   label: string
-  type: 'text' | 'date'
+  type: 'text' | 'date' | 'multi_select'
   required: boolean
   placeholder?: string
   default_value?: string
   value?: string
+  options?: Array<{ id: string; label: string; value: string }>
 }
 
 export type FormUiAction = {
   type: 'ui_action'
   action: 'form'
-  form_id: 'onboarding_profile_name' | 'onboarding_profile_birth_date'
+  form_id: 'onboarding_profile_name' | 'onboarding_profile_birth_date' | 'onboarding_bank_accounts'
   title: string
   fields: FormUiField[]
   submit_label: string
@@ -223,7 +224,7 @@ export function toFormUiAction(value: unknown): FormUiAction | null {
   const submitLabel = record.submit_label
   const fields = record.fields
   if (
-    (formId !== 'onboarding_profile_name' && formId !== 'onboarding_profile_birth_date')
+    (formId !== 'onboarding_profile_name' && formId !== 'onboarding_profile_birth_date' && formId !== 'onboarding_bank_accounts')
     || typeof title !== 'string'
     || typeof submitLabel !== 'string'
     || !Array.isArray(fields)
@@ -240,7 +241,7 @@ export function toFormUiAction(value: unknown): FormUiAction | null {
       if (
         typeof raw.id !== 'string'
         || typeof raw.label !== 'string'
-        || (raw.type !== 'text' && raw.type !== 'date')
+        || (raw.type !== 'text' && raw.type !== 'date' && raw.type !== 'multi_select')
         || typeof raw.required !== 'boolean'
       ) {
         return null
@@ -248,6 +249,20 @@ export function toFormUiAction(value: unknown): FormUiAction | null {
       const placeholder = typeof raw.placeholder === 'string' ? raw.placeholder : undefined
       const defaultValue = typeof raw.default_value === 'string' ? raw.default_value : undefined
       const value = typeof raw.value === 'string' ? raw.value : undefined
+      const options = Array.isArray(raw.options)
+        ? raw.options
+            .map((option) => {
+              if (!option || typeof option !== 'object') {
+                return null
+              }
+              const parsed = option as Record<string, unknown>
+              if (typeof parsed.id !== 'string' || typeof parsed.label !== 'string' || typeof parsed.value !== 'string') {
+                return null
+              }
+              return { id: parsed.id, label: parsed.label, value: parsed.value }
+            })
+            .filter((option): option is { id: string; label: string; value: string } => option !== null)
+        : undefined
 
       return {
         id: raw.id,
@@ -257,6 +272,7 @@ export function toFormUiAction(value: unknown): FormUiAction | null {
         ...(placeholder ? { placeholder } : {}),
         ...(defaultValue !== undefined ? { default_value: defaultValue } : {}),
         ...(value !== undefined ? { value } : {}),
+        ...(options && options.length > 0 ? { options } : {}),
       }
     })
     .filter((field): field is FormUiField => field !== null)

@@ -108,6 +108,7 @@ _GLOBAL_STATE_ONBOARDING_SUBSTEPS = {
     "profile_fix_birth_date",
     "bank_accounts_collect",
     "bank_accounts_confirm",
+    "bank_accounts_fix_select",
     "import_select_account",
     "import_wait_ready",
     "categories_intro",
@@ -117,8 +118,10 @@ _GLOBAL_STATE_ONBOARDING_SUBSTEPS = {
     None,
 }
 _PROFILE_FIX_SUBSTEPS = {"profile_fix_select", "profile_fix_name", "profile_fix_birth_date"}
+_BANK_ACCOUNTS_FIX_SUBSTEP_PATTERN = re.compile(r"^bank_accounts_fix_")
 _PROFILE_COMPLETION_FIELDS = ("first_name", "last_name", "birth_date")
 _UI_FORM_SUBMIT_PREFIX = "__ui_form_submit__:"
+_ONBOARDING_BANK_ACCOUNT_PRESET_OPTIONS: tuple[str, ...] = ("UBS", "Raiffeisen", "BCV", "Banque cantonale", "PostFinance", "Revolut", "Neon", "Yuh", "Zak", "Wise", "Autre")
 _ONBOARDING_NAME_PATTERN = re.compile(
     r"^\s*([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'\-]+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'\-]+)\s*$"
 )
@@ -674,6 +677,77 @@ def _build_profile_birth_date_form_ui_action(profile_fields: dict[str, Any] | No
         ],
         "submit_label": "Valider",
     }
+
+
+def _build_bank_accounts_form_ui_action() -> dict[str, Any]:
+    """Return UI form payload for onboarding bank account collection."""
+
+    return {
+        "type": "ui_action",
+        "action": "form",
+        "form_id": "onboarding_bank_accounts",
+        "title": "Tes banques",
+        "fields": [
+            {
+                "id": "selected_banks",
+                "label": "Banques utilisées",
+                "type": "multi_select",
+                "required": True,
+                "options": [{"id": option, "label": option, "value": option} for option in _ONBOARDING_BANK_ACCOUNT_PRESET_OPTIONS],
+            },
+            {
+                "id": "other_bank_name",
+                "label": "Nom de la banque",
+                "type": "text",
+                "required": False,
+                "placeholder": "Ex: Banque X",
+            },
+        ],
+        "submit_label": "Valider",
+    }
+
+
+def _extract_submitted_bank_account_names(values: dict[str, Any]) -> list[str]:
+    raw_selected = values.get("selected_banks")
+    selected: list[str] = []
+    if isinstance(raw_selected, list):
+        selected = [str(item).strip() for item in raw_selected if str(item).strip()]
+    elif isinstance(raw_selected, str) and raw_selected.strip():
+        try:
+            parsed = json.loads(raw_selected)
+        except json.JSONDecodeError:
+            parsed = [part.strip() for part in raw_selected.split(",") if part.strip()]
+        if isinstance(parsed, list):
+            selected = [str(item).strip() for item in parsed if str(item).strip()]
+
+    other_name = str(values.get("other_bank_name") or "").strip()
+    names: list[str] = []
+    has_other = False
+    for name in selected:
+        if _normalize_text(name) == "autre":
+            has_other = True
+            continue
+        names.append(name)
+    if has_other and other_name:
+        names.append(other_name)
+
+    normalized: list[str] = []
+    for name in names:
+        matched, _ = extract_canonical_banks(name)
+        normalized.extend(matched or [name])
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for name in normalized:
+        key = _normalize_text(name)
+        if key and key not in seen:
+            deduped.append(name)
+            seen.add(key)
+    return deduped
+
+
+def _build_bank_accounts_confirm_recap(accounts: list[dict[str, Any]]) -> str:
+    return f"J’ai noté: {_format_accounts_for_reply(accounts)}.\n\nTout est correct ?"
 
 
 def _build_profile_collect_ui_action(profile_fields: dict[str, Any]) -> dict[str, Any]:
@@ -1659,7 +1733,7 @@ def _normalize_onboarding_step_substep(global_state: dict[str, Any]) -> dict[str
             "profile_fix_name",
             "profile_fix_birth_date",
         },
-        "bank_accounts": {"bank_accounts_collect", "bank_accounts_confirm"},
+        "bank_accounts": {"bank_accounts_collect", "bank_accounts_confirm", "bank_accounts_fix_select"},
         "import": {"import_select_account", "import_wait_ready"},
         "categories": {"categories_intro", "categories_bootstrap"},
         "report": {"report_offer", "report_sent"},
@@ -3080,31 +3154,37 @@ def agent_chat(
         if (
             _is_valid_global_state(global_state)
             and global_state.get("mode") == "onboarding"
-            and global_state.get("onboarding_step") == "profile"
-            and global_state.get("onboarding_substep") in _PROFILE_FIX_SUBSTEPS
+            and (
+                (
+                    global_state.get("onboarding_step") == "profile"
+                    and global_state.get("onboarding_substep") in _PROFILE_FIX_SUBSTEPS
+                )
+                or (
+                    global_state.get("onboarding_step") == "bank_accounts"
+                    and isinstance(global_state.get("onboarding_substep"), str)
+                    and _BANK_ACCOUNTS_FIX_SUBSTEP_PATTERN.match(str(global_state.get("onboarding_substep"))) is not None
+                )
+            )
             and (
                 bool(state_dict.get("session_resume_pending"))
                 or payload.request_greeting
             )
         ):
-            updated_global_state = _build_onboarding_global_state(
-                {
-                    **global_state,
-                    "profile_confirmed": False,
-                },
-                onboarding_step="profile",
-                onboarding_substep="profile_confirm",
-            )
-            updated_global_state["profile_confirmed"] = False
+            current_step = str(global_state.get("onboarding_step"))
+            target_substep = "profile_confirm" if current_step == "profile" else "bank_accounts_confirm"
+            updated_global_state = _build_onboarding_global_state(global_state, onboarding_step=current_step, onboarding_substep=target_substep)
+            if current_step == "profile":
+                updated_global_state["profile_confirmed"] = False
+            else:
+                updated_global_state["bank_accounts_confirmed"] = False
             global_state = _normalize_onboarding_step_substep(updated_global_state)
             state_dict = dict(state_dict) if isinstance(state_dict, dict) else {}
             state_dict["global_state"] = global_state
             loop_state = state_dict.get("loop")
-            if isinstance(loop_state, dict) and loop_state.get("loop_id") in {
-                "onboarding.profile_fix_select",
-                "onboarding.profile_fix_name",
-            }:
-                state_dict.pop("loop", None)
+            if isinstance(loop_state, dict):
+                loop_id = str(loop_state.get("loop_id") or "")
+                if loop_id.startswith("onboarding.profile_fix") or loop_id.startswith("onboarding.bank_accounts_fix"):
+                    state_dict.pop("loop", None)
             should_persist_global_state = True
 
         if global_state is None and hasattr(profiles_repository, "get_profile_fields"):
@@ -3145,10 +3225,8 @@ def agent_chat(
         should_offer_session_resume = (
             _is_valid_global_state(global_state)
             and global_state.get("mode") == "onboarding"
-            and global_state.get("onboarding_step") == "profile"
             and isinstance(global_state.get("onboarding_substep"), str)
-            and global_state.get("onboarding_substep")
-            in {"profile_collect", "profile_confirm"}
+            and global_state.get("onboarding_substep") in {"profile_collect", "profile_confirm", "bank_accounts_collect", "bank_accounts_confirm"}
         )
         session_resume_pending = bool(state_dict.get("session_resume_pending")) if isinstance(state_dict, dict) else False
 
@@ -3163,23 +3241,37 @@ def agent_chat(
                     user_id=auth_user_id,
                     chat_state=updated_chat_state,
                 )
-                if (
-                    _is_valid_global_state(global_state)
-                    and global_state.get("mode") == "onboarding"
-                    and global_state.get("onboarding_step") == "profile"
-                    and global_state.get("onboarding_substep") == "profile_confirm"
-                    and hasattr(profiles_repository, "get_profile_fields")
-                ):
-                    profile_fields = profiles_repository.get_profile_fields(
-                        profile_id=profile_id,
-                        fields=list(_PROFILE_COMPLETION_FIELDS),
-                    )
-                    if _is_profile_complete(profile_fields):
-                        return _chat_response(
-                            reply=_build_profile_recap_reply(profile_fields),
-                            tool_result=_build_quick_reply_yes_no_ui_action(),
-                            plan=None,
+                if _is_valid_global_state(global_state) and global_state.get("mode") == "onboarding":
+                    if (
+                        global_state.get("onboarding_step") == "profile"
+                        and global_state.get("onboarding_substep") == "profile_confirm"
+                        and hasattr(profiles_repository, "get_profile_fields")
+                    ):
+                        profile_fields = profiles_repository.get_profile_fields(
+                            profile_id=profile_id,
+                            fields=list(_PROFILE_COMPLETION_FIELDS),
                         )
+                        if _is_profile_complete(profile_fields):
+                            return _chat_response(
+                                reply=_build_profile_recap_reply(profile_fields),
+                                tool_result=_build_quick_reply_yes_no_ui_action(),
+                                plan=None,
+                            )
+                    if global_state.get("onboarding_step") == "bank_accounts":
+                        substep = global_state.get("onboarding_substep")
+                        if substep == "bank_accounts_collect":
+                            return _chat_response(
+                                reply="Sélectionne ta ou tes banques pour continuer.",
+                                tool_result=_build_bank_accounts_form_ui_action(),
+                                plan=None,
+                            )
+                        if substep == "bank_accounts_confirm" and hasattr(profiles_repository, "list_bank_accounts"):
+                            existing_accounts = profiles_repository.list_bank_accounts(profile_id=profile_id)
+                            return _chat_response(
+                                reply=_build_bank_accounts_confirm_recap(existing_accounts),
+                                tool_result=_build_quick_reply_yes_no_ui_action(),
+                                plan=None,
+                            )
                 payload = payload.model_copy(update={"message": ""})
             else:
                 return _chat_response(
@@ -3353,6 +3445,38 @@ def agent_chat(
                 )
                 return _chat_response(
                     reply=_build_profile_recap_reply(refreshed_fields),
+                    tool_result=_build_quick_reply_yes_no_ui_action(),
+                    plan=None,
+                )
+
+            if form_id == "onboarding_bank_accounts":
+                submitted_names = _extract_submitted_bank_account_names(values)
+                if not submitted_names:
+                    return _chat_response(
+                        reply="Sélectionne au moins une banque pour continuer.",
+                        tool_result=_build_bank_accounts_form_ui_action(),
+                        plan=None,
+                    )
+                profiles_repository.ensure_bank_accounts(profile_id=profile_id, names=submitted_names)
+                refreshed_accounts = profiles_repository.list_bank_accounts(profile_id=profile_id)
+                updated_global_state = _build_bank_accounts_onboarding_global_state(
+                    global_state,
+                    onboarding_substep="bank_accounts_confirm",
+                )
+                updated_global_state["bank_accounts_confirmed"] = False
+                updated_global_state["has_bank_accounts"] = bool(refreshed_accounts)
+                state_dict = dict(state_dict) if isinstance(state_dict, dict) else {}
+                state_dict.pop("import_context", None)
+                state_dict["global_state"] = updated_global_state
+                chat_state_to_save = dict(chat_state) if isinstance(chat_state, dict) else {}
+                chat_state_to_save["state"] = state_dict
+                profiles_repository.update_chat_state(
+                    profile_id=profile_id,
+                    user_id=auth_user_id,
+                    chat_state=chat_state_to_save,
+                )
+                return _chat_response(
+                    reply=_build_bank_accounts_confirm_recap(refreshed_accounts),
                     tool_result=_build_quick_reply_yes_no_ui_action(),
                     plan=None,
                 )
@@ -3895,6 +4019,34 @@ def agent_chat(
                 existing_accounts = profiles_repository.list_bank_accounts(profile_id=profile_id)
 
                 if substep == "bank_accounts_collect":
+                    if existing_accounts and not bool(global_state.get("bank_accounts_confirmed", False)):
+                        accounts_display = _format_accounts_for_reply(existing_accounts)
+                        updated_global_state = _build_bank_accounts_onboarding_global_state(
+                            global_state,
+                            onboarding_substep="bank_accounts_confirm",
+                        )
+                        updated_global_state["has_bank_accounts"] = True
+                        updated_global_state["bank_accounts_confirmed"] = False
+                        state_dict["global_state"] = updated_global_state
+                        updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                        updated_chat_state["state"] = state_dict
+                        profiles_repository.update_chat_state(
+                            profile_id=profile_id,
+                            user_id=auth_user_id,
+                            chat_state=updated_chat_state,
+                        )
+                        return _chat_response(
+                            reply=_build_bank_accounts_confirm_recap(existing_accounts),
+                            tool_result=_build_quick_reply_yes_no_ui_action(),
+                            plan=None,
+                        )
+
+                    return _chat_response(
+                        reply="Sélectionne ta ou tes banques pour continuer.",
+                        tool_result=_build_bank_accounts_form_ui_action(),
+                        plan=None,
+                    )
+
                     if _is_no(payload.message):
                         if existing_accounts:
                             accounts_display = _format_accounts_for_reply(existing_accounts)
@@ -4014,8 +4166,8 @@ def agent_chat(
                             chat_state=updated_chat_state,
                         )
                         return _chat_response(
-                            reply="Ok. Dis-moi la/les banques à ajouter ou corriger (ex: UBS, Revolut).",
-                            tool_result=None,
+                            reply="D'accord, corrige la liste de tes banques.",
+                            tool_result=_build_bank_accounts_form_ui_action(),
                             plan=None,
                         )
                     if _is_yes(payload.message):
@@ -4070,7 +4222,7 @@ def agent_chat(
                             tool_result=_build_quick_reply_yes_no_ui_action(),
                             plan=None,
                         )
-                    return _chat_response(reply="C’est correct ? Réponds ✅ ou ❌.", tool_result=_build_quick_reply_yes_no_ui_action(), plan=None)
+                    return _chat_response(reply=_build_bank_accounts_confirm_recap(existing_accounts), tool_result=_build_quick_reply_yes_no_ui_action(), plan=None)
 
             if mode == "onboarding" and onboarding_step == "import" and global_state.get("onboarding_substep") == "import_select_account" and hasattr(profiles_repository, "list_bank_accounts"):
                 existing_accounts = profiles_repository.list_bank_accounts(profile_id=profile_id)
