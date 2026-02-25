@@ -329,6 +329,32 @@ function buildUiFormSubmitMessage(formId: string, values: Record<string, string>
   return `__ui_form_submit__:${JSON.stringify({ form_id: formId, values })}`
 }
 
+function buildUiFormHumanText(formId: string, values: Record<string, string>): string {
+  if (formId === 'onboarding_profile_name') {
+    const firstName = (values.first_name ?? '').trim()
+    const lastName = (values.last_name ?? '').trim()
+    return `Je m'appelle ${firstName} ${lastName}.`
+  }
+
+  if (formId === 'onboarding_profile_birth_date') {
+    const birthDate = (values.birth_date ?? '').trim()
+    return `Je suis né le ${birthDate}.`
+  }
+
+  return 'Je valide le formulaire.'
+}
+
+function buildFormSubmitPayload(formId: string, values: Record<string, string>): { humanText: string; messageToBackend: string } {
+  const humanText = buildUiFormHumanText(formId, values)
+  const structuredMessage = buildUiFormSubmitMessage(formId, values)
+  return {
+    humanText,
+    messageToBackend: `${humanText}\n${structuredMessage}`,
+  }
+}
+
+type ComposerMode = 'form' | 'quick_replies' | 'text'
+
 function toProgressUiAction(toolResult: ChatMessage['toolResult']): ProgressUiAction | null {
   if (!toolResult || typeof toolResult !== 'object') {
     return null
@@ -407,31 +433,15 @@ export function ChatPage({ email }: ChatPageProps) {
   }, [messages])
   const quickReplyAction = useMemo(() => toQuickReplyYesNoUiAction(latestAssistantMessage?.toolResult), [latestAssistantMessage])
   const formUiAction = useMemo(() => toFormUiAction(latestAssistantMessage?.toolResult), [latestAssistantMessage])
-  const activeTypingMessageId = useMemo(() => {
-    const revealed = revealedMessageIdsRef.current
-    for (const item of messages) {
-      if (item.role !== 'assistant') {
-        continue
-      }
-      if (!revealed?.has(item.id)) {
-        return item.id
-      }
+  const composerMode: ComposerMode = useMemo(() => {
+    if (formUiAction) {
+      return 'form'
     }
-    return null
-  }, [messages, typingCursor])
-  const shouldShowFormCard = Boolean(
-    formUiAction
-      && latestAssistantMessage
-      && revealedMessageIdsRef.current.has(latestAssistantMessage.id)
-      && activeTypingMessageId === null,
-  )
-  const shouldShowQuickReplies = Boolean(
-    quickReplyAction
-      && !shouldShowFormCard
-      && latestAssistantMessage
-      && revealedMessageIdsRef.current.has(latestAssistantMessage.id)
-      && activeTypingMessageId === null,
-  )
+    if (quickReplyAction) {
+      return 'quick_replies'
+    }
+    return 'text'
+  }, [formUiAction, quickReplyAction])
   const hasUnauthorizedError = useMemo(() => error?.includes('(401)') ?? false, [error])
   const statusBadge = debugMode ? 'Debug' : isImportRequired ? 'Onboarding' : 'Prêt'
 
@@ -748,7 +758,7 @@ export function ChatPage({ email }: ChatPageProps) {
   }
 
   async function submitQuickReply(displayMessage: '✅' | '❌', apiMessage: 'oui' | 'non') {
-    if (isLoading || isImportRequired) {
+    if (isLoading || isImportRequired || composerMode !== 'quick_replies') {
       return
     }
 
@@ -780,18 +790,18 @@ export function ChatPage({ email }: ChatPageProps) {
 
 
   async function submitForm(formId: string, values: Record<string, string>) {
-    if (isLoading || isImportRequired) {
+    if (isLoading || isImportRequired || composerMode !== 'form') {
       return
     }
 
-    setMessages((previous) => [...previous, { id: crypto.randomUUID(), role: 'user' as const, content: 'Valider', createdAt: Date.now() }])
+    const { humanText, messageToBackend } = buildFormSubmitPayload(formId, values)
+    setMessages((previous) => [...previous, { id: crypto.randomUUID(), role: 'user' as const, content: humanText, createdAt: Date.now() }])
     setMessage('')
     setError(null)
     setIsLoading(true)
 
     try {
-      const specialMessage = buildUiFormSubmitMessage(formId, values)
-      const response = await sendChatMessage(specialMessage, { debug: debugMode })
+      const response = await sendChatMessage(messageToBackend, { debug: debugMode })
       syncLoopDebug(response)
       const segments = splitAssistantReply(response.reply)
       enqueueAssistantMessages(segments, response.tool_result, response.plan, response)
@@ -804,6 +814,9 @@ export function ChatPage({ email }: ChatPageProps) {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    if (composerMode !== 'text') {
+      return
+    }
     const trimmedMessage = message.trim()
     if (!trimmedMessage || isLoading || isImportRequired) {
       return
@@ -1047,32 +1060,24 @@ export function ChatPage({ email }: ChatPageProps) {
           }}
         />
 
-        <QuickReplyBar
-          quickReplyAction={shouldShowQuickReplies ? quickReplyAction : null}
+        <ComposerArea
+          composerMode={composerMode}
+          quickReplyAction={quickReplyAction}
+          formUiAction={formUiAction}
           isLoading={isLoading}
-          disabled={isImportRequired}
+          message={message}
+          setMessage={setMessage}
+          isImportRequired={isImportRequired}
+          onSubmit={handleSubmit}
           onSubmitQuickReply={(option) => {
             const normalizedValue = option.value.trim().toLowerCase()
             const displayMessage = option.label.trim() === '❌' || normalizedValue === 'non' ? '❌' : '✅'
             const apiMessage: 'oui' | 'non' = normalizedValue === 'non' ? 'non' : 'oui'
             void submitQuickReply(displayMessage, apiMessage)
           }}
-        />
-
-        <FormCard
-          formUiAction={shouldShowFormCard ? formUiAction : null}
-          isLoading={isLoading}
           onSubmitForm={(formId, values) => {
             void submitForm(formId, values)
           }}
-        />
-
-        <Composer
-          message={message}
-          setMessage={setMessage}
-          onSubmit={handleSubmit}
-          isLoading={isLoading}
-          disabled={isImportRequired || shouldShowFormCard}
         />
 
         {error ? <p className="error-text">{error}</p> : null}
@@ -1587,6 +1592,47 @@ function MessageBubble({
 }
 
 
+type ComposerAreaProps = {
+  composerMode: ComposerMode
+  quickReplyAction: ReturnType<typeof toQuickReplyYesNoUiAction>
+  formUiAction: ReturnType<typeof toFormUiAction>
+  isLoading: boolean
+  message: string
+  setMessage: (next: string) => void
+  isImportRequired: boolean
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void
+  onSubmitQuickReply: (option: { id: string; label: string; value: string }) => void
+  onSubmitForm: (formId: string, values: Record<string, string>) => void
+}
+
+function ComposerArea({
+  composerMode,
+  quickReplyAction,
+  formUiAction,
+  isLoading,
+  message,
+  setMessage,
+  isImportRequired,
+  onSubmit,
+  onSubmitQuickReply,
+  onSubmitForm,
+}: ComposerAreaProps) {
+  return (
+    <div className="composer-area sticky-bottom" aria-label={`Composer mode ${composerMode}`}>
+      {composerMode === 'form' ? (
+        <FormCard formUiAction={formUiAction} isLoading={isLoading} onSubmitForm={onSubmitForm} />
+      ) : null}
+      {composerMode === 'quick_replies' ? (
+        <QuickReplyBar quickReplyAction={quickReplyAction} isLoading={isLoading} disabled={isImportRequired} onSubmitQuickReply={onSubmitQuickReply} />
+      ) : null}
+      {composerMode === 'text' ? (
+        <Composer message={message} setMessage={setMessage} onSubmit={onSubmit} isLoading={isLoading} disabled={isImportRequired} />
+      ) : null}
+    </div>
+  )
+}
+
+
 function QuickReplyBar({
   quickReplyAction,
   isLoading,
@@ -1707,7 +1753,7 @@ function Composer({
   }
 
   return (
-    <form onSubmit={onSubmit} className="composer sticky-bottom">
+    <form onSubmit={onSubmit} className="composer">
       <textarea
         ref={textareaRef}
         value={message}

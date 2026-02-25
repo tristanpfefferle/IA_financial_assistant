@@ -428,8 +428,7 @@ describe('ChatPage import intent rendering', () => {
     expect(firstNameInput).toBeTruthy()
     expect(lastNameInput).toBeTruthy()
 
-    const chatTextbox = container.querySelector('textarea[aria-label="Message"]') as HTMLTextAreaElement
-    expect(chatTextbox.disabled).toBe(true)
+    expect(container.querySelector('textarea[aria-label="Message"]')).toBeNull()
 
     await act(async () => {
       firstNameInput.value = 'Tristan'
@@ -447,9 +446,11 @@ describe('ChatPage import intent rendering', () => {
 
     expect(sendChatMessage).toHaveBeenNthCalledWith(
       2,
-      '__ui_form_submit__:{"form_id":"onboarding_profile_name","values":{"first_name":"Tristan","last_name":"Pfefferlé"}}',
+      `Je m'appelle Tristan Pfefferlé.\n__ui_form_submit__:{"form_id":"onboarding_profile_name","values":{"first_name":"Tristan","last_name":"Pfefferlé"}}`,
       { debug: false },
     )
+    expect(container.textContent).toContain("Je m'appelle Tristan Pfefferlé.")
+    expect(container.textContent).not.toContain('__ui_form_submit__:')
   })
 
   it('renders onboarding birth-date form card and submits deterministic special message', async () => {
@@ -489,8 +490,7 @@ describe('ChatPage import intent rendering', () => {
     const birthDateInput = container.querySelector('input[type="date"]') as HTMLInputElement
     expect(birthDateInput).toBeTruthy()
 
-    const chatTextbox = container.querySelector('textarea[aria-label="Message"]') as HTMLTextAreaElement
-    expect(chatTextbox.disabled).toBe(true)
+    expect(container.querySelector('textarea[aria-label="Message"]')).toBeNull()
 
     await act(async () => {
       birthDateInput.value = '2001-12-22'
@@ -506,9 +506,11 @@ describe('ChatPage import intent rendering', () => {
 
     expect(sendChatMessage).toHaveBeenNthCalledWith(
       2,
-      '__ui_form_submit__:{"form_id":"onboarding_profile_birth_date","values":{"birth_date":"2001-12-22"}}',
+      'Je suis né le 2001-12-22.\n__ui_form_submit__:{"form_id":"onboarding_profile_birth_date","values":{"birth_date":"2001-12-22"}}',
       { debug: false },
     )
+    expect(container.textContent).toContain('Je suis né le 2001-12-22.')
+    expect(container.textContent).not.toContain('__ui_form_submit__:')
   })
 
   it('shows local upload message before assistant import acknowledgement', async () => {
@@ -752,7 +754,7 @@ describe('ChatPage import intent rendering', () => {
   })
 
 
-  it('does not show quick replies before assistant typing is revealed', async () => {
+  it('shows quick replies and hides text input when quick reply mode is active', async () => {
     vi.useFakeTimers()
     ;(globalThis as { __CHAT_ENABLE_TYPING_IN_TESTS__?: boolean }).__CHAT_ENABLE_TYPING_IN_TESTS__ = true
     try {
@@ -776,14 +778,15 @@ describe('ChatPage import intent rendering', () => {
       })
 
       let yesButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.trim() === '✅')
-      expect(yesButton).toBeFalsy()
+      expect(yesButton).toBeTruthy()
+      expect(container.querySelector('textarea[aria-label="Message"]')).toBeNull()
 
       await act(async () => {
         vi.advanceTimersByTime(300)
       })
 
       yesButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.trim() === '✅')
-      expect(yesButton).toBeFalsy()
+      expect(yesButton).toBeTruthy()
     } finally {
       delete (globalThis as { __CHAT_ENABLE_TYPING_IN_TESTS__?: boolean }).__CHAT_ENABLE_TYPING_IN_TESTS__
       vi.useRealTimers()

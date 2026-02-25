@@ -652,9 +652,19 @@ def _build_profile_collect_ui_action(profile_fields: dict[str, Any]) -> dict[str
 def _parse_ui_form_submit_message(message: str) -> dict[str, Any] | None:
     """Parse deterministic UI form-submit envelope when present."""
 
-    if not isinstance(message, str) or not message.startswith(_UI_FORM_SUBMIT_PREFIX):
+    if not isinstance(message, str):
         return None
-    raw_payload = message[len(_UI_FORM_SUBMIT_PREFIX) :].strip()
+
+    marker_index = message.find(f"\n{_UI_FORM_SUBMIT_PREFIX}")
+    if marker_index >= 0:
+        payload_start = marker_index + 1 + len(_UI_FORM_SUBMIT_PREFIX)
+    else:
+        marker_index = message.find(_UI_FORM_SUBMIT_PREFIX)
+        if marker_index < 0:
+            return None
+        payload_start = marker_index + len(_UI_FORM_SUBMIT_PREFIX)
+
+    raw_payload = message[payload_start:].strip()
     if not raw_payload:
         raise ValueError("missing_form_payload")
     parsed = json.loads(raw_payload)
