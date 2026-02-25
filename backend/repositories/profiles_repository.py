@@ -1237,7 +1237,25 @@ class SupabaseProfilesRepository:
             use_anon_key=False,
         )
 
-        self.update_chat_state(profile_id=profile_id, user_id=user_id, chat_state={})
+        self.update_chat_state(
+            profile_id=profile_id,
+            user_id=user_id,
+            chat_state={
+                "active_task": None,
+                "state": {
+                    "global_state": {
+                        "mode": "onboarding",
+                        "onboarding_step": "profile",
+                        "onboarding_substep": "profile_intro",
+                        "profile_confirmed": False,
+                        "bank_accounts_confirmed": False,
+                        "has_bank_accounts": False,
+                        "has_imported_transactions": False,
+                        "budget_created": False,
+                    }
+                },
+            },
+        )
 
         for table_name in ("releves_bancaires", "merchants", "profile_categories", "bank_accounts"):
             self._client.delete_rows(

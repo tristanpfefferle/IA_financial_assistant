@@ -792,7 +792,7 @@ export function ChatPage({ email }: ChatPageProps) {
 
     setError(null)
     resetLocalChatState()
-    didInitConversationRef.current = true
+    didInitConversationRef.current = false
 
     try {
       await hardResetProfile()

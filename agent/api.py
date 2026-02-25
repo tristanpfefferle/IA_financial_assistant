@@ -3117,7 +3117,7 @@ def agent_chat(
             and global_state.get("onboarding_step") == "profile"
             and isinstance(global_state.get("onboarding_substep"), str)
             and global_state.get("onboarding_substep")
-            in {"profile_intro", "profile_collect", "profile_confirm", "profile_fix_select", "profile_fix_name", "profile_fix_birth_date"}
+            in {"profile_collect", "profile_confirm", "profile_fix_select", "profile_fix_name", "profile_fix_birth_date"}
         )
         session_resume_pending = bool(state_dict.get("session_resume_pending")) if isinstance(state_dict, dict) else False
 
@@ -3132,6 +3132,23 @@ def agent_chat(
                     user_id=auth_user_id,
                     chat_state=updated_chat_state,
                 )
+                if (
+                    _is_valid_global_state(global_state)
+                    and global_state.get("mode") == "onboarding"
+                    and global_state.get("onboarding_step") == "profile"
+                    and global_state.get("onboarding_substep") == "profile_confirm"
+                    and hasattr(profiles_repository, "get_profile_fields")
+                ):
+                    profile_fields = profiles_repository.get_profile_fields(
+                        profile_id=profile_id,
+                        fields=list(_PROFILE_COMPLETION_FIELDS),
+                    )
+                    if _is_profile_complete(profile_fields):
+                        return _chat_response(
+                            reply=_build_profile_recap_reply(profile_fields),
+                            tool_result=_build_quick_reply_yes_no_ui_action(),
+                            plan=None,
+                        )
                 payload = payload.model_copy(update={"message": ""})
             else:
                 return _chat_response(
