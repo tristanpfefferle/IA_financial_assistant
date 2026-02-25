@@ -23,3 +23,10 @@ npm run dev
 - [ ] Si token expiré, le refresh de session permet l'envoi chat sans 401 utilisateur.
 - [ ] Le bouton **Se déconnecter** retourne bien à l'écran de login.
 - [ ] En cas d'erreur API (401/500), un message lisible s'affiche avec le détail backend si présent.
+
+## Check-list UI chat plein écran
+
+- [ ] Le `body` ne scrolle plus.
+- [ ] La liste de messages scrolle correctement.
+- [ ] Le composer reste visible en bas.
+- [ ] Le bouton ↓ apparaît quand on remonte et disparaît en bas.
