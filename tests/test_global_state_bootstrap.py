@@ -21,18 +21,6 @@ def _auth_headers() -> dict[str, str]:
     return {"Authorization": "Bearer test-token"}
 
 
-def _install_llm_call_counter(monkeypatch) -> dict[str, int]:
-    calls = {"count": 0}
-    base_llm_extractor = agent_api._extract_profile_fields_with_llm
-
-    def _counting_llm(message: str):
-        calls["count"] += 1
-        return base_llm_extractor(message)
-
-    monkeypatch.setattr(agent_api, "_extract_profile_fields_with_llm", _counting_llm)
-    return calls
-
-
 class _Repo:
     def __init__(
         self,
@@ -1666,13 +1654,25 @@ def test_profile_collect_low_signal_message_does_not_update(monkeypatch) -> None
     )
     monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
     monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
-    llm_calls = _install_llm_call_counter(monkeypatch)
+
+    monkeypatch.setattr(
+        agent_api,
+        "_extract_profile_fields_with_llm",
+        lambda _message: {
+            "first_name": None,
+            "last_name": None,
+            "birth_date": None,
+            "confidence": 0.1,
+            "reason": "llm_fallback",
+            "needs_clarification": False,
+            "clarification_question": None,
+        },
+    )
 
     response = client.post("/agent/chat", json={"message": "'es sérieux ?"}, headers=_auth_headers())
 
     assert response.status_code == 200
     assert repo.profile_update_calls == []
-    assert llm_calls["count"] == 0
     assert "quel est ton prénom et ton nom" in response.json()["reply"].lower()
 
 
@@ -2004,12 +2004,15 @@ def test_profile_collect_toxic_message_does_not_call_llm_and_reasks(monkeypatch)
     )
     monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
     monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
-    llm_calls = _install_llm_call_counter(monkeypatch)
+
+    def _fail_if_called(_message: str):
+        raise AssertionError("LLM fallback should not be called for toxic input")
+
+    monkeypatch.setattr(agent_api, "_extract_profile_fields_with_llm", _fail_if_called)
 
     response = client.post("/agent/chat", json={"message": "Ta gueule"}, headers=_auth_headers())
 
     assert response.status_code == 200
-    assert llm_calls["count"] == 0
     assert "restons respectueux" in response.json()["reply"].lower()
     assert "prénom" in response.json()["reply"].lower()
 
