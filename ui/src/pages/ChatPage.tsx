@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent, type ReactNode } from 'react'
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
 
 import {
@@ -455,11 +455,10 @@ export function ChatPage({ email }: ChatPageProps) {
   const [autoOpenImportPicker, setAutoOpenImportPicker] = useState(false)
   const [awaitingPendingCategorizationReply, setAwaitingPendingCategorizationReply] = useState(false)
   const [isOptimisticallySubmittingForm, setIsOptimisticallySubmittingForm] = useState(false)
-  const [typingCursor, setTypingCursor] = useState(0)
+  const [isAssistantTyping, setIsAssistantTyping] = useState(false)
   const envDebugEnabled = import.meta.env.VITE_UI_DEBUG === 'true'
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(import.meta.env.VITE_API_URL), [])
   const executedPdfMessageIdsRef = useRef<Set<string>>(new Set())
-  const revealedMessageIdsRef = useRef<Set<string>>(new Set())
   const assistantQueueRef = useRef<
     Array<{
       id: string
@@ -682,11 +681,21 @@ export function ChatPage({ email }: ChatPageProps) {
 
     isDrainingAssistantQueueRef.current = true
     try {
+      let hasDisplayedAssistantSegment = false
       while (assistantQueueRef.current.length > 0) {
         const queued = assistantQueueRef.current.shift()
         if (!queued) {
           continue
         }
+
+        if (hasDisplayedAssistantSegment) {
+          setIsAssistantTyping(true)
+          await new Promise<void>((resolve) => {
+            window.setTimeout(resolve, computeAssistantSegmentDelay(queued.content))
+          })
+        }
+
+        setIsAssistantTyping(false)
 
         setMessages((previous) => [
           ...previous,
@@ -700,13 +709,10 @@ export function ChatPage({ email }: ChatPageProps) {
             debugPayload: queued.debugPayload,
           },
         ])
-        if (assistantQueueRef.current.length > 0) {
-          await new Promise<void>((resolve) => {
-            window.setTimeout(resolve, computeAssistantSegmentDelay(queued.content))
-          })
-        }
+        hasDisplayedAssistantSegment = true
       }
     } finally {
+      setIsAssistantTyping(false)
       isDrainingAssistantQueueRef.current = false
     }
   }
@@ -790,10 +796,9 @@ export function ChatPage({ email }: ChatPageProps) {
     setAwaitingPendingCategorizationReply(false)
     setPendingCategorizationCount(0)
     setResolvePendingAliasesFeedback(null)
-    setTypingCursor((value) => value + 1)
+    setIsAssistantTyping(false)
 
     executedPdfMessageIdsRef.current.clear()
-    revealedMessageIdsRef.current.clear()
     assistantQueueRef.current = []
     uploadMessageGuardsRef.current.clear()
     hasPromptedPendingCategorizationRef.current = false
@@ -880,6 +885,7 @@ export function ChatPage({ email }: ChatPageProps) {
     setMessage('')
     setError(null)
     setIsLoading(true)
+    setIsAssistantTyping(true)
 
     try {
       if (awaitingPendingCategorizationReply) {
@@ -898,6 +904,7 @@ export function ChatPage({ email }: ChatPageProps) {
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Erreur inconnue')
     } finally {
+      setIsAssistantTyping(false)
       setIsLoading(false)
     }
   }
@@ -913,6 +920,7 @@ export function ChatPage({ email }: ChatPageProps) {
     setMessage('')
     setError(null)
     setIsLoading(true)
+    setIsAssistantTyping(true)
 
     setIsOptimisticallySubmittingForm(true)
 
@@ -924,6 +932,7 @@ export function ChatPage({ email }: ChatPageProps) {
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Erreur inconnue')
     } finally {
+      setIsAssistantTyping(false)
       setIsOptimisticallySubmittingForm(false)
       setIsLoading(false)
     }
@@ -943,6 +952,7 @@ export function ChatPage({ email }: ChatPageProps) {
     setMessage('')
     setError(null)
     setIsLoading(true)
+    setIsAssistantTyping(true)
 
     try {
       const response = await sendChatMessage(trimmedMessage, { debug: debugMode })
@@ -952,6 +962,7 @@ export function ChatPage({ email }: ChatPageProps) {
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Erreur inconnue')
     } finally {
+      setIsAssistantTyping(false)
       setIsLoading(false)
     }
   }
@@ -963,6 +974,7 @@ export function ChatPage({ email }: ChatPageProps) {
 
     setIsLoading(true)
     setError(null)
+    setIsAssistantTyping(true)
     try {
       const response = await sendChatMessage('', { debug: debugMode, requestGreeting: true })
       syncLoopDebug(response)
@@ -972,6 +984,7 @@ export function ChatPage({ email }: ChatPageProps) {
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Erreur inconnue')
     } finally {
+      setIsAssistantTyping(false)
       setIsLoading(false)
     }
   }
@@ -1084,6 +1097,7 @@ export function ChatPage({ email }: ChatPageProps) {
 
         setToast({ type: 'success', message: 'Import terminé. Analyse automatique en cours…' })
         setIsLoading(true)
+        setIsAssistantTyping(true)
         const response = await sendChatMessage('', { debug: debugMode, requestGreeting: true })
         syncLoopDebug(response)
         const segments = splitAssistantReply(response.reply)
@@ -1095,6 +1109,7 @@ export function ChatPage({ email }: ChatPageProps) {
         replaceProgressWithAssistantMessage(progressId, buildImportErrorText(message))
         setToast({ type: 'error', message })
       } finally {
+        setIsAssistantTyping(false)
         setIsLoading(false)
       }
     })()
@@ -1131,8 +1146,7 @@ export function ChatPage({ email }: ChatPageProps) {
           isLoading={isLoading}
           debugMode={debugMode}
           apiBaseUrl={apiBaseUrl}
-          typingCursor={typingCursor}
-          revealedMessageIdsRef={revealedMessageIdsRef}
+          isAssistantTyping={isAssistantTyping}
           onImportNow={(intent) => {
             setIsImportDialogOpen(true)
             setAutoOpenImportPicker(true)
@@ -1160,7 +1174,6 @@ export function ChatPage({ email }: ChatPageProps) {
               )
             }
           }}
-          onTypingDone={(_messageId) => setTypingCursor((value) => value + 1)}
         />
 
         <ComposerArea
@@ -1303,80 +1316,22 @@ function ChatHeader({ onLogout, debugMode, loopDebug }: { onLogout: () => void; 
 type MessageListProps = {
   messages: ChatMessage[]
   isLoading: boolean
+  isAssistantTyping: boolean
   debugMode: boolean
   apiBaseUrl: string
-  typingCursor: number
-  revealedMessageIdsRef: RefObject<Set<string>>
   onImportNow: (intent: ImportIntent) => void
-  onTypingDone: (messageId: string) => void
-  onActiveTypingChange?: (messageId: string | null) => void
-}
-
-function MessageRow({
-  chatMessage,
-  activeTypingMessageId,
-  debugMode,
-  onImportNow,
-  apiBaseUrl,
-  revealedMessageIdsRef,
-  onTypingDone,
-}: {
-  chatMessage: ChatMessage
-  activeTypingMessageId: string | null
-  debugMode: boolean
-  onImportNow: (intent: ImportIntent) => void
-  apiBaseUrl: string
-  revealedMessageIdsRef: RefObject<Set<string>>
-  onTypingDone: (messageId: string) => void
-}) {
-  const isRevealed = revealedMessageIdsRef.current?.has(chatMessage.id) ?? false
-  if (chatMessage.role === 'assistant' && !isRevealed && chatMessage.id !== activeTypingMessageId) {
-    return null
-  }
-
-  return (
-    <MessageBubble
-      message={chatMessage}
-      debugMode={debugMode}
-      onImportNow={onImportNow}
-      apiBaseUrl={apiBaseUrl}
-      revealedMessageIdsRef={revealedMessageIdsRef}
-      isActiveTyping={chatMessage.id === activeTypingMessageId}
-      onTypingDone={onTypingDone}
-    />
-  )
 }
 
 export function MessageList({
   messages,
   isLoading,
+  isAssistantTyping,
   debugMode,
   apiBaseUrl,
-  typingCursor,
-  revealedMessageIdsRef,
   onImportNow,
-  onTypingDone,
-  onActiveTypingChange,
 }: MessageListProps) {
   const virtuosoRef = useRef<VirtuosoHandle | null>(null)
   const [isAtBottom, setIsAtBottom] = useState(true)
-
-  const activeTypingMessageId = useMemo(() => {
-    const revealed = revealedMessageIdsRef.current
-    for (const item of messages) {
-      if (item.role !== 'assistant') {
-        continue
-      }
-      if (!revealed?.has(item.id)) {
-        return item.id
-      }
-    }
-    return null
-  }, [messages, revealedMessageIdsRef, typingCursor])
-
-  useEffect(() => {
-    onActiveTypingChange?.(activeTypingMessageId)
-  }, [activeTypingMessageId, onActiveTypingChange])
 
   const canScrollToBottom = messages.length > 0
 
@@ -1404,28 +1359,33 @@ export function MessageList({
         itemContent={(_index, chatMessage) => (
           <div className="message-row">
             <MessageRow
-              chatMessage={chatMessage}
-              activeTypingMessageId={activeTypingMessageId}
+              message={chatMessage}
               debugMode={debugMode}
               onImportNow={onImportNow}
               apiBaseUrl={apiBaseUrl}
-              revealedMessageIdsRef={revealedMessageIdsRef}
-              onTypingDone={onTypingDone}
             />
           </div>
         )}
-        followOutput={(atBottom) => (atBottom ? 'smooth' : false)}
+        followOutput={isAtBottom ? 'smooth' : false}
         components={{
           Header: () => <div style={{ height: 16 }} />,
           Footer: () => (
             <>
-              {isLoading ? (
+              {isAssistantTyping ? (
+                <div className="message-row message-row-typing" aria-live="polite" aria-label="L’assistant écrit…">
+                  <article className="message message-assistant message-typing-indicator">
+                    <p className="message-role">Assistant</p>
+                    <p className="message-content">L’assistant écrit<span className="typing-dots" aria-hidden="true">...</span></p>
+                  </article>
+                </div>
+              ) : null}
+              {isLoading && !isAssistantTyping ? (
                 <div className="loading-state">
                   <span className="spinner" />
                   <p className="subtle-text">L’assistant réfléchit…</p>
                 </div>
               ) : null}
-              <div style={{ height: 14 }} />
+              <div style={{ height: 22 }} />
             </>
           ),
         }}
@@ -1445,140 +1405,16 @@ export function MessageList({
   )
 }
 
-function shouldBypassTypingInTests(): boolean {
-  if (import.meta.env.MODE !== 'test') {
-    return false
-  }
-
-  return !(globalThis as { __CHAT_ENABLE_TYPING_IN_TESTS__?: boolean }).__CHAT_ENABLE_TYPING_IN_TESTS__
-}
-
-export function TypingText({
-  message,
-  apiBaseUrl,
-  revealedMessageIdsRef,
-  isActiveTyping,
-  onTypingDone,
-}: {
-  message: ChatMessage
-  apiBaseUrl: string
-  revealedMessageIdsRef: RefObject<Set<string>>
-  isActiveTyping: boolean
-  onTypingDone: (messageId: string) => void
-}) {
-  const shouldBypassTyping = shouldBypassTypingInTests()
-  const completionNotifiedRef = useRef(false)
-  const [visibleLength, setVisibleLength] = useState(() => {
-    const revealed = revealedMessageIdsRef.current
-    return revealed?.has(message.id) ? message.content.length : 0
-  })
-
-  useEffect(() => {
-    completionNotifiedRef.current = false
-  }, [message.id])
-
-  useEffect(() => {
-    const revealed = revealedMessageIdsRef.current
-
-    const notifyCompletion = () => {
-      if (completionNotifiedRef.current) {
-        return
-      }
-      completionNotifiedRef.current = true
-      onTypingDone(message.id)
-    }
-
-    if (shouldBypassTyping) {
-      setVisibleLength(message.content.length)
-      if (!revealed?.has(message.id)) {
-        revealed?.add(message.id)
-        notifyCompletion()
-      }
-      return
-    }
-
-    if (revealed?.has(message.id)) {
-      setVisibleLength(message.content.length)
-      return
-    }
-
-    if (!isActiveTyping) {
-      setVisibleLength(0)
-      return
-    }
-
-    let active = true
-    let timerId: number | undefined
-
-    const step = () => {
-      if (!active) {
-        return
-      }
-
-      setVisibleLength((previous) => {
-        const increment = previous > 120 ? 4 : 2
-        const next = Math.min(message.content.length, previous + increment)
-        if (next >= message.content.length) {
-          if (!revealed?.has(message.id)) {
-            revealed?.add(message.id)
-          }
-          return message.content.length
-        }
-
-        const delay = previous > 120 ? 14 : 20
-        timerId = window.setTimeout(step, delay)
-        return next
-      })
-    }
-
-    timerId = window.setTimeout(step, 10)
-
-    return () => {
-      active = false
-      if (timerId !== undefined) {
-        window.clearTimeout(timerId)
-      }
-    }
-  }, [isActiveTyping, shouldBypassTyping, message.id, message.content, onTypingDone, revealedMessageIdsRef])
-
-
-  useEffect(() => {
-    const revealed = revealedMessageIdsRef.current
-    const isFullyVisible = visibleLength >= message.content.length
-    if (!isFullyVisible) {
-      return
-    }
-    if (!revealed?.has(message.id)) {
-      return
-    }
-    if (completionNotifiedRef.current) {
-      return
-    }
-    completionNotifiedRef.current = true
-    onTypingDone(message.id)
-  }, [message.id, message.content.length, onTypingDone, revealedMessageIdsRef, visibleLength])
-
-  const content = shouldBypassTyping ? message.content : message.content.slice(0, visibleLength)
-
-  return <>{renderContentWithLinks(content, apiBaseUrl)}</>
-}
-
-function MessageBubble({
+function MessageRow({
   message,
   debugMode,
   onImportNow,
   apiBaseUrl,
-  revealedMessageIdsRef,
-  isActiveTyping,
-  onTypingDone,
 }: {
   message: ChatMessage
   debugMode: boolean
   onImportNow: (intent: ImportIntent) => void
   apiBaseUrl: string
-  revealedMessageIdsRef: RefObject<Set<string>>
-  isActiveTyping: boolean
-  onTypingDone: (messageId: string) => void
 }) {
   const dateLabel = new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   const pdfUiRequest = toPdfUiRequest(message.toolResult)
@@ -1655,13 +1491,8 @@ function MessageBubble({
       <p className="message-role">{roleLabel(message.role)}</p>
       <p className="message-content">
         {message.role === 'assistant' ? (
-          <TypingText
-            message={message}
-            apiBaseUrl={apiBaseUrl}
-            revealedMessageIdsRef={revealedMessageIdsRef}
-            isActiveTyping={isActiveTyping}
-            onTypingDone={onTypingDone}
-          />
+          // Reveal progressif supprimé: les messages complets améliorent la fiabilité du followOutput/autoscroll et une UX plus prévisible.
+          renderContentWithLinks(message.content, apiBaseUrl)
         ) : (
           renderContentWithLinks(message.content, apiBaseUrl)
         )}
