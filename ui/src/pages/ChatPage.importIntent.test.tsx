@@ -364,8 +364,8 @@ describe('ChatPage import intent rendering', () => {
           form_id: 'onboarding_profile_name',
           title: 'Ton profil',
           fields: [
-            { id: 'first_name', label: 'Prénom', type: 'text', required: true, placeholder: 'Tristan' },
-            { id: 'last_name', label: 'Nom', type: 'text', required: true, placeholder: 'Pfefferlé' },
+            { id: 'first_name', label: 'Prénom', type: 'text', required: true, placeholder: 'Prénom' },
+            { id: 'last_name', label: 'Nom', type: 'text', required: true, placeholder: 'Nom' },
           ],
           submit_label: 'Valider',
         },
@@ -384,8 +384,8 @@ describe('ChatPage import intent rendering', () => {
       await Promise.resolve()
     })
 
-    const firstNameInput = Array.from(container.querySelectorAll('input')).find((input) => input.getAttribute('placeholder') === 'Tristan') as HTMLInputElement
-    const lastNameInput = Array.from(container.querySelectorAll('input')).find((input) => input.getAttribute('placeholder') === 'Pfefferlé') as HTMLInputElement
+    const firstNameInput = Array.from(container.querySelectorAll('input')).find((input) => input.getAttribute('placeholder') === 'Prénom') as HTMLInputElement
+    const lastNameInput = Array.from(container.querySelectorAll('input')).find((input) => input.getAttribute('placeholder') === 'Nom') as HTMLInputElement
     expect(firstNameInput).toBeTruthy()
     expect(lastNameInput).toBeTruthy()
 
@@ -423,7 +423,7 @@ describe('ChatPage import intent rendering', () => {
           action: 'form',
           form_id: 'onboarding_profile_birth_date',
           title: 'Date de naissance',
-          fields: [{ id: 'birth_date', label: 'Date de naissance', type: 'date', required: true }],
+          fields: [{ id: 'birth_date', label: 'Date de naissance', type: 'date', required: true, placeholder: 'Date de naissance' }],
           submit_label: 'Valider',
         },
         plan: null,

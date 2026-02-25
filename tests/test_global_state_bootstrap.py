@@ -1028,7 +1028,7 @@ def test_free_chat_re_gates_to_profile_when_profile_missing(monkeypatch) -> None
     assert persisted["onboarding_step"] == "profile"
     assert persisted["onboarding_substep"] == "profile_intro"
     assert "assistant financier" in response.json()["reply"].lower()
-    assert response.json()["tool_result"]["options"] == [{"id": "start", "label": "Allons-y", "value": "allons_y"}]
+    assert response.json()["tool_result"]["options"] == [{"id": "start", "label": "Allons-y !", "value": "allons-y"}]
 
 
 def test_profile_re_gate_message_asks_only_for_name(monkeypatch) -> None:
@@ -1523,11 +1523,9 @@ def test_onboarding_request_greeting_returns_intro_without_user_message(monkeypa
     )
 
     assert response.status_code == 200
-    assert "salut" in response.json()["reply"].lower()
-    assert "assistant financier" in response.json()["reply"].lower()
-    assert "3 étapes" in response.json()["reply"]
-    assert response.json()["tool_result"]["options"] == [{"id": "start", "label": "Allons-y", "value": "allons_y"}]
-    assert "avant de continuer" not in response.json()["reply"].lower()
+    assert response.json()["reply"] == "Salut 👋 Es-tu prêt à reprendre où nous en étions ?"
+    assert response.json()["tool_result"]["options"] == [{"id": "start", "label": "Allons-y !", "value": "allons-y"}]
+    assert repo.update_calls[-1]["chat_state"]["state"]["session_resume_pending"] is True
     assert loop.called is False
 
 
@@ -1548,13 +1546,69 @@ def test_profile_intro_allons_y_returns_name_form(monkeypatch) -> None:
     monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
     monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
 
-    response = client.post("/agent/chat", json={"message": "allons_y"}, headers=_auth_headers())
+    response = client.post("/agent/chat", json={"message": "allons-y"}, headers=_auth_headers())
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["tool_result"]["form_id"] == "onboarding_profile_name"
     assert repo.update_calls[-1]["chat_state"]["state"]["global_state"]["onboarding_substep"] == "profile_collect"
 
+
+
+def test_onboarding_resume_pending_allons_y_resumes_profile_collect(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "onboarding",
+                    "onboarding_step": "profile",
+                    "onboarding_substep": "profile_collect",
+                },
+                "session_resume_pending": True,
+            }
+        },
+        profile_fields={"first_name": "Ada", "last_name": "Lovelace", "birth_date": ""},
+    )
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
+
+    response = client.post("/agent/chat", json={"message": "allons-y"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["reply"] == "Quelle est ta date de naissance ?"
+    assert payload["tool_result"]["form_id"] == "onboarding_profile_birth_date"
+    assert repo.update_calls[-1]["chat_state"]["state"]["session_resume_pending"] is False
+
+
+def test_onboarding_birth_date_form_rejects_implausible_date(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "onboarding",
+                    "onboarding_step": "profile",
+                    "onboarding_substep": "profile_collect",
+                }
+            }
+        },
+        profile_fields={"first_name": "Ada", "last_name": "Lovelace", "birth_date": ""},
+    )
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
+
+    response = client.post(
+        "/agent/chat",
+        json={"message": '__ui_form_submit__:{"form_id":"onboarding_profile_birth_date","values":{"birth_date":"1800-01-01"}}'},
+        headers=_auth_headers(),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["reply"] == "Cette date me paraît étrange. Peux-tu vérifier ?"
+    assert response.json()["tool_result"]["form_id"] == "onboarding_profile_birth_date"
+    assert all("birth_date" not in call for call in repo.profile_update_calls)
 
 def test_profile_fix_name_submit_keeps_birth_date_and_returns_recap(monkeypatch) -> None:
     _mock_auth(monkeypatch)
