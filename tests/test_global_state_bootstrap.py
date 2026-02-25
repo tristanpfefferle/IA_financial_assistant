@@ -1906,9 +1906,9 @@ def test_profile_collect_accepts_first_and_last_non_standard(monkeypatch) -> Non
     response = client.post("/agent/chat", json={"message": "C’est Tristan et mon nom Jadre"}, headers=_auth_headers())
 
     assert response.status_code == 200
-    assert {"first_name": "Tristan"} in repo.profile_update_calls
-    assert all("last_name" not in call for call in repo.profile_update_calls)
-    assert "nom de famille" in response.json()["reply"].lower()
+    assert any(call.get("first_name") == "Tristan" for call in repo.profile_update_calls)
+    assert any(call.get("last_name") == "Jadre" for call in repo.profile_update_calls)
+    assert "date de naissance" in response.json()["reply"].lower()
 
 
 def test_profile_collect_accepts_birth_date_only_when_name_known(monkeypatch) -> None:
