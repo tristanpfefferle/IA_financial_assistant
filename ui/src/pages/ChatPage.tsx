@@ -73,6 +73,27 @@ export function ChatPage({ email }: ChatPageProps) {
     setIsLoggingOut(false)
   }
 
+  function enqueueAssistantMessages(replySegments: string[]) {
+    if (replySegments.length === 0) {
+      return
+    }
+
+    const assistantMessages = replySegments.map((segment) => createMessage('assistant', segment))
+    setMessages((previous) => [...previous, ...assistantMessages])
+  }
+
+  function drainAssistantQueue(reply: string) {
+    const assistantQueue = splitAssistantReply(reply)
+    enqueueAssistantMessages(assistantQueue)
+  }
+
+  async function submitForm(message: string) {
+    setMessages((previous) => [...previous, createMessage('user', message)])
+
+    const response = await sendChatMessage(message)
+    drainAssistantQueue(response.reply)
+  }
+
   async function handleSubmit(event?: FormEvent<HTMLFormElement>) {
     event?.preventDefault()
 
@@ -85,12 +106,9 @@ export function ChatPage({ email }: ChatPageProps) {
     setError(null)
     setIsSubmitting(true)
     setIsTyping(true)
-    setMessages((current) => [...current, createMessage('user', message)])
 
     try {
-      const response = await sendChatMessage(message)
-      const assistantMessages = splitAssistantReply(response.reply).map((segment) => createMessage('assistant', segment))
-      setMessages((current) => [...current, ...assistantMessages])
+      await submitForm(message)
     } catch (submitError) {
       const errorMessage = submitError instanceof Error ? submitError.message : 'Erreur inconnue'
       setError(errorMessage)
@@ -139,7 +157,10 @@ export function ChatPage({ email }: ChatPageProps) {
 
               return (
                 <div className={`message-row ${item.role === 'user' ? 'message-row-user' : 'message-row-assistant'}`}>
-                  <article className={`message ${item.role === 'user' ? 'message-user' : 'message-assistant'}`}>
+                  <article
+                    className={`message ${item.role === 'user' ? 'message-user' : 'message-assistant'}`}
+                    data-testid={`message-bubble-${item.role}`}
+                  >
                     <p className="message-content">{item.content}</p>
                     <p className="message-time">
                       {roleLabel} · {formatMessageTime(item.createdAt)}
