@@ -2,6 +2,46 @@ import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+vi.mock('react-virtuoso', async () => {
+  const React = await vi.importActual<typeof import('react')>('react')
+
+  const Virtuoso = React.forwardRef(function MockVirtuoso(props: {
+    className?: string
+    style?: React.CSSProperties
+    data?: unknown[]
+    itemContent: (index: number, item: unknown) => React.ReactNode
+    components?: { Header?: React.ComponentType; Footer?: React.ComponentType }
+    atBottomStateChange?: (isBottom: boolean) => void
+  }, ref: React.ForwardedRef<{ scrollToIndex: () => void }>) {
+    const { className, style, data = [], itemContent, components, atBottomStateChange } = props
+
+    React.useImperativeHandle(ref, () => ({
+      scrollToIndex: () => undefined,
+    }))
+
+    React.useEffect(() => {
+      atBottomStateChange?.(true)
+    }, [atBottomStateChange])
+
+    const Header = components?.Header
+    const Footer = components?.Footer
+
+    return (
+      <div className={className} style={style}>
+        {Header ? <Header /> : null}
+        {data.map((item, index) => (
+          <div key={index}>{itemContent(index, item)}</div>
+        ))}
+        {Footer ? <Footer /> : null}
+      </div>
+    )
+  })
+
+  return {
+    Virtuoso,
+  }
+})
+
 import { ChatPage } from './ChatPage'
 
 const {

@@ -163,6 +163,8 @@ button:disabled {
 
 .messages-viewport {
   position: relative;
+  display: flex;
+  flex-direction: column;
   min-height: 0;
   flex: 1;
   overflow: hidden;
@@ -170,6 +172,7 @@ button:disabled {
 }
 
 .messages {
+  flex: 1;
   min-height: 0;
 }
 

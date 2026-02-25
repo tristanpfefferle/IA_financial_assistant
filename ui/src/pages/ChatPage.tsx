@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
 
 import {
@@ -477,6 +477,7 @@ export function ChatPage({ email }: ChatPageProps) {
   const hasPromptedPendingCategorizationRef = useRef(false)
   const lastPromptedPendingCategorizationCountRef = useRef<number>(0)
   const didInitConversationRef = useRef(false)
+  const lastTypingAutoScrollAtRef = useRef(0)
 
   const pendingImportIntent = useMemo(() => findPendingImportIntent(messages), [messages])
   const isImportRequired = pendingImportIntent !== null
@@ -510,6 +511,35 @@ export function ChatPage({ email }: ChatPageProps) {
   const hasUnauthorizedError = useMemo(() => error?.includes('(401)') ?? false, [error])
   const statusBadge = debugMode ? 'Debug' : isImportRequired ? 'Onboarding' : 'Prêt'
 
+  const scrollToLatestMessage = useCallback(
+    (behavior: 'auto' | 'smooth' = 'smooth') => {
+      if (messages.length === 0) {
+        return
+      }
+
+      virtuosoRef.current?.scrollToIndex({
+        index: messages.length - 1,
+        align: 'end',
+        behavior,
+      })
+    },
+    [messages.length],
+  )
+
+  const handleTypingProgress = useCallback(() => {
+    if (!isAtBottom || messages.length === 0) {
+      return
+    }
+
+    const now = Date.now()
+    if (now - lastTypingAutoScrollAtRef.current < 100) {
+      return
+    }
+
+    lastTypingAutoScrollAtRef.current = now
+    scrollToLatestMessage('smooth')
+  }, [isAtBottom, messages.length, scrollToLatestMessage])
+
   useEffect(() => {
     if (!toast) {
       return
@@ -517,6 +547,14 @@ export function ChatPage({ email }: ChatPageProps) {
     const timeoutId = window.setTimeout(() => setToast(null), 3500)
     return () => window.clearTimeout(timeoutId)
   }, [toast])
+
+  useEffect(() => {
+    if (!isAtBottom || messages.length === 0) {
+      return
+    }
+
+    scrollToLatestMessage('smooth')
+  }, [isAtBottom, messages.length, scrollToLatestMessage])
 
   useEffect(() => {
     setDebugMode(readChatDebugMode())
@@ -1167,12 +1205,10 @@ export function ChatPage({ email }: ChatPageProps) {
             }
           }}
           onScrollToBottom={() => {
-            if (messages.length === 0) {
-              return
-            }
-            virtuosoRef.current?.scrollToIndex({ index: messages.length - 1, behavior: 'smooth' })
+            scrollToLatestMessage('smooth')
           }}
           onTypingDone={(_messageId) => setTypingCursor((value) => value + 1)}
+          onTypingProgress={handleTypingProgress}
         />
 
         <ComposerArea
@@ -1422,7 +1458,7 @@ export function MessageList({
             />
           </div>
         )}
-        followOutput={(atBottom) => (atBottom ? 'smooth' : false)}
+        followOutput={(atBottom) => (atBottom || isAtBottom ? 'smooth' : false)}
         atBottomStateChange={onAtBottomStateChange}
         components={{
           Header: () => <div style={{ height: 16 }} />,
@@ -1434,7 +1470,7 @@ export function MessageList({
                   <p className="subtle-text">L’assistant réfléchit…</p>
                 </div>
               ) : null}
-              <div style={{ height: 16 }} />
+              <div style={{ height: 24 }} />
             </>
           ),
         }}
@@ -1473,7 +1509,6 @@ export function TypingText({
 }) {
   const shouldBypassTyping = shouldBypassTypingInTests()
   const completionNotifiedRef = useRef(false)
-  const lastTypingProgressAtRef = useRef(0)
   const [visibleLength, setVisibleLength] = useState(() => {
     const revealed = revealedMessageIdsRef.current
     return revealed?.has(message.id) ? message.content.length : 0
@@ -1531,9 +1566,7 @@ export function TypingText({
           return message.content.length
         }
 
-        const now = Date.now()
-        if (next > previous && now - lastTypingProgressAtRef.current >= 100) {
-          lastTypingProgressAtRef.current = now
+        if (next > previous) {
           onTypingProgress?.()
         }
 
