@@ -2898,6 +2898,7 @@ def agent_chat(
             loop_services = {
                 "profiles_repository": profiles_repository,
                 "tool_router": tool_router,
+                "global_state": global_state or {},
             }
             loop_reply = route_message(
                 message=payload.message,
@@ -2926,7 +2927,11 @@ def agent_chat(
                         continue
                     state_dict[update_key] = update_value
 
-            should_persist_loop_state = bool(state_updates) or resolved_loop != current_loop
+            should_persist_loop_state = (
+                should_persist_global_state
+                or bool(state_updates)
+                or resolved_loop != current_loop
+            )
             if should_persist_loop_state:
                 updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
                 if state_dict:

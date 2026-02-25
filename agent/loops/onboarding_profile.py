@@ -59,10 +59,17 @@ class OnboardingProfileCollectLoop:
 
         if slot_value.confidence == ConfidenceLevel.HIGH and slot_value.value:
             if profiles_repository is not None and hasattr(profiles_repository, "update_profile_fields"):
-                profiles_repository.update_profile_fields(
-                    profile_id=profile_id,
-                    set_dict={missing_slot: slot_value.value},
-                )
+                try:
+                    profiles_repository.update_profile_fields(
+                        profile_id=profile_id,
+                        user_id=user_id,
+                        set_dict={missing_slot: slot_value.value},
+                    )
+                except TypeError:
+                    profiles_repository.update_profile_fields(
+                        profile_id=profile_id,
+                        set_dict={missing_slot: slot_value.value},
+                    )
             current_fields[missing_slot] = slot_value.value
             completed = self._first_missing_slot(current_fields) is None
             updated_state = self._next_global_state(services, completed=completed)
