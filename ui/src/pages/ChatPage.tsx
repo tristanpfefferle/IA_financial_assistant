@@ -1,8 +1,6 @@
-import { useMemo, useState } from 'react'
-import type { FormEvent, KeyboardEvent } from 'react'
-import { Virtuoso } from 'react-virtuoso'
+import { useState } from 'react'
 
-import { resetSession, resolveApiBaseUrl, sendChatMessage } from '../api/agentApi'
+import { resetSession } from '../api/agentApi'
 import { logoutWithSessionReset } from '../lib/sessionLifecycle'
 import { supabase } from '../lib/supabaseClient'
 
@@ -10,169 +8,57 @@ type ChatPageProps = {
   email?: string
 }
 
-type ChatRole = 'user' | 'assistant'
-
-type ChatMessage = {
-  id: string
-  role: ChatRole
-  content: string
-  createdAt: Date
-}
-
-function splitAssistantReply(reply: string): string[] {
-  const cleanedReply = reply.trim()
-  if (!cleanedReply) {
-    return ['Je n\'ai pas de réponse pour le moment.']
-  }
-
-  return cleanedReply
-    .split(/\n{2,}/)
-    .map((segment) => segment.trim())
-    .filter(Boolean)
-}
-
-function formatMessageTime(value: Date): string {
-  return new Intl.DateTimeFormat('fr-CH', {
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(value)
-}
-
-function createMessage(role: ChatRole, content: string): ChatMessage {
-  return {
-    id: `${role}-${crypto.randomUUID()}`,
-    role,
-    content,
-    createdAt: new Date(),
-  }
-}
-
 export function ChatPage({ email }: ChatPageProps) {
-  const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [draft, setDraft] = useState('')
-  const [isTyping, setIsTyping] = useState(false)
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const [isAtBottom, setIsAtBottom] = useState(true)
+  const [logoutError, setLogoutError] = useState<string | null>(null)
+  const [resetFeedback, setResetFeedback] = useState<string | null>(null)
   const [isLoggingOut, setIsLoggingOut] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), [])
+  const [isResetting, setIsResetting] = useState(false)
 
   async function handleLogout() {
-    setError(null)
+    setLogoutError(null)
     setIsLoggingOut(true)
 
     await logoutWithSessionReset({
       resetSession: () => resetSession({ timeoutMs: 1500 }),
       signOut: () => supabase.auth.signOut(),
       onLogoutError: () => {
-        setError('Impossible de se déconnecter pour le moment.')
+        setLogoutError('Impossible de se déconnecter pour le moment.')
       },
     })
 
     setIsLoggingOut(false)
   }
 
-  async function handleSubmit(event?: FormEvent<HTMLFormElement>) {
-    event?.preventDefault()
-
-    const message = draft.trim()
-    if (!message || isSubmitting) {
-      return
-    }
-
-    setDraft('')
-    setError(null)
-    setIsSubmitting(true)
-    setIsTyping(true)
-    setMessages((current) => [...current, createMessage('user', message)])
+  async function handleResetForTests() {
+    setResetFeedback(null)
+    setIsResetting(true)
 
     try {
-      const response = await sendChatMessage(message)
-      const assistantMessages = splitAssistantReply(response.reply).map((segment) => createMessage('assistant', segment))
-      setMessages((current) => [...current, ...assistantMessages])
-    } catch (submitError) {
-      const errorMessage = submitError instanceof Error ? submitError.message : 'Erreur inconnue'
-      setError(errorMessage)
+      await resetSession({ timeoutMs: 1500 })
+      setResetFeedback('Session agent réinitialisée.')
     } finally {
-      setIsSubmitting(false)
-      setIsTyping(false)
-    }
-  }
-
-  function handleInputKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key === 'Enter' && !event.shiftKey) {
-      event.preventDefault()
-      void handleSubmit()
+      setIsResetting(false)
     }
   }
 
   return (
-    <main className="chat-layout chat-layout-professional">
-      <aside className="sidebar">
-        <section className="card sidebar-card">
-          <h2>Espace IA</h2>
-          <p className="subtle-text">Connecté: {email ?? 'utilisateur inconnu'}</p>
-          <p className="subtle-text">API: {apiBaseUrl}</p>
+    <main className="chat-shell">
+      <section className="card chat-card" aria-label="chat-placeholder">
+        <h1>Chat désactivé (refonte en cours)</h1>
+        <p className="subtle-text">Cette zone est temporairement simplifiée pour stabiliser l&apos;interface.</p>
+        <p className="subtle-text">Connecté en tant que {email ?? 'utilisateur inconnu'}.</p>
+
+        <div className="message-actions" style={{ marginTop: '1rem' }}>
           <button type="button" onClick={handleLogout} disabled={isLoggingOut}>
             {isLoggingOut ? 'Déconnexion...' : 'Se déconnecter'}
           </button>
-        </section>
-      </aside>
-
-      <section className="card chat-panel chat-panel-pro" aria-label="chat-professional">
-        <header className="chat-header">
-          <h1>Assistant financier</h1>
-        </header>
-
-        <div className="messages-viewport">
-          <Virtuoso
-            className="messages messages-list"
-            data={messages}
-            atBottomStateChange={setIsAtBottom}
-            followOutput={isAtBottom ? 'smooth' : false}
-            components={{
-              Footer: () => <div style={{ height: 24 }} aria-hidden="true" />,
-            }}
-            itemContent={(_index, item) => {
-              const roleLabel = item.role === 'user' ? 'Vous' : 'Assistant'
-
-              return (
-                <div className={`message-row ${item.role === 'user' ? 'message-row-user' : 'message-row-assistant'}`}>
-                  <article className={`message ${item.role === 'user' ? 'message-user' : 'message-assistant'}`}>
-                    <p className="message-content">{item.content}</p>
-                    <p className="message-time">
-                      {roleLabel} · {formatMessageTime(item.createdAt)}
-                    </p>
-                  </article>
-                </div>
-              )
-            }}
-          />
+          <button type="button" className="secondary-button" onClick={handleResetForTests} disabled={isResetting}>
+            {isResetting ? 'Reset...' : 'Reset (tests)'}
+          </button>
         </div>
 
-        <div className="composer-area sticky-bottom">
-          <form className="composer" onSubmit={handleSubmit}>
-            <textarea
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              onKeyDown={handleInputKeyDown}
-              placeholder="Posez votre question financière..."
-              aria-label="Message"
-              rows={1}
-            />
-            <button
-              type="submit"
-              className="send-icon-button"
-              aria-label="Envoyer"
-              disabled={isSubmitting || !draft.trim()}
-            >
-              ➤
-            </button>
-          </form>
-          {isTyping ? <p className="subtle-text typing-indicator">Assistant en train d&apos;écrire…</p> : null}
-          {error ? <p className="error-text">{error}</p> : null}
-        </div>
+        {logoutError ? <p className="error-text">{logoutError}</p> : null}
+        {resetFeedback ? <p className="subtle-text">{resetFeedback}</p> : null}
       </section>
     </main>
   )

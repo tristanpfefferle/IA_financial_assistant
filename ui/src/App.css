@@ -393,7 +393,6 @@ button:disabled {
   position: sticky;
   bottom: 0;
   z-index: 3;
-  background: linear-gradient(180deg, rgba(17, 24, 39, 0.2), #111827 24%);
 }
 
 .composer textarea {
@@ -486,44 +485,6 @@ button:disabled {
   grid-template-columns: 1fr;
 }
 
-
-.chat-layout-professional {
-  min-height: 100vh;
-  max-width: 1280px;
-  align-items: stretch;
-}
-
-.chat-panel-pro {
-  width: min(100%, 980px);
-  height: min(82vh, 860px);
-  max-height: min(82vh, 860px);
-  gap: 0;
-}
-
-.messages-list {
-  padding-top: 0.5rem;
-}
-
-.message-row-user {
-  display: flex;
-  justify-content: flex-end;
-}
-
-.message-row-assistant {
-  display: flex;
-  justify-content: flex-start;
-}
-
-.message-time {
-  margin: 0.45rem 0 0;
-  font-size: 0.75rem;
-  color: rgba(226, 232, 240, 0.75);
-}
-
-.typing-indicator {
-  padding: 0 0.8rem 0.2rem;
-}
-
 @keyframes spin {
   to {
     transform: rotate(360deg);
@@ -565,11 +526,6 @@ button:disabled {
     min-height: 0;
     height: calc(100vh - 5rem);
     overflow: hidden;
-  }
-
-  .chat-panel-pro {
-    height: calc(100vh - 5rem);
-    max-height: calc(100vh - 5rem);
   }
 
   .form-fields-inline {
