@@ -30,3 +30,14 @@ npm run dev
 - [ ] La liste de messages scrolle correctement.
 - [ ] Le composer reste visible en bas.
 - [ ] Le bouton ↓ apparaît quand on remonte et disparaît en bas.
+
+## ActionPanel
+
+Le composant `ActionPanel` (dans `ui/src/chat/ActionPanel.tsx`) garde la zone basse du chat stable (même conteneur) et change uniquement son contenu selon `uiState`:
+
+- `none`: n’affiche aucune action.
+- `quick_replies`: affiche uniquement les quick replies (chips/boutons).
+- `text`: affiche uniquement le champ texte + bouton d’envoi.
+- `quick_replies_text`: affiche les quick replies et le champ texte.
+
+Règle d’implémentation: la structure globale de l’UI ne change pas, seul `uiState` pilote l’affichage des actions en bas du chat.
