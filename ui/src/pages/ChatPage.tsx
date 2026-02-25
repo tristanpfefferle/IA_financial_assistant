@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from 'react'
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
 
 import {
@@ -17,6 +17,8 @@ import {
   type RelevesImportResult,
 } from '../api/agentApi'
 import { DebugPanel } from '../components/DebugPanel'
+import { ActionPanel } from '../chat/ActionPanel'
+import type { ChatUiState, QuickReplyOption } from '../chat/types'
 import { installSessionResetOnPageExit, logoutWithSessionReset } from '../lib/sessionLifecycle'
 import { supabase } from '../lib/supabaseClient'
 import {
@@ -392,7 +394,7 @@ function buildFormSubmitPayload(formId: string, values: Record<string, unknown>)
   }
 }
 
-type ComposerMode = 'form' | 'quick_replies' | 'text'
+type ComposerMode = 'form' | 'action_panel'
 
 function resolveGlobalStateMode(payload: unknown): GlobalStateMode | null {
   if (!payload || typeof payload !== 'object') {
@@ -436,7 +438,6 @@ function toProgressUiAction(toolResult: ChatMessage['toolResult']): ProgressUiAc
 }
 
 export function ChatPage({ email }: ChatPageProps) {
-  const [message, setMessage] = useState('')
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [error, setError] = useState<string | null>(null)
   const [toast, setToast] = useState<ToastState>(null)
@@ -456,6 +457,7 @@ export function ChatPage({ email }: ChatPageProps) {
   const [awaitingPendingCategorizationReply, setAwaitingPendingCategorizationReply] = useState(false)
   const [isOptimisticallySubmittingForm, setIsOptimisticallySubmittingForm] = useState(false)
   const [isAssistantTyping, setIsAssistantTyping] = useState(false)
+  const [uiState, setUiState] = useState<ChatUiState>({ mode: 'text' })
   const envDebugEnabled = import.meta.env.VITE_UI_DEBUG === 'true'
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(import.meta.env.VITE_API_URL), [])
   const executedPdfMessageIdsRef = useRef<Set<string>>(new Set())
@@ -474,6 +476,7 @@ export function ChatPage({ email }: ChatPageProps) {
   const hasPromptedPendingCategorizationRef = useRef(false)
   const lastPromptedPendingCategorizationCountRef = useRef<number>(0)
   const didInitConversationRef = useRef(false)
+  const assistantReplyCounterRef = useRef(0)
 
   const pendingImportIntent = useMemo(() => findPendingImportIntent(messages), [messages])
   const isImportRequired = pendingImportIntent !== null
@@ -490,22 +493,33 @@ export function ChatPage({ email }: ChatPageProps) {
   const isGuidedMode = globalStateMode !== 'free_chat'
   const composerMode: ComposerMode = useMemo(() => {
     if (isOptimisticallySubmittingForm) {
-      return 'text'
+      return 'action_panel'
     }
     if (formUiAction) {
       return 'form'
     }
-    if (quickReplyAction) {
-      return 'quick_replies'
-    }
-    if (isGuidedMode) {
-      return 'quick_replies'
-    }
-    return 'text'
-  }, [formUiAction, isGuidedMode, isOptimisticallySubmittingForm, quickReplyAction])
+    return 'action_panel'
+  }, [formUiAction, isOptimisticallySubmittingForm])
   const shouldShowGuidedPlaceholder = isGuidedMode && !formUiAction && !quickReplyAction
   const hasUnauthorizedError = useMemo(() => error?.includes('(401)') ?? false, [error])
   const statusBadge = debugMode ? 'Debug' : isImportRequired ? 'Onboarding' : 'Prêt'
+
+  useEffect(() => {
+    if (formUiAction) {
+      setUiState({ mode: 'none' })
+      return
+    }
+
+    if (quickReplyAction) {
+      setUiState({
+        mode: 'quick_replies',
+        options: quickReplyAction.options,
+      })
+      return
+    }
+
+    setUiState((previous) => (previous.mode === 'none' ? { mode: 'text' } : previous))
+  }, [formUiAction, quickReplyAction])
 
   useEffect(() => {
     if (!toast) {
@@ -786,7 +800,6 @@ export function ChatPage({ email }: ChatPageProps) {
 
   function resetLocalChatState(): void {
     setMessages([])
-    setMessage('')
     setError(null)
     setToast(null)
     setLoopDebug(null)
@@ -876,16 +889,30 @@ export function ChatPage({ email }: ChatPageProps) {
     }
   }
 
-  async function submitQuickReply(displayMessage: string, apiMessage: string) {
-    if (isLoading || isImportRequired || composerMode !== 'quick_replies') {
+  function applyDemoUiStateAfterAssistantReply() {
+    assistantReplyCounterRef.current += 1
+    if (assistantReplyCounterRef.current % 2 === 1) {
+      const options: QuickReplyOption[] = [
+        { id: 'demo-yes', label: 'Oui', value: 'oui' },
+        { id: 'demo-no', label: 'Non', value: 'non' },
+      ]
+      setUiState({ mode: 'quick_replies_text', prompt: 'Réponse rapide ?', options, placeholder: 'Ou écris une réponse…' })
+      return
+    }
+
+    setUiState({ mode: 'text', placeholder: 'Pose une question sur tes finances…', submitLabel: 'Envoyer' })
+  }
+
+  async function submitUserMessage(displayMessage: string, apiMessage: string) {
+    if (isLoading || isImportRequired) {
       return
     }
 
     setMessages((previous) => [...previous, { id: crypto.randomUUID(), role: 'user' as const, content: displayMessage, createdAt: Date.now() }])
-    setMessage('')
     setError(null)
     setIsLoading(true)
     setIsAssistantTyping(true)
+    setUiState({ mode: 'text', placeholder: 'Envoi en cours…', submitLabel: 'Envoyer' })
 
     try {
       if (awaitingPendingCategorizationReply) {
@@ -900,6 +927,7 @@ export function ChatPage({ email }: ChatPageProps) {
       syncLoopDebug(response)
       const segments = splitAssistantReply(response.reply)
       enqueueAssistantMessages(segments, response.tool_result, response.plan, response)
+      applyDemoUiStateAfterAssistantReply()
       await refreshPendingCategorizationStatus({ withPrompt: true })
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Erreur inconnue')
@@ -917,7 +945,6 @@ export function ChatPage({ email }: ChatPageProps) {
 
     const { humanText, messageToBackend } = buildFormSubmitPayload(formId, values)
     setMessages((previous) => [...previous, { id: crypto.randomUUID(), role: 'user' as const, content: humanText, createdAt: Date.now() }])
-    setMessage('')
     setError(null)
     setIsLoading(true)
     setIsAssistantTyping(true)
@@ -938,33 +965,13 @@ export function ChatPage({ email }: ChatPageProps) {
     }
   }
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (composerMode !== 'text') {
-      return
-    }
-    const trimmedMessage = message.trim()
-    if (!trimmedMessage || isLoading || isImportRequired) {
+  async function handleSubmitText(text: string) {
+    const trimmedMessage = text.trim()
+    if (!trimmedMessage) {
       return
     }
 
-    setMessages((previous) => [...previous, { id: crypto.randomUUID(), role: 'user' as const, content: trimmedMessage, createdAt: Date.now() }])
-    setMessage('')
-    setError(null)
-    setIsLoading(true)
-    setIsAssistantTyping(true)
-
-    try {
-      const response = await sendChatMessage(trimmedMessage, { debug: debugMode })
-      syncLoopDebug(response)
-      const segments = splitAssistantReply(response.reply)
-      enqueueAssistantMessages(segments, response.tool_result, response.plan, response)
-    } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : 'Erreur inconnue')
-    } finally {
-      setIsAssistantTyping(false)
-      setIsLoading(false)
-    }
+    await submitUserMessage(trimmedMessage, trimmedMessage)
   }
 
   async function startConversation() {
@@ -980,6 +987,7 @@ export function ChatPage({ email }: ChatPageProps) {
       syncLoopDebug(response)
       const segments = splitAssistantReply(response.reply)
       enqueueAssistantMessages(segments, response.tool_result, response.plan, response)
+      applyDemoUiStateAfterAssistantReply()
       await refreshPendingCategorizationStatus({ withPrompt: true })
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Erreur inconnue')
@@ -1102,6 +1110,7 @@ export function ChatPage({ email }: ChatPageProps) {
         syncLoopDebug(response)
         const segments = splitAssistantReply(response.reply)
         enqueueAssistantMessages(segments, response.tool_result, response.plan, response)
+        applyDemoUiStateAfterAssistantReply()
         await refreshPendingCategorizationStatus({ withPrompt: true })
       } catch (caughtError) {
         const message = caughtError instanceof Error ? caughtError.message : 'Erreur inconnue pendant l’import'
@@ -1178,19 +1187,19 @@ export function ChatPage({ email }: ChatPageProps) {
 
         <ComposerArea
           composerMode={composerMode}
-          quickReplyAction={quickReplyAction}
           formUiAction={formUiAction}
           isLoading={isLoading}
-          message={message}
-          setMessage={setMessage}
+          uiState={uiState}
           isImportRequired={isImportRequired}
           isGuidedMode={isGuidedMode}
           showGuidedPlaceholder={shouldShowGuidedPlaceholder}
-          onSubmit={handleSubmit}
-          onSubmitQuickReply={(option) => {
-            const normalizedValue = option.value.trim().toLowerCase()
-            const displayMessage =
-              normalizedValue === 'oui'
+          onSubmitText={(text) => {
+            void handleSubmitText(text)
+          }}
+          onSubmitQuickReply={(value, label) => {
+            const normalizedValue = value.trim().toLowerCase()
+            const displayMessage = label
+              ?? (normalizedValue === 'oui'
                 ? 'Oui ✅'
                 : normalizedValue === 'non'
                   ? 'Non ❌'
@@ -1198,9 +1207,9 @@ export function ChatPage({ email }: ChatPageProps) {
                     ? 'Je veux corriger mon prénom/nom.'
                     : normalizedValue === 'corriger_date'
                       ? 'Je veux corriger ma date de naissance.'
-                      : option.label
-            const apiMessage = option.value
-            void submitQuickReply(displayMessage, apiMessage)
+                      : value)
+
+            void submitUserMessage(displayMessage, value)
           }}
           onSubmitForm={(formId, values) => {
             void submitForm(formId, values)
@@ -1623,30 +1632,26 @@ function MessageRow({
 
 type ComposerAreaProps = {
   composerMode: ComposerMode
-  quickReplyAction: ReturnType<typeof toQuickReplyYesNoUiAction>
   formUiAction: ReturnType<typeof toFormUiAction>
+  uiState: ChatUiState
   isLoading: boolean
-  message: string
-  setMessage: (next: string) => void
   isImportRequired: boolean
   isGuidedMode: boolean
   showGuidedPlaceholder: boolean
-  onSubmit: (event: FormEvent<HTMLFormElement>) => void
-  onSubmitQuickReply: (option: { id: string; label: string; value: string }) => void
+  onSubmitText: (text: string) => void
+  onSubmitQuickReply: (value: string, label?: string) => void
   onSubmitForm: (formId: string, values: Record<string, unknown>) => void
 }
 
 function ComposerArea({
   composerMode,
-  quickReplyAction,
   formUiAction,
+  uiState,
   isLoading,
-  message,
-  setMessage,
   isImportRequired,
   isGuidedMode,
   showGuidedPlaceholder,
-  onSubmit,
+  onSubmitText,
   onSubmitQuickReply,
   onSubmitForm,
 }: ComposerAreaProps) {
@@ -1655,47 +1660,10 @@ function ComposerArea({
       {composerMode === 'form' ? (
         <FormCard formUiAction={formUiAction} isLoading={isLoading} onSubmitForm={onSubmitForm} />
       ) : null}
-      {composerMode === 'quick_replies' ? (
-        <QuickReplyBar quickReplyAction={quickReplyAction} isLoading={isLoading} disabled={isImportRequired} onSubmitQuickReply={onSubmitQuickReply} />
-      ) : null}
-      {composerMode === 'text' && !isGuidedMode ? (
-        <Composer message={message} setMessage={setMessage} onSubmit={onSubmit} isLoading={isLoading} disabled={isImportRequired} />
+      {composerMode === 'action_panel' && !isGuidedMode ? (
+        <ActionPanel uiState={uiState} isSending={isLoading || isImportRequired} onQuickReply={onSubmitQuickReply} onSubmitText={onSubmitText} />
       ) : null}
       {showGuidedPlaceholder ? <div className="guided-placeholder subtle-text">Suis les boutons ci-dessous pour continuer.</div> : null}
-    </div>
-  )
-}
-
-
-function QuickReplyBar({
-  quickReplyAction,
-  isLoading,
-  disabled,
-  onSubmitQuickReply,
-}: {
-  quickReplyAction: ReturnType<typeof toQuickReplyYesNoUiAction>
-  isLoading: boolean
-  disabled: boolean
-  onSubmitQuickReply: (option: { id: string; label: string; value: string }) => void
-}) {
-  if (!quickReplyAction) {
-    return null
-  }
-
-  return (
-    <div className="message-actions" aria-label="Quick reply yes no">
-      {quickReplyAction.options.map((option) => (
-        <button
-          key={option.id}
-          type="button"
-          className="secondary-button"
-          onClick={() => onSubmitQuickReply(option)}
-          disabled={isLoading || disabled}
-          aria-label={`Quick reply ${option.value}`}
-        >
-          {option.label}
-        </button>
-      ))}
     </div>
   )
 }
@@ -1792,54 +1760,6 @@ function FormCard({
   )
 }
 
-
-function Composer({
-  message,
-  setMessage,
-  onSubmit,
-  isLoading,
-  disabled,
-}: {
-  message: string
-  setMessage: (next: string) => void
-  onSubmit: (event: FormEvent<HTMLFormElement>) => void
-  isLoading: boolean
-  disabled: boolean
-}) {
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null)
-
-  useEffect(() => {
-    if (!textareaRef.current) return
-    textareaRef.current.style.height = 'auto'
-    textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 128)}px`
-  }, [message])
-
-  function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key === 'Enter' && !event.shiftKey) {
-      event.preventDefault()
-      const form = event.currentTarget.form
-      form?.requestSubmit()
-    }
-  }
-
-  return (
-    <form onSubmit={onSubmit} className="composer">
-      <textarea
-        ref={textareaRef}
-        value={message}
-        onChange={(event) => setMessage(event.target.value)}
-        onKeyDown={handleComposerKeyDown}
-        placeholder={disabled ? 'Import requis avant de continuer.' : 'Pose une question sur tes finances…'}
-        aria-label="Message"
-        rows={1}
-        disabled={disabled}
-      />
-      <button type="submit" disabled={isLoading || disabled || message.trim().length === 0}>
-        Envoyer
-      </button>
-    </form>
-  )
-}
 
 type ImportDialogProps = {
   isOpen: boolean
