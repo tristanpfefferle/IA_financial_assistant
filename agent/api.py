@@ -1553,13 +1553,29 @@ def _is_profile_field_completed(value: Any) -> bool:
     return True
 
 
+def _is_birth_date_field_completed(value: Any) -> bool:
+    """Return True when birth_date is a non-empty valid ISO date (YYYY-MM-DD)."""
+
+    if not isinstance(value, str):
+        return False
+
+    normalized_value = value.strip()
+    if not normalized_value:
+        return False
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", normalized_value):
+        return False
+
+    try:
+        parsed_date = date.fromisoformat(normalized_value)
+    except ValueError:
+        return False
+    return parsed_date.isoformat() == normalized_value
+
+
 def _compute_bootstrap_global_state(profile_fields: dict[str, Any]) -> dict[str, Any]:
     """Compute initial global state from profile completeness."""
 
-    is_profile_complete = all(
-        _is_profile_field_completed(profile_fields.get(field_name))
-        for field_name in _PROFILE_COMPLETION_FIELDS
-    )
+    is_profile_complete = _is_profile_complete(profile_fields)
     if is_profile_complete:
         return {
             "mode": "onboarding",
@@ -1608,10 +1624,15 @@ def _is_valid_global_state(value: Any) -> bool:
 def _is_profile_complete(profile_fields: dict[str, Any]) -> bool:
     """Return True when onboarding profile completion fields are all present."""
 
-    return all(
-        _is_profile_field_completed(profile_fields.get(field_name))
-        for field_name in _PROFILE_COMPLETION_FIELDS
-    )
+    for field_name in _PROFILE_COMPLETION_FIELDS:
+        field_value = profile_fields.get(field_name)
+        if field_name == "birth_date":
+            if not _is_birth_date_field_completed(field_value):
+                return False
+            continue
+        if not _is_profile_field_completed(field_value):
+            return False
+    return True
 
 
 def _normalize_onboarding_step_substep(global_state: dict[str, Any]) -> dict[str, Any]:
@@ -2173,7 +2194,7 @@ def _missing_profile_field_question(profile_fields: dict[str, Any]) -> str:
     first_name = str(profile_fields.get("first_name") or "").strip()
     has_first_name = _is_profile_field_completed(first_name)
     has_last_name = _is_profile_field_completed(profile_fields.get("last_name"))
-    has_birth_date = _is_profile_field_completed(profile_fields.get("birth_date"))
+    has_birth_date = _is_birth_date_field_completed(profile_fields.get("birth_date"))
 
     if not has_first_name and not has_last_name:
         return "Quel est ton prénom et ton nom ?"
@@ -2193,7 +2214,7 @@ def _next_missing_profile_field(profile_fields: dict[str, Any]) -> str | None:
         return "first_name"
     if not _is_profile_field_completed(profile_fields.get("last_name")):
         return "last_name"
-    if not _is_profile_field_completed(profile_fields.get("birth_date")):
+    if not _is_birth_date_field_completed(profile_fields.get("birth_date")):
         return "birth_date"
     return None
 
@@ -3135,6 +3156,48 @@ def agent_chat(
                 plan=None,
             )
 
+        if (
+            _is_valid_global_state(global_state)
+            and global_state.get("mode") == "onboarding"
+            and global_state.get("onboarding_step") == "profile"
+            and global_state.get("onboarding_substep") == "profile_confirm"
+            and hasattr(profiles_repository, "get_profile_fields")
+        ):
+            profile_fields = profiles_repository.get_profile_fields(
+                profile_id=profile_id,
+                fields=list(_PROFILE_COMPLETION_FIELDS),
+            )
+            if not _is_profile_complete(profile_fields):
+                updated_global_state = _build_onboarding_global_state(
+                    {
+                        **global_state,
+                        "profile_confirmed": False,
+                    },
+                    onboarding_step="profile",
+                    onboarding_substep="profile_collect",
+                )
+                updated_global_state["profile_confirmed"] = False
+
+                state_dict = dict(state_dict) if isinstance(state_dict, dict) else {}
+                state_dict["global_state"] = _normalize_onboarding_step_substep(updated_global_state)
+                loop_state = state_dict.get("loop")
+                if isinstance(loop_state, dict) and loop_state.get("loop_id") == "onboarding.profile_confirm":
+                    state_dict.pop("loop", None)
+
+                updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                updated_chat_state["state"] = state_dict
+                profiles_repository.update_chat_state(
+                    profile_id=profile_id,
+                    user_id=auth_user_id,
+                    chat_state=updated_chat_state,
+                )
+
+                return _chat_response(
+                    reply=_missing_profile_field_question(profile_fields) or "Quelle est ta date de naissance ?",
+                    tool_result=_build_profile_collect_ui_action(profile_fields),
+                    plan=None,
+                )
+
         try:
             ui_form_submit_payload = _parse_ui_form_submit_message(payload.message)
         except (ValueError, json.JSONDecodeError):
@@ -3144,13 +3207,6 @@ def agent_chat(
             values = ui_form_submit_payload.get("values")
             if not isinstance(form_id, str) or not isinstance(values, dict):
                 return _chat_response(reply="Soumission de formulaire invalide.", tool_result=None, plan=None)
-
-            current_substep = (
-                global_state.get("onboarding_substep")
-                if _is_valid_global_state(global_state)
-                else None
-            )
-            is_profile_name_correction = current_substep == "profile_fix_name"
 
             if form_id == "onboarding_profile_name":
                 try:
@@ -3172,8 +3228,8 @@ def agent_chat(
                     profile_id=profile_id,
                     fields=list(_PROFILE_COMPLETION_FIELDS),
                 )
-                has_birth_date = _is_profile_field_completed(refreshed_fields.get("birth_date"))
-                if not has_birth_date and not is_profile_name_correction:
+                has_birth_date = _is_birth_date_field_completed(refreshed_fields.get("birth_date"))
+                if not has_birth_date:
                     next_substep = "profile_collect"
                     reply_text = "Quelle est ta date de naissance ?"
                     tool_result = _build_profile_birth_date_form_ui_action(refreshed_fields)
@@ -3530,7 +3586,7 @@ def agent_chat(
                     has_name = _is_profile_field_completed(profile_fields.get("first_name")) and _is_profile_field_completed(
                         profile_fields.get("last_name")
                     )
-                    has_birth_date = _is_profile_field_completed(profile_fields.get("birth_date"))
+                    has_birth_date = _is_birth_date_field_completed(profile_fields.get("birth_date"))
 
                     if has_name and has_birth_date:
                         updated_global_state = _build_onboarding_global_state(
