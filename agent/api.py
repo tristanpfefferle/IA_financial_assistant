@@ -229,9 +229,6 @@ _ONBOARDING_PROFILE_CANT_ANSWER_PATTERNS = (
     re.compile(r"^\s*je\s+sais\s+pas\s*[\!\.\?]*\s*$", re.IGNORECASE),
     re.compile(r"^\s*(non|nop|nan)\s*[\!\.\?]*\s*$", re.IGNORECASE),
     re.compile(r"^\s*j[’']?en\s+sais\s+rien\s*[\!\.\?]*\s*$", re.IGNORECASE),
-    re.compile(r"^\s*j[’']?en\s+ai\s+pas(?:\s+(?:mdr|lol|ptdr|haha|xd))?\s*[\!\.\?]*\s*$", re.IGNORECASE),
-    re.compile(r"^\s*j[’']?ai\s+pas(?:\s+de\s+nom)?(?:\s+(?:mdr|lol|ptdr|haha|xd))?\s*[\!\.\?]*\s*$", re.IGNORECASE),
-    re.compile(r"^\s*aucun(?:e\s+idee)?(?:\s+(?:mdr|lol|ptdr|haha|xd))?\s*[\!\.\?]*\s*$", re.IGNORECASE),
 )
 _ONBOARDING_FIRST_NAME_ALLOWED_CHARS_PATTERN = re.compile(r"^[A-Za-zÀ-ÖØ-öø-ÿ'\- ]+$")
 _ONBOARDING_LAST_NAME_ALLOWED_CHARS_PATTERN = re.compile(r"^[A-Za-zÀ-ÖØ-öø-ÿ'\- ]+$")
@@ -533,8 +530,8 @@ def _should_prompt_household_link_setup(
 def _build_profile_recap_reply(profile_fields: dict[str, Any]) -> str:
     """Build onboarding profile recap confirmation prompt."""
 
-    first_name = _format_person_name(str(profile_fields.get("first_name", "")).strip())
-    last_name = _format_person_name(str(profile_fields.get("last_name", "")).strip())
+    first_name = str(profile_fields.get("first_name", "")).strip()
+    last_name = str(profile_fields.get("last_name", "")).strip()
     birth_date_iso = str(profile_fields.get("birth_date", "")).strip()
     return (
         f"Parfait ✅\n\nRécapitulatif de ton profil :\n- Prénom: {first_name}\n- Nom: {last_name}\n- Date de naissance: {birth_date_iso}\n\n"
@@ -1969,7 +1966,7 @@ def _build_onboarding_reminder(global_state: dict[str, Any] | None) -> str | Non
 
 
 def _missing_profile_field_question(profile_fields: dict[str, Any]) -> str:
-    first_name = _format_person_name(str(profile_fields.get("first_name") or "").strip())
+    first_name = str(profile_fields.get("first_name") or "").strip()
     has_first_name = _is_profile_field_completed(first_name)
     has_last_name = _is_profile_field_completed(profile_fields.get("last_name"))
     has_birth_date = _is_profile_field_completed(profile_fields.get("birth_date"))
@@ -2024,21 +2021,6 @@ def _extract_name_from_message(message: str) -> tuple[str, str] | None:
 
 def _normalize_name_token(token: str) -> str:
     return token.strip(" '\"-_").strip()
-
-
-def _format_person_name(value: str) -> str:
-    """Normalize person names to title-case words and hyphenated segments."""
-
-    normalized = str(value or "").strip()
-    if not normalized:
-        return ""
-
-    formatted_words: list[str] = []
-    for word in normalized.split():
-        segments = [segment.capitalize() for segment in word.split("-") if segment]
-        if segments:
-            formatted_words.append("-".join(segments))
-    return " ".join(formatted_words)
 
 
 def _tokenize_profile_name_fragment(fragment: str) -> list[str]:
@@ -3075,7 +3057,7 @@ f"Salut 👋\n\nJe suis ton assistant financier. Je t’aide à analyser tes dé
                 if substep == "profile_collect":
                     message = payload.message.strip()
                     if hasattr(profiles_repository, "update_profile_fields"):
-                        existing_first_name = _format_person_name(str(profile_fields.get("first_name") or "").strip())
+                        existing_first_name = str(profile_fields.get("first_name") or "").strip()
                         existing_last_name = str(profile_fields.get("last_name") or "").strip()
                         existing_birth_date = str(profile_fields.get("birth_date") or "").strip()
                         if _is_toxic_message(message):
@@ -3244,10 +3226,13 @@ f"Salut 👋\n\nJe suis ton assistant financier. Je t’aide à analyser tes dé
                         expected_field = _next_missing_profile_field(profile_fields)
                         if any(pattern.match(message) for pattern in _ONBOARDING_PROFILE_CANT_ANSWER_PATTERNS):
                             if expected_field == "last_name":
-                                reply = (
-                                    f"Ok {existing_first_name} 🙂 J’ai besoin de ton nom de famille "
-                                    "(celui sur tes documents). Si tu préfères, tu peux mettre uniquement l’initiale."
-                                )
+                                if existing_first_name:
+                                    reply = (
+                                        f"Ok {existing_first_name} 🙂 J’ai besoin de ton nom de famille "
+                                        "(celui sur tes documents). Si tu préfères, tu peux mettre uniquement l’initiale."
+                                    )
+                                else:
+                                    reply = "Quel est ton prénom et ton nom ?"
                             elif expected_field == "birth_date":
                                 reply = (
                                     f"Merci {existing_first_name} 🙂 Peux-tu me donner ta date de naissance "
@@ -3370,22 +3355,6 @@ f"Salut 👋\n\nJe suis ton assistant financier. Je t’aide à analyser tes dé
                                     plan=None,
                                 )
 
-                        expected_last_name_single_token = False
-                        if expected_field == "last_name":
-                            last_name_tokens = _tokenize_profile_name_fragment(message)
-                            if len(last_name_tokens) == 1:
-                                candidate_last_name = last_name_tokens[0]
-                                if _is_plausible_last_name(candidate_last_name):
-                                    extraction = {
-                                        "first_name": None,
-                                        "last_name": candidate_last_name,
-                                        "birth_date": None,
-                                        "confidence": 0.9,
-                                        "reason": "expected_last_name_single_token",
-                                    }
-                                    extraction_source = "heuristic"
-                                    expected_last_name_single_token = True
-
                         extracted_any = any(
                             extraction.get(field_name)
                             for field_name in ("first_name", "last_name", "birth_date")
@@ -3445,8 +3414,6 @@ f"Salut 👋\n\nJe suis ton assistant financier. Je t’aide à analyser tes dé
                                 or invalid_last_name_phrase
                             )
                         )
-                        if expected_last_name_single_token:
-                            should_try_llm = False
                         if should_try_llm:
                             try:
                                 llm_extraction = _extract_profile_fields_with_llm(message)
@@ -3531,11 +3498,11 @@ f"Salut 👋\n\nJe suis ton assistant financier. Je t’aide à analyser tes dé
                         name_update_payload: dict[str, str] = {}
                         extracted_first_name = extraction.get("first_name")
                         if isinstance(extracted_first_name, str) and extracted_first_name.strip() and not existing_first_name:
-                            name_update_payload["first_name"] = _format_person_name(extracted_first_name.strip())
+                            name_update_payload["first_name"] = extracted_first_name.strip()
 
                         extracted_last_name = extraction.get("last_name")
                         if isinstance(extracted_last_name, str) and extracted_last_name.strip() and not existing_last_name:
-                            name_update_payload["last_name"] = _format_person_name(extracted_last_name.strip())
+                            name_update_payload["last_name"] = extracted_last_name.strip()
 
                         if invalid_first_name_detected and not _is_profile_field_completed(existing_first_name):
                             updated_global_state = _build_onboarding_global_state(
