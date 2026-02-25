@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent, type ReactNode, type RefObject, type UIEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
+import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
 
 import {
   fetchPendingTransactions,
@@ -457,7 +458,7 @@ export function ChatPage({ email }: ChatPageProps) {
   const [typingCursor, setTypingCursor] = useState(0)
   const envDebugEnabled = import.meta.env.VITE_UI_DEBUG === 'true'
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(import.meta.env.VITE_API_URL), [])
-  const messagesRef = useRef<HTMLDivElement | null>(null)
+  const virtuosoRef = useRef<VirtuosoHandle>(null)
   const executedPdfMessageIdsRef = useRef<Set<string>>(new Set())
   const revealedMessageIdsRef = useRef<Set<string>>(new Set())
   const assistantQueueRef = useRef<
@@ -470,13 +471,12 @@ export function ChatPage({ email }: ChatPageProps) {
     }>
   >([])
   const isDrainingAssistantQueueRef = useRef(false)
-  const shouldAutoScrollRef = useRef(true)
+  const [isAtBottom, setIsAtBottom] = useState(true)
   const previousIntentMessageIdRef = useRef<string | null>(null)
   const uploadMessageGuardsRef = useRef<Set<string>>(new Set())
   const hasPromptedPendingCategorizationRef = useRef(false)
   const lastPromptedPendingCategorizationCountRef = useRef<number>(0)
   const didInitConversationRef = useRef(false)
-  const messagesEndRef = useRef<HTMLDivElement | null>(null)
 
   const pendingImportIntent = useMemo(() => findPendingImportIntent(messages), [messages])
   const isImportRequired = pendingImportIntent !== null
@@ -655,29 +655,6 @@ export function ChatPage({ email }: ChatPageProps) {
     }
   }, [apiBaseUrl, messages])
 
-  function scrollToBottom(options: { smooth?: boolean } = {}) {
-    if (!shouldAutoScrollRef.current) {
-      return
-    }
-
-    const performScroll = () => {
-      const endElement = messagesEndRef.current
-      if (!endElement || typeof endElement.scrollIntoView !== 'function') {
-        return
-      }
-
-      endElement.scrollIntoView({ behavior: options.smooth === false ? 'auto' : 'smooth', block: 'end' })
-    }
-
-    window.requestAnimationFrame(() => {
-      window.setTimeout(performScroll, 0)
-    })
-  }
-
-  useEffect(() => {
-    scrollToBottom({ smooth: true })
-  }, [messages.length])
-
   useEffect(() => {
     if (!hasToken || didInitConversationRef.current) {
       return
@@ -725,8 +702,6 @@ export function ChatPage({ email }: ChatPageProps) {
             debugPayload: queued.debugPayload,
           },
         ])
-        scrollToBottom({ smooth: true })
-
         if (assistantQueueRef.current.length > 0) {
           await new Promise<void>((resolve) => {
             window.setTimeout(resolve, computeAssistantSegmentDelay(queued.content))
@@ -826,7 +801,7 @@ export function ChatPage({ email }: ChatPageProps) {
     hasPromptedPendingCategorizationRef.current = false
     lastPromptedPendingCategorizationCountRef.current = 0
     previousIntentMessageIdRef.current = null
-    shouldAutoScrollRef.current = true
+    setIsAtBottom(true)
 
     for (const storageKey of CHAT_LOCAL_STORAGE_KEYS) {
       localStorage.removeItem(storageKey)
@@ -1161,8 +1136,9 @@ export function ChatPage({ email }: ChatPageProps) {
           apiBaseUrl={apiBaseUrl}
           typingCursor={typingCursor}
           revealedMessageIdsRef={revealedMessageIdsRef}
-          messagesRef={messagesRef}
-          messagesEndRef={messagesEndRef}
+          virtuosoRef={virtuosoRef}
+          isAtBottom={isAtBottom}
+          onAtBottomStateChange={setIsAtBottom}
           onImportNow={(intent) => {
             setIsImportDialogOpen(true)
             setAutoOpenImportPicker(true)
@@ -1190,10 +1166,11 @@ export function ChatPage({ email }: ChatPageProps) {
               )
             }
           }}
-          onScroll={(event) => {
-            const element = event.currentTarget
-            const threshold = 48
-            shouldAutoScrollRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < threshold
+          onScrollToBottom={() => {
+            if (messages.length === 0) {
+              return
+            }
+            virtuosoRef.current?.scrollToIndex({ index: messages.length - 1, behavior: 'smooth' })
           }}
           onTypingDone={(_messageId) => setTypingCursor((value) => value + 1)}
         />
@@ -1342,16 +1319,70 @@ type MessageListProps = {
   apiBaseUrl: string
   typingCursor: number
   revealedMessageIdsRef: RefObject<Set<string>>
-  messagesRef: RefObject<HTMLDivElement | null>
-  messagesEndRef: RefObject<HTMLDivElement | null>
+  virtuosoRef: RefObject<VirtuosoHandle | null>
+  isAtBottom: boolean
+  onAtBottomStateChange: (isBottom: boolean) => void
   onImportNow: (intent: ImportIntent) => void
-  onScroll: (event: UIEvent<HTMLDivElement>) => void
+  onScrollToBottom: () => void
   onTypingDone: (messageId: string) => void
   onActiveTypingChange?: (messageId: string | null) => void
   onTypingProgress?: () => void
 }
 
-export function MessageList({ messages, isLoading, debugMode, apiBaseUrl, typingCursor, revealedMessageIdsRef, messagesRef, messagesEndRef, onImportNow, onScroll, onTypingDone, onActiveTypingChange, onTypingProgress }: MessageListProps) {
+function MessageRow({
+  chatMessage,
+  activeTypingMessageId,
+  debugMode,
+  onImportNow,
+  apiBaseUrl,
+  revealedMessageIdsRef,
+  onTypingDone,
+  onTypingProgress,
+}: {
+  chatMessage: ChatMessage
+  activeTypingMessageId: string | null
+  debugMode: boolean
+  onImportNow: (intent: ImportIntent) => void
+  apiBaseUrl: string
+  revealedMessageIdsRef: RefObject<Set<string>>
+  onTypingDone: (messageId: string) => void
+  onTypingProgress?: () => void
+}) {
+  const isRevealed = revealedMessageIdsRef.current?.has(chatMessage.id) ?? false
+  if (chatMessage.role === 'assistant' && !isRevealed && chatMessage.id !== activeTypingMessageId) {
+    return null
+  }
+
+  return (
+    <MessageBubble
+      message={chatMessage}
+      debugMode={debugMode}
+      onImportNow={onImportNow}
+      apiBaseUrl={apiBaseUrl}
+      revealedMessageIdsRef={revealedMessageIdsRef}
+      isActiveTyping={chatMessage.id === activeTypingMessageId}
+      onTypingDone={onTypingDone}
+      onTypingProgress={onTypingProgress}
+    />
+  )
+}
+
+export function MessageList({
+  messages,
+  isLoading,
+  debugMode,
+  apiBaseUrl,
+  typingCursor,
+  revealedMessageIdsRef,
+  virtuosoRef,
+  isAtBottom,
+  onAtBottomStateChange,
+  onImportNow,
+  onScrollToBottom,
+  onTypingDone,
+  onActiveTypingChange,
+  onTypingProgress,
+}: MessageListProps) {
   const activeTypingMessageId = useMemo(() => {
     const revealed = revealedMessageIdsRef.current
     for (const item of messages) {
@@ -1369,37 +1400,50 @@ export function MessageList({ messages, isLoading, debugMode, apiBaseUrl, typing
     onActiveTypingChange?.(activeTypingMessageId)
   }, [activeTypingMessageId, onActiveTypingChange])
 
-  const isMessageRevealed = (id: string): boolean => revealedMessageIdsRef.current?.has(id) ?? false
-
   return (
-    <div className="messages card" aria-live="polite" ref={messagesRef} onScroll={onScroll}>
+    <div className="messages-viewport card" aria-live="polite">
       {messages.length === 0 ? <p className="subtle-text">Initialisation…</p> : null}
-      {messages.map((chatMessage) => {
-        if (chatMessage.role === 'assistant' && !isMessageRevealed(chatMessage.id) && chatMessage.id !== activeTypingMessageId) {
-          return null
-        }
-
-        return (
-        <MessageBubble
-          key={chatMessage.id}
-          message={chatMessage}
-          debugMode={debugMode}
-          onImportNow={onImportNow}
-          apiBaseUrl={apiBaseUrl}
-          revealedMessageIdsRef={revealedMessageIdsRef}
-          isActiveTyping={chatMessage.id === activeTypingMessageId}
-          onTypingDone={onTypingDone}
-          onTypingProgress={onTypingProgress}
-        />
-        )
-      })}
-      {isLoading ? (
-        <div className="loading-state">
-          <span className="spinner" />
-          <p className="subtle-text">L’assistant réfléchit…</p>
-        </div>
+      <Virtuoso
+        ref={virtuosoRef}
+        className="messages"
+        style={{ height: '100%' }}
+        data={messages}
+        itemContent={(_index, chatMessage) => (
+          <div className="message-row">
+            <MessageRow
+              chatMessage={chatMessage}
+              activeTypingMessageId={activeTypingMessageId}
+              debugMode={debugMode}
+              onImportNow={onImportNow}
+              apiBaseUrl={apiBaseUrl}
+              revealedMessageIdsRef={revealedMessageIdsRef}
+              onTypingDone={onTypingDone}
+              onTypingProgress={onTypingProgress}
+            />
+          </div>
+        )}
+        followOutput={(atBottom) => (atBottom ? 'smooth' : false)}
+        atBottomStateChange={onAtBottomStateChange}
+        components={{
+          Header: () => <div style={{ height: 16 }} />,
+          Footer: () => (
+            <>
+              {isLoading ? (
+                <div className="loading-state">
+                  <span className="spinner" />
+                  <p className="subtle-text">L’assistant réfléchit…</p>
+                </div>
+              ) : null}
+              <div style={{ height: 16 }} />
+            </>
+          ),
+        }}
+      />
+      {!isAtBottom ? (
+        <button type="button" className="scroll-to-bottom-button" onClick={onScrollToBottom} aria-label="Revenir en bas">
+          ↓
+        </button>
       ) : null}
-      <div ref={messagesEndRef} aria-hidden="true" className="messages-end-spacer" />
     </div>
   )
 }
