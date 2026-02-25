@@ -328,26 +328,45 @@ function isImportErrorResult(x: unknown): x is { ok: false; type: 'error'; messa
   return candidate.ok === false && candidate.type === 'error'
 }
 
-function buildUiFormSubmitMessage(formId: string, values: Record<string, string>): string {
+function buildUiFormSubmitMessage(formId: string, values: Record<string, unknown>): string {
   return `__ui_form_submit__:${JSON.stringify({ form_id: formId, values })}`
 }
 
-function buildUiFormHumanText(formId: string, values: Record<string, string>): string {
+function buildUiFormHumanText(formId: string, values: Record<string, unknown>): string {
   if (formId === 'onboarding_profile_name') {
-    const firstName = (values.first_name ?? '').trim()
-    const lastName = (values.last_name ?? '').trim()
+    const firstName = String(values.first_name ?? '').trim()
+    const lastName = String(values.last_name ?? '').trim()
     return `Je m'appelle ${firstName} ${lastName}.`
   }
 
   if (formId === 'onboarding_profile_birth_date') {
-    const birthDate = (values.birth_date ?? '').trim()
+    const birthDate = String(values.birth_date ?? '').trim()
     return `Je suis né le ${birthDate}.`
+  }
+
+  if (formId === 'onboarding_bank_accounts') {
+    const selectedBanks = Array.isArray(values.selected_banks)
+      ? values.selected_banks.map((item) => String(item).trim()).filter((item) => item.length > 0)
+      : []
+    const otherBankName = String(values.other_bank_name ?? '').trim()
+    const visibleBanks = selectedBanks
+      .filter((item) => item.toLowerCase() !== 'autre')
+      .concat(otherBankName ? [`Autre: ${otherBankName}`] : [])
+
+    if (visibleBanks.length === 0) {
+      return "Je valide mes banques."
+    }
+    if (visibleBanks.length === 1) {
+      return `J'utilise ${visibleBanks[0]}.`
+    }
+    const head = visibleBanks.slice(0, -1).join(', ')
+    return `J'utilise ${head} et ${visibleBanks[visibleBanks.length - 1]}.`
   }
 
   return 'Je valide le formulaire.'
 }
 
-function buildFormSubmitPayload(formId: string, values: Record<string, string>): { humanText: string; messageToBackend: string } {
+function buildFormSubmitPayload(formId: string, values: Record<string, unknown>): { humanText: string; messageToBackend: string } {
   const humanText = buildUiFormHumanText(formId, values)
   const structuredMessage = buildUiFormSubmitMessage(formId, values)
   return {
@@ -884,7 +903,7 @@ export function ChatPage({ email }: ChatPageProps) {
   }
 
 
-  async function submitForm(formId: string, values: Record<string, string>) {
+  async function submitForm(formId: string, values: Record<string, unknown>) {
     if (isLoading || isImportRequired || composerMode !== 'form') {
       return
     }
@@ -1690,7 +1709,7 @@ type ComposerAreaProps = {
   showGuidedPlaceholder: boolean
   onSubmit: (event: FormEvent<HTMLFormElement>) => void
   onSubmitQuickReply: (option: { id: string; label: string; value: string }) => void
-  onSubmitForm: (formId: string, values: Record<string, string>) => void
+  onSubmitForm: (formId: string, values: Record<string, unknown>) => void
 }
 
 function ComposerArea({
@@ -1764,11 +1783,18 @@ function FormCard({
 }: {
   formUiAction: ReturnType<typeof toFormUiAction>
   isLoading: boolean
-  onSubmitForm: (formId: string, values: Record<string, string>) => void
+  onSubmitForm: (formId: string, values: Record<string, unknown>) => void
 }) {
   if (!formUiAction) {
     return null
   }
+
+  const bankSelectField = formUiAction.form_id === 'onboarding_bank_accounts'
+    ? formUiAction.fields.find((field) => field.id === 'selected_banks' && field.type === 'multi_select')
+    : null
+  const otherBankField = formUiAction.form_id === 'onboarding_bank_accounts'
+    ? formUiAction.fields.find((field) => field.id === 'other_bank_name')
+    : null
 
   return (
     <form
@@ -1780,6 +1806,23 @@ function FormCard({
           return
         }
         const formData = new FormData(event.currentTarget)
+
+        if (formUiAction.form_id === 'onboarding_bank_accounts') {
+          const selectedBanks = (bankSelectField?.options ?? [])
+            .map((option) => option.value)
+            .filter((optionValue) => formData.get(`bank_${optionValue}`) === 'on')
+          const otherBankName = String(formData.get('other_bank_name') ?? '').trim()
+          const hasOther = selectedBanks.some((item) => item.toLowerCase() === 'autre')
+          if (selectedBanks.length === 0 || (hasOther && otherBankName.length === 0)) {
+            return
+          }
+          onSubmitForm(formUiAction.form_id, {
+            selected_banks: selectedBanks,
+            other_bank_name: otherBankName,
+          })
+          return
+        }
+
         const values: Record<string, string> = {}
         for (const field of formUiAction.fields) {
           values[field.id] = String(formData.get(field.id) ?? '').trim()
@@ -1791,21 +1834,47 @@ function FormCard({
       }}
     >
       <h3 className="form-title">{formUiAction.title}</h3>
-      <div className={`form-fields ${formUiAction.fields.length > 1 ? 'form-fields-inline' : ''}`}>
-        {formUiAction.fields.map((field) => (
-          <label key={field.id} className="form-field">
-            {field.label}
+      {formUiAction.form_id === 'onboarding_bank_accounts' ? (
+        <div className="form-fields">
+          <fieldset className="form-field">
+            <legend>{bankSelectField?.label ?? 'Banques utilisées'}</legend>
+            <div className="checkbox-grid">
+              {(bankSelectField?.options ?? []).map((option) => (
+                <label key={option.id} className="checkbox-option">
+                  <input name={`bank_${option.value}`} type="checkbox" disabled={isLoading} />
+                  <span>{option.label}</span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
+          <label className="form-field">
+            {otherBankField?.label ?? 'Nom de la banque'}
             <input
-              name={field.id}
-              type={field.type}
-              required={field.required}
-              placeholder={field.placeholder}
-              defaultValue={field.default_value ?? field.value ?? ''}
+              name="other_bank_name"
+              type="text"
+              placeholder={otherBankField?.placeholder}
+              defaultValue={otherBankField?.default_value ?? otherBankField?.value ?? ''}
               disabled={isLoading}
             />
           </label>
-        ))}
-      </div>
+        </div>
+      ) : (
+        <div className={`form-fields ${formUiAction.fields.length > 1 ? 'form-fields-inline' : ''}`}>
+          {formUiAction.fields.map((field) => (
+            <label key={field.id} className="form-field">
+              {field.label}
+              <input
+                name={field.id}
+                type={field.type}
+                required={field.required}
+                placeholder={field.placeholder}
+                defaultValue={field.default_value ?? field.value ?? ''}
+                disabled={isLoading}
+              />
+            </label>
+          ))}
+        </div>
+      )}
       <div className="form-actions">
         <button type="submit" className="send-icon-button" disabled={isLoading} aria-label={formUiAction.submit_label}>
           ➤

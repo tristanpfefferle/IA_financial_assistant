@@ -345,6 +345,36 @@ def test_session_resume_allons_y_from_profile_fix_returns_profile_confirm_recap(
     assert persisted_state["session_resume_pending"] is False
     assert persisted_state["global_state"]["onboarding_substep"] == "profile_confirm"
 
+def test_session_resume_allons_y_from_bank_fix_returns_bank_confirm_recap(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "onboarding",
+                    "onboarding_step": "bank_accounts",
+                    "onboarding_substep": "bank_accounts_fix_select",
+                },
+                "session_resume_pending": True,
+            }
+        },
+    )
+    repo.bank_accounts = [{"id": "bank-1", "name": "UBS"}, {"id": "bank-2", "name": "Revolut"}]
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
+
+    response = client.post("/agent/chat", json={"message": "allons-y"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "J’ai noté" in payload["reply"]
+    assert "Tout est correct" in payload["reply"]
+    assert payload["tool_result"]["action"] == "quick_replies"
+    persisted_state = repo.update_calls[-1]["chat_state"]["state"]
+    assert persisted_state["session_resume_pending"] is False
+    assert persisted_state["global_state"]["onboarding_substep"] == "bank_accounts_confirm"
+
+
 
 def test_bank_accounts_collect_creates_then_moves_to_confirm(monkeypatch) -> None:
     _mock_auth(monkeypatch)
@@ -366,14 +396,11 @@ def test_bank_accounts_collect_creates_then_moves_to_confirm(monkeypatch) -> Non
     response = client.post("/agent/chat", json={"message": "UBS et Revolut"}, headers=_auth_headers())
 
     assert response.status_code == 200
-    assert repo.ensure_bank_accounts_calls == [{"names": ["UBS", "Revolut"]}]
-    persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
-    assert persisted["onboarding_step"] == "bank_accounts"
-    assert persisted["onboarding_substep"] == "bank_accounts_confirm"
-    assert persisted["bank_accounts_confirmed"] is False
-    assert response.json()["tool_result"] == {"type": "ui_action", "action": "quick_replies", "options": [{"id": "yes", "label": "✅", "value": "oui"}, {"id": "no", "label": "❌", "value": "non"}]}
-    assert "J’ai noté" in response.json()["reply"]
-    assert "C’est correct" in response.json()["reply"]
+    assert repo.ensure_bank_accounts_calls == []
+    payload = response.json()
+    assert payload["tool_result"]["type"] == "ui_action"
+    assert payload["tool_result"]["action"] == "form"
+    assert payload["tool_result"]["form_id"] == "onboarding_bank_accounts"
 
 
 def test_bank_accounts_confirm_no_back_to_collect(monkeypatch) -> None:
@@ -400,7 +427,7 @@ def test_bank_accounts_confirm_no_back_to_collect(monkeypatch) -> None:
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
     assert persisted["onboarding_substep"] == "bank_accounts_collect"
     assert persisted["bank_accounts_confirmed"] is False
-    assert "ajouter ou corriger" in response.json()["reply"]
+    assert "corrige la liste" in response.json()["reply"]
 
 
 def test_bank_accounts_confirm_yes_moves_to_import_wait_ready(monkeypatch) -> None:
@@ -453,7 +480,6 @@ def test_bank_accounts_collect_no_with_existing_account_moves_to_import_select(m
 
     assert response.status_code == 200
     assert "J’ai noté: UBS." in response.json()["reply"]
-    assert "C’est correct" in response.json()["reply"]
     assert "nom exact" not in response.json()["reply"].lower()
     assert response.json()["tool_result"] == {"type": "ui_action", "action": "quick_replies", "options": [{"id": "yes", "label": "✅", "value": "oui"}, {"id": "no", "label": "❌", "value": "non"}]}
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
@@ -1367,7 +1393,7 @@ def test_profile_collect_with_missing_birth_date_stays_collect(monkeypatch) -> N
 
     
 
-def test_onboarding_bank_accounts_unrecognized_input_returns_help_without_creation(monkeypatch) -> None:
+def test_onboarding_bank_accounts_collect_form_returned(monkeypatch) -> None:
     _mock_auth(monkeypatch)
     repo = _Repo(
         initial_chat_state={
@@ -1386,14 +1412,13 @@ def test_onboarding_bank_accounts_unrecognized_input_returns_help_without_creati
     response = client.post("/agent/chat", json={"message": "Salut"}, headers=_auth_headers())
 
     assert response.status_code == 200
-    assert repo.ensure_bank_accounts_calls == []
-    assert (
-        "Je n’ai pas reconnu" in response.json()["reply"]
-        or "Indique-moi tes banques" in response.json()["reply"]
-    )
+    payload = response.json()
+    assert payload["tool_result"]["type"] == "ui_action"
+    assert payload["tool_result"]["action"] == "form"
+    assert payload["tool_result"]["form_id"] == "onboarding_bank_accounts"
 
 
-def test_onboarding_bank_accounts_request_like_input_returns_blocking_help(monkeypatch) -> None:
+def test_onboarding_bank_accounts_submit_moves_to_confirm_and_returns_recap(monkeypatch) -> None:
     _mock_auth(monkeypatch)
     repo = _Repo(
         initial_chat_state={
@@ -1409,43 +1434,19 @@ def test_onboarding_bank_accounts_request_like_input_returns_blocking_help(monke
     monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
     monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
 
-    response = client.post("/agent/chat", json={"message": "Liste mes catégories"}, headers=_auth_headers())
+    message = '__ui_form_submit__:{"form_id":"onboarding_bank_accounts","values":{"selected_banks":["UBS","Autre"],"other_bank_name":"Banque X"}}'
+    response = client.post("/agent/chat", json={"message": message}, headers=_auth_headers())
 
     assert response.status_code == 200
-    assert repo.ensure_bank_accounts_calls == []
-    assert response.json()["reply"] == "Avant de continuer, indique-moi tes banques (ex: UBS, Revolut)."
-
-
-def test_onboarding_bank_accounts_creates_accounts_and_moves_to_import(monkeypatch) -> None:
-    _mock_auth(monkeypatch)
-    repo = _Repo(
-        initial_chat_state={
-            "state": {
-                "global_state": {
-                    "mode": "onboarding",
-                    "onboarding_step": "bank_accounts",
-                    "onboarding_substep": "bank_accounts_collect",
-                }
-            }
-        },
-    )
-    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
-    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
-
-    response = client.post("/agent/chat", json={"message": "UBS et Revolut"}, headers=_auth_headers())
-
-    assert response.status_code == 200
-    assert repo.ensure_bank_accounts_calls == [{"names": ["UBS", "Revolut"]}]
+    assert repo.ensure_bank_accounts_calls == [{"names": ["UBS", "Banque X"]}]
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
     assert persisted["onboarding_step"] == "bank_accounts"
     assert persisted["onboarding_substep"] == "bank_accounts_confirm"
-    assert persisted["bank_accounts_confirmed"] is False
-    assert "J’ai noté: UBS, Revolut." in response.json()["reply"]
-    assert "C’est correct ?" in response.json()["reply"]
-    assert response.json()["tool_result"] == {"type": "ui_action", "action": "quick_replies", "options": [{"id": "yes", "label": "✅", "value": "oui"}, {"id": "no", "label": "❌", "value": "non"}]}
+    assert "J’ai noté" in response.json()["reply"]
+    assert response.json()["tool_result"]["action"] == "quick_replies"
 
 
-def test_onboarding_bank_accounts_skips_creation_if_already_exists(monkeypatch) -> None:
+def test_onboarding_bank_accounts_confirm_yes_moves_to_import_step(monkeypatch) -> None:
     _mock_auth(monkeypatch)
     repo = _Repo(
         initial_chat_state={
@@ -1453,7 +1454,7 @@ def test_onboarding_bank_accounts_skips_creation_if_already_exists(monkeypatch) 
                 "global_state": {
                     "mode": "onboarding",
                     "onboarding_step": "bank_accounts",
-                    "onboarding_substep": "bank_accounts_collect",
+                    "onboarding_substep": "bank_accounts_confirm",
                 }
             }
         },
@@ -1462,98 +1463,14 @@ def test_onboarding_bank_accounts_skips_creation_if_already_exists(monkeypatch) 
     monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
     monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
 
-    response = client.post("/agent/chat", json={"message": "Salut"}, headers=_auth_headers())
+    response = client.post("/agent/chat", json={"message": "oui"}, headers=_auth_headers())
 
     assert response.status_code == 200
-    assert repo.ensure_bank_accounts_calls == []
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
-    assert persisted["onboarding_substep"] == "bank_accounts_confirm"
-    assert "J’ai noté: UBS." in response.json()["reply"]
-    assert "C’est correct" in response.json()["reply"]
-    assert response.json()["tool_result"] == {"type": "ui_action", "action": "quick_replies", "options": [{"id": "yes", "label": "✅", "value": "oui"}, {"id": "no", "label": "❌", "value": "non"}]}
+    assert persisted["onboarding_step"] == "import"
+    assert persisted["onboarding_substep"] == "import_wait_ready"
+    assert persisted["bank_accounts_confirmed"] is True
 
-
-
-
-def test_onboarding_bank_accounts_collect_non_with_existing_accounts_moves_to_import_select(monkeypatch) -> None:
-    _mock_auth(monkeypatch)
-    repo = _Repo(
-        initial_chat_state={
-            "state": {
-                "global_state": {
-                    "mode": "onboarding",
-                    "onboarding_step": "bank_accounts",
-                    "onboarding_substep": "bank_accounts_collect",
-                }
-            }
-        },
-    )
-    repo.bank_accounts = [{"id": "bank-1", "name": "UBS"}]
-    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
-    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
-
-    response = client.post("/agent/chat", json={"message": "non"}, headers=_auth_headers())
-
-    assert response.status_code == 200
-    assert repo.ensure_bank_accounts_calls == []
-    persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
-    assert persisted["onboarding_step"] == "bank_accounts"
-    assert persisted["onboarding_substep"] == "bank_accounts_confirm"
-    assert persisted["bank_accounts_confirmed"] is False
-    assert persisted["has_bank_accounts"] is True
-    assert "J’ai noté: UBS." in response.json()["reply"]
-    assert "C’est correct" in response.json()["reply"]
-    assert "nom exact" not in response.json()["reply"].lower()
-    assert response.json()["tool_result"] == {"type": "ui_action", "action": "quick_replies", "options": [{"id": "yes", "label": "✅", "value": "oui"}, {"id": "no", "label": "❌", "value": "non"}]}
-
-
-def test_onboarding_bank_accounts_collect_non_without_accounts_requires_bank(monkeypatch) -> None:
-    _mock_auth(monkeypatch)
-    repo = _Repo(
-        initial_chat_state={
-            "state": {
-                "global_state": {
-                    "mode": "onboarding",
-                    "onboarding_step": "bank_accounts",
-                    "onboarding_substep": "bank_accounts_collect",
-                }
-            }
-        },
-    )
-    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
-    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
-
-    response = client.post("/agent/chat", json={"message": "non"}, headers=_auth_headers())
-
-    assert response.status_code == 200
-    assert repo.ensure_bank_accounts_calls == []
-    assert "au moins une banque" in response.json()["reply"].lower()
-
-def test_onboarding_bank_accounts_canonicalizes_raifeisen(monkeypatch) -> None:
-    _mock_auth(monkeypatch)
-    repo = _Repo(
-        initial_chat_state={
-            "state": {
-                "global_state": {
-                    "mode": "onboarding",
-                    "onboarding_step": "bank_accounts",
-                    "onboarding_substep": "bank_accounts_collect",
-                }
-            }
-        },
-    )
-    monkeypatch.setattr(
-        agent_api,
-        "extract_canonical_banks",
-        lambda message: (["Raiffeisen"], []) if "Raifeisen" in message else ([], [message]),
-    )
-    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
-    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
-
-    response = client.post("/agent/chat", json={"message": "Raifeisen"}, headers=_auth_headers())
-
-    assert response.status_code == 200
-    assert repo.ensure_bank_accounts_calls == [{"names": ["Raiffeisen"]}]
 
 
 def test_onboarding_reminder_ignores_invalid_memory_update_state(monkeypatch) -> None:
@@ -2049,10 +1966,8 @@ def test_after_bank_added_waits_ready_before_import_ui_request(monkeypatch) -> N
     payload = response.json()
     assert payload["tool_result"] is not None
     assert payload["tool_result"]["type"] == "ui_action"
-    assert payload["tool_result"]["action"] == "quick_replies"
-    assert [opt["label"] for opt in payload["tool_result"]["options"]] == ["✅", "❌"]
-    assert "J’ai noté: UBS." in payload["reply"]
-    assert "C’est correct ?" in payload["reply"]
+    assert payload["tool_result"]["action"] == "form"
+    assert payload["tool_result"]["form_id"] == "onboarding_bank_accounts"
 
 
 def test_import_wait_ready_confirmation_returns_import_file(monkeypatch) -> None:
