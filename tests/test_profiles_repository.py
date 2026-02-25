@@ -551,6 +551,32 @@ def test_update_profile_fields_uses_table_update_and_filters_unknown_fields() ->
     assert client.query.eq_filters == [("id", str(profile_id))]
 
 
+
+
+def test_sync_bank_accounts_removes_non_selected_accounts() -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    client = _ClientStub(
+        responses=[
+            [{"id": "bank-1", "name": "UBS"}, {"id": "bank-2", "name": "BCV"}],
+            [{"id": "bank-1", "name": "UBS"}, {"id": "bank-2", "name": "BCV"}],
+            [{"id": "bank-1", "name": "UBS"}],
+        ]
+    )
+    repository = SupabaseProfilesRepository(client=client)
+
+    result = repository.sync_bank_accounts(profile_id=profile_id, names=["UBS"])
+
+    assert result["all"] == ["UBS"]
+    assert result["removed"] == ["BCV"]
+    assert client.delete_calls == [
+        {
+            "table": "bank_accounts",
+            "query": {"profile_id": f"eq.{profile_id}", "name": "eq.BCV"},
+            "use_anon_key": False,
+        }
+    ]
+    assert client.post_calls == []
+
 def test_hard_reset_profile_deletes_only_filtered_by_profile_id() -> None:
     profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
     user_id = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")

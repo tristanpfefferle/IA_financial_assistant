@@ -341,7 +341,7 @@ function buildUiFormHumanText(formId: string, values: Record<string, unknown>): 
 
   if (formId === 'onboarding_profile_birth_date') {
     const birthDate = String(values.birth_date ?? '').trim()
-    return `Je suis né le ${birthDate}.`
+    return `Je suis né le ${formatFrenchBirthDate(birthDate)}.`
   }
 
   if (formId === 'onboarding_bank_accounts') {
@@ -360,6 +360,26 @@ function buildUiFormHumanText(formId: string, values: Record<string, unknown>): 
   }
 
   return 'Je valide le formulaire.'
+}
+
+function formatFrenchBirthDate(iso: string): string {
+  const candidate = iso.trim()
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(candidate)) {
+    return candidate
+  }
+
+  const parsedDate = new Date(`${candidate}T00:00:00Z`)
+  if (Number.isNaN(parsedDate.getTime())) {
+    return candidate
+  }
+
+  const formatter = new Intl.DateTimeFormat('fr-CH', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'UTC',
+  })
+  return formatter.format(parsedDate)
 }
 
 function buildFormSubmitPayload(formId: string, values: Record<string, unknown>): { humanText: string; messageToBackend: string } {
@@ -715,14 +735,13 @@ export function ChatPage({ email }: ChatPageProps) {
     plan: Record<string, unknown> | null,
     debugPayload: unknown,
   ) {
-    segments.forEach((segment, index) => {
-      const isLast = index === segments.length - 1
+    segments.forEach((segment) => {
       assistantQueueRef.current.push({
         id: crypto.randomUUID(),
         content: segment,
-        toolResult: isLast ? toolResult : null,
-        plan: isLast ? plan : null,
-        debugPayload: isLast ? debugPayload : null,
+        toolResult,
+        plan,
+        debugPayload,
       })
     })
 
@@ -1371,7 +1390,7 @@ export function MessageList({ messages, isLoading, debugMode, apiBaseUrl, typing
           <p className="subtle-text">L’assistant réfléchit…</p>
         </div>
       ) : null}
-      <div ref={messagesEndRef} aria-hidden="true" />
+      <div ref={messagesEndRef} aria-hidden="true" className="messages-end-spacer" />
     </div>
   )
 }

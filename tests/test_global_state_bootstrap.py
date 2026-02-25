@@ -36,6 +36,8 @@ class _Repo:
         self.update_calls: list[dict[str, object]] = []
         self.profile_update_calls: list[dict[str, object]] = []
         self.ensure_bank_accounts_calls: list[dict[str, object]] = []
+        self.remove_bank_accounts_calls: list[dict[str, object]] = []
+        self.sync_bank_accounts_calls: list[dict[str, object]] = []
 
     def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None):
         assert auth_user_id == AUTH_USER_ID
@@ -81,6 +83,38 @@ class _Repo:
             existing_lower.add(lowered)
             created.append(name)
         return {"created": created, "all": names}
+
+    def remove_bank_accounts(self, *, profile_id: UUID, names: list[str]) -> dict[str, object]:
+        assert profile_id == PROFILE_ID
+        self.remove_bank_accounts_calls.append({"names": list(names)})
+        names_lower = {name.lower() for name in names}
+        kept_accounts: list[dict[str, object]] = []
+        deleted: list[str] = []
+        for account in self.bank_accounts:
+            account_name = str(account.get("name") or "")
+            if account_name.lower() in names_lower:
+                deleted.append(account_name)
+                continue
+            kept_accounts.append(account)
+        self.bank_accounts = kept_accounts
+        return {"deleted": deleted}
+
+    def sync_bank_accounts(self, *, profile_id: UUID, names: list[str]) -> dict[str, object]:
+        assert profile_id == PROFILE_ID
+        self.sync_bank_accounts_calls.append({"names": list(names)})
+        desired_lower = {name.lower() for name in names}
+        existing_lower = {str(row.get("name", "")).lower() for row in self.bank_accounts if row.get("name")}
+        removed = [str(row.get("name")) for row in self.bank_accounts if str(row.get("name", "")).lower() not in desired_lower]
+        self.bank_accounts = [row for row in self.bank_accounts if str(row.get("name", "")).lower() in desired_lower]
+        created: list[str] = []
+        for name in names:
+            lowered = name.lower()
+            if lowered in existing_lower:
+                continue
+            self.bank_accounts.append({"id": f"bank-{len(self.bank_accounts)+1}", "name": name})
+            created.append(name)
+            existing_lower.add(lowered)
+        return {"all": list(names), "removed": removed, "created": created}
 
     def list_profile_categories(self, *, profile_id: UUID) -> list[dict[str, object]]:
         assert profile_id == PROFILE_ID
@@ -1439,7 +1473,7 @@ def test_onboarding_bank_accounts_submit_moves_to_confirm_and_returns_recap(monk
     response = client.post("/agent/chat", json={"message": message}, headers=_auth_headers())
 
     assert response.status_code == 200
-    assert repo.ensure_bank_accounts_calls == [{"names": ["UBS", "Revolut"]}]
+    assert repo.sync_bank_accounts_calls == [{"names": ["UBS", "Revolut"]}]
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
     assert persisted["onboarding_step"] == "bank_accounts"
     assert persisted["onboarding_substep"] == "bank_accounts_confirm"
@@ -1448,6 +1482,35 @@ def test_onboarding_bank_accounts_submit_moves_to_confirm_and_returns_recap(monk
 
 
 
+
+
+
+def test_onboarding_bank_accounts_submit_replaces_existing_selection(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "onboarding",
+                    "onboarding_step": "bank_accounts",
+                    "onboarding_substep": "bank_accounts_collect",
+                }
+            }
+        },
+    )
+    repo.bank_accounts = [
+        {"id": "bank-1", "name": "UBS"},
+        {"id": "bank-2", "name": "BCV"},
+    ]
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
+
+    message = '__ui_form_submit__:{"form_id":"onboarding_bank_accounts","values":{"selected_banks":["UBS"]}}'
+    response = client.post("/agent/chat", json={"message": message}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert [account["name"] for account in repo.list_bank_accounts(profile_id=PROFILE_ID)] == ["UBS"]
+    assert repo.sync_bank_accounts_calls == [{"names": ["UBS"]}]
 
 def test_onboarding_bank_accounts_confirm_without_accounts_forces_collect(monkeypatch) -> None:
     _mock_auth(monkeypatch)

@@ -164,9 +164,14 @@ button:disabled {
 .messages {
   overflow-y: auto;
   scroll-behavior: smooth;
-  padding: 1rem;
+  padding: 1rem 1rem 7.5rem;
   min-height: 0;
   flex: 1;
+}
+
+.messages-end-spacer {
+  height: 1px;
+  scroll-margin-bottom: 6.5rem;
 }
 
 .message {

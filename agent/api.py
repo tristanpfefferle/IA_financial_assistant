@@ -3463,7 +3463,31 @@ def agent_chat(
                         tool_result=_build_bank_accounts_form_ui_action(),
                         plan=None,
                     )
-                profiles_repository.ensure_bank_accounts(profile_id=profile_id, names=submitted_names)
+
+                existing_accounts = profiles_repository.list_bank_accounts(profile_id=profile_id)
+                existing_names_by_norm = {
+                    _normalize_text(str(account.get("name") or "")): str(account.get("name") or "").strip()
+                    for account in existing_accounts
+                    if str(account.get("name") or "").strip()
+                }
+                desired_names_by_norm = {
+                    _normalize_text(name): name
+                    for name in submitted_names
+                    if _normalize_text(name)
+                }
+                accounts_to_remove = [
+                    existing_name
+                    for norm_name, existing_name in existing_names_by_norm.items()
+                    if norm_name not in desired_names_by_norm
+                ]
+
+                desired_names = list(desired_names_by_norm.values())
+                if hasattr(profiles_repository, "sync_bank_accounts"):
+                    profiles_repository.sync_bank_accounts(profile_id=profile_id, names=desired_names)
+                else:
+                    if accounts_to_remove and hasattr(profiles_repository, "remove_bank_accounts"):
+                        profiles_repository.remove_bank_accounts(profile_id=profile_id, names=accounts_to_remove)
+                    profiles_repository.ensure_bank_accounts(profile_id=profile_id, names=desired_names)
                 refreshed_accounts = profiles_repository.list_bank_accounts(profile_id=profile_id)
                 updated_global_state = _build_bank_accounts_onboarding_global_state(
                     global_state,
@@ -3897,11 +3921,8 @@ def agent_chat(
                             chat_state=updated_chat_state,
                         )
                         return _chat_response(
-                            reply=(
-                                "Super 👍\n\nMaintenant, on ajoute ta banque. Ça me permet de lier correctement tes relevés et de classer tes transactions.\n\n"
-                                "Quelle banque utilises-tu ? (ex: UBS, Revolut)"
-                            ),
-                            tool_result=None,
+                            reply="Sélectionne les banques où tu as un compte. Tu peux en choisir plusieurs.",
+                            tool_result=_build_bank_accounts_form_ui_action(),
                             plan=None,
                         )
                     if _is_no(payload.message):
