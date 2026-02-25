@@ -45,7 +45,7 @@ def _onboarding_help_prompt(loop_id: str, *, services: Any, profile_id: Any) -> 
     prompts = {
         "onboarding.profile_confirm": "Confirme ton profil (oui/non).",
         "onboarding.profile_fix_select": "Dis-moi ce que tu veux corriger : prénom/nom ou date de naissance.",
-        "onboarding.bank_accounts_collect": "Quels comptes utilises-tu ?",
+        "onboarding.bank_accounts_collect": "Sélectionne les banques où tu as un compte. Tu peux en choisir plusieurs.",
         "onboarding.bank_accounts_confirm": "Confirme la liste des comptes (oui/non).",
         "onboarding.import_select_account": "Sélectionne le compte à importer.",
         "onboarding.import_wait_ready": "Ton CSV est-il prêt ? (oui/non)",

@@ -122,6 +122,12 @@ _BANK_ACCOUNTS_FIX_SUBSTEP_PATTERN = re.compile(r"^bank_accounts_fix_")
 _PROFILE_COMPLETION_FIELDS = ("first_name", "last_name", "birth_date")
 _UI_FORM_SUBMIT_PREFIX = "__ui_form_submit__:"
 _ONBOARDING_BANK_ACCOUNT_PRESET_OPTIONS: tuple[str, ...] = ("UBS", "Raiffeisen", "BCV", "Banque cantonale", "PostFinance", "Revolut", "Neon", "Yuh", "Zak", "Wise")
+_BANK_ACCOUNTS_SELECTION_QUESTION = "Sélectionne les banques où tu as un compte. Tu peux en choisir plusieurs."
+_BANK_ACCOUNTS_SELECTION_INTRO = (
+    "Parfait 👍\n\n"
+    "Maintenant, on va ajouter tes banques. Ça me permet d’associer correctement tes relevés et de classer tes transactions.\n\n"
+    f"{_BANK_ACCOUNTS_SELECTION_QUESTION}"
+)
 _ONBOARDING_NAME_PATTERN = re.compile(
     r"^\s*([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'\-]+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'\-]+)\s*$"
 )
@@ -733,7 +739,7 @@ def _extract_submitted_bank_account_names(values: dict[str, Any]) -> list[str]:
 
 
 def _build_bank_accounts_confirm_recap(accounts: list[dict[str, Any]]) -> str:
-    return f"Tu as des comptes bancaires chez : {_format_accounts_for_reply(accounts)}.\n\nTout est correct ?"
+    return f"Tu as des comptes bancaires chez : {_format_accounts_for_reply(accounts)}.\n\nEst-ce bien correct ?"
 
 
 def _build_profile_collect_ui_action(profile_fields: dict[str, Any]) -> dict[str, Any]:
@@ -3268,7 +3274,7 @@ def agent_chat(
                             )
                         if substep == "bank_accounts_collect":
                             return _chat_response(
-                                reply="Sélectionne les banques où tu as un compte. Tu peux en choisir plusieurs.",
+                                reply=_BANK_ACCOUNTS_SELECTION_INTRO,
                                 tool_result=_build_bank_accounts_form_ui_action(),
                                 plan=None,
                             )
@@ -3921,7 +3927,7 @@ def agent_chat(
                             chat_state=updated_chat_state,
                         )
                         return _chat_response(
-                            reply="Sélectionne les banques où tu as un compte. Tu peux en choisir plusieurs.",
+                            reply=_BANK_ACCOUNTS_SELECTION_INTRO,
                             tool_result=_build_bank_accounts_form_ui_action(),
                             plan=None,
                         )
@@ -3949,7 +3955,7 @@ def agent_chat(
                             tool_result=_build_quick_reply_profile_fix_ui_action(),
                             plan=None,
                         )
-                    return _chat_response(reply="Tout est correct ?", tool_result=_build_quick_reply_yes_no_ui_action(), plan=None)
+                    return _chat_response(reply="Est-ce bien correct ?", tool_result=_build_quick_reply_yes_no_ui_action(), plan=None)
 
 
             mode = global_state.get("mode")
@@ -4069,7 +4075,7 @@ def agent_chat(
                         )
 
                     return _chat_response(
-                        reply="Sélectionne les banques où tu as un compte. Tu peux en choisir plusieurs.",
+                        reply=_BANK_ACCOUNTS_SELECTION_INTRO,
                         tool_result=_build_bank_accounts_form_ui_action(),
                         plan=None,
                     )
@@ -4193,7 +4199,7 @@ def agent_chat(
                             chat_state=updated_chat_state,
                         )
                         return _chat_response(
-                            reply="Sélectionne les banques où tu as un compte. Tu peux en choisir plusieurs.",
+                            reply=_BANK_ACCOUNTS_SELECTION_INTRO,
                             tool_result=_build_bank_accounts_form_ui_action(),
                             plan=None,
                         )

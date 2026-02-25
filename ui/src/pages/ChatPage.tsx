@@ -655,19 +655,27 @@ export function ChatPage({ email }: ChatPageProps) {
     }
   }, [apiBaseUrl, messages])
 
-  const scrollToBottom = () => {
-    const endElement = messagesEndRef.current
-    if (!endElement || typeof endElement.scrollIntoView !== 'function') {
-      return
-    }
-    endElement.scrollIntoView({ behavior: 'smooth', block: 'end' })
-  }
-
-  useEffect(() => {
+  function scrollToBottom(options: { smooth?: boolean } = {}) {
     if (!shouldAutoScrollRef.current) {
       return
     }
-    scrollToBottom()
+
+    const performScroll = () => {
+      const endElement = messagesEndRef.current
+      if (!endElement || typeof endElement.scrollIntoView !== 'function') {
+        return
+      }
+
+      endElement.scrollIntoView({ behavior: options.smooth === false ? 'auto' : 'smooth', block: 'end' })
+    }
+
+    window.requestAnimationFrame(() => {
+      window.setTimeout(performScroll, 0)
+    })
+  }
+
+  useEffect(() => {
+    scrollToBottom({ smooth: true })
   }, [messages.length])
 
   useEffect(() => {
@@ -717,6 +725,7 @@ export function ChatPage({ email }: ChatPageProps) {
             debugPayload: queued.debugPayload,
           },
         ])
+        scrollToBottom({ smooth: true })
 
         if (assistantQueueRef.current.length > 0) {
           await new Promise<void>((resolve) => {

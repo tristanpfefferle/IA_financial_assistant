@@ -121,7 +121,7 @@ def build_default_loops() -> list[Any]:
         OnboardingProfileCollectLoop(),
         OnboardingProfileFixSelectLoop(),
         DeterministicLoop("onboarding.profile_confirm", True, "Confirme ton profil (oui/non).", yes_no, ("profile_confirm",), "onboarding.bank_accounts_collect"),
-        DeterministicLoop("onboarding.bank_accounts_collect", True, "Quels comptes utilises-tu ?", enter_when_substeps=("bank_accounts_collect",)),
+        DeterministicLoop("onboarding.bank_accounts_collect", True, "Sélectionne les banques où tu as un compte. Tu peux en choisir plusieurs.", enter_when_substeps=("bank_accounts_collect",)),
         DeterministicLoop("onboarding.bank_accounts_confirm", True, "Confirme la liste des comptes (oui/non).", yes_no, ("bank_accounts_confirm",), "onboarding.import_select_account"),
         DeterministicLoop("onboarding.import_select_account", True, "Sélectionne le compte à importer.", enter_when_substeps=("import_select_account",)),
         DeterministicLoop("onboarding.import_wait_ready", True, "Ton CSV est-il prêt ? (oui/non)", yes_no, ("import_wait_ready",), "onboarding.categories_intro"),

@@ -41,5 +41,5 @@ def build_profile_recap_reply(profile_fields: dict[str, Any]) -> str:
     birth_date_display = format_birth_date_fr_long(birth_date_iso)
     return (
         f"Parfait ✅\n\nRécapitulatif de ton profil :\n- Prénom: {first_name}\n- Nom: {last_name}\n- Date de naissance: {birth_date_display}\n\n"
-        "Tout est correct ?"
+        "Est-ce bien correct ?"
     )
