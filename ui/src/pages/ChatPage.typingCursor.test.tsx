@@ -80,10 +80,10 @@ describe('MessageList sequential typing cursor', () => {
             typingCursor={typingCursor}
             revealedMessageIdsRef={revealedMessageIdsRef}
             messagesRef={{ current: null }}
+            messagesEndRef={{ current: null }}
             onImportNow={() => undefined}
             onScroll={() => undefined}
-            onStartConversation={() => undefined}
-            onTypingDone={() => setTypingCursor((value) => value + 1)}
+              onTypingDone={() => setTypingCursor((value) => value + 1)}
           />
         )
       }

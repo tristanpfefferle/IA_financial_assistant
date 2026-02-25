@@ -58,12 +58,14 @@ button:disabled {
 }
 
 .chat-layout {
-  height: 100vh;
   min-height: 100vh;
   display: grid;
-  grid-template-columns: 320px minmax(0, 1fr);
+  grid-template-columns: 280px minmax(0, 1fr);
   gap: 1rem;
-  padding: 1rem;
+  padding: 1.25rem;
+  max-width: 1280px;
+  margin: 0 auto;
+  align-items: start;
 }
 
 .mobile-menu-button {
@@ -117,8 +119,11 @@ button:disabled {
 }
 
 .chat-panel {
+  width: min(100%, 1024px);
+  margin: 0 auto;
   min-height: 0;
-  height: calc(100vh - 2rem);
+  height: 70vh;
+  max-height: 780px;
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
@@ -158,6 +163,7 @@ button:disabled {
 
 .messages {
   overflow-y: auto;
+  scroll-behavior: smooth;
   padding: 1rem;
   min-height: 0;
   flex: 1;
@@ -271,11 +277,70 @@ button:disabled {
   flex: none;
 }
 
+.guided-placeholder {
+  min-height: 2.2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .composer {
   display: grid;
   grid-template-columns: 1fr auto;
   gap: 0.6rem;
   padding: 0.8rem;
+}
+
+.form-composer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.7rem;
+}
+
+.form-title {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 0.86rem;
+  color: #cbd5e1;
+}
+
+.form-fields {
+  display: grid;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.form-fields-inline {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.form-field {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.8rem;
+  color: #cbd5e1;
+}
+
+.form-field input {
+  min-height: 38px;
+  padding: 0.45rem 0.65rem;
+}
+
+.form-actions {
+  align-self: end;
+}
+
+.send-icon-button {
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
 }
 
 .sticky-bottom {
@@ -413,8 +478,12 @@ button:disabled {
 
   .chat-panel {
     min-height: 0;
-    height: calc(100vh - 4rem);
+    height: calc(100vh - 5rem);
     overflow: hidden;
+  }
+
+  .form-fields-inline {
+    grid-template-columns: 1fr;
   }
 
   .message {

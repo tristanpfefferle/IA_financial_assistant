@@ -64,6 +64,8 @@ type LoopDebugState = {
   blocking: boolean | null
 }
 
+type GlobalStateMode = 'onboarding' | 'free_chat' | string
+
 const CHAT_DEBUG_STORAGE_KEY = 'chat_debug'
 
 function isChatDebugEnabledByEnv(): boolean {
@@ -355,6 +357,21 @@ function buildFormSubmitPayload(formId: string, values: Record<string, string>):
 
 type ComposerMode = 'form' | 'quick_replies' | 'text'
 
+function resolveGlobalStateMode(payload: unknown): GlobalStateMode | null {
+  if (!payload || typeof payload !== 'object') {
+    return null
+  }
+
+  const root = payload as { global_state?: unknown; debug?: { global_state?: unknown } }
+  const nestedGlobalState = root.global_state ?? root.debug?.global_state
+  if (!nestedGlobalState || typeof nestedGlobalState !== 'object') {
+    return null
+  }
+
+  const mode = (nestedGlobalState as { mode?: unknown }).mode
+  return typeof mode === 'string' ? mode : null
+}
+
 function toProgressUiAction(toolResult: ChatMessage['toolResult']): ProgressUiAction | null {
   if (!toolResult || typeof toolResult !== 'object') {
     return null
@@ -396,6 +413,7 @@ export function ChatPage({ email }: ChatPageProps) {
   const [debugMode, setDebugMode] = useState(false)
   const [loopDebug, setLoopDebug] = useState<LoopDebugState | null>(null)
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
+  const [globalStateMode, setGlobalStateMode] = useState<GlobalStateMode | null>(null)
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false)
   const [autoOpenImportPicker, setAutoOpenImportPicker] = useState(false)
   const [awaitingPendingCategorizationReply, setAwaitingPendingCategorizationReply] = useState(false)
@@ -420,6 +438,8 @@ export function ChatPage({ email }: ChatPageProps) {
   const uploadMessageGuardsRef = useRef<Set<string>>(new Set())
   const hasPromptedPendingCategorizationRef = useRef(false)
   const lastPromptedPendingCategorizationCountRef = useRef<number>(0)
+  const didInitConversationRef = useRef(false)
+  const messagesEndRef = useRef<HTMLDivElement | null>(null)
 
   const pendingImportIntent = useMemo(() => findPendingImportIntent(messages), [messages])
   const isImportRequired = pendingImportIntent !== null
@@ -433,6 +453,7 @@ export function ChatPage({ email }: ChatPageProps) {
   }, [messages])
   const quickReplyAction = useMemo(() => toQuickReplyYesNoUiAction(latestAssistantMessage?.toolResult), [latestAssistantMessage])
   const formUiAction = useMemo(() => toFormUiAction(latestAssistantMessage?.toolResult), [latestAssistantMessage])
+  const isGuidedMode = globalStateMode !== 'free_chat'
   const composerMode: ComposerMode = useMemo(() => {
     if (formUiAction) {
       return 'form'
@@ -440,8 +461,12 @@ export function ChatPage({ email }: ChatPageProps) {
     if (quickReplyAction) {
       return 'quick_replies'
     }
+    if (isGuidedMode) {
+      return 'quick_replies'
+    }
     return 'text'
-  }, [formUiAction, quickReplyAction])
+  }, [formUiAction, isGuidedMode, quickReplyAction])
+  const shouldShowGuidedPlaceholder = composerMode === 'quick_replies' && !quickReplyAction
   const hasUnauthorizedError = useMemo(() => error?.includes('(401)') ?? false, [error])
   const statusBadge = debugMode ? 'Debug' : isImportRequired ? 'Onboarding' : 'Prêt'
 
@@ -486,6 +511,11 @@ export function ChatPage({ email }: ChatPageProps) {
   }, [debugMode])
 
   function syncLoopDebug(payload: unknown): void {
+    const nextGlobalStateMode = resolveGlobalStateMode(payload)
+    if (nextGlobalStateMode) {
+      setGlobalStateMode(nextGlobalStateMode)
+    }
+
     if (!debugMode) {
       return
     }
@@ -564,18 +594,28 @@ export function ChatPage({ email }: ChatPageProps) {
   }, [apiBaseUrl, messages])
 
   const scrollToBottom = () => {
-    const element = messagesRef.current
-    if (!element) {
+    const endElement = messagesEndRef.current
+    if (!endElement || typeof endElement.scrollIntoView !== 'function') {
       return
     }
-    element.scrollTop = element.scrollHeight
+    endElement.scrollIntoView({ behavior: 'smooth', block: 'end' })
   }
 
   useEffect(() => {
-    if (shouldAutoScrollRef.current) {
-      scrollToBottom()
+    if (!shouldAutoScrollRef.current) {
+      return
     }
-  }, [messages, typingCursor])
+    scrollToBottom()
+  }, [messages.length])
+
+  useEffect(() => {
+    if (!hasToken || didInitConversationRef.current) {
+      return
+    }
+
+    didInitConversationRef.current = true
+    void startConversation()
+  }, [hasToken])
 
   useEffect(() => {
     if (!pendingImportIntent) {
@@ -757,7 +797,7 @@ export function ChatPage({ email }: ChatPageProps) {
     }
   }
 
-  async function submitQuickReply(displayMessage: '✅' | '❌', apiMessage: 'oui' | 'non') {
+  async function submitQuickReply(displayMessage: string, apiMessage: string) {
     if (isLoading || isImportRequired || composerMode !== 'quick_replies') {
       return
     }
@@ -847,7 +887,7 @@ export function ChatPage({ email }: ChatPageProps) {
     setIsLoading(true)
     setError(null)
     try {
-      const response = await sendChatMessage('', { debug: debugMode, requestGreeting: true })
+      const response = await sendChatMessage('', { debug: debugMode })
       syncLoopDebug(response)
       const segments = splitAssistantReply(response.reply)
       enqueueAssistantMessages(segments, response.tool_result, response.plan, response)
@@ -1017,6 +1057,7 @@ export function ChatPage({ email }: ChatPageProps) {
           typingCursor={typingCursor}
           revealedMessageIdsRef={revealedMessageIdsRef}
           messagesRef={messagesRef}
+          messagesEndRef={messagesEndRef}
           onImportNow={(intent) => {
             setIsImportDialogOpen(true)
             setAutoOpenImportPicker(true)
@@ -1049,15 +1090,7 @@ export function ChatPage({ email }: ChatPageProps) {
             const threshold = 48
             shouldAutoScrollRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < threshold
           }}
-          onStartConversation={() => {
-            void startConversation()
-          }}
           onTypingDone={(_messageId) => setTypingCursor((value) => value + 1)}
-          onTypingProgress={() => {
-            if (shouldAutoScrollRef.current) {
-              scrollToBottom()
-            }
-          }}
         />
 
         <ComposerArea
@@ -1068,11 +1101,22 @@ export function ChatPage({ email }: ChatPageProps) {
           message={message}
           setMessage={setMessage}
           isImportRequired={isImportRequired}
+          isGuidedMode={isGuidedMode}
+          showGuidedPlaceholder={shouldShowGuidedPlaceholder}
           onSubmit={handleSubmit}
           onSubmitQuickReply={(option) => {
             const normalizedValue = option.value.trim().toLowerCase()
-            const displayMessage = option.label.trim() === '❌' || normalizedValue === 'non' ? '❌' : '✅'
-            const apiMessage: 'oui' | 'non' = normalizedValue === 'non' ? 'non' : 'oui'
+            const displayMessage =
+              normalizedValue === 'oui'
+                ? 'Oui ✅'
+                : normalizedValue === 'non'
+                  ? 'Non ❌'
+                  : normalizedValue === 'corriger_nom'
+                    ? 'Je veux corriger mon prénom/nom.'
+                    : normalizedValue === 'corriger_date'
+                      ? 'Je veux corriger ma date de naissance.'
+                      : option.label
+            const apiMessage = option.value
             void submitQuickReply(displayMessage, apiMessage)
           }}
           onSubmitForm={(formId, values) => {
@@ -1194,15 +1238,15 @@ type MessageListProps = {
   typingCursor: number
   revealedMessageIdsRef: RefObject<Set<string>>
   messagesRef: RefObject<HTMLDivElement | null>
+  messagesEndRef: RefObject<HTMLDivElement | null>
   onImportNow: (intent: ImportIntent) => void
   onScroll: (event: UIEvent<HTMLDivElement>) => void
-  onStartConversation: () => void
   onTypingDone: (messageId: string) => void
   onActiveTypingChange?: (messageId: string | null) => void
   onTypingProgress?: () => void
 }
 
-export function MessageList({ messages, isLoading, debugMode, apiBaseUrl, typingCursor, revealedMessageIdsRef, messagesRef, onImportNow, onScroll, onStartConversation, onTypingDone, onActiveTypingChange, onTypingProgress }: MessageListProps) {
+export function MessageList({ messages, isLoading, debugMode, apiBaseUrl, typingCursor, revealedMessageIdsRef, messagesRef, messagesEndRef, onImportNow, onScroll, onTypingDone, onActiveTypingChange, onTypingProgress }: MessageListProps) {
   const activeTypingMessageId = useMemo(() => {
     const revealed = revealedMessageIdsRef.current
     for (const item of messages) {
@@ -1224,7 +1268,7 @@ export function MessageList({ messages, isLoading, debugMode, apiBaseUrl, typing
 
   return (
     <div className="messages card" aria-live="polite" ref={messagesRef} onScroll={onScroll}>
-      {messages.length === 0 ? <EmptyState onStartConversation={onStartConversation} /> : null}
+      {messages.length === 0 ? <p className="subtle-text">Initialisation…</p> : null}
       {messages.map((chatMessage) => {
         if (chatMessage.role === 'assistant' && !isMessageRevealed(chatMessage.id) && chatMessage.id !== activeTypingMessageId) {
           return null
@@ -1250,21 +1294,8 @@ export function MessageList({ messages, isLoading, debugMode, apiBaseUrl, typing
           <p className="subtle-text">L’assistant réfléchit…</p>
         </div>
       ) : null}
+      <div ref={messagesEndRef} aria-hidden="true" />
     </div>
-  )
-}
-
-function EmptyState({ onStartConversation }: { onStartConversation: () => void }) {
-  return (
-    <section className="empty-state">
-      <h3>Bienvenue 👋</h3>
-      <p className="subtle-text">Je peux t’aider à comprendre tes dépenses, tes revenus et tes tendances.</p>
-      <div className="empty-actions">
-        <button type="button" onClick={onStartConversation}>
-          Commencer
-        </button>
-      </div>
-    </section>
   )
 }
 
@@ -1600,6 +1631,8 @@ type ComposerAreaProps = {
   message: string
   setMessage: (next: string) => void
   isImportRequired: boolean
+  isGuidedMode: boolean
+  showGuidedPlaceholder: boolean
   onSubmit: (event: FormEvent<HTMLFormElement>) => void
   onSubmitQuickReply: (option: { id: string; label: string; value: string }) => void
   onSubmitForm: (formId: string, values: Record<string, string>) => void
@@ -1613,6 +1646,8 @@ function ComposerArea({
   message,
   setMessage,
   isImportRequired,
+  isGuidedMode,
+  showGuidedPlaceholder,
   onSubmit,
   onSubmitQuickReply,
   onSubmitForm,
@@ -1625,9 +1660,10 @@ function ComposerArea({
       {composerMode === 'quick_replies' ? (
         <QuickReplyBar quickReplyAction={quickReplyAction} isLoading={isLoading} disabled={isImportRequired} onSubmitQuickReply={onSubmitQuickReply} />
       ) : null}
-      {composerMode === 'text' ? (
+      {composerMode === 'text' && !isGuidedMode ? (
         <Composer message={message} setMessage={setMessage} onSubmit={onSubmit} isLoading={isLoading} disabled={isImportRequired} />
       ) : null}
+      {showGuidedPlaceholder ? <div className="guided-placeholder subtle-text">…</div> : null}
     </div>
   )
 }
@@ -1681,7 +1717,7 @@ function FormCard({
 
   return (
     <form
-      className="card"
+      className="form-composer card"
       aria-label={`Formulaire ${formUiAction.form_id}`}
       onSubmit={(event) => {
         event.preventDefault()
@@ -1699,10 +1735,10 @@ function FormCard({
         onSubmitForm(formUiAction.form_id, values)
       }}
     >
-      <h3>{formUiAction.title}</h3>
-      <div className="settings-grid">
+      <h3 className="form-title">{formUiAction.title}</h3>
+      <div className={`form-fields ${formUiAction.fields.length > 1 ? 'form-fields-inline' : ''}`}>
         {formUiAction.fields.map((field) => (
-          <label key={field.id} className="settings-field">
+          <label key={field.id} className="form-field">
             {field.label}
             <input
               name={field.id}
@@ -1715,8 +1751,10 @@ function FormCard({
           </label>
         ))}
       </div>
-      <div className="message-actions">
-        <button type="submit" disabled={isLoading}>{formUiAction.submit_label}</button>
+      <div className="form-actions">
+        <button type="submit" className="send-icon-button" disabled={isLoading} aria-label={formUiAction.submit_label}>
+          ➤
+        </button>
       </div>
     </form>
   )

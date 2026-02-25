@@ -82,9 +82,9 @@ describe('MessageList spending report summary', () => {
           typingCursor={0}
           revealedMessageIdsRef={{ current: new Set<string>() }}
           messagesRef={createRef<HTMLDivElement>()}
+          messagesEndRef={createRef<HTMLDivElement>()}
           onImportNow={() => undefined}
           onScroll={() => undefined}
-          onStartConversation={() => undefined}
           onTypingDone={() => undefined}
         />,
       )
@@ -124,9 +124,9 @@ describe('MessageList spending report summary', () => {
           typingCursor={0}
           revealedMessageIdsRef={{ current: new Set<string>() }}
           messagesRef={createRef<HTMLDivElement>()}
+          messagesEndRef={createRef<HTMLDivElement>()}
           onImportNow={() => undefined}
           onScroll={() => undefined}
-          onStartConversation={() => undefined}
           onTypingDone={() => undefined}
         />,
       )
