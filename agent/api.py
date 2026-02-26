@@ -545,14 +545,19 @@ def _classify_merchants_without_category(*, profiles_repository: Any, profile_id
     return classified_count, remaining_count, invalid_count
 
 
-def _build_import_file_ui_request(_import_context: dict[str, Any] | None = None) -> dict[str, Any]:
+def _build_import_file_ui_request(import_context: dict[str, Any] | None = None) -> dict[str, Any]:
     """Return a UI upload request payload to trigger file import."""
 
-    return {
+    ui_request: dict[str, Any] = {
         "type": "ui_request",
         "name": "import_file",
         "accepted_types": ["csv"],
     }
+    if isinstance(import_context, dict):
+        bank_account_id = import_context.get("bank_account_id") or import_context.get("selected_bank_account_id")
+        if isinstance(bank_account_id, str) and bank_account_id.strip():
+            ui_request["bank_account_id"] = bank_account_id.strip()
+    return ui_request
 
 
 def _should_prompt_household_link_setup(
@@ -1389,7 +1394,20 @@ def _build_spending_pdf_url(*, month: str | None = None, start_date: str | None 
 
 
 def _extract_import_date_range(result: dict[str, Any]) -> dict[str, str] | None:
-    """Infer import date range from preview rows when available."""
+    """Infer import date range from explicit fields or preview rows."""
+
+    start_raw = result.get("import_start_date")
+    end_raw = result.get("import_end_date")
+    if isinstance(start_raw, str) and isinstance(end_raw, str):
+        try:
+            start_value = date.fromisoformat(start_raw)
+            end_value = date.fromisoformat(end_raw)
+            return {
+                "start": min(start_value, end_value).isoformat(),
+                "end": max(start_value, end_value).isoformat(),
+            }
+        except ValueError:
+            pass
 
     preview_items = result.get("preview")
     if not isinstance(preview_items, list):
@@ -1414,6 +1432,16 @@ def _extract_import_date_range(result: dict[str, Any]) -> dict[str, str] | None:
         "start": min(valid_dates).isoformat(),
         "end": max(valid_dates).isoformat(),
     }
+
+
+def _is_tool_error_payload(result: Any) -> bool:
+    """Return whether a JSON-encoded payload looks like a ToolError."""
+
+    if not isinstance(result, dict):
+        return False
+    code = result.get("code")
+    message = result.get("message")
+    return isinstance(code, str) and bool(code.strip()) and isinstance(message, str) and bool(message.strip())
 
 
 def _build_pending_clarification_from_tool_result(
@@ -4035,9 +4063,55 @@ def agent_chat(
 
             if mode == "onboarding" and onboarding_step == "import" and global_state.get("onboarding_substep") == "import_wait_ready":
                 if _is_yes(payload.message):
+                    import_context = state_dict.get("import_context") if isinstance(state_dict.get("import_context"), dict) else {}
+                    selected_bank_account_id = None
+                    if isinstance(import_context, dict):
+                        selected_bank_account_id = import_context.get("bank_account_id") or import_context.get("selected_bank_account_id")
+
+                    if (not selected_bank_account_id) and hasattr(profiles_repository, "list_bank_accounts"):
+                        existing_accounts = profiles_repository.list_bank_accounts(profile_id=profile_id)
+                        if len(existing_accounts) == 1:
+                            selected_account = existing_accounts[0]
+                            selected_bank_account_id = str(selected_account.get("id") or "").strip() or None
+                            account_name = str(selected_account.get("name") or "").strip()
+                            state_dict["import_context"] = {
+                                "bank_account_id": selected_bank_account_id,
+                                "selected_bank_account_id": selected_bank_account_id,
+                                "selected_bank_account_name": account_name,
+                            }
+                            updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                            updated_chat_state["state"] = state_dict
+                            profiles_repository.update_chat_state(
+                                profile_id=profile_id,
+                                user_id=auth_user_id,
+                                chat_state=updated_chat_state,
+                            )
+                        elif len(existing_accounts) > 1:
+                            updated_global_state = _build_onboarding_global_state(
+                                global_state,
+                                onboarding_step="import",
+                                onboarding_substep="import_select_account",
+                            )
+                            state_dict["global_state"] = updated_global_state
+                            updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                            updated_chat_state["state"] = state_dict
+                            profiles_repository.update_chat_state(
+                                profile_id=profile_id,
+                                user_id=auth_user_id,
+                                chat_state=updated_chat_state,
+                            )
+                            return _chat_response(
+                                reply=(
+                                    "J’ai besoin du compte cible avant l’import. "
+                                    f"Comptes dispo: {_format_accounts_for_reply(existing_accounts)}."
+                                ),
+                                tool_result=None,
+                                plan=None,
+                            )
+
                     return _chat_response(
                         reply="Parfait 🙂\n\nClique sur « Importer maintenant » pour sélectionner ton fichier CSV.",
-                        tool_result=_build_import_file_ui_request(),
+                        tool_result=_build_import_file_ui_request(state_dict.get("import_context")),
                         plan=None,
                     )
                 return _chat_response(
@@ -4322,6 +4396,7 @@ def agent_chat(
                         if len(existing_accounts) == 1:
                             selected_account = existing_accounts[0]
                             state_dict["import_context"] = {
+                                "bank_account_id": str(selected_account.get("id")),
                                 "selected_bank_account_id": str(selected_account.get("id")),
                                 "selected_bank_account_name": str(selected_account.get("name", "")),
                             }
@@ -4364,6 +4439,7 @@ def agent_chat(
 
                 updated_state = dict(state_dict)
                 updated_state["import_context"] = {
+                    "bank_account_id": str(matched_account.get("id")),
                     "selected_bank_account_id": str(matched_account.get("id")),
                     "selected_bank_account_name": str(matched_account.get("name", "")),
                 }
@@ -5839,14 +5915,23 @@ def _run_import_job_pipeline(*, repository: SupabaseImportJobsRepository, profil
             job_id=job_id,
         )
 
+        job = repository.get_job(profile_id=profile_id, job_id=job_id)
+        persisted_result = job.result if job is not None and isinstance(getattr(job, "result", None), dict) else {}
+        persisted_bank_account_id = None
+        if isinstance(persisted_result, dict):
+            candidate = persisted_result.get("bank_account_id")
+            if isinstance(candidate, str) and candidate.strip():
+                persisted_bank_account_id = candidate.strip()
+        selected_bank_account_id = payload.bank_account_id or persisted_bank_account_id
+
         request_payload = {
             "files": [{"filename": file.filename, "content_base64": file.content_base64} for file in payload.files],
             "import_mode": payload.import_mode,
             "modified_action": payload.modified_action,
             "profile_id": str(profile_id),
         }
-        if payload.bank_account_id:
-            request_payload["bank_account_id"] = payload.bank_account_id
+        if selected_bank_account_id:
+            request_payload["bank_account_id"] = selected_bank_account_id
 
         request_model = RelevesImportRequest.model_validate(request_payload)
         tool_router = get_tool_router()
@@ -5902,7 +5987,7 @@ def _run_import_job_pipeline(*, repository: SupabaseImportJobsRepository, profil
                     "files": [{"filename": file.filename, "content_base64": file.content_base64} for file in payload.files],
                     "import_mode": payload.import_mode,
                     "modified_action": payload.modified_action,
-                    **({"bank_account_id": payload.bank_account_id} if payload.bank_account_id else {}),
+                    **({"bank_account_id": selected_bank_account_id} if selected_bank_account_id else {}),
                 },
                 profile_id=profile_id,
             )
@@ -5917,11 +6002,31 @@ def _run_import_job_pipeline(*, repository: SupabaseImportJobsRepository, profil
                 job_patch={"processed_llm_items": total_transactions_hint, "total_llm_items": total_transactions_hint},
             )
 
+        if _is_tool_error_payload(result):
+            error_message = str(result.get("message") or "Import interrompu.")
+            _emit_import_job_event(
+                repository=repository,
+                profile_id=profile_id,
+                job_id=job_id,
+                kind="error",
+                message=error_message,
+                progress=1.0,
+                payload={"result": result},
+                job_patch={"status": "error", "error_message": error_message, "result": result},
+            )
+            raise RuntimeError(error_message)
+
         processed_transactions = None
         if isinstance(result, dict):
+            if selected_bank_account_id:
+                result.setdefault("bank_account_id", selected_bank_account_id)
             value = result.get("transactions_imported") or result.get("imported_count")
             if isinstance(value, (int, float)):
                 processed_transactions = int(value)
+            date_range = _extract_import_date_range(result)
+            if isinstance(date_range, dict):
+                result.setdefault("import_start_date", date_range.get("start"))
+                result.setdefault("import_end_date", date_range.get("end"))
 
         _emit_import_job_event(
             repository=repository,
@@ -5953,6 +6058,9 @@ def _run_import_job_pipeline(*, repository: SupabaseImportJobsRepository, profil
         )
     except Exception as exc:
         logger.exception("import_job_pipeline_failed job_id=%s profile_id=%s", job_id, profile_id)
+        current_job = repository.get_job(profile_id=profile_id, job_id=job_id)
+        if current_job is not None and current_job.status == "error":
+            return
         _emit_import_job_event(
             repository=repository,
             profile_id=profile_id,
@@ -5994,7 +6102,11 @@ def upload_import_job_file(
     if invalid_filenames:
         raise HTTPException(status_code=400, detail="Format invalide. Pour l’instant, seul le format CSV est supporté.")
 
-    repository.patch_job(profile_id=profile_id, job_id=job_id, payload={"status": "running", "error_message": None})
+    job_patch_payload: dict[str, Any] = {"status": "running", "error_message": None}
+    if payload.bank_account_id:
+        existing_result = job.result if isinstance(getattr(job, "result", None), dict) else {}
+        job_patch_payload["result"] = {**existing_result, "bank_account_id": payload.bank_account_id}
+    repository.patch_job(profile_id=profile_id, job_id=job_id, payload=job_patch_payload)
     background_tasks.add_task(
         _run_import_job_pipeline,
         repository=repository,
@@ -6051,6 +6163,19 @@ def finalize_import_job_chat(
         profiles_repository.get_chat_state(profile_id=profile_id, user_id=_auth_user_id)
     )
     state_dict = dict(chat_state.get("state")) if isinstance(chat_state.get("state"), dict) else {}
+    if isinstance(job.result, dict):
+        start_date = job.result.get("import_start_date")
+        end_date = job.result.get("import_end_date")
+        if isinstance(start_date, str) and isinstance(end_date, str) and start_date.strip() and end_date.strip():
+            last_query = state_dict.get("last_query") if isinstance(state_dict.get("last_query"), dict) else {}
+            filters = last_query.get("filters") if isinstance(last_query.get("filters"), dict) else {}
+            filters["date_range"] = {
+                "start_date": start_date.strip(),
+                "end_date": end_date.strip(),
+            }
+            last_query["filters"] = filters
+            state_dict["last_query"] = last_query
+
     global_state = state_dict.get("global_state") if _is_valid_global_state(state_dict.get("global_state")) else None
     updated_global_state = _normalize_onboarding_step_substep(
         _build_onboarding_global_state(

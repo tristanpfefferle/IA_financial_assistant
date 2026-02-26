@@ -114,9 +114,16 @@ def test_import_job_endpoints_create_upload_and_events(monkeypatch) -> None:
     class _BackendClient:
         def finance_releves_import_files(self, *, request: Any, on_progress: Any):
             assert request.files[0].filename == "sample.csv"
+            assert str(request.bank_account_id) == "11111111-1111-1111-1111-111111111111"
             on_progress("parsed_total", 47, 47)
             on_progress("categorization", 47, 47)
-            return {"imported_count": 2}
+            return {
+                "imported_count": 2,
+                "preview": [
+                    {"date": "2026-01-01", "montant": "10.00", "devise": "EUR"},
+                    {"date": "2026-01-31", "montant": "20.00", "devise": "EUR"},
+                ],
+            }
 
     class _Router:
         def __init__(self) -> None:
@@ -137,7 +144,10 @@ def test_import_job_endpoints_create_upload_and_events(monkeypatch) -> None:
     upload_response = client.post(
         f"/imports/jobs/{job_id}/files",
         headers=headers,
-        json={"files": [{"filename": "sample.csv", "content_base64": "ZGF0ZSxtb250YW50XG4yMDI2LTAxLTAxLDEw"}]},
+        json={
+            "files": [{"filename": "sample.csv", "content_base64": "ZGF0ZSxtb250YW50XG4yMDI2LTAxLTAxLDEw"}],
+            "bank_account_id": "11111111-1111-1111-1111-111111111111",
+        },
     )
     assert upload_response.status_code == 200
     assert upload_response.json()["ok"] is True
@@ -146,6 +156,9 @@ def test_import_job_endpoints_create_upload_and_events(monkeypatch) -> None:
     assert status_response.status_code == 200
     assert status_response.json()["status"] == "done"
     assert repo.jobs[UUID(job_id)].result is not None
+    assert repo.jobs[UUID(job_id)].result["bank_account_id"] == "11111111-1111-1111-1111-111111111111"
+    assert repo.jobs[UUID(job_id)].result["import_start_date"] == "2026-01-01"
+    assert repo.jobs[UUID(job_id)].result["import_end_date"] == "2026-01-31"
 
     finalize_response = client.post(f"/imports/jobs/{job_id}/finalize-chat", headers=headers)
     assert finalize_response.status_code == 200
@@ -181,6 +194,75 @@ def test_import_job_endpoints_create_upload_and_events(monkeypatch) -> None:
     persisted_global_state = profiles_repo.chat_state.get("state", {}).get("global_state", {})
     assert persisted_global_state.get("onboarding_step") == "report"
     assert persisted_global_state.get("onboarding_substep") == "report_offer"
+    persisted_last_query = profiles_repo.chat_state.get("state", {}).get("last_query", {})
+    date_range = persisted_last_query.get("filters", {}).get("date_range", {})
+    assert date_range == {"start_date": "2026-01-01", "end_date": "2026-01-31"}
+
+
+def test_import_job_pipeline_marks_error_on_tool_error_payload(monkeypatch) -> None:
+    auth_user_id = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+
+    monkeypatch.setattr(
+        agent_api,
+        "get_user_from_bearer_token",
+        lambda _token: {"id": str(auth_user_id), "email": "user@example.com"},
+    )
+
+    class _ProfilesRepo:
+        def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None):
+            assert auth_user_id
+            return profile_id
+
+        def get_chat_state(self, *, profile_id: UUID, user_id: UUID) -> dict[str, Any]:
+            assert profile_id
+            assert user_id
+            return {"state": {}}
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: _ProfilesRepo())
+
+    class _BackendClient:
+        def finance_releves_import_files(self, *, request: Any, on_progress: Any):
+            assert request.files[0].filename == "sample.csv"
+            return {"code": "validation_error", "message": "bank account missing"}
+
+    class _Router:
+        def __init__(self) -> None:
+            self.backend_client = _BackendClient()
+
+    monkeypatch.setattr(agent_api, "get_tool_router", lambda: _Router())
+
+    repo = _Repo()
+    monkeypatch.setattr(agent_api, "_get_import_jobs_repository_or_501", lambda: repo)
+
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer token"}
+
+    create_response = client.post("/imports/jobs", headers=headers)
+    assert create_response.status_code == 200
+    job_id = create_response.json()["job_id"]
+
+    upload_response = client.post(
+        f"/imports/jobs/{job_id}/files",
+        headers=headers,
+        json={"files": [{"filename": "sample.csv", "content_base64": "ZGF0ZSxtb250YW50XG4yMDI2LTAxLTAxLDEw"}]},
+    )
+    assert upload_response.status_code == 200
+    assert upload_response.json()["ok"] is True
+
+    status_response = client.get(f"/imports/jobs/{job_id}", headers=headers)
+    assert status_response.status_code == 200
+    assert status_response.json()["status"] == "error"
+
+    events = repo.events[UUID(job_id)]
+    kinds = [event.kind for event in events]
+    assert "error" in kinds
+    assert "done" not in kinds
+    error_event = next(event for event in events if event.kind == "error")
+    assert "bank account missing" in error_event.message
+
+    finalize_response = client.post(f"/imports/jobs/{job_id}/finalize-chat", headers=headers)
+    assert finalize_response.status_code == 409
 
 
 def test_finalize_chat_then_yes_routes_to_report_and_not_import(monkeypatch) -> None:
