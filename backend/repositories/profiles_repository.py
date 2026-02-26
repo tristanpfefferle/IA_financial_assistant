@@ -161,6 +161,13 @@ class ProfilesRepository(Protocol):
     def get_merchant_entity_suggested_category_norm(self, *, merchant_entity_id: UUID) -> str | None:
         """Return suggested_category_norm for one merchant entity."""
 
+    def get_merchant_entity_canonical_names_by_ids(
+        self,
+        *,
+        merchant_entity_ids: list[UUID],
+    ) -> dict[UUID, str]:
+        """Return canonical merchant names keyed by merchant entity id."""
+
     def list_merchant_entities_missing_suggested_category(self, *, limit: int = 200) -> list[dict[str, Any]]:
         """List merchant entities that still need suggested category enrichment."""
 
@@ -1100,6 +1107,43 @@ class SupabaseProfilesRepository:
             return None
         cleaned = self._normalize_name_norm(suggested)
         return cleaned or None
+
+    def get_merchant_entity_canonical_names_by_ids(
+        self,
+        *,
+        merchant_entity_ids: list[UUID],
+    ) -> dict[UUID, str]:
+        unique_ids = sorted({str(entity_id) for entity_id in merchant_entity_ids if entity_id}, key=str)
+        if not unique_ids:
+            return {}
+
+        rows, _ = self._client.get_rows(
+            table="merchant_entities",
+            query={
+                "select": "id,canonical_name",
+                "id": f"in.({','.join(unique_ids)})",
+                "limit": max(1, len(unique_ids)),
+            },
+            with_count=False,
+            use_anon_key=False,
+        )
+
+        canonical_names: dict[UUID, str] = {}
+        for row in rows:
+            raw_id = row.get("id")
+            raw_canonical_name = row.get("canonical_name")
+            if raw_id is None or not isinstance(raw_canonical_name, str):
+                continue
+            cleaned_name = " ".join(raw_canonical_name.strip().split())
+            if not cleaned_name:
+                continue
+            try:
+                merchant_entity_id = raw_id if isinstance(raw_id, UUID) else UUID(str(raw_id))
+            except (TypeError, ValueError):
+                continue
+            canonical_names[merchant_entity_id] = cleaned_name
+
+        return canonical_names
 
     def list_merchant_entities_missing_suggested_category(self, *, limit: int = 200) -> list[dict[str, Any]]:
         rows, _ = self._client.get_rows(
