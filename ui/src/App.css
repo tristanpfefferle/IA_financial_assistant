@@ -106,7 +106,7 @@ button:disabled {
 .console-area-inner {
   height: 320px;
   max-height: 320px;
-  overflow: auto;
+  overflow: hidden;
 }
 
 .chat-min-header {
@@ -266,13 +266,47 @@ button:disabled {
 }
 
 .action-dock {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
   border-top: 1px solid #334155;
   border-radius: 20px;
   border: 1px solid #2b3a58;
-  padding: 20px;
+  padding: 16px;
   background: rgba(11, 15, 23, 0.96);
   box-shadow: 0 -10px 26px rgba(2, 6, 23, 0.35);
   animation: dock-enter 220ms ease;
+}
+
+.dock-content {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.dock-footer {
+  flex: none;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-top: 10px;
+}
+
+.dock-send-btn {
+  width: 46px;
+  height: 46px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.1rem;
+  padding: 0;
+}
+
+.dock-send-btn:disabled {
+  opacity: 0.45;
 }
 
 @keyframes dock-enter {
@@ -296,28 +330,31 @@ button:disabled {
 .console-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  gap: 10px;
 }
 
 .console-list {
   display: grid;
-  gap: 12px;
-  max-height: 260px;
-  overflow-y: auto;
+  gap: 10px;
 }
 
 .console-split {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 12px;
+  gap: 10px;
 }
 
 .console-btn {
-  min-height: 68px;
+  min-height: 54px;
   border-radius: 16px;
-  font-size: 1.06rem;
+  font-size: 0.98rem;
   font-weight: 700;
   width: 100%;
+}
+
+.console-btn-selected {
+  outline: 2px solid #93c5fd;
+  box-shadow: inset 0 0 0 1px #93c5fd;
 }
 
 .console-btn-positive {
@@ -351,8 +388,8 @@ button:disabled {
 
 .profile-card {
   border: 1px solid #334155;
-  border-radius: 18px;
-  padding: 16px;
+  border-radius: 16px;
+  padding: 14px;
   display: grid;
   gap: 14px;
   background: rgba(11, 15, 23, 0.96);
@@ -361,19 +398,6 @@ button:disabled {
 .form-card {
   display: grid;
   gap: 12px;
-}
-
-
-.form-submit-icon-btn {
-  width: 44px;
-  height: 44px;
-  border-radius: 999px;
-  justify-self: end;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 1.15rem;
-  padding: 0;
 }
 
 .form-fields {

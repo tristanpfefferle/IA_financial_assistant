@@ -1,11 +1,17 @@
-import { useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 
 import type { ConsoleOption, ConsoleUiState } from './types'
 
 type ConsolePanelProps = {
   uiState: ConsoleUiState
   isSending: boolean
-  onChoose: (value: string, label?: string) => void
+  selectedOptionId?: string | null
+  onSelectOption: (option: ConsoleOption) => void
+  onSend: () => void
+  canSend: boolean
+  sendLabel?: string
+  onTriggerImportPicker: () => void
+  registerImportPickerTrigger?: (trigger: (() => void) | null) => void
   onImportFile: (file: File) => void
 }
 
@@ -19,22 +25,64 @@ function toneClassName(option: ConsoleOption): string {
   return 'console-btn-neutral'
 }
 
-function OptionButton({ option, isSending, onChoose }: { option: ConsoleOption; isSending: boolean; onChoose: (value: string, label?: string) => void }) {
+function OptionButton({
+  option,
+  isSending,
+  isSelected,
+  onSelectOption,
+}: {
+  option: ConsoleOption
+  isSending: boolean
+  isSelected: boolean
+  onSelectOption: (option: ConsoleOption) => void
+}) {
   return (
     <button
       type="button"
-      className={`console-btn ${toneClassName(option)}`}
+      className={`console-btn ${toneClassName(option)}${isSelected ? ' console-btn-selected' : ''}`}
       disabled={isSending || option.disabled}
       aria-disabled={isSending || option.disabled}
-      onClick={() => onChoose(option.value, option.label)}
+      aria-pressed={isSelected}
+      onClick={() => onSelectOption(option)}
     >
       {option.label}
     </button>
   )
 }
 
-export function ConsolePanel({ uiState, isSending, onChoose, onImportFile }: ConsolePanelProps) {
+export function ConsolePanel({
+  uiState,
+  isSending,
+  selectedOptionId,
+  onSelectOption,
+  onSend,
+  canSend,
+  sendLabel,
+  onTriggerImportPicker,
+  registerImportPickerTrigger,
+  onImportFile,
+}: ConsolePanelProps) {
   const inputRef = useRef<HTMLInputElement | null>(null)
+  const triggerImportPicker = () => {
+    if (isSending) {
+      return
+    }
+    inputRef.current?.click()
+  }
+
+  useEffect(() => {
+    if (!registerImportPickerTrigger) {
+      return undefined
+    }
+
+    registerImportPickerTrigger(() => {
+      inputRef.current?.click()
+    })
+    return () => {
+      registerImportPickerTrigger(null)
+    }
+  }, [registerImportPickerTrigger])
+
   const acceptedFileTypes = useMemo(() => {
     if (uiState.mode !== 'import_file') {
       return '.csv'
@@ -54,22 +102,22 @@ export function ConsolePanel({ uiState, isSending, onChoose, onImportFile }: Con
 
   return (
     <div className="action-dock" aria-label={`Console panel mode ${uiState.mode}`}>
-      <div className="console-panel">
+      <div className="dock-content console-panel">
         {uiState.mode === 'yes_no' ? (
           <div className="console-split" role="group" aria-label="Réponse oui/non">
-            <OptionButton option={uiState.yes} isSending={isSending} onChoose={onChoose} />
-            <OptionButton option={uiState.no} isSending={isSending} onChoose={onChoose} />
+            <OptionButton option={uiState.yes} isSending={isSending} isSelected={selectedOptionId === uiState.yes.id} onSelectOption={onSelectOption} />
+            <OptionButton option={uiState.no} isSending={isSending} isSelected={selectedOptionId === uiState.no.id} onSelectOption={onSelectOption} />
           </div>
         ) : null}
 
         {uiState.mode === 'single_primary' ? (
-          <OptionButton option={{ ...uiState.option, tone: 'positive' }} isSending={isSending} onChoose={onChoose} />
+          <OptionButton option={{ ...uiState.option, tone: 'positive' }} isSending={isSending} isSelected={selectedOptionId === uiState.option.id} onSelectOption={onSelectOption} />
         ) : null}
 
         {uiState.mode === 'options_grid' ? (
           <div className="console-grid" role="group" aria-label="Options">
             {uiState.options.map((option) => (
-              <OptionButton key={option.id} option={option} isSending={isSending} onChoose={onChoose} />
+              <OptionButton key={option.id} option={option} isSending={isSending} isSelected={selectedOptionId === option.id} onSelectOption={onSelectOption} />
             ))}
           </div>
         ) : null}
@@ -77,7 +125,7 @@ export function ConsolePanel({ uiState, isSending, onChoose, onImportFile }: Con
         {uiState.mode === 'options_list' ? (
           <div className="console-list" role="group" aria-label="Options">
             {uiState.options.map((option) => (
-              <OptionButton key={option.id} option={option} isSending={isSending} onChoose={onChoose} />
+              <OptionButton key={option.id} option={option} isSending={isSending} isSelected={selectedOptionId === option.id} onSelectOption={onSelectOption} />
             ))}
           </div>
         ) : null}
@@ -88,9 +136,7 @@ export function ConsolePanel({ uiState, isSending, onChoose, onImportFile }: Con
               type="button"
               className="console-btn console-btn-positive"
               disabled={isSending}
-              onClick={() => {
-                inputRef.current?.click()
-              }}
+              onClick={triggerImportPicker}
             >
               {uiState.buttonLabel ?? 'Importer maintenant'}
             </button>
@@ -109,6 +155,17 @@ export function ConsolePanel({ uiState, isSending, onChoose, onImportFile }: Con
             />
           </div>
         ) : null}
+      </div>
+      <div className="dock-footer">
+        <button
+          type="button"
+          className="dock-send-btn"
+          disabled={!canSend || isSending}
+          onClick={uiState.mode === 'import_file' ? onTriggerImportPicker : onSend}
+          aria-label={sendLabel ?? 'Envoyer'}
+        >
+          ➤
+        </button>
       </div>
     </div>
   )
