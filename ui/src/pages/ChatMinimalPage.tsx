@@ -5,6 +5,7 @@ import { createImportJob, finalizeImportJobChat, hardResetProfile, sendChatMessa
 import { ChatInteractiveCard } from '../chat/ChatInteractiveCard'
 import { InlineAction } from '../chat/InlineAction'
 import { normalizeQuickReplyDisplay } from '../chat/formatters'
+import { shouldRenderImportEvent } from '../chat/importEventVisibility'
 import { supabase } from '../lib/supabaseClient'
 import {
   toAnyPdfUiRequest,
@@ -433,6 +434,10 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
             return
           }
           displayedSeq.add(event.seq)
+
+          if (!shouldRenderImportEvent(event.kind)) {
+            return
+          }
 
           if (event.kind === 'done') {
             if (stopStreaming) {
