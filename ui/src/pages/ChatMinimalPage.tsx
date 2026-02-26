@@ -578,7 +578,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
     <main className="chat-layout" aria-label="Chat minimal">
       <div className="chat-frame">
         <div className="chat-stack">
-          <header className="chat-min-header">
+          <header className="chat-min-header chat-header-fadein">
             <button
               type="button"
               className={`icon-avatar-button ${activeTab === 'af' ? 'tab-button-selected' : ''}`}
