@@ -272,12 +272,17 @@ const FormCard = forwardRef<FormCardHandle, FormCardProps>(function FormCard({ f
 
       onSubmitForm(formUiAction.form_id, submitValues)
     },
-    canSubmit: () => !isBusy && !isRequiredMultiSelectMissing,
+    canSubmit: () => {
+      const result = !isBusy && !isRequiredMultiSelectMissing
+      return result
+    },
   }), [formUiAction, isBusy, isRequiredMultiSelectMissing, onSubmitForm, selectedMultiValues, values])
+
+  const isProfileUpdateForm = String(formUiAction.form_id) === 'profile_update'
 
   return (
     <form className="form-card" onSubmit={handleSubmit}>
-      <div className="form-fields">
+      <div className={`form-fields${isProfileUpdateForm ? ' compact' : ''}`}>
         {formUiAction.fields.map((field) => (
           <div key={field.id} className="form-field">
             <span>{field.label}</span>
@@ -362,7 +367,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
   const [debugMode, setDebugMode] = useState(() => localStorage.getItem('ui_debug_mode') === 'true')
   const [headerMessage, setHeaderMessage] = useState<string | null>(null)
   const [submitErrorMessage, setSubmitErrorMessage] = useState<string | null>(null)
-  const [pendingOption, setPendingOption] = useState<ConsoleOption | null>(null)
+  const [canSubmitForm, setCanSubmitForm] = useState(false)
   const isMountedRef = useRef(true)
   const assistantSequenceRef = useRef(0)
   const formCardRef = useRef<FormCardHandle | null>(null)
@@ -430,7 +435,6 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
           toolResult: isLastSentence ? toolResult : undefined,
         },
       ])
-      setPendingOption(null)
 
       if (!isLastSentence) {
         setIsAssistantTyping(true)
@@ -468,6 +472,16 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
   useEffect(() => {
     localStorage.setItem('ui_debug_unlocked', String(debugUnlocked))
   }, [debugUnlocked])
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setCanSubmitForm(formCardRef.current?.canSubmit() ?? false)
+    }, 100)
+
+    return () => {
+      window.clearInterval(intervalId)
+    }
+  }, [])
 
   function handleUnlockDebug() {
     // TODO: move PIN to a secure/configurable source (backend or runtime config).
@@ -670,8 +684,9 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
     }
   }
 
-  function handleSelectOption(option: ConsoleOption) {
-    setPendingOption(option)
+  function handleDirectOption(option: ConsoleOption) {
+    const display = normalizeQuickReplyDisplay(option.label, option.value)
+    void submitMessage(option.value, display || option.value, true)
   }
 
   function handleSendFromDock() {
@@ -685,13 +700,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
       return
     }
 
-    if (!pendingOption) {
-      return
-    }
-
-    const display = normalizeQuickReplyDisplay(pendingOption.label, pendingOption.value)
-    void submitMessage(pendingOption.value, display || pendingOption.value, true)
-    setPendingOption(null)
+    // No-op for direct option modes handled by click handlers in ConsolePanel.
   }
 
   function handleFormSubmit(formId: FormUiAction['form_id'], values: Record<string, string | string[]>) {
@@ -844,7 +853,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
                       <button
                         type="button"
                         className="dock-send-btn"
-                        disabled={isSending || isAssistantTyping || !(formCardRef.current?.canSubmit() ?? false)}
+                        disabled={isSending || isAssistantTyping || !canSubmitForm}
                         onClick={handleSendFromDock}
                         aria-label="Envoyer"
                       >
@@ -857,10 +866,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
                 <ConsolePanel
                   uiState={consoleState}
                   isSending={isSending}
-                  selectedOptionId={pendingOption?.id ?? null}
-                  onSelectOption={handleSelectOption}
-                  onSend={handleSendFromDock}
-                  canSend={consoleState.mode === 'import_file' ? true : pendingOption !== null}
+                  onSelectOption={handleDirectOption}
                   onTriggerImportPicker={() => {
                     importPickerTriggerRef.current?.()
                   }}

@@ -104,8 +104,8 @@ button:disabled {
 }
 
 .console-area-inner {
-  height: 320px;
-  max-height: 320px;
+  height: 160px;
+  max-height: 160px;
   overflow: hidden;
 }
 
@@ -272,7 +272,8 @@ button:disabled {
   border-top: 1px solid #334155;
   border-radius: 20px;
   border: 1px solid #2b3a58;
-  padding: 16px;
+  padding: 12px;
+  font-size: 0.92rem;
   background: rgba(11, 15, 23, 0.96);
   box-shadow: 0 -10px 26px rgba(2, 6, 23, 0.35);
   animation: dock-enter 220ms ease;
@@ -330,24 +331,24 @@ button:disabled {
 .console-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: 8px;
 }
 
 .console-list {
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .console-split {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 10px;
+  gap: 8px;
 }
 
 .console-btn {
-  min-height: 54px;
+  min-height: 42px;
   border-radius: 16px;
-  font-size: 0.98rem;
+  font-size: 0.9rem;
   font-weight: 700;
   width: 100%;
 }
@@ -403,6 +404,12 @@ button:disabled {
 .form-fields {
   display: grid;
   gap: 10px;
+}
+
+.form-fields.compact {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .form-field {

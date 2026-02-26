@@ -5,11 +5,7 @@ import type { ConsoleOption, ConsoleUiState } from './types'
 type ConsolePanelProps = {
   uiState: ConsoleUiState
   isSending: boolean
-  selectedOptionId?: string | null
   onSelectOption: (option: ConsoleOption) => void
-  onSend: () => void
-  canSend: boolean
-  sendLabel?: string
   onTriggerImportPicker: () => void
   registerImportPickerTrigger?: (trigger: (() => void) | null) => void
   onImportFile: (file: File) => void
@@ -28,21 +24,18 @@ function toneClassName(option: ConsoleOption): string {
 function OptionButton({
   option,
   isSending,
-  isSelected,
   onSelectOption,
 }: {
   option: ConsoleOption
   isSending: boolean
-  isSelected: boolean
   onSelectOption: (option: ConsoleOption) => void
 }) {
   return (
     <button
       type="button"
-      className={`console-btn ${toneClassName(option)}${isSelected ? ' console-btn-selected' : ''}`}
+      className={`console-btn ${toneClassName(option)}`}
       disabled={isSending || option.disabled}
       aria-disabled={isSending || option.disabled}
-      aria-pressed={isSelected}
       onClick={() => onSelectOption(option)}
     >
       {option.label}
@@ -53,11 +46,7 @@ function OptionButton({
 export function ConsolePanel({
   uiState,
   isSending,
-  selectedOptionId,
   onSelectOption,
-  onSend,
-  canSend,
-  sendLabel,
   onTriggerImportPicker,
   registerImportPickerTrigger,
   onImportFile,
@@ -105,19 +94,19 @@ export function ConsolePanel({
       <div className="dock-content console-panel">
         {uiState.mode === 'yes_no' ? (
           <div className="console-split" role="group" aria-label="Réponse oui/non">
-            <OptionButton option={uiState.yes} isSending={isSending} isSelected={selectedOptionId === uiState.yes.id} onSelectOption={onSelectOption} />
-            <OptionButton option={uiState.no} isSending={isSending} isSelected={selectedOptionId === uiState.no.id} onSelectOption={onSelectOption} />
+            <OptionButton option={uiState.yes} isSending={isSending} onSelectOption={onSelectOption} />
+            <OptionButton option={uiState.no} isSending={isSending} onSelectOption={onSelectOption} />
           </div>
         ) : null}
 
         {uiState.mode === 'single_primary' ? (
-          <OptionButton option={{ ...uiState.option, tone: 'positive' }} isSending={isSending} isSelected={selectedOptionId === uiState.option.id} onSelectOption={onSelectOption} />
+          <OptionButton option={{ ...uiState.option, tone: 'positive' }} isSending={isSending} onSelectOption={onSelectOption} />
         ) : null}
 
         {uiState.mode === 'options_grid' ? (
           <div className="console-grid" role="group" aria-label="Options">
             {uiState.options.map((option) => (
-              <OptionButton key={option.id} option={option} isSending={isSending} isSelected={selectedOptionId === option.id} onSelectOption={onSelectOption} />
+              <OptionButton key={option.id} option={option} isSending={isSending} onSelectOption={onSelectOption} />
             ))}
           </div>
         ) : null}
@@ -125,7 +114,7 @@ export function ConsolePanel({
         {uiState.mode === 'options_list' ? (
           <div className="console-list" role="group" aria-label="Options">
             {uiState.options.map((option) => (
-              <OptionButton key={option.id} option={option} isSending={isSending} isSelected={selectedOptionId === option.id} onSelectOption={onSelectOption} />
+              <OptionButton key={option.id} option={option} isSending={isSending} onSelectOption={onSelectOption} />
             ))}
           </div>
         ) : null}
@@ -156,17 +145,19 @@ export function ConsolePanel({
           </div>
         ) : null}
       </div>
-      <div className="dock-footer">
-        <button
-          type="button"
-          className="dock-send-btn"
-          disabled={!canSend || isSending}
-          onClick={uiState.mode === 'import_file' ? onTriggerImportPicker : onSend}
-          aria-label={sendLabel ?? 'Envoyer'}
-        >
-          ➤
-        </button>
-      </div>
+      {uiState.mode === 'import_file' && (
+        <div className="dock-footer">
+          <button
+            type="button"
+            className="dock-send-btn"
+            disabled={isSending}
+            onClick={onTriggerImportPicker}
+            aria-label="Envoyer"
+          >
+            ➤
+          </button>
+        </div>
+      )}
     </div>
   )
 }
