@@ -179,13 +179,16 @@ export function ChatInteractiveCard({ toolResult, onSubmit, onImport }: Interact
             setPdfErrorMessage(null)
             try {
               await openPdfFromUrl(openPdfAction.url)
-            } catch {
-              setPdfErrorMessage('Impossible d’ouvrir le PDF pour le moment. Réessaie dans quelques instants.')
+            } catch (error) {
+              const message = error instanceof Error && error.message === 'popup_blocked'
+                ? 'Le navigateur a bloqué l’ouverture du nouvel onglet. Autorise les pop-ups puis réessaie.'
+                : 'Impossible d’ouvrir le PDF pour le moment. Réessaie dans quelques instants.'
+              setPdfErrorMessage(message)
             }
           }}
           aria-label={openPdfAction.title}
         >
-          📄 {openPdfAction.label}
+          📄 Ouvrir le PDF
         </button>
         {pdfErrorMessage ? <p className="subtle-text">{pdfErrorMessage}</p> : null}
       </div>
