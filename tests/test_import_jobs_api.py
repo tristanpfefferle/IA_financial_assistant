@@ -82,11 +82,34 @@ def test_import_job_endpoints_create_upload_and_events(monkeypatch) -> None:
     )
 
     class _ProfilesRepo:
+        def __init__(self) -> None:
+            self.chat_state: dict[str, Any] = {
+                "state": {
+                    "global_state": {
+                        "mode": "onboarding",
+                        "onboarding_step": "import",
+                        "onboarding_substep": "import_wait_ready",
+                    }
+                }
+            }
+
         def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None):
             assert auth_user_id
             return profile_id
 
-    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: _ProfilesRepo())
+        def get_chat_state(self, *, profile_id: UUID, user_id: UUID) -> dict[str, Any]:
+            assert profile_id
+            assert user_id
+            return self.chat_state
+
+        def update_chat_state(self, *, profile_id: UUID, user_id: UUID, chat_state: dict[str, Any]) -> None:
+            assert profile_id
+            assert user_id
+            self.chat_state = chat_state
+
+    profiles_repo = _ProfilesRepo()
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: profiles_repo)
 
     class _BackendClient:
         def finance_releves_import_files(self, *, request: Any, on_progress: Any):
@@ -127,9 +150,9 @@ def test_import_job_endpoints_create_upload_and_events(monkeypatch) -> None:
     finalize_response = client.post(f"/imports/jobs/{job_id}/finalize-chat", headers=headers)
     assert finalize_response.status_code == 200
     payload = finalize_response.json()
-    assert "Veux-tu afficher ton rapport mensuel maintenant ?" in payload["reply"]
+    assert "rapport" in payload["reply"].lower()
     assert payload["tool_result"]["type"] == "ui_action"
-    assert payload["tool_result"]["action"] == "quick_reply_yes_no"
+    assert payload["tool_result"]["action"] == "quick_replies"
     assert len(payload["tool_result"]["options"]) == 2
 
     events = repo.events[UUID(job_id)]
@@ -137,10 +160,94 @@ def test_import_job_endpoints_create_upload_and_events(monkeypatch) -> None:
     assert "started" in kinds
     assert "parsing" in kinds
     assert "parsed" in kinds
+    assert "db_insert_progress" in kinds
     parsed_events = [event for event in events if event.kind == "parsed"]
     assert parsed_events
     assert parsed_events[0].message == "Transactions détectées : 47."
+    first_categorization = next(event for event in events if event.kind == "categorization_progress")
+    assert first_categorization.message == "Catégorisation… (0/47)"
+    parsed_index = next(index for index, event in enumerate(events) if event.kind == "parsed")
+    first_categorization_index = next(index for index, event in enumerate(events) if event.kind == "categorization_progress")
+    assert parsed_index < first_categorization_index
+    done_event = next(event for event in events if event.kind == "done")
+    assert done_event.message == "Traitement terminé."
     assert "done" in kinds
+
+    persisted_global_state = profiles_repo.chat_state.get("state", {}).get("global_state", {})
+    assert persisted_global_state.get("onboarding_step") == "report"
+    assert persisted_global_state.get("onboarding_substep") == "report_offer"
+
+
+def test_finalize_chat_then_yes_routes_to_report_and_not_import(monkeypatch) -> None:
+    auth_user_id = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+
+    monkeypatch.setattr(
+        agent_api,
+        "get_user_from_bearer_token",
+        lambda _token: {"id": str(auth_user_id), "email": "user@example.com"},
+    )
+
+    class _ProfilesRepo:
+        def __init__(self) -> None:
+            self.chat_state: dict[str, Any] = {
+                "state": {
+                    "global_state": {
+                        "mode": "onboarding",
+                        "onboarding_step": "import",
+                        "onboarding_substep": "import_wait_ready",
+                    }
+                }
+            }
+
+        def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None):
+            assert auth_user_id
+            return profile_id
+
+        def get_chat_state(self, *, profile_id: UUID, user_id: UUID) -> dict[str, Any]:
+            assert profile_id
+            assert user_id
+            return self.chat_state
+
+        def update_chat_state(self, *, profile_id: UUID, user_id: UUID, chat_state: dict[str, Any]) -> None:
+            assert profile_id
+            assert user_id
+            self.chat_state = chat_state
+
+        def list_bank_accounts(self, *, profile_id: UUID):
+            assert profile_id
+            return []
+
+    profiles_repo = _ProfilesRepo()
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: profiles_repo)
+
+    class _Router:
+        def call(self, *_args, **_kwargs):
+            return {"ok": True}
+
+    monkeypatch.setattr(agent_api, "get_tool_router", lambda: _Router())
+
+    repo = _Repo()
+    job_id = repo.create_job(profile_id=profile_id)
+    repo.patch_job(profile_id=profile_id, job_id=job_id, payload={"status": "done", "result": {"imported_count": 4}})
+    monkeypatch.setattr(agent_api, "_get_import_jobs_repository_or_501", lambda: repo)
+
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer token"}
+
+    finalize_response = client.post(f"/imports/jobs/{job_id}/finalize-chat", headers=headers)
+    assert finalize_response.status_code == 200
+    assert "rapport" in finalize_response.json()["reply"].lower()
+
+    yes_response = client.post(
+        "/agent/chat",
+        headers=headers,
+        json={"message": "Oui"},
+    )
+    assert yes_response.status_code == 200
+    reply = yes_response.json()["reply"]
+    assert "Clique sur Importer maintenant" not in reply
+    assert "Parfait, le voici" in reply
 
 
 def test_finalize_import_job_chat_requires_done_status(monkeypatch) -> None:
