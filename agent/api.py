@@ -6035,6 +6035,30 @@ def _run_import_job_pipeline(*, repository: SupabaseImportJobsRepository, profil
                     selected_bank_account_name = candidate_name
                 break
 
+        current_app_env = _config.app_env().strip().lower()
+        supabase_url_configured = bool(_config.supabase_url())
+        supabase_service_role_key_configured = bool(_config.supabase_service_role_key())
+        _emit_import_job_event(
+            repository=repository,
+            profile_id=profile_id,
+            job_id=job_id,
+            kind="debug",
+            message=(
+                "Import debug: "
+                f"app_env={current_app_env}, "
+                f"supabase_url={'ok' if supabase_url_configured else 'missing'}, "
+                f"service_role_key={'ok' if supabase_service_role_key_configured else 'missing'}, "
+                f"bank_account_id={selected_bank_account_id or 'missing'}"
+            ),
+            progress=0.01,
+            payload={
+                "app_env": current_app_env,
+                "supabase_url_configured": supabase_url_configured,
+                "supabase_service_role_key_configured": supabase_service_role_key_configured,
+                "selected_bank_account_id": selected_bank_account_id,
+            },
+        )
+
         if detected_bank_code and selected_bank_account_id:
             account_label = selected_bank_account_name or selected_bank_account_id
             _emit_import_job_event(
