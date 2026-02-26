@@ -3,8 +3,8 @@ import { Navigate, Route, Routes, useNavigate } from 'react-router-dom'
 
 import './App.css'
 import { supabase } from './lib/supabaseClient'
-import { AuthChatPage } from './pages/AuthChatPage'
 import { ChatMinimalPage } from './pages/ChatMinimalPage'
+import { LoginPage } from './pages/LoginPage'
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
   const navigate = useNavigate()
@@ -49,7 +49,7 @@ function ProtectedRoute({ children }: { children: ReactNode }) {
 function App() {
   return (
     <Routes>
-      <Route path="/login" element={<AuthChatPage />} />
+      <Route path="/login" element={<LoginPage />} />
       <Route
         path="/chat"
         element={
