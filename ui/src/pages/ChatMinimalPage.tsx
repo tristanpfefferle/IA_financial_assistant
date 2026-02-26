@@ -61,15 +61,15 @@ function splitIntoSentences(text: string): string[] {
 export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
   const navigate = useNavigate()
   const scrollRef = useRef<HTMLDivElement | null>(null)
+  const profileMenuRef = useRef<HTMLDivElement | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [isSending, setIsSending] = useState(false)
   const [isAssistantTyping, setIsAssistantTyping] = useState(false)
   const [isNearBottom, setIsNearBottom] = useState(true)
   const [canScroll, setCanScroll] = useState(false)
-  const [debugUnlocked, setDebugUnlocked] = useState(() => localStorage.getItem('ui_debug_unlocked') === 'true')
   const [debugMode, setDebugMode] = useState(() => localStorage.getItem('ui_debug_mode') === 'true')
-  const [headerMessage, setHeaderMessage] = useState<string | null>(null)
   const [submitErrorMessage, setSubmitErrorMessage] = useState<string | null>(null)
+  const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false)
   const isMountedRef = useRef(true)
   const assistantSequenceRef = useRef(0)
   const lastProgressMessageIdRef = useRef<string | null>(null)
@@ -253,31 +253,22 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
   }, [debugMode])
 
   useEffect(() => {
-    localStorage.setItem('ui_debug_unlocked', String(debugUnlocked))
-  }, [debugUnlocked])
-
-  function handleUnlockDebug() {
-    const DEBUG_UNLOCK_PIN = '1234'
-    const enteredPin = window.prompt('Entrer le code PIN debug')
-
-    if (enteredPin === DEBUG_UNLOCK_PIN) {
-      setHeaderMessage(null)
-      setDebugUnlocked(true)
-      return
+    function handleOutsideClick(event: MouseEvent) {
+      if (!profileMenuRef.current) {
+        return
+      }
+      if (!profileMenuRef.current.contains(event.target as Node)) {
+        setIsProfileMenuOpen(false)
+      }
     }
 
-    setHeaderMessage('Code incorrect')
-  }
-
-  function handleLockDebug() {
-    setDebugUnlocked(false)
-    setDebugMode(false)
-    localStorage.removeItem('ui_debug_unlocked')
-    localStorage.removeItem('ui_debug_mode')
-  }
+    document.addEventListener('mousedown', handleOutsideClick)
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick)
+    }
+  }, [])
 
   async function startConversation() {
-    setHeaderMessage(null)
     setMessages([])
     setIsSending(false)
     try {
@@ -536,15 +527,33 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
       return
     }
 
-    setHeaderMessage(null)
     try {
       await hardResetProfile()
       resetLocalChatState()
       await startConversation()
-      setHeaderMessage('Reset terminé. Conversation redémarrée.')
     } catch (error) {
-      setHeaderMessage(error instanceof Error ? error.message : 'Échec du reset complet.')
+      setMessages((current) => [
+        ...current,
+        {
+          id: createMessageId(),
+          role: 'assistant',
+          content: error instanceof Error ? error.message : 'Échec du reset complet.',
+          createdAt: Date.now(),
+        },
+      ])
     }
+  }
+
+  function handleHelpPlaceholder() {
+    setMessages((current) => [
+      ...current,
+      {
+        id: createMessageId(),
+        role: 'assistant',
+        content: 'Aide (bientôt) 🙂\n- Sécurité des données\n- Fonctionnement de l’IA\n- Import CSV\n\nCette section sera disponible prochainement.',
+        createdAt: Date.now(),
+      },
+    ])
   }
 
   async function handleLogout() {
@@ -570,42 +579,59 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
       <div className="chat-frame">
         <div className="chat-stack">
           <header className="chat-min-header">
+            <button type="button" className="icon-avatar-button" aria-label="Assistant financier">
+              <span className="icon-avatar">AF</span>
+            </button>
             <div className="chat-title-wrap">
-              <strong>Assistant financier</strong>
-              {debugUnlocked && debugMode ? <span className="debug-badge">Debug</span> : null}
+              <strong className="chat-title">Assistant financier</strong>
             </div>
             <div className="chat-header-actions">
+              <button type="button" className="icon-button" onClick={handleHelpPlaceholder} aria-label="Aide">
+                ?
+              </button>
               <label className="debug-toggle" htmlFor="debug-mode-toggle">
                 <input
                   id="debug-mode-toggle"
                   type="checkbox"
                   checked={debugMode}
                   onChange={(event) => setDebugMode(event.target.checked)}
-                  disabled={!debugUnlocked}
                 />
                 Debug
               </label>
-              {!debugUnlocked ? (
-                <button type="button" className="secondary-button unlock-button" onClick={handleUnlockDebug}>
-                  Déverrouiller
-                </button>
-              ) : (
-                <button type="button" className="secondary-button" onClick={handleLockDebug}>
-                  Verrouiller
-                </button>
-              )}
-              {debugUnlocked && debugMode ? (
+              {debugMode ? (
                 <button type="button" className="secondary-button" onClick={() => { void handleHardReset() }}>
                   Reset
                 </button>
               ) : null}
-              {email ? <span className="subtle-text">{email}</span> : null}
-              <button type="button" className="secondary-button" onClick={() => { void handleLogout() }}>
-                Se déconnecter
-              </button>
+              <div className="profile-menu-wrap" ref={profileMenuRef}>
+                <button
+                  type="button"
+                  className="icon-button"
+                  onClick={() => setIsProfileMenuOpen((current) => !current)}
+                  aria-label="Menu profil"
+                  aria-expanded={isProfileMenuOpen}
+                >
+                  👤
+                </button>
+                {isProfileMenuOpen ? (
+                  <div className="profile-menu-dropdown" role="menu">
+                    {email ? <p className="profile-menu-email">{email}</p> : null}
+                    <button
+                      type="button"
+                      className="profile-menu-item"
+                      role="menuitem"
+                      onClick={() => {
+                        setIsProfileMenuOpen(false)
+                        void handleLogout()
+                      }}
+                    >
+                      Se déconnecter
+                    </button>
+                  </div>
+                ) : null}
+              </div>
             </div>
           </header>
-          {headerMessage ? <p className="subtle-text">{headerMessage}</p> : null}
 
           <div className="message-area">
             <div ref={scrollRef} className="chat-scroll" onScroll={handleScroll}>
@@ -691,7 +717,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
                         }}
                       />
                     ) : null}
-                    {debugUnlocked && debugMode && isLastAssistantMessage ? (
+                    {debugMode && isLastAssistantMessage ? (
                       <details>
                         <summary>Debug payload</summary>
                         <pre>{JSON.stringify(message.toolResult ?? null, null, 2)}</pre>
