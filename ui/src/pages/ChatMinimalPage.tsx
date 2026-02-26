@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 import { hardResetProfile, importReleves, sendChatMessage } from '../api/agentApi'
@@ -176,7 +176,12 @@ type FormCardProps = {
   onSubmitForm: (formId: FormUiAction['form_id'], values: Record<string, string | string[]>) => void
 }
 
-function FormCard({ formUiAction, isBusy, onSubmitForm }: FormCardProps) {
+type FormCardHandle = {
+  submit: () => void
+  canSubmit: () => boolean
+}
+
+const FormCard = forwardRef<FormCardHandle, FormCardProps>(function FormCard({ formUiAction, isBusy, onSubmitForm }, ref) {
   const [values, setValues] = useState<Record<string, string>>(() => {
     const initialValues: Record<string, string> = {}
     for (const field of formUiAction.fields) {
@@ -251,6 +256,25 @@ function FormCard({ formUiAction, isBusy, onSubmitForm }: FormCardProps) {
     return (selectedMultiValues[field.id]?.size ?? 0) === 0
   })
 
+  useImperativeHandle(ref, () => ({
+    submit: () => {
+      if (isBusy || isRequiredMultiSelectMissing) {
+        return
+      }
+
+      const submitValues: Record<string, string | string[]> = { ...values }
+      for (const field of formUiAction.fields) {
+        if (field.type !== 'multi_select' && field.type !== 'multi-select') {
+          continue
+        }
+        submitValues[field.id] = Array.from(selectedMultiValues[field.id] ?? new Set<string>())
+      }
+
+      onSubmitForm(formUiAction.form_id, submitValues)
+    },
+    canSubmit: () => !isBusy && !isRequiredMultiSelectMissing,
+  }), [formUiAction, isBusy, isRequiredMultiSelectMissing, onSubmitForm, selectedMultiValues, values])
+
   return (
     <form className="form-card" onSubmit={handleSubmit}>
       <div className="form-fields">
@@ -322,12 +346,9 @@ function FormCard({ formUiAction, isBusy, onSubmitForm }: FormCardProps) {
           </div>
         ))}
       </div>
-      <button type="submit" className="form-submit-icon-btn" disabled={isBusy || isRequiredMultiSelectMissing} aria-label="Envoyer">
-        ➤
-      </button>
     </form>
   )
-}
+})
 
 export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
   const navigate = useNavigate()
@@ -341,8 +362,11 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
   const [debugMode, setDebugMode] = useState(() => localStorage.getItem('ui_debug_mode') === 'true')
   const [headerMessage, setHeaderMessage] = useState<string | null>(null)
   const [submitErrorMessage, setSubmitErrorMessage] = useState<string | null>(null)
+  const [pendingOption, setPendingOption] = useState<ConsoleOption | null>(null)
   const isMountedRef = useRef(true)
   const assistantSequenceRef = useRef(0)
+  const formCardRef = useRef<FormCardHandle | null>(null)
+  const importPickerTriggerRef = useRef<(() => void) | null>(null)
 
   const consoleState = useMemo(() => extractConsoleState(messages, isSending), [isSending, messages])
   const latestAssistant = useMemo(() => [...messages].reverse().find((message) => message.role === 'assistant') ?? null, [messages])
@@ -406,6 +430,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
           toolResult: isLastSentence ? toolResult : undefined,
         },
       ])
+      setPendingOption(null)
 
       if (!isLastSentence) {
         setIsAssistantTyping(true)
@@ -645,9 +670,28 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
     }
   }
 
-  function handleQuickReply(value: string, label?: string) {
-    const displayContent = normalizeQuickReplyDisplay(label, value)
-    void submitMessage(value, displayContent || value, true)
+  function handleSelectOption(option: ConsoleOption) {
+    setPendingOption(option)
+  }
+
+  function handleSendFromDock() {
+    if (composerMode === 'form') {
+      formCardRef.current?.submit()
+      return
+    }
+
+    if (consoleState.mode === 'import_file') {
+      importPickerTriggerRef.current?.()
+      return
+    }
+
+    if (!pendingOption) {
+      return
+    }
+
+    const display = normalizeQuickReplyDisplay(pendingOption.label, pendingOption.value)
+    void submitMessage(pendingOption.value, display || pendingOption.value, true)
+    setPendingOption(null)
   }
 
   function handleFormSubmit(formId: FormUiAction['form_id'], values: Record<string, string | string[]>) {
@@ -792,12 +836,39 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
             <div className="console-area-inner">
               {composerMode === 'form' ? (
                 formUiAction ? (
-                  <div className="profile-card">
-                    <FormCard formUiAction={formUiAction} isBusy={isSending || isAssistantTyping} onSubmitForm={handleFormSubmit} />
+                  <div className="action-dock" aria-label="Console panel mode form">
+                    <div className="dock-content profile-card">
+                      <FormCard ref={formCardRef} formUiAction={formUiAction} isBusy={isSending || isAssistantTyping} onSubmitForm={handleFormSubmit} />
+                    </div>
+                    <div className="dock-footer">
+                      <button
+                        type="button"
+                        className="dock-send-btn"
+                        disabled={isSending || isAssistantTyping || !(formCardRef.current?.canSubmit() ?? false)}
+                        onClick={handleSendFromDock}
+                        aria-label="Envoyer"
+                      >
+                        ➤
+                      </button>
+                    </div>
                   </div>
                 ) : null
               ) : (
-                <ConsolePanel uiState={consoleState} isSending={isSending} onChoose={handleQuickReply} onImportFile={handleImportFile} />
+                <ConsolePanel
+                  uiState={consoleState}
+                  isSending={isSending}
+                  selectedOptionId={pendingOption?.id ?? null}
+                  onSelectOption={handleSelectOption}
+                  onSend={handleSendFromDock}
+                  canSend={consoleState.mode === 'import_file' ? true : pendingOption !== null}
+                  onTriggerImportPicker={() => {
+                    importPickerTriggerRef.current?.()
+                  }}
+                  registerImportPickerTrigger={(trigger) => {
+                    importPickerTriggerRef.current = trigger
+                  }}
+                  onImportFile={handleImportFile}
+                />
               )}
             </div>
             {submitErrorMessage ? <p className="subtle-text">{submitErrorMessage}</p> : null}
