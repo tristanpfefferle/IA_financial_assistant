@@ -6198,7 +6198,7 @@ def import_releves(request: Request, payload: ImportRequestPayload, authorizatio
             selected_bank_account_name = str(detection_result.get("name") or "").strip() or None
         elif detection_result == "ambiguous":
             chat_state = _normalize_chat_state(
-                profiles_repository.get_chat_state(profile_id=profile_id, user_id=_auth_user_id)
+                profiles_repository.get_chat_state(profile_id=profile_id, user_id=auth_user_id)
             )
             state = chat_state.get("state")
             state_dict = dict(state) if isinstance(state, dict) else {}
@@ -6214,7 +6214,7 @@ def import_releves(request: Request, payload: ImportRequestPayload, authorizatio
             updated_chat_state["state"] = state_dict
             profiles_repository.update_chat_state(
                 profile_id=profile_id,
-                user_id=_auth_user_id,
+                user_id=auth_user_id,
                 chat_state=updated_chat_state,
             )
             account_names = " / ".join(account["name"] for account in import_context["clarification_accounts"])
@@ -6273,7 +6273,7 @@ def import_releves(request: Request, payload: ImportRequestPayload, authorizatio
     try:
         profiles_repository = get_profiles_repository()
         chat_state = _normalize_chat_state(
-            profiles_repository.get_chat_state(profile_id=profile_id, user_id=_auth_user_id)
+            profiles_repository.get_chat_state(profile_id=profile_id, user_id=auth_user_id)
         )
         state = chat_state.get("state")
         state_dict = dict(state) if isinstance(state, dict) else {}
@@ -6302,7 +6302,7 @@ def import_releves(request: Request, payload: ImportRequestPayload, authorizatio
         updated_chat_state["state"] = state_dict
         profiles_repository.update_chat_state(
             profile_id=profile_id,
-            user_id=_auth_user_id,
+            user_id=auth_user_id,
             chat_state=updated_chat_state,
         )
     except Exception:
