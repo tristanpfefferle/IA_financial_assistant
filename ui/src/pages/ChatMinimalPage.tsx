@@ -408,6 +408,23 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
           }
           displayedSeq.add(event.seq)
 
+          if (event.kind === 'done') {
+            if (stopStreaming) {
+              stopStreaming()
+            }
+            const lastProgressMessageId = lastProgressMessageIdRef.current
+            if (lastProgressMessageId) {
+              updateAssistantStatus(lastProgressMessageId, 'Import terminé ✅')
+            } else {
+              pushAssistantStatus('Import terminé ✅')
+            }
+            lastProgressMessageIdRef.current = null
+            const response = await finalizeImportJobChat(jobId)
+            await appendAssistantReplyInSequence(response.reply, response.tool_result)
+            setIsSending(false)
+            return
+          }
+
           const isProgressEvent = event.kind.endsWith('_progress')
           if (isProgressEvent) {
             const lastProgressMessageId = lastProgressMessageIdRef.current
@@ -419,16 +436,6 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
           } else {
             lastProgressMessageIdRef.current = null
             pushAssistantStatus(event.message)
-          }
-
-          if (event.kind === 'done') {
-            if (stopStreaming) {
-              stopStreaming()
-            }
-            const response = await finalizeImportJobChat(jobId)
-            await appendAssistantReplyInSequence(response.reply, response.tool_result)
-            setIsSending(false)
-            return
           }
 
           if (event.kind === 'error') {

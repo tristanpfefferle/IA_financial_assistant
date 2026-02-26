@@ -529,6 +529,9 @@ class RelevesImportService:
                 errors.append(RelevesImportError(file=file.filename, message=str(exc)))
                 continue
 
+        if on_progress:
+            on_progress("parsed_total", total_rows_to_categorize, total_rows_to_categorize)
+
         if on_progress and total_rows_to_categorize > 0:
             on_progress("categorization", 0, total_rows_to_categorize)
 
