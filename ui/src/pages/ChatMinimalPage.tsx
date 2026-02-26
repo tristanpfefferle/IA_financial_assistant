@@ -29,32 +29,9 @@ type ChatMinimalPageProps = {
   email?: string
 }
 
-const THINKING_DELAY_MS = { min: 500, max: 900 }
-const BETWEEN_SENTENCE_DELAY_MS = { min: 350, max: 650 }
+const ASSISTANT_STEP_DELAY_MS = 2000
 function createMessageId(): string {
   return typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`
-}
-
-function randomDelay(min: number, max: number): number {
-  return Math.floor(Math.random() * (max - min + 1)) + min
-}
-
-function splitIntoSentences(text: string): string[] {
-  const trimmed = text.trim()
-  if (!trimmed) {
-    return []
-  }
-
-  const sentences = trimmed
-    .split(/(?<=[.!?…])\s+/)
-    .map((sentence) => sentence.trim())
-    .filter((sentence) => sentence.length > 0)
-    .filter((sentence) => !/^\(?\s*oui\s*\/\s*non\s*\)?\.?$/i.test(sentence))
-  if (sentences.length === 0) {
-    return []
-  }
-
-  return sentences.length > 1 ? sentences : [sentences[0]]
 }
 
 
@@ -70,6 +47,9 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
   const [debugMode, setDebugMode] = useState(() => localStorage.getItem('ui_debug_mode') === 'true')
   const [submitErrorMessage, setSubmitErrorMessage] = useState<string | null>(null)
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false)
+  const [pendingActionMessageId, setPendingActionMessageId] = useState<string | null>(null)
+  const [revealedActionMessageId, setRevealedActionMessageId] = useState<string | null>(null)
+  const [openingPdfByMessageId, setOpeningPdfByMessageId] = useState<Record<string, boolean>>({})
   const isMountedRef = useRef(true)
   const assistantSequenceRef = useRef(0)
   const lastProgressMessageIdRef = useRef<string | null>(null)
@@ -163,42 +143,44 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
 
   async function appendAssistantReplyInSequence(reply: string, toolResult?: Record<string, unknown> | null): Promise<void> {
     const sequenceId = ++assistantSequenceRef.current
-    const sentences = splitIntoSentences(reply)
+    const hasToolResult = Boolean(toolResult)
+    const assistantMessageId = createMessageId()
 
     setIsAssistantTyping(true)
-    await wait(randomDelay(THINKING_DELAY_MS.min, THINKING_DELAY_MS.max))
+    await wait(ASSISTANT_STEP_DELAY_MS)
     if (isSequenceCancelled(sequenceId)) {
       return
     }
 
-    for (let index = 0; index < sentences.length; index += 1) {
-      const sentence = sentences[index]
-      const isLastSentence = index === sentences.length - 1
+    setMessages((current) => [
+      ...current,
+      {
+        id: assistantMessageId,
+        role: 'assistant',
+        content: reply,
+        createdAt: Date.now(),
+        toolResult,
+      },
+    ])
 
-      setIsAssistantTyping(false)
-      setMessages((current) => [
-        ...current,
-        {
-          id: createMessageId(),
-          role: 'assistant',
-          content: sentence,
-          createdAt: Date.now(),
-          toolResult: isLastSentence ? toolResult : undefined,
-        },
-      ])
-
-      if (!isLastSentence) {
-        setIsAssistantTyping(true)
-        await wait(randomDelay(BETWEEN_SENTENCE_DELAY_MS.min, BETWEEN_SENTENCE_DELAY_MS.max))
-        if (isSequenceCancelled(sequenceId)) {
-          return
-        }
+    if (!hasToolResult) {
+      if (!isSequenceCancelled(sequenceId)) {
+        setIsAssistantTyping(false)
       }
+      return
     }
 
-    if (!isSequenceCancelled(sequenceId)) {
-      setIsAssistantTyping(false)
+    setPendingActionMessageId(assistantMessageId)
+    setRevealedActionMessageId(null)
+
+    await wait(ASSISTANT_STEP_DELAY_MS)
+    if (isSequenceCancelled(sequenceId)) {
+      return
     }
+
+    setRevealedActionMessageId(assistantMessageId)
+    setPendingActionMessageId(null)
+    setIsAssistantTyping(false)
   }
 
   function pushAssistantStatus(content: string): string {
@@ -345,6 +327,8 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
 
     setMessages((current) => [...current, userMessage])
     setSubmitErrorMessage(null)
+    setPendingActionMessageId(null)
+    setRevealedActionMessageId(null)
     setIsSending(true)
     setIsAssistantTyping(true)
 
@@ -515,6 +499,9 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
     setIsSending(false)
     setIsAssistantTyping(false)
     setIsNearBottom(true)
+    setPendingActionMessageId(null)
+    setRevealedActionMessageId(null)
+    setOpeningPdfByMessageId({})
 
     const chatStorageKeys = ['chat_messages', 'chat_debug_payload', 'chat_console_state']
     for (const key of chatStorageKeys) {
@@ -654,22 +641,37 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
                         <button
                           type="button"
                           className="link-button"
+                          disabled={Boolean(openingPdfByMessageId[message.id])}
                           onClick={(event) => {
                             event.preventDefault()
+                            if (openingPdfByMessageId[message.id]) {
+                              return
+                            }
                             const pdfUi = toPdfUiRequest(message.toolResult as Record<string, unknown>)
                             if (!pdfUi) {
                               return
                             }
-                            void openPdfFromUrl(pdfUi.url)
+                            setOpeningPdfByMessageId((current) => ({ ...current, [message.id]: true }))
+                            void openPdfFromUrl(pdfUi.url).finally(() => {
+                              window.setTimeout(() => {
+                                setOpeningPdfByMessageId((current) => ({ ...current, [message.id]: false }))
+                              }, 1500)
+                            })
                           }}
                         >
-                          📄 Ouvrir le rapport PDF
+                          {openingPdfByMessageId[message.id] ? (
+                            <span className="pdf-opening-label" aria-live="polite">
+                              Ouverture… <span className="pdf-opening-dots" aria-hidden="true">...</span>
+                            </span>
+                          ) : '📄 Ouvrir le rapport PDF'}
                         </button>
                       </div>
                     ) : null}
                     {message.role === 'assistant'
                     && message.toolResult
                     && pendingInteractiveIndex === index
+                    && pendingActionMessageId !== message.id
+                    && revealedActionMessageId === message.id
                     && isFormToolResult(message.toolResult) ? (
                       <ChatInteractiveCard
                         toolResult={message.toolResult}
@@ -685,6 +687,8 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
                     {message.role === 'assistant'
                     && message.toolResult
                     && pendingInteractiveIndex === index
+                    && pendingActionMessageId !== message.id
+                    && revealedActionMessageId === message.id
                     && !isFormToolResult(message.toolResult)
                     && isInlineActionableToolResult(message.toolResult)
                     && !isPdfReportRequest(message.toolResult) ? (
@@ -703,6 +707,8 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
                     {message.role === 'assistant'
                     && message.toolResult
                     && pendingInteractiveIndex === index
+                    && pendingActionMessageId !== message.id
+                    && revealedActionMessageId === message.id
                     && isPdfReportRequest(message.toolResult)
                     && toQuickRepliesAction(message.toolResult) ? (
                       <InlineAction
