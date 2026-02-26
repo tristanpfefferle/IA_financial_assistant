@@ -26,6 +26,15 @@ def build_backend_tool_service() -> BackendToolService:
 
     supabase_url = config.supabase_url()
     supabase_key = config.supabase_service_role_key()
+    environment = config.app_env().strip().lower()
+    allow_in_memory_fallback = environment in {"dev", "local", "test", "ci"}
+
+    if not allow_in_memory_fallback and (not supabase_url or not supabase_key):
+        raise RuntimeError(
+            "Supabase not configured (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY missing) "
+            "- refusing to run in-memory repositories in prod."
+        )
+
     if supabase_url and supabase_key:
         supabase_client = SupabaseClient(
             settings=SupabaseSettings(
