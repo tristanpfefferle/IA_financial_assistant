@@ -100,7 +100,7 @@ def _normalize_chat_state(value: Any) -> dict[str, Any]:
     return value
 
 
-_GLOBAL_STATE_MODES = {"onboarding", "guided_budget", "free_chat"}
+_GLOBAL_STATE_MODES = {"onboarding", "guided_budget", "confidence_improvement", "free_chat"}
 _GLOBAL_STATE_ONBOARDING_STEPS = {"profile", "bank_accounts", "import", "categories", "budget", "report", None}
 _GLOBAL_STATE_ONBOARDING_SUBSTEPS = {
     "profile_intro",
@@ -118,8 +118,10 @@ _GLOBAL_STATE_ONBOARDING_SUBSTEPS = {
     "categories_bootstrap",
     "report_offer",
     "report_sent",
+    "report_wait_view_confirmation",
     None,
 }
+_GLOBAL_STATE_CONFIDENCE_STEPS = {"intro", "waiting_start", "shared_expenses_offer", None}
 _PROFILE_FIX_SUBSTEPS = {"profile_fix_select", "profile_fix_name", "profile_fix_birth_date"}
 _BANK_ACCOUNTS_FIX_SUBSTEP_PATTERN = re.compile(r"^bank_accounts_fix_")
 _PROFILE_COMPLETION_FIELDS = ("first_name", "last_name", "birth_date")
@@ -422,6 +424,7 @@ _ONBOARDING_SUBSTEP_TO_LOOP_ID: dict[str, str] = {
     "categories_bootstrap": "onboarding.categories_bootstrap",
     "report_offer": "onboarding.report",
     "report_sent": "onboarding.report",
+    "report_wait_view_confirmation": "onboarding.report",
 }
 
 _ONBOARDING_ROUTEABLE_SUBSTEPS: frozenset[str] = frozenset(_ONBOARDING_SUBSTEP_TO_LOOP_ID.keys())
@@ -608,6 +611,16 @@ def _build_quick_reply_yes_no_ui_action() -> dict[str, Any]:
             {"id": "yes", "label": "✅", "value": "oui"},
             {"id": "no", "label": "❌", "value": "non"},
         ],
+    }
+
+
+def _build_quick_reply_report_view_confirmed_ui_action() -> dict[str, Any]:
+    """Return quick reply payload used after opening the onboarding report PDF."""
+
+    return {
+        "type": "ui_action",
+        "action": "quick_replies",
+        "options": [{"id": "seen", "label": "Je l’ai vu", "value": "je l’ai vu"}],
     }
 
 
@@ -1751,6 +1764,7 @@ def _compute_bootstrap_global_state(profile_fields: dict[str, Any]) -> dict[str,
             "has_bank_accounts": False,
             "has_imported_transactions": False,
             "budget_created": False,
+            "confidence_step": None,
         }
     return {
         "mode": "onboarding",
@@ -1761,6 +1775,7 @@ def _compute_bootstrap_global_state(profile_fields: dict[str, Any]) -> dict[str,
         "has_bank_accounts": False,
         "has_imported_transactions": False,
         "budget_created": False,
+        "confidence_step": None,
     }
 
 
@@ -1775,6 +1790,9 @@ def _is_valid_global_state(value: Any) -> bool:
         return False
     onboarding_substep = value.get("onboarding_substep")
     if onboarding_substep not in _GLOBAL_STATE_ONBOARDING_SUBSTEPS:
+        return False
+    confidence_step = value.get("confidence_step")
+    if confidence_step not in _GLOBAL_STATE_CONFIDENCE_STEPS:
         return False
     has_bank_accounts = value.get("has_bank_accounts")
     if has_bank_accounts is not None and not isinstance(has_bank_accounts, bool):
@@ -1826,7 +1844,7 @@ def _normalize_onboarding_step_substep(global_state: dict[str, Any]) -> dict[str
         "bank_accounts": {"bank_accounts_collect", "bank_accounts_confirm", "bank_accounts_fix_select"},
         "import": {"import_select_account", "import_wait_ready"},
         "categories": {"categories_intro", "categories_bootstrap"},
-        "report": {"report_offer", "report_sent"},
+        "report": {"report_offer", "report_sent", "report_wait_view_confirmation"},
     }
     default_substep_by_step = {
         "profile": "profile_intro",
@@ -2063,8 +2081,38 @@ def _is_no(message: str) -> bool:
 
 
 def _is_allons_y(message: str) -> bool:
-    normalized = _normalize_text(message)
+    normalized = _normalize_text(re.sub(r"[!?.,;:]+$", "", message))
     return normalized in {"allons-y", "allons y", "allons_y"}
+
+
+def _is_report_view_confirmed(message: str) -> bool:
+    normalized = _normalize_text(re.sub(r"[!?.,;:]+$", "", message))
+    if normalized in {"vu", "ok vu", "cest vu", "c est vu"}:
+        return True
+    return "vu" in normalized and ("je" in normalized or "j" in normalized)
+
+
+def _build_confidence_intro_reply(state_dict: dict[str, Any]) -> str:
+    report_payload = state_dict.get("last_spending_report_payload") if isinstance(state_dict.get("last_spending_report_payload"), dict) else {}
+    score = report_payload.get("categorization_confidence_score_percent")
+    coverage = report_payload.get("categorization_confidence_coverage_percent")
+    try:
+        score_value = int(score) if score is not None else 0
+    except (TypeError, ValueError):
+        score_value = 0
+    try:
+        coverage_value = int(coverage) if coverage is not None else 0
+    except (TypeError, ValueError):
+        coverage_value = 0
+
+    return (
+        f"Ton rapport est actuellement précis à {score_value}%.\n"
+        f"Nous avons des informations pour {coverage_value}% de tes dépenses.\n\n"
+        "Pour améliorer encore la fiabilité de ton analyse,\n"
+        "j’ai besoin de te poser quelques questions rapides.\n\n"
+        "On améliore ça ensemble ?\n"
+        "Réponds : Allons-y !"
+    )
 
 
 def _pick_category_for_merchant_name(name: str) -> str:
@@ -2408,6 +2456,8 @@ def _build_onboarding_reminder(global_state: dict[str, Any] | None) -> str | Non
         return "(Pour continuer l’onboarding : je prépare automatiquement les catégories et les marchands.)"
     if substep == "report_offer":
         return "(Pour continuer l’onboarding : réponds oui ou non pour ouvrir le rapport PDF.)"
+    if substep == "report_wait_view_confirmation":
+        return "(Pour continuer l’onboarding : dis-moi quand tu as vu le rapport.)"
     return None
 
 
@@ -2855,6 +2905,7 @@ def _build_onboarding_global_state(
         "budget_created": bool(
             isinstance(existing_global_state, dict) and existing_global_state.get("budget_created", False)
         ),
+        "confidence_step": None,
     }
 
 
@@ -2879,6 +2930,7 @@ def _build_free_chat_global_state(existing_global_state: dict[str, Any] | None) 
         "budget_created": bool(
             isinstance(existing_global_state, dict) and existing_global_state.get("budget_created", False)
         ),
+        "confidence_step": None,
     }
 
 
@@ -4603,7 +4655,7 @@ def agent_chat(
                     updated_global_state = _build_onboarding_global_state(
                         global_state,
                         onboarding_step="report",
-                        onboarding_substep="report_sent",
+                        onboarding_substep="report_wait_view_confirmation",
                     )
                     updated_global_state = _normalize_onboarding_step_substep(updated_global_state)
                     state_dict["global_state"] = updated_global_state
@@ -4615,7 +4667,7 @@ def agent_chat(
                         chat_state=updated_chat_state,
                     )
                     return _chat_response(
-                        reply="Voici ton premier rapport financier !",
+                        reply="Prends un moment pour consulter ton rapport.\nDis-moi quand tu l’as vu 🙂",
                         tool_result=_build_open_pdf_ui_request(report_url),
                         plan=None,
                     )
@@ -4626,6 +4678,59 @@ def agent_chat(
                         plan=None,
                     )
                 return _chat_response(reply="Réponds par oui ou non.", tool_result=None, plan=None)
+
+            if mode == "onboarding" and onboarding_step == "report" and global_state.get("onboarding_substep") == "report_wait_view_confirmation":
+                if _is_report_view_confirmed(payload.message):
+                    updated_global_state = {
+                        **dict(global_state),
+                        "mode": "confidence_improvement",
+                        "onboarding_step": None,
+                        "onboarding_substep": None,
+                        "confidence_step": "waiting_start",
+                    }
+                    state_dict["global_state"] = updated_global_state
+                    updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                    updated_chat_state["state"] = state_dict
+                    profiles_repository.update_chat_state(
+                        profile_id=profile_id,
+                        user_id=auth_user_id,
+                        chat_state=updated_chat_state,
+                    )
+                    return _chat_response(
+                        reply=_build_confidence_intro_reply(state_dict),
+                        tool_result=_build_onboarding_intro_quick_replies_ui_action(),
+                        plan=None,
+                    )
+                return _chat_response(
+                    reply="Prends un moment pour consulter ton rapport.\nDis-moi quand tu l’as vu 🙂",
+                    tool_result=_build_quick_reply_report_view_confirmed_ui_action(),
+                    plan=None,
+                )
+
+            if mode == "confidence_improvement" and global_state.get("confidence_step") == "waiting_start":
+                if _is_allons_y(payload.message):
+                    updated_global_state = {
+                        **dict(global_state),
+                        "confidence_step": "shared_expenses_offer",
+                    }
+                    state_dict["global_state"] = updated_global_state
+                    updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                    updated_chat_state["state"] = state_dict
+                    profiles_repository.update_chat_state(
+                        profile_id=profile_id,
+                        user_id=auth_user_id,
+                        chat_state=updated_chat_state,
+                    )
+                    return _chat_response(
+                        reply="Commençons par un point important :\nCertaines dépenses sont-elles partagées avec quelqu’un ?",
+                        tool_result=None,
+                        plan=None,
+                    )
+                return _chat_response(
+                    reply="On améliore ça ensemble ?\nRéponds : Allons-y !",
+                    tool_result=_build_onboarding_intro_quick_replies_ui_action(),
+                    plan=None,
+                )
 
         if _should_prompt_household_link_setup(
             global_state=global_state,
