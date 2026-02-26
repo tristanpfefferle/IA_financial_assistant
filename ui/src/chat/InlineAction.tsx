@@ -1,10 +1,12 @@
 import { useMemo, useRef, useState } from 'react'
 
 import {
+  toAnyPdfUiRequest,
   toLegacyImportUiRequest,
   toOpenImportPanelUiAction,
   toQuickReplyYesNoUiAction,
 } from '../pages/chatUiRequests'
+import { openPdfFromUrl } from '../api/agentApi'
 
 type InlineActionProps = {
   actionState: Record<string, unknown>
@@ -92,6 +94,7 @@ function toInlineOptions(actionState: Record<string, unknown>): InlineOption[] |
 export function InlineAction({ actionState, disabled, onChoose, onImportFile }: InlineActionProps) {
   const fileRef = useRef<HTMLInputElement | null>(null)
   const [isDragOver, setIsDragOver] = useState(false)
+  const [pdfErrorMessage, setPdfErrorMessage] = useState<string | null>(null)
 
   const importPanelAction = toOpenImportPanelUiAction(actionState)
   const legacyImportAction = toLegacyImportUiRequest(actionState)
@@ -115,6 +118,31 @@ export function InlineAction({ actionState, disabled, onChoose, onImportFile }: 
             {option.label}
           </button>
         ))}
+      </div>
+    )
+  }
+
+  const pdf = toAnyPdfUiRequest(actionState)
+  if (pdf) {
+    return (
+      <div className="inline-action" role="group" aria-label="Actions">
+        <button
+          type="button"
+          className="console-btn console-btn-neutral"
+          disabled={disabled}
+          onClick={async () => {
+            setPdfErrorMessage(null)
+            try {
+              await openPdfFromUrl(pdf.url)
+            } catch {
+              setPdfErrorMessage('Impossible d’ouvrir le PDF pour le moment. Réessaie dans quelques instants.')
+            }
+          }}
+          aria-label={pdf.title}
+        >
+          📄 {pdf.label}
+        </button>
+        {pdfErrorMessage ? <p className="subtle-text">{pdfErrorMessage}</p> : null}
       </div>
     )
   }
