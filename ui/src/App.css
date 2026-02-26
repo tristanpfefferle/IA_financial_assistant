@@ -299,6 +299,34 @@ button:disabled {
   padding: 7px 11px;
 }
 
+.pdf-opening-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pdf-opening-dots {
+  letter-spacing: 1px;
+  opacity: 0.75;
+  animation: pdf-opening-pulse 1s ease-in-out infinite;
+}
+
+.link-button:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+@keyframes pdf-opening-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+
+  50% {
+    opacity: 0.95;
+  }
+}
+
 .scroll-down-btn {
   position: absolute;
   right: 14px;
