@@ -52,6 +52,7 @@ export function ChatInteractiveCard({ toolResult, onSubmit, onImport }: Interact
   })
 
   const fileRef = useRef<HTMLInputElement | null>(null)
+  const [isDragOver, setIsDragOver] = useState(false)
 
   const acceptedFileTypes = useMemo(() => {
     const acceptedTypes = openImportPanel?.accepted_types ?? legacyImportRequest?.accepted_types ?? ['csv']
@@ -154,8 +155,8 @@ export function ChatInteractiveCard({ toolResult, onSubmit, onImport }: Interact
           ))}
         </div>
         <div className="dock-footer">
-          <button type="submit" className="form-submit-btn" aria-label={formAction.submit_label}>
-            {formAction.submit_label || 'Valider'}
+          <button type="submit" className="dock-send-btn" aria-label={formAction.submit_label || 'Envoyer'}>
+            ➤
           </button>
         </div>
       </form>
@@ -165,9 +166,36 @@ export function ChatInteractiveCard({ toolResult, onSubmit, onImport }: Interact
   if (openImportPanel || legacyImportRequest) {
     return (
       <div className="chat-card import-card">
-        <button type="button" className="console-btn console-btn-positive" onClick={() => fileRef.current?.click()}>
-          Importer
-        </button>
+        <div
+          className={`dropzone${isDragOver ? ' is-dragover' : ''}`}
+          role="button"
+          tabIndex={0}
+          onClick={() => fileRef.current?.click()}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault()
+              fileRef.current?.click()
+            }
+          }}
+          onDragOver={(event) => {
+            event.preventDefault()
+            setIsDragOver(true)
+          }}
+          onDragLeave={() => {
+            setIsDragOver(false)
+          }}
+          onDrop={(event) => {
+            event.preventDefault()
+            setIsDragOver(false)
+            const file = event.dataTransfer.files?.[0]
+            if (file) {
+              onImport(file)
+            }
+          }}
+        >
+          <span className="dropzone-icon">📄</span>
+          <span>Dépose ton CSV ici ou clique pour choisir un fichier</span>
+        </div>
         <input
           ref={fileRef}
           type="file"

@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react'
+import { useMemo, useRef, useState } from 'react'
 
 import {
   toLegacyImportUiRequest,
@@ -86,6 +86,7 @@ function toInlineOptions(actionState: Record<string, unknown>): InlineOption[] |
 
 export function InlineAction({ actionState, disabled, onChoose, onImportFile }: InlineActionProps) {
   const fileRef = useRef<HTMLInputElement | null>(null)
+  const [isDragOver, setIsDragOver] = useState(false)
 
   const importPanelAction = toOpenImportPanelUiAction(actionState)
   const legacyImportAction = toLegacyImportUiRequest(actionState)
@@ -116,14 +117,48 @@ export function InlineAction({ actionState, disabled, onChoose, onImportFile }: 
   if (importPanelAction || legacyImportAction) {
     return (
       <div className="inline-action" role="group" aria-label="Import de fichier">
-        <button
-          type="button"
-          className="inline-pill inline-pill-primary"
-          disabled={disabled}
-          onClick={() => fileRef.current?.click()}
+        <div
+          className={`dropzone${isDragOver ? ' is-dragover' : ''}${disabled ? ' is-disabled' : ''}`}
+          role="button"
+          tabIndex={disabled ? -1 : 0}
+          onClick={() => {
+            if (!disabled) {
+              fileRef.current?.click()
+            }
+          }}
+          onKeyDown={(event) => {
+            if (disabled) {
+              return
+            }
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault()
+              fileRef.current?.click()
+            }
+          }}
+          onDragOver={(event) => {
+            event.preventDefault()
+            if (!disabled) {
+              setIsDragOver(true)
+            }
+          }}
+          onDragLeave={() => {
+            setIsDragOver(false)
+          }}
+          onDrop={(event) => {
+            event.preventDefault()
+            setIsDragOver(false)
+            if (disabled) {
+              return
+            }
+            const file = event.dataTransfer.files?.[0]
+            if (file) {
+              onImportFile(file)
+            }
+          }}
         >
-          Importer
-        </button>
+          <span className="dropzone-icon">📄</span>
+          <span>Dépose ton CSV ici ou clique pour choisir un fichier</span>
+        </div>
         <input
           ref={fileRef}
           type="file"
