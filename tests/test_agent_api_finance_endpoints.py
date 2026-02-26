@@ -1773,6 +1773,57 @@ def test_spending_report_json_parses_string_metadata_for_category_and_flow_type(
     assert payload["transactions"][0]["flow_type"] == "expense"
 
 
+
+def test_spending_report_builder_passes_bank_account_id_to_cashflow_summary(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class _RelevesRepository:
+        def compute_cashflow_summary(self, *, profile_id: UUID, date_range, bank_account_id: str | None = None):
+            captured["profile_id"] = profile_id
+            captured["date_range"] = date_range
+            captured["bank_account_id"] = bank_account_id
+            return {
+                "total_income": Decimal("0"),
+                "total_expense": Decimal("0"),
+                "net_cashflow": Decimal("0"),
+                "internal_transfers": Decimal("0"),
+                "transaction_count": 0,
+                "currency": "CHF",
+            }
+
+    class _ToolService:
+        releves_repository = _RelevesRepository()
+
+    class _BackendClient:
+        tool_service = _ToolService()
+
+    class _Router:
+        backend_client = _BackendClient()
+
+        def call(self, tool_name: str, payload: dict, *, profile_id: UUID | None = None):
+            if tool_name == "finance_releves_sum":
+                return {"total": "-10", "count": 1, "currency": "CHF"}
+            if tool_name == "finance_releves_aggregate":
+                return {"group_by": "categorie", "currency": "CHF", "groups": {"Courses": {"total": "-10", "count": 1}}}
+            if tool_name == "finance_releves_search":
+                return {"items": [{"date": "2026-01-01", "montant": "-10", "categorie": "Courses"}], "total": 1}
+            raise AssertionError(tool_name)
+
+    monkeypatch.setattr(agent_api, "get_tool_router", lambda: _Router())
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: None)
+    monkeypatch.setattr(agent_api, "_try_get_shared_expenses_repository", lambda: None)
+
+    bank_account_id = "dddddddd-dddd-dddd-dddd-dddddddddddd"
+    agent_api._build_spending_report_payload(
+        profile_id=PROFILE_ID,
+        period_start=date(2026, 1, 1),
+        period_end=date(2026, 1, 31),
+        bank_account_id=bank_account_id,
+    )
+
+    assert captured["profile_id"] == PROFILE_ID
+    assert captured["bank_account_id"] == bank_account_id
+
 def test_spending_report_builder_computes_categorization_confidence_weighted_score(monkeypatch) -> None:
     entity_a = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
     entity_b = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")

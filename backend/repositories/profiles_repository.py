@@ -1179,6 +1179,7 @@ class SupabaseProfilesRepository:
                 confidence = Decimal(str(raw_confidence))
             except (TypeError, ValueError, InvalidOperation):
                 continue
+            confidence = min(Decimal("1"), max(Decimal("0"), confidence))
             confidence_by_id[merchant_entity_id] = confidence
 
         return confidence_by_id
