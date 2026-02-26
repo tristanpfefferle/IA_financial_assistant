@@ -820,12 +820,14 @@ def _extract_required_form_value(values: dict[str, Any], field_id: str) -> str:
     return raw.strip()
 
 
-def _build_open_pdf_ui_request(url: str) -> dict[str, str]:
-    """Return an UI request payload instructing the client to open a PDF URL."""
+def _build_open_pdf_ui_action(url: str) -> dict[str, str]:
+    """Return an UI action payload exposing a clickable PDF card."""
 
     return {
-        "type": "ui_request",
-        "name": "open_pdf_report",
+        "type": "ui_action",
+        "action": "open_pdf",
+        "title": "Rapport mensuel (PDF)",
+        "label": "Ouvrir le PDF",
         "url": url,
     }
 
@@ -4398,7 +4400,7 @@ def agent_chat(
                     return _chat_response(
                         reply=(
                             "Import terminé ✅\n\nJe viens de classer tes dépenses et de générer ton rapport mensuel.\n\n"
-                            "Es-tu prêt à voir ton rapport mensuel ?"
+                            "Es-tu prêt à voir ton premier rapport ?"
                         ),
                         tool_result=_build_quick_reply_yes_no_ui_action(),
                         plan=None,
@@ -4456,17 +4458,13 @@ def agent_chat(
                         chat_state=updated_chat_state,
                     )
                     return _chat_response(
-                        reply=(
-                            "Parfait, le voici 📄\n\n"
-                            "Petit conseil : au début, une partie des dépenses peut tomber dans « Autres ».\n\nPlus tu personnalises tes catégories, plus le rapport devient précis.\n\n"
-                            "On pourra aussi renommer/recatégoriser certains marchands pour réduire « Autres » au maximum."
-                        ),
-                        tool_result=_build_open_pdf_ui_request(report_url),
+                        reply="Voici ton premier rapport financier !",
+                        tool_result=_build_open_pdf_ui_action(report_url),
                         plan=None,
                     )
                 if _is_no(payload.message):
                     return _chat_response(
-                        reply="Ok 🙂 Dis-moi quand tu veux le voir.",
+                        reply="OK. Tu pourras l’ouvrir plus tard depuis Rapports.",
                         tool_result=None,
                         plan=None,
                     )
@@ -4763,7 +4761,7 @@ def agent_chat(
                 plan_payload["end_date"] = end_date_value
             return _chat_response(
                 reply=f"Voici ton rapport PDF pour {period_label} : [Ouvrir le PDF]({report_url})",
-                tool_result=_build_open_pdf_ui_request(report_url),
+                tool_result=_build_open_pdf_ui_action(report_url),
                 plan={"tool_name": "finance_report_spending_pdf", "payload": plan_payload},
             )
 
@@ -6083,7 +6081,7 @@ def finalize_import_job_chat(
     )
 
     report_loop = registry.get("onboarding.report")
-    report_prompt = report_loop.prompt if hasattr(report_loop, "prompt") else "Veux-tu générer ton premier rapport ? (oui/non)"
+    report_prompt = report_loop.prompt if hasattr(report_loop, "prompt") else "Es-tu prêt à voir ton premier rapport ?"
     reply = loop_reply.reply.strip() if isinstance(loop_reply.reply, str) and loop_reply.reply.strip() else report_prompt
     return ChatResponse(
         reply=f"Import terminé ✅\n\nJe viens de classer tes dépenses et de générer ton rapport mensuel.\n\n{reply}",
