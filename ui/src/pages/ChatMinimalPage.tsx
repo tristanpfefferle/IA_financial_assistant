@@ -43,9 +43,18 @@ function splitIntoSentences(text: string): string[] {
     return []
   }
 
-  const sentences = trimmed.split(/(?<=[.!?…])\s+/).map((sentence) => sentence.trim()).filter(Boolean)
-  return sentences.length > 1 ? sentences : [trimmed]
+  const sentences = trimmed
+    .split(/(?<=[.!?…])\s+/)
+    .map((sentence) => sentence.trim())
+    .filter((sentence) => sentence.length > 0)
+    .filter((sentence) => !/^\(?\s*oui\s*\/\s*non\s*\)?\.?$/i.test(sentence))
+  if (sentences.length === 0) {
+    return []
+  }
+
+  return sentences.length > 1 ? sentences : [sentences[0]]
 }
+
 
 export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
   const navigate = useNavigate()
