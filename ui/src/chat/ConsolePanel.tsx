@@ -35,7 +35,6 @@ function OptionButton({ option, isSending, onChoose }: { option: ConsoleOption; 
 
 export function ConsolePanel({ uiState, isSending, onChoose, onImportFile }: ConsolePanelProps) {
   const inputRef = useRef<HTMLInputElement | null>(null)
-  const showPrompt = 'prompt' in uiState && typeof uiState.prompt === 'string' && uiState.prompt.trim().length > 0
   const acceptedFileTypes = useMemo(() => {
     if (uiState.mode !== 'import_file') {
       return '.csv'
@@ -56,19 +55,6 @@ export function ConsolePanel({ uiState, isSending, onChoose, onImportFile }: Con
   return (
     <div className="action-dock" aria-label={`Console panel mode ${uiState.mode}`}>
       <div className="console-panel">
-        {uiState.mode !== 'none' ? (
-          <div className="action-dock-header">
-            <p className="action-dock-title">{showPrompt ? uiState.prompt : 'Étape suivante'}</p>
-          </div>
-        ) : null}
-
-        {uiState.mode === 'none' ? (
-          <p className="dock-idle-text">
-            <span aria-hidden="true">ℹ</span>
-            <span>À toi de jouer.</span>
-          </p>
-        ) : null}
-
         {uiState.mode === 'yes_no' ? (
           <div className="console-split" role="group" aria-label="Réponse oui/non">
             <OptionButton option={uiState.yes} isSending={isSending} onChoose={onChoose} />
@@ -98,10 +84,6 @@ export function ConsolePanel({ uiState, isSending, onChoose, onImportFile }: Con
 
         {uiState.mode === 'import_file' ? (
           <div className="import-card">
-            <p className="import-card-title">
-              <span aria-hidden="true">📂</span>
-              <span>Relevé bancaire CSV</span>
-            </p>
             <button
               type="button"
               className="console-btn console-btn-positive"
@@ -125,7 +107,6 @@ export function ConsolePanel({ uiState, isSending, onChoose, onImportFile }: Con
                 event.target.value = ''
               }}
             />
-            <p className="subtle-text">Ajoute ton CSV pour lancer l’analyse automatique.</p>
           </div>
         ) : null}
       </div>

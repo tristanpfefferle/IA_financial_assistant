@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom'
 
 import { hardResetProfile, importReleves, sendChatMessage } from '../api/agentApi'
 import { ConsolePanel } from '../chat/ConsolePanel'
-import { ProgressIndicator } from '../chat/ProgressIndicator'
 import { buildFormSubmitPayload } from '../chat/formSubmit'
 import type { ConsoleOption, ConsoleUiState } from '../chat/types'
 import { supabase } from '../lib/supabaseClient'
@@ -27,6 +26,9 @@ type ChatMessage = {
 type ChatMinimalPageProps = {
   email?: string
 }
+
+const THINKING_DELAY_MS = { min: 500, max: 900 }
+const BETWEEN_SENTENCE_DELAY_MS = { min: 350, max: 650 }
 
 function createMessageId(): string {
   return typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`
@@ -67,6 +69,20 @@ function mapQuickReplyOption(option: { id: string; label: string; value: string 
     ...option,
     tone: tone ?? 'neutral',
   }
+}
+
+function randomDelay(min: number, max: number): number {
+  return Math.floor(Math.random() * (max - min + 1)) + min
+}
+
+function splitIntoSentences(text: string): string[] {
+  const trimmed = text.trim()
+  if (!trimmed) {
+    return []
+  }
+
+  const sentences = trimmed.split(/(?<=[.!?…])\s+/).map((sentence) => sentence.trim()).filter(Boolean)
+  return sentences.length > 1 ? sentences : [trimmed]
 }
 
 function extractPrompt(toolResult: Record<string, unknown> | null | undefined): string | undefined {
@@ -237,7 +253,6 @@ function FormCard({ formUiAction, isBusy, onSubmitForm }: FormCardProps) {
 
   return (
     <form className="form-card" onSubmit={handleSubmit}>
-      <p className="form-title">{formUiAction.title}</p>
       <div className="form-fields">
         {formUiAction.fields.map((field) => (
           <div key={field.id} className="form-field">
@@ -307,8 +322,8 @@ function FormCard({ formUiAction, isBusy, onSubmitForm }: FormCardProps) {
           </div>
         ))}
       </div>
-      <button type="submit" disabled={isBusy || isRequiredMultiSelectMissing}>
-        {formUiAction.submit_label || 'Continuer'}
+      <button type="submit" className="form-submit-icon-btn" disabled={isBusy || isRequiredMultiSelectMissing} aria-label="Envoyer">
+        ➤
       </button>
     </form>
   )
@@ -326,6 +341,8 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
   const [debugMode, setDebugMode] = useState(() => localStorage.getItem('ui_debug_mode') === 'true')
   const [headerMessage, setHeaderMessage] = useState<string | null>(null)
   const [submitErrorMessage, setSubmitErrorMessage] = useState<string | null>(null)
+  const isMountedRef = useRef(true)
+  const assistantSequenceRef = useRef(0)
 
   const consoleState = useMemo(() => extractConsoleState(messages, isSending), [isSending, messages])
   const latestAssistant = useMemo(() => [...messages].reverse().find((message) => message.role === 'assistant') ?? null, [messages])
@@ -352,6 +369,56 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
       top: scrollRef.current.scrollHeight,
       behavior: 'smooth',
     })
+  }
+
+  async function wait(ms: number): Promise<void> {
+    await new Promise((resolve) => {
+      window.setTimeout(resolve, ms)
+    })
+  }
+
+  function isSequenceCancelled(sequenceId: number): boolean {
+    return !isMountedRef.current || assistantSequenceRef.current !== sequenceId
+  }
+
+  async function appendAssistantReplyInSequence(reply: string, toolResult?: Record<string, unknown> | null): Promise<void> {
+    const sequenceId = ++assistantSequenceRef.current
+    const sentences = splitIntoSentences(reply)
+
+    setIsAssistantTyping(true)
+    await wait(randomDelay(THINKING_DELAY_MS.min, THINKING_DELAY_MS.max))
+    if (isSequenceCancelled(sequenceId)) {
+      return
+    }
+
+    for (let index = 0; index < sentences.length; index += 1) {
+      const sentence = sentences[index]
+      const isLastSentence = index === sentences.length - 1
+
+      setIsAssistantTyping(false)
+      setMessages((current) => [
+        ...current,
+        {
+          id: createMessageId(),
+          role: 'assistant',
+          content: sentence,
+          createdAt: Date.now(),
+          toolResult: isLastSentence ? toolResult : undefined,
+        },
+      ])
+
+      if (!isLastSentence) {
+        setIsAssistantTyping(true)
+        await wait(randomDelay(BETWEEN_SENTENCE_DELAY_MS.min, BETWEEN_SENTENCE_DELAY_MS.max))
+        if (isSequenceCancelled(sequenceId)) {
+          return
+        }
+      }
+    }
+
+    if (!isSequenceCancelled(sequenceId)) {
+      setIsAssistantTyping(false)
+    }
   }
 
   useEffect(() => {
@@ -402,18 +469,10 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
     setHeaderMessage(null)
     setMessages([])
     setIsSending(false)
-    setIsAssistantTyping(true)
     try {
       const response = await sendChatMessage('', { debug: debugMode, requestGreeting: true })
-      setMessages([
-        {
-          id: createMessageId(),
-          role: 'assistant',
-          content: response.reply,
-          createdAt: Date.now(),
-          toolResult: response.tool_result,
-        },
-      ])
+      setMessages([])
+      await appendAssistantReplyInSequence(response.reply, response.tool_result)
     } catch {
       setMessages([
         {
@@ -429,27 +488,19 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
   }
 
   useEffect(() => {
-    let isMounted = true
+    isMountedRef.current = true
 
     async function loadGreeting() {
-      setIsAssistantTyping(true)
       try {
         const response = await sendChatMessage('', { debug: debugMode, requestGreeting: true })
-        if (!isMounted) {
+        if (!isMountedRef.current) {
           return
         }
 
-        setMessages([
-          {
-            id: createMessageId(),
-            role: 'assistant',
-            content: response.reply,
-            createdAt: Date.now(),
-            toolResult: response.tool_result,
-          },
-        ])
+        setMessages([])
+        await appendAssistantReplyInSequence(response.reply, response.tool_result)
       } catch {
-        if (!isMounted) {
+        if (!isMountedRef.current) {
           return
         }
 
@@ -462,7 +513,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
           },
         ])
       } finally {
-        if (isMounted) {
+        if (isMountedRef.current) {
           setIsAssistantTyping(false)
         }
       }
@@ -471,7 +522,8 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
     void loadGreeting()
 
     return () => {
-      isMounted = false
+      isMountedRef.current = false
+      assistantSequenceRef.current += 1
     }
   }, [])
 
@@ -496,16 +548,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
 
     try {
       const response = await sendChatMessage(trimmed, { debug: debugMode })
-      setMessages((current) => [
-        ...current,
-        {
-          id: createMessageId(),
-          role: 'assistant',
-          content: response.reply,
-          createdAt: Date.now(),
-          toolResult: response.tool_result,
-        },
-      ])
+      await appendAssistantReplyInSequence(response.reply, response.tool_result)
     } catch (error) {
       const content = error instanceof Error ? error.message : 'Erreur inconnue.'
       setSubmitErrorMessage(content)
@@ -567,15 +610,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
       })
 
       if ('type' in importResult && importResult.type === 'clarification') {
-        setMessages((current) => [
-          ...current,
-          {
-            id: createMessageId(),
-            role: 'assistant',
-            content: importResult.message,
-            createdAt: Date.now(),
-          },
-        ])
+        await appendAssistantReplyInSequence(importResult.message)
         return
       }
 
@@ -591,16 +626,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
       ])
 
       const response = await sendChatMessage('', { debug: debugMode, requestGreeting: true })
-      setMessages((current) => [
-        ...current,
-        {
-          id: createMessageId(),
-          role: 'assistant',
-          content: response.reply,
-          createdAt: Date.now(),
-          toolResult: response.tool_result,
-        },
-      ])
+      await appendAssistantReplyInSequence(response.reply, response.tool_result)
     } catch (error) {
       const content = error instanceof Error ? error.message : 'Erreur inconnue.'
       setSubmitErrorMessage(content)
@@ -726,7 +752,6 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
               </button>
             </div>
           </header>
-          <ProgressIndicator messages={messages} formUiAction={formUiAction} />
           {headerMessage ? <p className="subtle-text">{headerMessage}</p> : null}
 
           <div className="message-area">
@@ -768,7 +793,6 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
               {composerMode === 'form' ? (
                 formUiAction ? (
                   <div className="profile-card">
-                    <p className="profile-card-title">Ton profil</p>
                     <FormCard formUiAction={formUiAction} isBusy={isSending || isAssistantTyping} onSubmitForm={handleFormSubmit} />
                   </div>
                 ) : null
