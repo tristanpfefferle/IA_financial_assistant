@@ -562,13 +562,8 @@ export async function fetchPendingTransactions(): Promise<PendingTransactionsRes
 }
 
 export async function openPdfFromUrl(url: string): Promise<void> {
-  const resolvedUrl = url.startsWith('http://') || url.startsWith('https://') ? url : `${resolveApiBaseUrl()}${url}`
-  const tab = window.open('about:blank', '_blank', 'noopener,noreferrer')
-  if (!tab) {
-    throw new Error('popup_blocked')
-  }
-
   const accessToken = await getAccessToken()
+  const resolvedUrl = url.startsWith('http://') || url.startsWith('https://') ? url : `${getBaseUrl()}${url}`
   debugLog('openPdfFromUrl url=', maskAccessTokenInUrl(resolvedUrl))
 
   try {
@@ -584,24 +579,18 @@ export async function openPdfFromUrl(url: string): Promise<void> {
 
     const blob = await response.blob()
     const blobUrl = URL.createObjectURL(blob)
-    tab.location.href = blobUrl
+    window.open(blobUrl, '_blank', 'noopener,noreferrer')
     setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000)
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error)
     const isNetworkError =
       error instanceof TypeError || message.includes('Failed to fetch') || message.includes('NetworkError')
     debugLog('openPdfFromUrl errorType=', error instanceof TypeError ? 'TypeError' : typeof error)
-    if (isNetworkError && (resolvedUrl.startsWith('http://') || resolvedUrl.startsWith('https://'))) {
+    if (isNetworkError) {
       const openedUrl = accessToken ? appendAccessTokenToUrl(resolvedUrl, accessToken) : resolvedUrl
       debugLog('openPdfFromUrl fallbackWindowOpen=', maskAccessTokenInUrl(openedUrl))
-      tab.location.href = openedUrl
+      window.open(openedUrl, '_blank', 'noopener,noreferrer')
       return
-    }
-
-    try {
-      tab.close()
-    } catch {
-      // Ignore close errors.
     }
 
     throw error instanceof Error ? error : new Error(`Erreur ouverture PDF: ${message}`)
