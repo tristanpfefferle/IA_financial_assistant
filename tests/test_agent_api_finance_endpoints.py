@@ -1286,10 +1286,6 @@ def test_spending_report_pdf_uses_merchant_entity_canonical_name_with_fallback(m
             assert user_id == AUTH_USER_ID
             return {"state": {"last_query": {"month": "2026-01"}}}
 
-        def get_merchant_entity_canonical_names_by_ids(self, *, merchant_entity_ids: list[UUID]) -> dict[UUID, str]:
-            assert merchant_entity_ids == [merchant_entity_id]
-            return {merchant_entity_id: "Coop"}
-
     monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: _Repo())
 
     captured: dict[str, object] = {}
@@ -1322,6 +1318,7 @@ def test_spending_report_pdf_uses_merchant_entity_canonical_name_with_fallback(m
                             "date": "2026-01-01",
                             "montant": "-10",
                             "merchant_entity_id": str(merchant_entity_id),
+                            "merchant_entity_canonical_name": "Coop",
                             "payee": "COOP-4815 MONTHEY",
                             "categorie": "Alimentation",
                         },
@@ -1825,17 +1822,7 @@ def test_spending_report_builder_passes_bank_account_id_to_cashflow_summary(monk
     assert captured["bank_account_id"] == bank_account_id
 
 def test_spending_report_builder_computes_categorization_confidence_weighted_score(monkeypatch) -> None:
-    entity_a = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
-    entity_b = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
-
     class _Repo:
-        def get_merchant_entity_suggested_confidence_by_ids(self, *, merchant_entity_ids: list[UUID]) -> dict[UUID, Decimal]:
-            assert merchant_entity_ids == sorted([entity_a, entity_b], key=str)
-            return {
-                entity_a: Decimal("0.8"),
-                entity_b: Decimal("1.0"),
-            }
-
         def get_profile_category_name_by_id(self, *, profile_id: UUID, category_id: UUID) -> str | None:
             return None
 
@@ -1853,11 +1840,36 @@ def test_spending_report_builder_computes_categorization_confidence_weighted_sco
             if tool_name == "finance_releves_search":
                 return {
                     "items": [
-                        {"date": "2026-01-01", "montant": "-100", "merchant_entity_id": str(entity_a), "categorie": "Courses"},
-                        {"date": "2026-01-02", "montant": "-300", "merchant_entity_id": str(entity_b), "categorie": "Courses"},
-                        {"date": "2026-01-03", "montant": "-100", "merchant_entity_id": None, "categorie": "Courses"},
+                        {
+                            "date": "2026-01-01",
+                            "montant": "-100",
+                            "merchant_entity_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                            "merchant_entity_suggested_confidence": "0.8",
+                            "categorie": "Courses",
+                        },
+                        {
+                            "date": "2026-01-02",
+                            "montant": "-300",
+                            "merchant_entity_id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+                            "merchant_entity_suggested_confidence": "1.2",
+                            "categorie": "Courses",
+                        },
+                        {
+                            "date": "2026-01-03",
+                            "montant": "-100",
+                            "merchant_entity_id": None,
+                            "merchant_entity_suggested_confidence": None,
+                            "categorie": "Courses",
+                        },
+                        {
+                            "date": "2026-01-04",
+                            "montant": "-100",
+                            "merchant_entity_id": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+                            "merchant_entity_suggested_confidence": "-0.2",
+                            "categorie": "Transferts internes",
+                        },
                     ],
-                    "total": 3,
+                    "total": 4,
                 }
             raise AssertionError(tool_name)
 

@@ -288,6 +288,9 @@ class ReleveBancaire(BaseModel):
     category_id: UUID | None = None
     payee: str | None = None
     merchant_id: UUID | None = None
+    merchant_entity_id: UUID | None = None
+    merchant_entity_canonical_name: str | None = None
+    merchant_entity_suggested_confidence: Decimal | None = None
     bank_account_id: UUID | None = None
 
 

@@ -182,6 +182,46 @@ def test_build_query_omits_category_filter_when_not_provided() -> None:
     assert not any(key == "categorie" for key, _ in query)
 
 
+def test_list_releves_hydrates_merchant_entity_fields() -> None:
+    merchant_entity_id = UUID("11111111-1111-1111-1111-111111111111")
+    client = _ClientStub(
+        rows=[
+            {
+                "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                "profile_id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+                "date": "2026-01-01",
+                "libelle": "Achat",
+                "montant": "-10.00",
+                "devise": "CHF",
+                "categorie": "Alimentation",
+                "category_id": None,
+                "payee": "COOP",
+                "merchant_id": None,
+                "merchant_entity_id": str(merchant_entity_id),
+                "bank_account_id": None,
+                "merchant_entities": {
+                    "canonical_name": "Coop",
+                    "suggested_confidence": "0.87",
+                },
+            }
+        ]
+    )
+    repository = SupabaseRelevesRepository(client=client)
+
+    rows, _ = repository.list_releves(
+        RelevesFilters(
+            profile_id=UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+            limit=10,
+            offset=0,
+        )
+    )
+
+    assert rows[0].merchant_entity_id == merchant_entity_id
+    assert rows[0].merchant_entity_canonical_name == "Coop"
+    assert rows[0].merchant_entity_suggested_confidence == Decimal("0.87")
+    assert "merchant_entities" not in client._rows[0]
+
+
 def test_in_memory_sum_and_aggregate_exclude_categories_for_debit_only(monkeypatch) -> None:
     repository = InMemoryRelevesRepository()
     repository._seed.append(
