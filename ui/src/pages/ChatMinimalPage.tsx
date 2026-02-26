@@ -29,7 +29,8 @@ type ChatMinimalPageProps = {
   email?: string
 }
 
-const ASSISTANT_STEP_DELAY_MS = 2000
+const ASSISTANT_STEP_DELAY_MS = 1000
+const DEFAULT_ASSISTANT_ACTION_MESSAGE = 'Je te propose les choix suivants :'
 function createMessageId(): string {
   return typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`
 }
@@ -145,46 +146,51 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
     return !isMountedRef.current || assistantSequenceRef.current !== sequenceId
   }
 
-  async function appendAssistantReplyInSequence(reply: string, toolResult?: Record<string, unknown> | null): Promise<void> {
+  function splitAssistantReply(reply: string): string[] {
+    return reply
+      .split('\n\n')
+      .map((segment) => segment.trim())
+      .filter((segment) => segment.length > 0)
+  }
+
+  async function appendAssistantSegments(segments: string[], toolResult?: Record<string, unknown> | null): Promise<void> {
     const sequenceId = ++assistantSequenceRef.current
-    const hasToolResult = Boolean(toolResult)
-    const assistantMessageId = createMessageId()
+    const normalizedSegments = segments.length > 0
+      ? segments
+      : [toolResult ? DEFAULT_ASSISTANT_ACTION_MESSAGE : '...']
 
-    setIsAssistantTyping(true)
-    await wait(ASSISTANT_STEP_DELAY_MS)
-    if (isSequenceCancelled(sequenceId)) {
-      return
-    }
+    for (let index = 0; index < normalizedSegments.length; index += 1) {
+      const isLastSegment = index === normalizedSegments.length - 1
+      const assistantMessageId = createMessageId()
 
-    setMessagesAf((current) => [
-      ...current,
-      {
-        id: assistantMessageId,
-        role: 'assistant',
-        content: reply,
-        createdAt: Date.now(),
-        toolResult,
-      },
-    ])
-
-    if (!hasToolResult) {
-      if (!isSequenceCancelled(sequenceId)) {
-        setIsAssistantTyping(false)
+      setIsAssistantTyping(true)
+      await wait(ASSISTANT_STEP_DELAY_MS)
+      if (isSequenceCancelled(sequenceId)) {
+        return
       }
-      return
+
+      setIsAssistantTyping(false)
+      setMessagesAf((current) => [
+        ...current,
+        {
+          id: assistantMessageId,
+          role: 'assistant',
+          content: normalizedSegments[index],
+          createdAt: Date.now(),
+          toolResult: isLastSegment ? toolResult : null,
+        },
+      ])
+
+      if (isLastSegment && toolResult) {
+        setPendingActionMessageId(null)
+        setRevealedActionMessageId(assistantMessageId)
+      }
     }
+  }
 
-    setPendingActionMessageId(assistantMessageId)
-    setRevealedActionMessageId(null)
-
-    await wait(ASSISTANT_STEP_DELAY_MS)
-    if (isSequenceCancelled(sequenceId)) {
-      return
-    }
-
-    setRevealedActionMessageId(assistantMessageId)
-    setPendingActionMessageId(null)
-    setIsAssistantTyping(false)
+  async function appendAssistantReplyInSequence(reply: string, toolResult?: Record<string, unknown> | null): Promise<void> {
+    const segments = splitAssistantReply(reply)
+    await appendAssistantSegments(segments, toolResult)
   }
 
   function pushAssistantStatus(content: string): string {
