@@ -631,7 +631,8 @@ def test_finalize_chat_then_yes_routes_to_report_and_not_import(monkeypatch) -> 
     )
     assert report_seen_response.status_code == 200
     report_seen_payload = report_seen_response.json()
-    assert "Réponds : Allons-y !" in report_seen_payload["reply"]
+    assert report_seen_payload["reply"] == "Ton rapport est actuellement précis à 0%.\nJe peux l’améliorer en te posant 2-3 questions rapides."
+    assert report_seen_payload["tool_result"]["action"] == "quick_replies"
     persisted_global_state = profiles_repo.chat_state.get("state", {}).get("global_state", {})
     assert persisted_global_state.get("mode") == "confidence_improvement"
     assert persisted_global_state.get("confidence_step") == "waiting_start"

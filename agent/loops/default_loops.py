@@ -127,6 +127,6 @@ def build_default_loops() -> list[Any]:
         DeterministicLoop("onboarding.import_wait_ready", True, "Ton CSV est-il prêt ? (oui/non)", yes_no, ("import_wait_ready",), "onboarding.categories_intro"),
         DeterministicLoop("onboarding.categories_intro", True, "On va préparer tes catégories personnalisées.", enter_when_substeps=("categories_intro",)),
         DeterministicLoop("onboarding.categories_bootstrap", True, "Je crée les catégories système.", enter_when_substeps=("categories_bootstrap",)),
-        DeterministicLoop("onboarding.report", False, "Es-tu prêt à le découvrir ?", yes_no, ("report_offer", "report_sent"), None, True),
+        DeterministicLoop("onboarding.report", False, "Ton rapport est prêt.", enter_when_substeps=("report_wait_view_confirmation",)),
         DeterministicLoop("household_link.setup", False, "As-tu des dépenses communes à partager ? (oui/non)", yes_no),
     ]

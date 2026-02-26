@@ -660,43 +660,6 @@ def test_classify_merchants_without_category_invalid_ids_not_counted_as_remainin
     assert repo.merchants[1]["category"] == ""
 
 
-def test_report_offer_oui_moves_to_wait_view_confirmation(monkeypatch) -> None:
-    _mock_auth(monkeypatch)
-    repo = _Repo(
-        initial_chat_state={
-            "state": {
-                "last_query": {"month": "2026-01"},
-                "global_state": {
-                    "mode": "onboarding",
-                    "onboarding_step": "report",
-                    "onboarding_substep": "report_offer",
-                    "profile_confirmed": True,
-                    "bank_accounts_confirmed": True,
-                    "has_bank_accounts": True,
-                    "has_imported_transactions": True,
-                    "budget_created": False,
-                },
-            }
-        },
-    )
-    loop = _LoopSpy()
-    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
-    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: loop)
-
-    response = client.post("/agent/chat", json={"message": "OUI"}, headers=_auth_headers())
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["tool_result"]["type"] == "ui_request"
-    assert payload["tool_result"]["name"] == "open_pdf_report"
-    assert "month=2026-01" in payload["tool_result"]["url"]
-    persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
-    assert persisted["mode"] == "onboarding"
-    assert persisted["onboarding_step"] == "report"
-    assert persisted["onboarding_substep"] == "report_wait_view_confirmation"
-    assert loop.called is False
-
-
 def test_free_chat_rapport_pdf_generates_ui_request(monkeypatch) -> None:
     _mock_auth(monkeypatch)
     repo = _Repo(
@@ -2086,30 +2049,6 @@ def test_import_wait_ready_confirmation_returns_import_file(monkeypatch) -> None
     assert payload["tool_result"]["accepted_types"] == ["csv"]
 
 
-def test_report_offer_flow_yes_returns_pdf_tool_result_and_waits_for_view_confirmation(monkeypatch) -> None:
-    _mock_auth(monkeypatch)
-    repo = _Repo(initial_chat_state={"state": {"last_query": {"month": "2026-01"}, "global_state": {"mode": "onboarding", "onboarding_step": "report", "onboarding_substep": "report_offer"}}})
-    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
-    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
-
-    response = client.post("/agent/chat", json={"message": "oui"}, headers=_auth_headers())
-    payload = response.json()
-    assert payload["tool_result"]["type"] == "ui_request"
-    assert payload["tool_result"]["name"] == "open_pdf_report"
-    assert payload["reply"] == "Prends un moment pour consulter ton rapport.\nDis-moi quand tu l’as vu 🙂"
-
-
-def test_report_offer_flow_no_keeps_state(monkeypatch) -> None:
-    _mock_auth(monkeypatch)
-    repo = _Repo(initial_chat_state={"state": {"global_state": {"mode": "onboarding", "onboarding_step": "report", "onboarding_substep": "report_offer"}}})
-    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
-    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
-
-    response = client.post("/agent/chat", json={"message": "non"}, headers=_auth_headers())
-    assert response.json()["reply"] == "Ok 🙂 Dis-moi quand tu veux le voir."
-    assert repo.update_calls == []
-
-
 def test_report_view_confirmation_enters_confidence_improvement(monkeypatch) -> None:
     _mock_auth(monkeypatch)
     repo = _Repo(
@@ -2136,8 +2075,7 @@ def test_report_view_confirmation_enters_confidence_improvement(monkeypatch) -> 
     assert response.status_code == 200
     payload = response.json()
     assert "Ton rapport est actuellement précis à 76%." in payload["reply"]
-    assert "Nous avons des informations pour 67% de tes dépenses." in payload["reply"]
-    assert "Réponds : Allons-y !" in payload["reply"]
+    assert payload["reply"] == "Ton rapport est actuellement précis à 76%.\nJe peux l’améliorer en te posant 2-3 questions rapides."
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
     assert persisted["mode"] == "confidence_improvement"
     assert persisted["onboarding_step"] is None

@@ -12,6 +12,7 @@ import {
   toFormUiAction,
   toLegacyImportUiRequest,
   toOpenImportPanelUiAction,
+  toPdfUiRequest,
   toQuickReplyYesNoUiAction,
 } from './chatUiRequests'
 
@@ -114,6 +115,18 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
 
   function isFormToolResult(toolResult: Record<string, unknown>): boolean {
     return Boolean(toFormUiAction(toolResult))
+  }
+
+  function toQuickRepliesOnlyAction(toolResult: Record<string, unknown>): Record<string, unknown> | null {
+    const quickReplies = toQuickReplyYesNoUiAction(toolResult)
+    if (!quickReplies) {
+      return null
+    }
+    return quickReplies as unknown as Record<string, unknown>
+  }
+
+  function isPdfReportRequest(toolResult: Record<string, unknown>): boolean {
+    return Boolean(toPdfUiRequest(toolResult))
   }
 
   function handleScroll() {
@@ -610,6 +623,13 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
                 return (
                   <div key={message.id}>
                     <div className={messageClasses}>{message.content}</div>
+                    {message.role === 'assistant' && message.toolResult && isPdfReportRequest(message.toolResult) ? (
+                      <div className="msg msg-assistant">
+                        <a href={toPdfUiRequest(message.toolResult)?.url} target="_blank" rel="noopener noreferrer">
+                          📄 Ouvrir le rapport PDF
+                        </a>
+                      </div>
+                    ) : null}
                     {message.role === 'assistant'
                     && message.toolResult
                     && pendingInteractiveIndex === index
@@ -629,9 +649,27 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
                     && message.toolResult
                     && pendingInteractiveIndex === index
                     && !isFormToolResult(message.toolResult)
-                    && isInlineActionableToolResult(message.toolResult) ? (
+                    && isInlineActionableToolResult(message.toolResult)
+                    && !isPdfReportRequest(message.toolResult) ? (
                       <InlineAction
                         actionState={message.toolResult}
+                        disabled={isSending || isAssistantTyping}
+                        onChoose={(value, label) => {
+                          const display = label ? normalizeQuickReplyDisplay(label, value) : normalizeQuickReplyDisplay(undefined, value)
+                          void submitMessage(value, display, true)
+                        }}
+                        onImportFile={(file) => {
+                          void handleImportFile(file)
+                        }}
+                      />
+                    ) : null}
+                    {message.role === 'assistant'
+                    && message.toolResult
+                    && pendingInteractiveIndex === index
+                    && isPdfReportRequest(message.toolResult)
+                    && toQuickRepliesOnlyAction(message.toolResult) ? (
+                      <InlineAction
+                        actionState={toQuickRepliesOnlyAction(message.toolResult) as Record<string, unknown>}
                         disabled={isSending || isAssistantTyping}
                         onChoose={(value, label) => {
                           const display = label ? normalizeQuickReplyDisplay(label, value) : normalizeQuickReplyDisplay(undefined, value)
