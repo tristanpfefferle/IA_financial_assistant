@@ -44,6 +44,7 @@ export type FormUiAction = {
     | 'onboarding_profile_identity'
     | 'onboarding_birth_date'
     | 'onboarding_bank_accounts'
+    | 'profile_update'
   title: string
   fields: FormUiField[]
   submit_label: string
@@ -235,6 +236,7 @@ export function toFormUiAction(value: unknown): FormUiAction | null {
       && formId !== 'onboarding_profile_identity'
       && formId !== 'onboarding_birth_date'
       && formId !== 'onboarding_bank_accounts'
+      && formId !== 'profile_update'
     )
     || typeof title !== 'string'
     || typeof submitLabel !== 'string'

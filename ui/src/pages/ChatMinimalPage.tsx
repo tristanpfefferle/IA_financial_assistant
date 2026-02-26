@@ -1,12 +1,12 @@
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 import { hardResetProfile, importReleves, sendChatMessage } from '../api/agentApi'
-import { ConsolePanel } from '../chat/ConsolePanel'
-import { buildFormSubmitPayload } from '../chat/formSubmit'
-import type { ConsoleOption, ConsoleUiState } from '../chat/types'
+import { ActionBar } from '../chat/ActionBar'
+import { ChatInteractiveCard } from '../chat/ChatInteractiveCard'
+import { extractQuickReplies } from '../chat/extractQuickReplies'
+import { normalizeQuickReplyDisplay } from '../chat/formatters'
 import { supabase } from '../lib/supabaseClient'
-import type { FormUiAction } from './chatUiRequests'
 import {
   toFormUiAction,
   toLegacyImportUiRequest,
@@ -34,43 +34,6 @@ function createMessageId(): string {
   return typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`
 }
 
-function normalizeReplyValue(option: { label: string; value: string }): string {
-  const normalizedValue = option.value.trim().toLowerCase()
-  if (normalizedValue.length > 0) {
-    return normalizedValue
-  }
-  return option.label.trim().toLowerCase()
-}
-
-function normalizeQuickReplyDisplay(label?: string, value?: string): string {
-  const candidate = (label ?? value ?? '').trim()
-  if (!candidate) {
-    return ''
-  }
-
-  if (candidate === '✅') {
-    return 'Oui.'
-  }
-
-  if (candidate === '❌') {
-    return 'Non.'
-  }
-
-  const capitalized = candidate.charAt(0).toLocaleUpperCase('fr-CH') + candidate.slice(1)
-  if (/[.!?…]$/.test(capitalized)) {
-    return capitalized
-  }
-
-  return `${capitalized}.`
-}
-
-function mapQuickReplyOption(option: { id: string; label: string; value: string }, tone?: ConsoleOption['tone']): ConsoleOption {
-  return {
-    ...option,
-    tone: tone ?? 'neutral',
-  }
-}
-
 function randomDelay(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min
 }
@@ -85,275 +48,18 @@ function splitIntoSentences(text: string): string[] {
   return sentences.length > 1 ? sentences : [trimmed]
 }
 
-function extractPrompt(toolResult: Record<string, unknown> | null | undefined): string | undefined {
+function hasInteractiveUi(toolResult: Record<string, unknown> | null | undefined): boolean {
   if (!toolResult) {
-    return undefined
-  }
-  return typeof toolResult.prompt === 'string' && toolResult.prompt.trim().length > 0 ? toolResult.prompt : undefined
-}
-
-function extractConsoleState(messages: ChatMessage[], isSending: boolean): ConsoleUiState {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index]
-    if (message.role !== 'assistant') {
-      continue
-    }
-
-    const action = toQuickReplyYesNoUiAction(message.toolResult)
-    if (action) {
-      const prompt = extractPrompt(message.toolResult)
-      if (action.options.length === 1) {
-        return {
-          mode: 'single_primary',
-          prompt,
-          option: mapQuickReplyOption(action.options[0], 'positive'),
-        }
-      }
-
-      if (action.options.length === 2) {
-        const [firstOption, secondOption] = action.options
-        const normalizedFirst = normalizeReplyValue(firstOption)
-        const normalizedSecond = normalizeReplyValue(secondOption)
-        const hasYesNo = [normalizedFirst, normalizedSecond].includes('oui') && [normalizedFirst, normalizedSecond].includes('non')
-
-        if (hasYesNo) {
-          const yesSource = normalizedFirst === 'oui' ? firstOption : secondOption
-          const noSource = normalizedFirst === 'non' ? firstOption : secondOption
-
-          return {
-            mode: 'yes_no',
-            prompt,
-            yes: mapQuickReplyOption(yesSource, 'positive'),
-            no: mapQuickReplyOption(noSource, 'negative'),
-          }
-        }
-      }
-
-      if (action.options.length <= 12) {
-        return {
-          mode: 'options_grid',
-          prompt,
-          options: action.options.map((option) => mapQuickReplyOption(option)),
-        }
-      }
-
-      return {
-        mode: 'options_list',
-        prompt,
-        options: action.options.map((option) => mapQuickReplyOption(option)),
-      }
-    }
-
-    if (toFormUiAction(message.toolResult)) {
-      return { mode: 'none' }
-    }
-
-    if (!isSending) {
-      const openImportPanel = toOpenImportPanelUiAction(message.toolResult)
-      const legacyImportRequest = toLegacyImportUiRequest(message.toolResult)
-      const acceptedTypes = openImportPanel?.accepted_types ?? legacyImportRequest?.accepted_types ?? ['csv']
-      if (openImportPanel || legacyImportRequest) {
-        return {
-          mode: 'import_file',
-          prompt: extractPrompt(message.toolResult) ?? 'Sélectionne ton fichier CSV.',
-          acceptedTypes,
-          buttonLabel: 'Importer maintenant',
-        }
-      }
-    }
-
-    break
+    return false
   }
 
-  return { mode: 'none' }
-}
-
-type ComposerMode = 'console' | 'form'
-
-type FormCardProps = {
-  formUiAction: FormUiAction
-  isBusy: boolean
-  onSubmitForm: (formId: FormUiAction['form_id'], values: Record<string, string | string[]>) => void
-}
-
-type FormCardHandle = {
-  submit: () => void
-  canSubmit: () => boolean
-}
-
-const FormCard = forwardRef<FormCardHandle, FormCardProps>(function FormCard({ formUiAction, isBusy, onSubmitForm }, ref) {
-  const [values, setValues] = useState<Record<string, string>>(() => {
-    const initialValues: Record<string, string> = {}
-    for (const field of formUiAction.fields) {
-      initialValues[field.id] = field.value ?? field.default_value ?? ''
-    }
-    return initialValues
-  })
-  const [selectedMultiValues, setSelectedMultiValues] = useState<Record<string, Set<string>>>(() => {
-    const initialSelected: Record<string, Set<string>> = {}
-    for (const field of formUiAction.fields) {
-      if (field.type !== 'multi_select' && field.type !== 'multi-select') {
-        continue
-      }
-      const rawSelection = field.value ?? field.default_value ?? ''
-      const selectedValues = rawSelection
-        .split(',')
-        .map((item) => item.trim())
-        .filter((item) => item.length > 0)
-      initialSelected[field.id] = new Set(selectedValues)
-    }
-    return initialSelected
-  })
-
-  useEffect(() => {
-    const nextValues: Record<string, string> = {}
-    const nextSelected: Record<string, Set<string>> = {}
-    for (const field of formUiAction.fields) {
-      nextValues[field.id] = field.value ?? field.default_value ?? ''
-      if (field.type === 'multi_select' || field.type === 'multi-select') {
-        const rawSelection = field.value ?? field.default_value ?? ''
-        nextSelected[field.id] = new Set(
-          rawSelection
-            .split(',')
-            .map((item) => item.trim())
-            .filter((item) => item.length > 0),
-        )
-      }
-    }
-    setValues(nextValues)
-    setSelectedMultiValues(nextSelected)
-  }, [formUiAction])
-
-  function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-
-    const submitValues: Record<string, string | string[]> = { ...values }
-    for (const field of formUiAction.fields) {
-      if (field.type !== 'multi_select' && field.type !== 'multi-select') {
-        continue
-      }
-      submitValues[field.id] = Array.from(selectedMultiValues[field.id] ?? new Set<string>())
-    }
-
-    onSubmitForm(formUiAction.form_id, submitValues)
-  }
-
-  useEffect(() => {
-    for (const field of formUiAction.fields) {
-      if ((field.type === 'multi_select' || field.type === 'multi-select') && (!field.options || field.options.length === 0)) {
-        console.debug('[FormCard] multi_select field without options. Falling back to text input.', {
-          formId: formUiAction.form_id,
-          fieldId: field.id,
-        })
-      }
-    }
-  }, [formUiAction])
-
-  const isRequiredMultiSelectMissing = formUiAction.fields.some((field) => {
-    if (!field.required || (field.type !== 'multi_select' && field.type !== 'multi-select')) {
-      return false
-    }
-    return (selectedMultiValues[field.id]?.size ?? 0) === 0
-  })
-
-  useImperativeHandle(ref, () => ({
-    submit: () => {
-      if (isBusy || isRequiredMultiSelectMissing) {
-        return
-      }
-
-      const submitValues: Record<string, string | string[]> = { ...values }
-      for (const field of formUiAction.fields) {
-        if (field.type !== 'multi_select' && field.type !== 'multi-select') {
-          continue
-        }
-        submitValues[field.id] = Array.from(selectedMultiValues[field.id] ?? new Set<string>())
-      }
-
-      onSubmitForm(formUiAction.form_id, submitValues)
-    },
-    canSubmit: () => {
-      const result = !isBusy && !isRequiredMultiSelectMissing
-      return result
-    },
-  }), [formUiAction, isBusy, isRequiredMultiSelectMissing, onSubmitForm, selectedMultiValues, values])
-
-  const isProfileUpdateForm = String(formUiAction.form_id) === 'profile_update'
-
-  return (
-    <form className="form-card" onSubmit={handleSubmit}>
-      <div className={`form-fields${isProfileUpdateForm ? ' compact' : ''}`}>
-        {formUiAction.fields.map((field) => (
-          <div key={field.id} className="form-field">
-            <span>{field.label}</span>
-            {field.type === 'multi_select' || field.type === 'multi-select' ? (
-              field.options && field.options.length > 0 ? (
-                <div className="form-multi-select-grid" role="group" aria-label={field.label}>
-                  {field.options.map((option) => {
-                    const selected = selectedMultiValues[field.id]?.has(option.value) ?? false
-                    return (
-                      <label key={option.id ?? `${field.id}-${option.value}`} className="form-multi-select-option">
-                        <input
-                          type="checkbox"
-                          checked={selected}
-                          onChange={(event) => {
-                            setSelectedMultiValues((current) => {
-                              const nextSet = new Set(current[field.id] ?? [])
-                              if (event.target.checked) {
-                                nextSet.add(option.value)
-                              } else {
-                                nextSet.delete(option.value)
-                              }
-                              return {
-                                ...current,
-                                [field.id]: nextSet,
-                              }
-                            })
-                          }}
-                        />
-                        <span>{option.label}</span>
-                      </label>
-                    )
-                  })}
-                </div>
-              ) : (
-                <input
-                  id={`form-field-${field.id}`}
-                  type="text"
-                  value={values[field.id] ?? ''}
-                  required={field.required}
-                  placeholder={field.placeholder}
-                  onChange={(event) => {
-                    const nextValue = event.target.value
-                    setValues((current) => ({
-                      ...current,
-                      [field.id]: nextValue,
-                    }))
-                  }}
-                />
-              )
-            ) : (
-              <input
-                id={`form-field-${field.id}`}
-                type={field.type === 'date' ? 'date' : field.type}
-                value={values[field.id] ?? ''}
-                required={field.required}
-                placeholder={field.placeholder}
-                onChange={(event) => {
-                  const nextValue = event.target.value
-                  setValues((current) => ({
-                    ...current,
-                    [field.id]: nextValue,
-                  }))
-                }}
-              />
-            )}
-          </div>
-        ))}
-      </div>
-    </form>
+  return Boolean(
+    toQuickReplyYesNoUiAction(toolResult)
+      || toFormUiAction(toolResult)
+      || toOpenImportPanelUiAction(toolResult)
+      || toLegacyImportUiRequest(toolResult),
   )
-})
+}
 
 export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
   const navigate = useNavigate()
@@ -367,16 +73,14 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
   const [debugMode, setDebugMode] = useState(() => localStorage.getItem('ui_debug_mode') === 'true')
   const [headerMessage, setHeaderMessage] = useState<string | null>(null)
   const [submitErrorMessage, setSubmitErrorMessage] = useState<string | null>(null)
-  const [canSubmitForm, setCanSubmitForm] = useState(false)
   const isMountedRef = useRef(true)
   const assistantSequenceRef = useRef(0)
-  const formCardRef = useRef<FormCardHandle | null>(null)
-  const importPickerTriggerRef = useRef<(() => void) | null>(null)
 
-  const consoleState = useMemo(() => extractConsoleState(messages, isSending), [isSending, messages])
   const latestAssistant = useMemo(() => [...messages].reverse().find((message) => message.role === 'assistant') ?? null, [messages])
-  const formUiAction = useMemo(() => toFormUiAction(latestAssistant?.toolResult), [latestAssistant])
-  const composerMode: ComposerMode = formUiAction ? 'form' : 'console'
+  const actionBarQuickReplies = useMemo(
+    () => extractQuickReplies((latestAssistant?.toolResult as Record<string, unknown> | null | undefined) ?? undefined),
+    [latestAssistant?.toolResult],
+  )
 
   function handleScroll() {
     if (!scrollRef.current) {
@@ -473,18 +177,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
     localStorage.setItem('ui_debug_unlocked', String(debugUnlocked))
   }, [debugUnlocked])
 
-  useEffect(() => {
-    const intervalId = window.setInterval(() => {
-      setCanSubmitForm(formCardRef.current?.canSubmit() ?? false)
-    }, 100)
-
-    return () => {
-      window.clearInterval(intervalId)
-    }
-  }, [])
-
   function handleUnlockDebug() {
-    // TODO: move PIN to a secure/configurable source (backend or runtime config).
     const DEBUG_UNLOCK_PIN = '1234'
     const enteredPin = window.prompt('Entrer le code PIN debug')
 
@@ -684,40 +377,6 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
     }
   }
 
-  function handleDirectOption(option: ConsoleOption) {
-    const display = normalizeQuickReplyDisplay(option.label, option.value)
-    void submitMessage(option.value, display || option.value, true)
-  }
-
-  function handleSendFromDock() {
-    if (composerMode === 'form') {
-      formCardRef.current?.submit()
-      return
-    }
-
-    if (consoleState.mode === 'import_file') {
-      importPickerTriggerRef.current?.()
-      return
-    }
-
-    // No-op for direct option modes handled by click handlers in ConsolePanel.
-  }
-
-  function handleFormSubmit(formId: FormUiAction['form_id'], values: Record<string, string | string[]>) {
-    if (!formUiAction) {
-      return
-    }
-
-    const payload = buildFormSubmitPayload(
-      {
-        ...formUiAction,
-        form_id: formId,
-      },
-      values,
-    )
-    void submitMessage(payload.messageToBackend, payload.humanText)
-  }
-
   function resetLocalChatState() {
     setMessages([])
     setIsSending(false)
@@ -745,7 +404,6 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
       setHeaderMessage(error instanceof Error ? error.message : 'Échec du reset complet.')
     }
   }
-
 
   async function handleLogout() {
     const { error } = await supabase.auth.signOut()
@@ -821,8 +479,20 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
                 ].join(' ')
 
                 return (
-                  <div key={message.id} className={messageClasses}>
-                    {message.content}
+                  <div key={message.id}>
+                    <div className={messageClasses}>{message.content}</div>
+                    {message.role === 'assistant' && message.toolResult && hasInteractiveUi(message.toolResult) ? (
+                      <ChatInteractiveCard
+                        toolResult={message.toolResult}
+                        onSubmit={({ message: nextMessage, humanText }) => {
+                          const display = humanText ?? normalizeQuickReplyDisplay(undefined, nextMessage)
+                          void submitMessage(nextMessage, display, true)
+                        }}
+                        onImport={(file) => {
+                          void handleImportFile(file)
+                        }}
+                      />
+                    ) : null}
                     {debugUnlocked && debugMode && isLastAssistantMessage ? (
                       <details>
                         <summary>Debug payload</summary>
@@ -841,44 +511,14 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
             ) : null}
           </div>
 
-          <div className="console-area">
-            <div className="console-area-inner">
-              {composerMode === 'form' ? (
-                formUiAction ? (
-                  <div className="action-dock" aria-label="Console panel mode form">
-                    <div className="dock-content profile-card">
-                      <FormCard ref={formCardRef} formUiAction={formUiAction} isBusy={isSending || isAssistantTyping} onSubmitForm={handleFormSubmit} />
-                    </div>
-                    <div className="dock-footer">
-                      <button
-                        type="button"
-                        className="dock-send-btn"
-                        disabled={isSending || isAssistantTyping || !canSubmitForm}
-                        onClick={handleSendFromDock}
-                        aria-label="Envoyer"
-                      >
-                        ➤
-                      </button>
-                    </div>
-                  </div>
-                ) : null
-              ) : (
-                <ConsolePanel
-                  uiState={consoleState}
-                  isSending={isSending}
-                  onSelectOption={handleDirectOption}
-                  onTriggerImportPicker={() => {
-                    importPickerTriggerRef.current?.()
-                  }}
-                  registerImportPickerTrigger={(trigger) => {
-                    importPickerTriggerRef.current = trigger
-                  }}
-                  onImportFile={handleImportFile}
-                />
-              )}
-            </div>
-            {submitErrorMessage ? <p className="subtle-text">{submitErrorMessage}</p> : null}
-          </div>
+          <ActionBar
+            onSend={(text) => {
+              void submitMessage(text)
+            }}
+            quickReplies={actionBarQuickReplies}
+            disabled={isSending || isAssistantTyping}
+          />
+          {submitErrorMessage ? <p className="subtle-text">{submitErrorMessage}</p> : null}
         </div>
       </div>
     </main>

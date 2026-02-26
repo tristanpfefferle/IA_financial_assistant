@@ -17,3 +17,25 @@ export function formatFrenchDate(isoDate: string): string {
 
   return frenchDateFormatter.format(date)
 }
+
+export function normalizeQuickReplyDisplay(label?: string, value?: string): string {
+  const candidate = (label ?? value ?? '').trim()
+  if (!candidate) {
+    return ''
+  }
+
+  if (candidate === '✅') {
+    return 'Oui.'
+  }
+
+  if (candidate === '❌') {
+    return 'Non.'
+  }
+
+  const capitalized = candidate.charAt(0).toLocaleUpperCase('fr-CH') + candidate.slice(1)
+  if (/[.!?…]$/.test(capitalized)) {
+    return capitalized
+  }
+
+  return `${capitalized}.`
+}

@@ -1,0 +1,189 @@
+import { useMemo, useRef, useState } from 'react'
+
+import { buildFormSubmitPayload } from './formSubmit'
+import {
+  toFormUiAction,
+  toLegacyImportUiRequest,
+  toOpenImportPanelUiAction,
+  toQuickReplyYesNoUiAction,
+} from '../pages/chatUiRequests'
+
+type InteractiveCardProps = {
+  toolResult: Record<string, unknown>
+  onSubmit: (payload: { message: string; humanText?: string }) => void
+  onImport: (file: File) => void
+}
+
+export function ChatInteractiveCard({ toolResult, onSubmit, onImport }: InteractiveCardProps) {
+  const quickRepliesAction = toQuickReplyYesNoUiAction(toolResult)
+  const formAction = toFormUiAction(toolResult)
+  const openImportPanel = toOpenImportPanelUiAction(toolResult)
+  const legacyImportRequest = toLegacyImportUiRequest(toolResult)
+
+  const [values, setValues] = useState<Record<string, string>>(() => {
+    if (!formAction) {
+      return {}
+    }
+    const initialValues: Record<string, string> = {}
+    for (const field of formAction.fields) {
+      initialValues[field.id] = field.value ?? field.default_value ?? ''
+    }
+    return initialValues
+  })
+
+  const [selectedMultiValues, setSelectedMultiValues] = useState<Record<string, Set<string>>>(() => {
+    if (!formAction) {
+      return {}
+    }
+    const initialSelected: Record<string, Set<string>> = {}
+    for (const field of formAction.fields) {
+      if (field.type !== 'multi_select' && field.type !== 'multi-select') {
+        continue
+      }
+      const rawSelection = field.value ?? field.default_value ?? ''
+      initialSelected[field.id] = new Set(
+        rawSelection
+          .split(',')
+          .map((item) => item.trim())
+          .filter((item) => item.length > 0),
+      )
+    }
+    return initialSelected
+  })
+
+  const fileRef = useRef<HTMLInputElement | null>(null)
+
+  const acceptedFileTypes = useMemo(() => {
+    const acceptedTypes = openImportPanel?.accepted_types ?? legacyImportRequest?.accepted_types ?? ['csv']
+    return acceptedTypes
+      .map((item) => item.trim().replace(/^\./, '').toLowerCase())
+      .filter((item) => item.length > 0)
+      .map((item) => `.${item}`)
+      .join(',')
+  }, [legacyImportRequest?.accepted_types, openImportPanel?.accepted_types])
+
+  if (quickRepliesAction) {
+    return (
+      <div className="chat-card">
+        <div className="quick-replies-row" role="group" aria-label="Actions rapides">
+          {quickRepliesAction.options.map((option) => (
+            <button key={option.id} type="button" className="console-btn console-btn-neutral" onClick={() => onSubmit({ message: option.value })}>
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  if (formAction) {
+    const isProfileUpdateForm = String(formAction.form_id) === 'profile_update'
+    const sortedFields = isProfileUpdateForm
+      ? [
+          ...formAction.fields.filter((field) => field.id === 'first_name' || field.id === 'last_name'),
+          ...formAction.fields.filter((field) => field.id !== 'first_name' && field.id !== 'last_name'),
+        ]
+      : formAction.fields
+
+    return (
+      <form
+        className="chat-card"
+        onSubmit={(event) => {
+          event.preventDefault()
+          const submitValues: Record<string, string | string[]> = { ...values }
+          for (const field of formAction.fields) {
+            if (field.type !== 'multi_select' && field.type !== 'multi-select') {
+              continue
+            }
+            submitValues[field.id] = Array.from(selectedMultiValues[field.id] ?? new Set<string>())
+          }
+          const payload = buildFormSubmitPayload(formAction, submitValues)
+          onSubmit({ message: payload.messageToBackend, humanText: payload.humanText })
+        }}
+      >
+        <div className={`form-fields${isProfileUpdateForm ? ' compact' : ''}`}>
+          {sortedFields.map((field) => (
+            <div key={field.id} className="form-field">
+              <span>{field.label}</span>
+              {field.type === 'multi_select' || field.type === 'multi-select' ? (
+                <div className="form-multi-select-grid">
+                  {field.options?.map((option) => {
+                    const selected = selectedMultiValues[field.id]?.has(option.value) ?? false
+                    return (
+                      <label key={option.id ?? `${field.id}-${option.value}`} className="form-multi-select-option">
+                        <input
+                          type="checkbox"
+                          checked={selected}
+                          onChange={(event) => {
+                            setSelectedMultiValues((current) => {
+                              const nextSet = new Set(current[field.id] ?? [])
+                              if (event.target.checked) {
+                                nextSet.add(option.value)
+                              } else {
+                                nextSet.delete(option.value)
+                              }
+                              return {
+                                ...current,
+                                [field.id]: nextSet,
+                              }
+                            })
+                          }}
+                        />
+                        <span>{option.label}</span>
+                      </label>
+                    )
+                  })}
+                </div>
+              ) : (
+                <input
+                  id={`form-field-${field.id}`}
+                  type={field.type === 'date' ? 'date' : field.type}
+                  value={values[field.id] ?? ''}
+                  required={field.required}
+                  placeholder={field.placeholder}
+                  onChange={(event) => {
+                    const nextValue = event.target.value
+                    setValues((current) => ({
+                      ...current,
+                      [field.id]: nextValue,
+                    }))
+                  }}
+                />
+              )}
+            </div>
+          ))}
+        </div>
+        <div className="dock-footer">
+          <button type="submit" className="dock-send-btn" aria-label="Continuer">
+            ➤
+          </button>
+        </div>
+      </form>
+    )
+  }
+
+  if (openImportPanel || legacyImportRequest) {
+    return (
+      <div className="chat-card import-card">
+        <button type="button" className="console-btn console-btn-positive" onClick={() => fileRef.current?.click()}>
+          Importer
+        </button>
+        <input
+          ref={fileRef}
+          type="file"
+          hidden
+          accept={acceptedFileTypes || '.csv'}
+          onChange={(event) => {
+            const file = event.target.files?.[0]
+            if (file) {
+              onImport(file)
+            }
+            event.target.value = ''
+          }}
+        />
+      </div>
+    )
+  }
+
+  return null
+}
