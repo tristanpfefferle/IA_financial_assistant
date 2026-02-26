@@ -14,6 +14,7 @@ import io
 import secrets
 import unicodedata
 import calendar
+import time
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import lru_cache
 from typing import Any
@@ -60,7 +61,7 @@ from backend.repositories.shared_expenses_repository import SharedExpensesReposi
 from backend.repositories.import_jobs_repository import SupabaseImportJobsRepository
 from backend.services.shared_expenses.effective_spending_adapter import compute_effective_spending_summary_safe
 from backend.services.shared_expenses.suggestion_generator import generate_initial_shared_expense_suggestions
-from shared.models import DateRange, RelevesDirection, ToolError, ToolErrorCode
+from shared.models import DateRange, RelevesDirection, RelevesImportRequest, ToolError, ToolErrorCode
 
 
 logger = logging.getLogger(__name__)
@@ -5771,6 +5772,56 @@ def _emit_import_job_event(
     return seq
 
 
+def _build_throttled_import_progress_emitter(
+    *,
+    repository: SupabaseImportJobsRepository,
+    profile_id: UUID,
+    job_id: UUID,
+    min_interval_seconds: float = 0.8,
+):
+    """Return a throttled emitter for frequent progress updates."""
+
+    last_emitted_at_by_kind: dict[str, float] = {}
+
+    def _emit(
+        *,
+        kind: str,
+        message: str,
+        done: int,
+        total: int,
+        force: bool = False,
+        progress: float | None = None,
+        job_patch: dict[str, Any] | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        total_safe = max(total, 1)
+        done_safe = max(0, min(done, total_safe))
+        now = time.monotonic()
+        should_emit_by_count = done_safe % 25 == 0 or done_safe == total_safe
+        elapsed = now - last_emitted_at_by_kind.get(kind, 0.0)
+        should_emit = force or (should_emit_by_count and elapsed >= min_interval_seconds)
+        if not should_emit:
+            return
+
+        emit_progress = progress if progress is not None else done_safe / total_safe
+        patch_payload = dict(job_patch or {})
+        patch_payload.setdefault("processed_transactions", done_safe)
+        patch_payload.setdefault("total_transactions", total)
+        _emit_import_job_event(
+            repository=repository,
+            profile_id=profile_id,
+            job_id=job_id,
+            kind=kind,
+            message=message,
+            progress=emit_progress,
+            payload=payload,
+            job_patch=patch_payload,
+        )
+        last_emitted_at_by_kind[kind] = now
+
+    return _emit
+
+
 def _run_import_job_pipeline(*, repository: SupabaseImportJobsRepository, profile_id: UUID, payload: ImportRequestPayload, job_id: UUID) -> None:
     """Execute CSV import in background and persist progress events."""
 
@@ -5811,20 +5862,76 @@ def _run_import_job_pipeline(*, repository: SupabaseImportJobsRepository, profil
             repository=repository,
             profile_id=profile_id,
             job_id=job_id,
-            kind="db_insert",
-            message="Import en base de données…",
+            kind="db_insert_progress",
+            message="Import en base de données… (0/1)",
             progress=0.35,
         )
 
-        tool_payload: dict[str, Any] = {
+        total_transactions_hint = total_transactions if isinstance(total_transactions, int) and total_transactions > 0 else 1
+        emit_progress = _build_throttled_import_progress_emitter(
+            repository=repository,
+            profile_id=profile_id,
+            job_id=job_id,
+        )
+        emit_progress(
+            kind="categorization_progress",
+            message=f"Catégorisation… (0/{total_transactions_hint})",
+            done=0,
+            total=total_transactions_hint,
+            force=True,
+            progress=0.45,
+            job_patch={"total_llm_items": total_transactions_hint, "processed_llm_items": 0},
+        )
+
+        request_payload = {
             "files": [{"filename": file.filename, "content_base64": file.content_base64} for file in payload.files],
             "import_mode": payload.import_mode,
             "modified_action": payload.modified_action,
+            "profile_id": str(profile_id),
         }
         if payload.bank_account_id:
-            tool_payload["bank_account_id"] = payload.bank_account_id
+            request_payload["bank_account_id"] = payload.bank_account_id
 
-        result = get_tool_router().call("finance_releves_import_files", tool_payload, profile_id=profile_id)
+        request_model = RelevesImportRequest.model_validate(request_payload)
+        tool_router = get_tool_router()
+
+        def _on_import_progress(stage: str, done: int, total: int) -> None:
+            if stage != "categorization":
+                return
+            emit_progress(
+                kind="categorization_progress",
+                message=f"Catégorisation… ({done}/{total})",
+                done=done,
+                total=total,
+                progress=0.45 + (0.45 * (done / max(total, 1))),
+                job_patch={"processed_llm_items": done, "total_llm_items": total},
+            )
+
+        backend_client = getattr(tool_router, "backend_client", None)
+        if backend_client is not None and hasattr(backend_client, "finance_releves_import_files"):
+            result_obj = backend_client.finance_releves_import_files(request=request_model, on_progress=_on_import_progress)
+            result = jsonable_encoder(result_obj)
+        else:
+            result_obj = tool_router.call(
+                "finance_releves_import_files",
+                {
+                    "files": [{"filename": file.filename, "content_base64": file.content_base64} for file in payload.files],
+                    "import_mode": payload.import_mode,
+                    "modified_action": payload.modified_action,
+                    **({"bank_account_id": payload.bank_account_id} if payload.bank_account_id else {}),
+                },
+                profile_id=profile_id,
+            )
+            result = jsonable_encoder(result_obj)
+            emit_progress(
+                kind="categorization_progress",
+                message=f"Catégorisation… ({total_transactions_hint}/{total_transactions_hint})",
+                done=total_transactions_hint,
+                total=total_transactions_hint,
+                force=True,
+                progress=0.9,
+                job_patch={"processed_llm_items": total_transactions_hint, "total_llm_items": total_transactions_hint},
+            )
 
         processed_transactions = None
         if isinstance(result, dict):
@@ -5836,11 +5943,20 @@ def _run_import_job_pipeline(*, repository: SupabaseImportJobsRepository, profil
             repository=repository,
             profile_id=profile_id,
             job_id=job_id,
+            kind="db_insert_progress",
+            message="Import en base de données… (1/1)",
+            progress=0.92,
+            job_patch={"processed_transactions": processed_transactions},
+        )
+        _emit_import_job_event(
+            repository=repository,
+            profile_id=profile_id,
+            job_id=job_id,
             kind="done",
             message="Import terminé ✅",
             progress=1.0,
             payload={"result": result if isinstance(result, dict) else None},
-            job_patch={"status": "done", "processed_transactions": processed_transactions},
+            job_patch={"status": "done", "processed_transactions": processed_transactions, "result": result if isinstance(result, dict) else None},
         )
     except Exception as exc:
         logger.exception("import_job_pipeline_failed job_id=%s profile_id=%s", job_id, profile_id)
@@ -5918,6 +6034,29 @@ def get_import_job_status(
         processed_transactions=job.processed_transactions,
         total_llm_items=job.total_llm_items,
         processed_llm_items=job.processed_llm_items,
+    )
+
+
+@app.post("/imports/jobs/{job_id}/finalize-chat", response_model=ChatResponse)
+def finalize_import_job_chat(
+    request: Request,
+    job_id: UUID,
+    authorization: str | None = Header(default=None),
+) -> ChatResponse:
+    """Finalize import chat step once async job is complete."""
+
+    _auth_user_id, profile_id = _resolve_authenticated_profile(request, authorization)
+    repository = _get_import_jobs_repository_or_501()
+    job = repository.get_job(profile_id=profile_id, job_id=job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    if job.status != "done":
+        raise HTTPException(status_code=409, detail="job not done")
+
+    result_payload = job.result if isinstance(job.result, dict) else None
+    return ChatResponse(
+        reply="Import terminé ✅",
+        tool_result=result_payload,
     )
 
 

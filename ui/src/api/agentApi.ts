@@ -382,6 +382,21 @@ export async function getImportJobStatus(jobId: string): Promise<ImportJobStatus
   return (await response.json()) as ImportJobStatus
 }
 
+export async function finalizeImportJobChat(jobId: string): Promise<AgentChatResponse> {
+  const response = await fetch(`${getBaseUrl()}/imports/jobs/${encodeURIComponent(jobId)}/finalize-chat`, {
+    method: 'POST',
+    headers: await buildAuthHeaders(),
+    body: JSON.stringify({}),
+  })
+
+  if (!response.ok) {
+    const detail = await extractErrorDetail(response)
+    throw new Error(`Erreur API finalize import (${response.status}): ${detail}`)
+  }
+
+  return (await response.json()) as AgentChatResponse
+}
+
 export async function streamImportJobEvents(
   jobId: string,
   onEvent: (event: ImportJobEvent) => void,

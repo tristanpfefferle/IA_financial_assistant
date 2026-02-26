@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
-import { createImportJob, hardResetProfile, sendChatMessage, streamImportJobEvents, uploadImportFileToJob } from '../api/agentApi'
+import { createImportJob, finalizeImportJobChat, hardResetProfile, sendChatMessage, streamImportJobEvents, uploadImportFileToJob } from '../api/agentApi'
 import { ChatInteractiveCard } from '../chat/ChatInteractiveCard'
 import { InlineAction } from '../chat/InlineAction'
 import { normalizeQuickReplyDisplay } from '../chat/formatters'
@@ -60,6 +60,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
   const [submitErrorMessage, setSubmitErrorMessage] = useState<string | null>(null)
   const isMountedRef = useRef(true)
   const assistantSequenceRef = useRef(0)
+  const lastProgressMessageIdRef = useRef<string | null>(null)
 
   const pendingInteractiveIndex = useMemo(() => {
     let actionIndex = -1
@@ -173,16 +174,24 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
     }
   }
 
-  function pushAssistantStatus(content: string) {
+  function pushAssistantStatus(content: string): string {
+    const id = createMessageId()
     setMessages((current) => [
       ...current,
       {
-        id: createMessageId(),
+        id,
         role: 'assistant',
         content,
         createdAt: Date.now(),
       },
     ])
+    return id
+  }
+
+  function updateAssistantStatus(messageId: string, content: string) {
+    setMessages((current) => current.map((message) => (
+      message.id === messageId ? { ...message, content } : message
+    )))
   }
 
   useEffect(() => {
@@ -398,15 +407,28 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
             return
           }
           displayedSeq.add(event.seq)
-          pushAssistantStatus(event.message)
+
+          const isProgressEvent = event.kind.endsWith('_progress')
+          if (isProgressEvent) {
+            const lastProgressMessageId = lastProgressMessageIdRef.current
+            if (lastProgressMessageId) {
+              updateAssistantStatus(lastProgressMessageId, event.message)
+            } else {
+              lastProgressMessageIdRef.current = pushAssistantStatus(event.message)
+            }
+          } else {
+            lastProgressMessageIdRef.current = null
+            pushAssistantStatus(event.message)
+          }
 
           if (event.kind === 'done') {
             if (stopStreaming) {
               stopStreaming()
             }
-            const response = await sendChatMessage('', { debug: debugMode, requestGreeting: true })
+            const response = await finalizeImportJobChat(jobId)
             await appendAssistantReplyInSequence(response.reply, response.tool_result)
             setIsSending(false)
+            return
           }
 
           if (event.kind === 'error') {
@@ -415,6 +437,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
             }
             setSubmitErrorMessage(event.message)
             setIsSending(false)
+            return
           }
         },
         (errorMessage) => {
@@ -447,7 +470,9 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
     }
   }
 
+
   function resetLocalChatState() {
+    lastProgressMessageIdRef.current = null
     setMessages([])
     setIsSending(false)
     setIsAssistantTyping(false)
