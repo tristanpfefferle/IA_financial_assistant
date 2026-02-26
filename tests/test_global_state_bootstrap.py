@@ -589,18 +589,20 @@ def test_categories_bootstrap_creates_categories_classifies_merchants_and_skips_
     payload = response.json()
     assert payload["reply"] == (
         "Import terminé ✅\n\n"
-        "Je viens de classer tes transactions et de générer ton premier rapport financier.\n\n"
-        "Es-tu prêt à le découvrir ?"
+        "Je viens de générer ton premier rapport financier.\n"
+        "Ouvre-le, puis dis-moi quand tu l’as consulté 🙂"
     )
     assert len(repo.profile_categories) == len(agent_api._SYSTEM_CATEGORIES)
     assert repo.merchants[0]["category"] == "Alimentation"
     assert repo.merchants[1]["category"] == "Autres"
     assert repo.merchants[2]["category"] == ""
-    assert payload["tool_result"] == {"type": "ui_action", "action": "quick_replies", "options": [{"id": "yes", "label": "✅", "value": "oui"}, {"id": "no", "label": "❌", "value": "non"}]}
+    assert payload["tool_result"]["type"] == "ui_request"
+    assert payload["tool_result"]["name"] == "open_pdf_report"
+    assert payload["tool_result"]["quick_replies"] == [{"id": "seen", "label": "J’ai consulté mon rapport", "value": "j_ai_consulte_mon_rapport"}]
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
     assert persisted["mode"] == "onboarding"
     assert persisted["onboarding_step"] == "report"
-    assert persisted["onboarding_substep"] == "report_offer"
+    assert persisted["onboarding_substep"] == "report_wait_view_confirmation"
     assert loop.called is False
 
 
@@ -631,7 +633,9 @@ def test_import_classification_direct_to_pdf_when_already_classified(monkeypatch
     assert response.status_code == 200
     payload = response.json()
     assert "Import terminé ✅" in payload["reply"]
-    assert payload["tool_result"] == {"type": "ui_action", "action": "quick_replies", "options": [{"id": "yes", "label": "✅", "value": "oui"}, {"id": "no", "label": "❌", "value": "non"}]}
+    assert payload["tool_result"]["type"] == "ui_request"
+    assert payload["tool_result"]["name"] == "open_pdf_report"
+    assert payload["tool_result"]["quick_replies"] == [{"id": "seen", "label": "J’ai consulté mon rapport", "value": "j_ai_consulte_mon_rapport"}]
 
 
 
@@ -2127,7 +2131,7 @@ def test_report_view_confirmation_enters_confidence_improvement(monkeypatch) -> 
     monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
     monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
 
-    response = client.post("/agent/chat", json={"message": "Je l'ai vu"}, headers=_auth_headers())
+    response = client.post("/agent/chat", json={"message": "j_ai_consulte_mon_rapport"}, headers=_auth_headers())
 
     assert response.status_code == 200
     payload = response.json()
