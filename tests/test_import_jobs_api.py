@@ -116,7 +116,7 @@ def test_import_job_endpoints_create_upload_and_events(monkeypatch) -> None:
             assert request.files[0].filename == "sample.csv"
             on_progress("parsed_total", 47, 47)
             on_progress("categorization", 47, 47)
-            return {"imported_count": 2}
+            return {"imported_count": 2, "preview": [{"date": "2026-01-02"}, {"date": "2026-01-31"}]}
 
     class _Router:
         def __init__(self) -> None:
@@ -146,6 +146,8 @@ def test_import_job_endpoints_create_upload_and_events(monkeypatch) -> None:
     assert status_response.status_code == 200
     assert status_response.json()["status"] == "done"
     assert repo.jobs[UUID(job_id)].result is not None
+    assert repo.jobs[UUID(job_id)].result["import_start_date"] == "2026-01-02"
+    assert repo.jobs[UUID(job_id)].result["import_end_date"] == "2026-01-31"
 
     finalize_response = client.post(f"/imports/jobs/{job_id}/finalize-chat", headers=headers)
     assert finalize_response.status_code == 200
@@ -177,6 +179,11 @@ def test_import_job_endpoints_create_upload_and_events(monkeypatch) -> None:
     done_event = next(event for event in events if event.kind == "done")
     assert done_event.message == "Traitement terminé."
     assert "done" in kinds
+
+
+    persisted_last_query = profiles_repo.chat_state.get("state", {}).get("last_query", {})
+    persisted_date_range = persisted_last_query.get("filters", {}).get("date_range", {})
+    assert persisted_date_range == {"start_date": "2026-01-02", "end_date": "2026-01-31"}
 
     persisted_global_state = profiles_repo.chat_state.get("state", {}).get("global_state", {})
     assert persisted_global_state.get("onboarding_step") == "report"
@@ -234,7 +241,7 @@ def test_finalize_chat_then_yes_routes_to_report_and_not_import(monkeypatch) -> 
 
     repo = _Repo()
     job_id = repo.create_job(profile_id=profile_id)
-    repo.patch_job(profile_id=profile_id, job_id=job_id, payload={"status": "done", "result": {"imported_count": 4}})
+    repo.patch_job(profile_id=profile_id, job_id=job_id, payload={"status": "done", "result": {"imported_count": 4, "import_start_date": "2026-01-01", "import_end_date": "2026-01-31"}})
     monkeypatch.setattr(agent_api, "_get_import_jobs_repository_or_501", lambda: repo)
 
     client = TestClient(app)
@@ -254,7 +261,7 @@ def test_finalize_chat_then_yes_routes_to_report_and_not_import(monkeypatch) -> 
     assert payload["reply"] == "Voici ton premier rapport financier !"
     assert payload["tool_result"]["type"] == "ui_request"
     assert payload["tool_result"]["name"] == "open_pdf_report"
-    assert payload["tool_result"]["url"]
+    assert payload["tool_result"]["url"] == "/finance/reports/spending.pdf?start_date=2026-01-01&end_date=2026-01-31"
 
 
 def test_finalize_import_job_chat_requires_done_status(monkeypatch) -> None:

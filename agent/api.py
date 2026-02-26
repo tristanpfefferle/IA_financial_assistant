@@ -5918,10 +5918,20 @@ def _run_import_job_pipeline(*, repository: SupabaseImportJobsRepository, profil
             )
 
         processed_transactions = None
+        enriched_result: dict[str, Any] | None = None
         if isinstance(result, dict):
             value = result.get("transactions_imported") or result.get("imported_count")
             if isinstance(value, (int, float)):
                 processed_transactions = int(value)
+
+            enriched_result = dict(result)
+            import_date_range = _extract_import_date_range(enriched_result)
+            if isinstance(import_date_range, dict):
+                start_date = import_date_range.get("start")
+                end_date = import_date_range.get("end")
+                if isinstance(start_date, str) and isinstance(end_date, str):
+                    enriched_result["import_start_date"] = start_date
+                    enriched_result["import_end_date"] = end_date
 
         _emit_import_job_event(
             repository=repository,
@@ -5948,8 +5958,8 @@ def _run_import_job_pipeline(*, repository: SupabaseImportJobsRepository, profil
             kind="done",
             message="Traitement terminé.",
             progress=1.0,
-            payload={"result": result if isinstance(result, dict) else None},
-            job_patch={"status": "done", "processed_transactions": processed_transactions, "result": result if isinstance(result, dict) else None},
+            payload={"result": enriched_result},
+            job_patch={"status": "done", "processed_transactions": processed_transactions, "result": enriched_result},
         )
     except Exception as exc:
         logger.exception("import_job_pipeline_failed job_id=%s profile_id=%s", job_id, profile_id)
@@ -6076,6 +6086,19 @@ def finalize_import_job_chat(
         llm_judge=None,
         registry=registry,
     )
+
+    job_result = job.result if isinstance(job.result, dict) else {}
+    start_date = job_result.get("import_start_date")
+    end_date = job_result.get("import_end_date")
+    if isinstance(start_date, str) and start_date.strip() and isinstance(end_date, str) and end_date.strip():
+        state_dict["last_query"] = {
+            "filters": {
+                "date_range": {
+                    "start_date": start_date.strip(),
+                    "end_date": end_date.strip(),
+                }
+            }
+        }
 
     state_dict["global_state"] = updated_global_state
     if loop_reply.next_loop is None:
