@@ -2,13 +2,15 @@ import { useMemo, useRef, useState } from 'react'
 
 import { buildFormSubmitPayload } from './formSubmit'
 import {
+  openPdfFromUrl,
+} from '../api/agentApi'
+import {
   toFormUiAction,
   toLegacyImportUiRequest,
   toAnyPdfUiRequest,
   toOpenImportPanelUiAction,
   toQuickReplyYesNoUiAction,
 } from '../pages/chatUiRequests'
-import { supabase } from '../lib/supabaseClient'
 
 type InteractiveCardProps = {
   toolResult: Record<string, unknown>
@@ -57,40 +59,6 @@ export function ChatInteractiveCard({ toolResult, onSubmit, onImport }: Interact
   const fileRef = useRef<HTMLInputElement | null>(null)
   const [isDragOver, setIsDragOver] = useState(false)
   const [pdfErrorMessage, setPdfErrorMessage] = useState<string | null>(null)
-
-  async function handleOpenPdf(url: string) {
-    setPdfErrorMessage(null)
-
-    try {
-      const { data } = await supabase.auth.getSession()
-      const accessToken = data.session?.access_token
-      if (!accessToken) {
-        console.warn('No Supabase session found while opening PDF, falling back to window.open(url).')
-        window.open(url, '_blank', 'noopener,noreferrer')
-        return
-      }
-
-      const response = await fetch(url, {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-      })
-
-      if (!response.ok) {
-        throw new Error(`Impossible d'ouvrir le rapport (HTTP ${response.status})`)
-      }
-
-      const blob = await response.blob()
-      const blobUrl = URL.createObjectURL(blob)
-      window.open(blobUrl, '_blank', 'noopener,noreferrer')
-      window.setTimeout(() => {
-        URL.revokeObjectURL(blobUrl)
-      }, 60_000)
-    } catch (error) {
-      console.error('Failed to open PDF report with authenticated fetch', error)
-      setPdfErrorMessage('Impossible d’ouvrir le PDF pour le moment. Réessaie dans quelques instants.')
-    }
-  }
 
   const acceptedFileTypes = useMemo(() => {
     const acceptedTypes = openImportPanel?.accepted_types ?? legacyImportRequest?.accepted_types ?? ['csv']
@@ -207,8 +175,13 @@ export function ChatInteractiveCard({ toolResult, onSubmit, onImport }: Interact
         <button
           type="button"
           className="console-btn console-btn-neutral"
-          onClick={() => {
-            void handleOpenPdf(openPdfAction.url)
+          onClick={async () => {
+            setPdfErrorMessage(null)
+            try {
+              await openPdfFromUrl(openPdfAction.url)
+            } catch {
+              setPdfErrorMessage('Impossible d’ouvrir le PDF pour le moment. Réessaie dans quelques instants.')
+            }
           }}
           aria-label={openPdfAction.title}
         >
