@@ -5549,33 +5549,6 @@ def _fetch_spending_transactions(
 
     rows: list[SpendingTransactionRow] = []
     profiles_repository = get_profiles_repository()
-    merchant_entity_ids: set[UUID] = set()
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        raw_merchant_entity_id = item.get("merchant_entity_id")
-        if raw_merchant_entity_id is None:
-            continue
-        try:
-            merchant_entity_id = (
-                raw_merchant_entity_id
-                if isinstance(raw_merchant_entity_id, UUID)
-                else UUID(str(raw_merchant_entity_id))
-            )
-        except (TypeError, ValueError):
-            continue
-        merchant_entity_ids.add(merchant_entity_id)
-
-    merchant_canonical_name_map: dict[UUID, str] = {}
-    get_canonical_names = getattr(
-        profiles_repository,
-        "get_merchant_entity_canonical_names_by_ids",
-        None,
-    )
-    if callable(get_canonical_names) and merchant_entity_ids:
-        merchant_canonical_name_map = get_canonical_names(
-            merchant_entity_ids=sorted(merchant_entity_ids, key=str),
-        )
 
     for item in items:
         if not isinstance(item, dict):
@@ -5590,27 +5563,10 @@ def _fetch_spending_transactions(
         date_value = item.get("date")
         date_label = str(date_value) if date_value is not None else ""
 
-        merchant_entity_canonical_name: str | None = None
-        raw_merchant_entity_id = item.get("merchant_entity_id")
-        if raw_merchant_entity_id is not None:
-            try:
-                merchant_entity_id = (
-                    raw_merchant_entity_id
-                    if isinstance(raw_merchant_entity_id, UUID)
-                    else UUID(str(raw_merchant_entity_id))
-                )
-            except (TypeError, ValueError):
-                merchant_entity_id = None
-            if merchant_entity_id is not None:
-                merchant_entity_canonical_name = merchant_canonical_name_map.get(
-                    merchant_entity_id
-                )
-
         merchant_raw = _pick_first_non_empty_string(
             [
-                merchant_entity_canonical_name,
-                item.get("merchant_entity_name"),
                 item.get("merchant_entity_canonical_name"),
+                item.get("merchant_entity_name"),
                 item.get("merchant_canonical_name"),
                 item.get("merchant_display_name"),
                 item.get("merchant"),
@@ -5671,7 +5627,6 @@ def _serialize_effective_spending_summary(summary: dict[str, Decimal]) -> dict[s
 def _compute_categorization_confidence_metrics(
     *,
     transactions: list[dict[str, Any]],
-    profiles_repository: ProfilesRepository,
 ) -> tuple[int | None, int | None]:
     """Compute weighted categorization confidence and scored transaction coverage."""
 
@@ -5682,26 +5637,6 @@ def _compute_categorization_confidence_metrics(
     ]
     if not relevant_transactions:
         return None, None
-
-    merchant_entity_ids: set[UUID] = set()
-    for tx in relevant_transactions:
-        raw_merchant_entity_id = tx.get("merchant_entity_id")
-        if raw_merchant_entity_id is None:
-            continue
-        try:
-            merchant_entity_id = (
-                raw_merchant_entity_id if isinstance(raw_merchant_entity_id, UUID) else UUID(str(raw_merchant_entity_id))
-            )
-        except (TypeError, ValueError):
-            continue
-        merchant_entity_ids.add(merchant_entity_id)
-
-    confidence_by_entity_id: dict[UUID, Decimal] = {}
-    get_confidence_map = getattr(profiles_repository, "get_merchant_entity_suggested_confidence_by_ids", None)
-    if callable(get_confidence_map) and merchant_entity_ids:
-        confidence_by_entity_id = get_confidence_map(
-            merchant_entity_ids=sorted(merchant_entity_ids, key=str),
-        )
 
     total_weight = Decimal("0")
     scored_weight = Decimal("0")
@@ -5716,19 +5651,13 @@ def _compute_categorization_confidence_metrics(
         total_weight += weight
 
         confidence = Decimal("0")
-        raw_merchant_entity_id = tx.get("merchant_entity_id")
-        if raw_merchant_entity_id is not None:
+        raw_confidence = tx.get("merchant_entity_suggested_confidence")
+        if raw_confidence is not None:
             try:
-                merchant_entity_id = (
-                    raw_merchant_entity_id if isinstance(raw_merchant_entity_id, UUID) else UUID(str(raw_merchant_entity_id))
-                )
-            except (TypeError, ValueError):
-                merchant_entity_id = None
-            if merchant_entity_id is not None:
-                raw_confidence = confidence_by_entity_id.get(merchant_entity_id)
-                if raw_confidence is not None:
-                    confidence = max(Decimal("0"), min(Decimal("1"), Decimal(str(raw_confidence))))
-                    scored_count += 1
+                confidence = max(Decimal("0"), min(Decimal("1"), Decimal(str(raw_confidence))))
+                scored_count += 1
+            except (InvalidOperation, TypeError, ValueError):
+                confidence = Decimal("0")
 
         scored_weight += weight * confidence
 
@@ -5840,7 +5769,6 @@ def _build_spending_report_payload(
     profiles_repository = get_profiles_repository()
     confidence_score_percent, confidence_coverage_percent = _compute_categorization_confidence_metrics(
         transactions=raw_transactions,
-        profiles_repository=profiles_repository,
     )
 
     return {

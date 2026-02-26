@@ -657,7 +657,7 @@ class SupabaseRelevesRepository:
 
     def list_releves(self, filters: RelevesFilters) -> tuple[list[ReleveBancaire], int | None]:
         select_with_category, _ = self._select_with_category_embed(
-            "id,profile_id,date,libelle,montant,devise,categorie,category_id,payee,merchant_id,bank_account_id"
+            "id,profile_id,date,libelle,montant,devise,categorie,category_id,payee,merchant_id,merchant_entity_id,bank_account_id,merchant_entities(canonical_name,suggested_confidence)"
         )
         query = [
             *self._build_query(filters),
@@ -668,6 +668,22 @@ class SupabaseRelevesRepository:
         rows, total = self._client.get_rows(table="releves_bancaires", query=query, with_count=True)
 
         self._hydrate_category_label(rows)
+        for row in rows:
+            merchant_entities = row.get("merchant_entities")
+            merchant_entity_payload: dict[str, object] | None = None
+            if isinstance(merchant_entities, dict):
+                merchant_entity_payload = merchant_entities
+            elif isinstance(merchant_entities, list):
+                for candidate in merchant_entities:
+                    if isinstance(candidate, dict):
+                        merchant_entity_payload = candidate
+                        break
+
+            if merchant_entity_payload is not None:
+                row["merchant_entity_canonical_name"] = merchant_entity_payload.get("canonical_name")
+                row["merchant_entity_suggested_confidence"] = merchant_entity_payload.get("suggested_confidence")
+
+            row.pop("merchant_entities", None)
 
         return [ReleveBancaire.model_validate(row) for row in rows], total
 
