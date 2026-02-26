@@ -8,9 +8,6 @@ import inspect
 import os
 import re
 import base64
-import asyncio
-import csv
-import io
 import secrets
 import unicodedata
 import calendar
@@ -21,8 +18,8 @@ from datetime import date, datetime
 from uuid import UUID, uuid4
 
 from fastapi.encoders import jsonable_encoder
-from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Query
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi import FastAPI, Header, HTTPException
+from fastapi.responses import JSONResponse, Response
 from fastapi.requests import Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -57,7 +54,6 @@ from backend.db.supabase_client import SupabaseClient, SupabaseRequestError, Sup
 from backend.repositories.profiles_repository import ProfilesRepository, SupabaseProfilesRepository
 from backend.repositories.share_rules_repository import ShareRulesRepository, SupabaseShareRulesRepository
 from backend.repositories.shared_expenses_repository import SharedExpensesRepository, SupabaseSharedExpensesRepository
-from backend.repositories.import_jobs_repository import SupabaseImportJobsRepository
 from backend.services.shared_expenses.effective_spending_adapter import compute_effective_spending_summary_safe
 from backend.services.shared_expenses.suggestion_generator import generate_initial_shared_expense_suggestions
 from shared.models import DateRange, RelevesDirection, ToolError, ToolErrorCode
@@ -2827,25 +2823,6 @@ class ImportRequestPayload(BaseModel):
     modified_action: str = "replace"
 
 
-class ImportJobCreateResponse(BaseModel):
-    """Response payload when creating an async import job."""
-
-    job_id: UUID
-
-
-class ImportJobStatusResponse(BaseModel):
-    """Snapshot payload for async import job status."""
-
-    job_id: UUID
-    status: str
-    error_message: str | None = None
-    updated_at: datetime | None = None
-    total_transactions: int | None = None
-    processed_transactions: int | None = None
-    total_llm_items: int | None = None
-    processed_llm_items: int | None = None
-
-
 class HardResetPayload(BaseModel):
     """Payload for debug hard reset endpoint."""
 
@@ -3003,31 +2980,6 @@ def _try_get_shared_expenses_repository() -> SharedExpensesRepository | None:
         )
     )
     return SupabaseSharedExpensesRepository(client=client)
-
-
-def _try_get_import_jobs_repository() -> SupabaseImportJobsRepository | None:
-    """Return async-import repository when Supabase config is available."""
-
-    supabase_url = _config.supabase_url()
-    supabase_key = _config.supabase_service_role_key()
-    if not supabase_url or not supabase_key:
-        return None
-
-    client = SupabaseClient(
-        settings=SupabaseSettings(
-            url=supabase_url,
-            service_role_key=supabase_key,
-            anon_key=_config.supabase_anon_key(),
-        )
-    )
-    return SupabaseImportJobsRepository(client=client)
-
-
-def _get_import_jobs_repository_or_501() -> SupabaseImportJobsRepository:
-    repository = _try_get_import_jobs_repository()
-    if repository is None:
-        raise HTTPException(status_code=501, detail="imports jobs disabled")
-    return repository
 
 
 def _resolve_authenticated_profile(request: Request, authorization: str | None) -> tuple[UUID, UUID]:
@@ -5724,251 +5676,6 @@ def get_spending_report_pdf(
     except Exception:
         logger.exception("spending_report_failed", extra={"format": "pdf"})
         raise
-
-
-
-
-def _estimate_csv_transactions_count(files: list[ImportFilePayload]) -> int | None:
-    """Return approximate CSV transaction count from uploaded files."""
-
-    total = 0
-    for import_file in files:
-        try:
-            decoded = base64.b64decode(import_file.content_base64, validate=False)
-            content = decoded.decode("utf-8", errors="ignore")
-            rows = list(csv.reader(io.StringIO(content)))
-            if not rows:
-                continue
-            total += max(len(rows) - 1, 0)
-        except Exception:
-            logger.warning("import_jobs_csv_estimation_failed filename=%s", import_file.filename)
-            return None
-    return total
-
-
-def _emit_import_job_event(
-    *,
-    repository: SupabaseImportJobsRepository,
-    profile_id: UUID,
-    job_id: UUID,
-    kind: str,
-    message: str,
-    progress: float | None = None,
-    payload: dict[str, Any] | None = None,
-    job_patch: dict[str, Any] | None = None,
-) -> int:
-    """Persist one import progress event and optional job updates."""
-
-    seq = repository.next_event_seq(job_id=job_id)
-    repository.create_event(job_id=job_id, seq=seq, kind=kind, message=message, progress=progress, payload=payload)
-    patch_payload: dict[str, Any] = {}
-    if job_patch:
-        patch_payload.update(job_patch)
-    if progress is not None and patch_payload.get("status") in {"pending", "running"}:
-        patch_payload["processed_transactions"] = patch_payload.get("processed_transactions")
-    if patch_payload:
-        repository.patch_job(profile_id=profile_id, job_id=job_id, payload=patch_payload)
-    return seq
-
-
-def _run_import_job_pipeline(*, repository: SupabaseImportJobsRepository, profile_id: UUID, payload: ImportRequestPayload, job_id: UUID) -> None:
-    """Execute CSV import in background and persist progress events."""
-
-    try:
-        _emit_import_job_event(
-            repository=repository,
-            profile_id=profile_id,
-            job_id=job_id,
-            kind="started",
-            message="Import lancé.",
-            progress=0.01,
-        )
-        _emit_import_job_event(
-            repository=repository,
-            profile_id=profile_id,
-            job_id=job_id,
-            kind="parsing",
-            message="Lecture du fichier CSV…",
-            progress=0.08,
-        )
-        total_transactions = _estimate_csv_transactions_count(payload.files)
-        parsed_message = (
-            f"CSV lu: {total_transactions} transactions détectées."
-            if total_transactions is not None
-            else "CSV lu: transactions détectées."
-        )
-        _emit_import_job_event(
-            repository=repository,
-            profile_id=profile_id,
-            job_id=job_id,
-            kind="parsed",
-            message=parsed_message,
-            progress=0.2,
-            payload={"total_transactions": total_transactions} if total_transactions is not None else None,
-            job_patch={"total_transactions": total_transactions},
-        )
-        _emit_import_job_event(
-            repository=repository,
-            profile_id=profile_id,
-            job_id=job_id,
-            kind="db_insert",
-            message="Import en base de données…",
-            progress=0.35,
-        )
-
-        tool_payload: dict[str, Any] = {
-            "files": [{"filename": file.filename, "content_base64": file.content_base64} for file in payload.files],
-            "import_mode": payload.import_mode,
-            "modified_action": payload.modified_action,
-        }
-        if payload.bank_account_id:
-            tool_payload["bank_account_id"] = payload.bank_account_id
-
-        result = get_tool_router().call("finance_releves_import_files", tool_payload, profile_id=profile_id)
-
-        processed_transactions = None
-        if isinstance(result, dict):
-            value = result.get("transactions_imported") or result.get("imported_count")
-            if isinstance(value, (int, float)):
-                processed_transactions = int(value)
-
-        _emit_import_job_event(
-            repository=repository,
-            profile_id=profile_id,
-            job_id=job_id,
-            kind="done",
-            message="Import terminé ✅",
-            progress=1.0,
-            payload={"result": result if isinstance(result, dict) else None},
-            job_patch={"status": "done", "processed_transactions": processed_transactions},
-        )
-    except Exception as exc:
-        logger.exception("import_job_pipeline_failed job_id=%s profile_id=%s", job_id, profile_id)
-        _emit_import_job_event(
-            repository=repository,
-            profile_id=profile_id,
-            job_id=job_id,
-            kind="error",
-            message=f"Import interrompu: {exc}",
-            progress=1.0,
-            job_patch={"status": "error", "error_message": str(exc)},
-        )
-
-
-@app.post("/imports/jobs", response_model=ImportJobCreateResponse)
-def create_import_job(request: Request, authorization: str | None = Header(default=None)) -> ImportJobCreateResponse:
-    """Create one async import job for the authenticated profile."""
-
-    _auth_user_id, profile_id = _resolve_authenticated_profile(request, authorization)
-    repository = _get_import_jobs_repository_or_501()
-    job_id = repository.create_job(profile_id=profile_id)
-    return ImportJobCreateResponse(job_id=job_id)
-
-
-@app.post("/imports/jobs/{job_id}/files")
-def upload_import_job_file(
-    request: Request,
-    job_id: UUID,
-    payload: ImportRequestPayload,
-    background_tasks: BackgroundTasks,
-    authorization: str | None = Header(default=None),
-) -> dict[str, bool]:
-    """Attach uploaded CSV file to existing job and start background processing."""
-
-    _auth_user_id, profile_id = _resolve_authenticated_profile(request, authorization)
-    repository = _get_import_jobs_repository_or_501()
-    job = repository.get_job(profile_id=profile_id, job_id=job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail="job not found")
-
-    invalid_filenames = [item.filename for item in payload.files if not item.filename.lower().endswith(".csv")]
-    if invalid_filenames:
-        raise HTTPException(status_code=400, detail="Format invalide. Pour l’instant, seul le format CSV est supporté.")
-
-    repository.patch_job(profile_id=profile_id, job_id=job_id, payload={"status": "running", "error_message": None})
-    background_tasks.add_task(
-        _run_import_job_pipeline,
-        repository=repository,
-        profile_id=profile_id,
-        payload=payload,
-        job_id=job_id,
-    )
-    return {"ok": True}
-
-
-@app.get("/imports/jobs/{job_id}", response_model=ImportJobStatusResponse)
-def get_import_job_status(
-    request: Request,
-    job_id: UUID,
-    authorization: str | None = Header(default=None),
-) -> ImportJobStatusResponse:
-    """Return one job status snapshot for polling fallback."""
-
-    _auth_user_id, profile_id = _resolve_authenticated_profile(request, authorization)
-    repository = _get_import_jobs_repository_or_501()
-    job = repository.get_job(profile_id=profile_id, job_id=job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail="job not found")
-    return ImportJobStatusResponse(
-        job_id=job.id,
-        status=job.status,
-        error_message=job.error_message,
-        updated_at=job.updated_at,
-        total_transactions=job.total_transactions,
-        processed_transactions=job.processed_transactions,
-        total_llm_items=job.total_llm_items,
-        processed_llm_items=job.processed_llm_items,
-    )
-
-
-@app.get("/imports/jobs/{job_id}/events")
-async def stream_import_job_events(
-    request: Request,
-    job_id: UUID,
-    authorization: str | None = Header(default=None),
-    last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
-    last_event_id_query: int | None = Query(default=None, alias="last_event_id"),
-) -> StreamingResponse:
-    """Stream persisted import job progress events via SSE."""
-
-    _auth_user_id, profile_id = _resolve_authenticated_profile(request, authorization)
-    repository = _get_import_jobs_repository_or_501()
-    job = repository.get_job(profile_id=profile_id, job_id=job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail="job not found")
-
-    if isinstance(last_event_id, str) and last_event_id.isdigit():
-        start_seq = int(last_event_id)
-    elif isinstance(last_event_id_query, int) and last_event_id_query >= 0:
-        start_seq = last_event_id_query
-    else:
-        start_seq = 0
-
-    async def _event_stream():
-        last_seq = start_seq
-        while True:
-            if await request.is_disconnected():
-                break
-
-            events = repository.list_events_since(job_id=job_id, after_seq=last_seq, limit=300)
-            for event in events:
-                last_seq = event.seq
-                payload_data = {
-                    "seq": event.seq,
-                    "kind": event.kind,
-                    "message": event.message,
-                    "progress": event.progress,
-                    "payload": event.payload,
-                }
-                yield f"id: {event.seq}\nevent: progress\ndata: {json.dumps(payload_data, ensure_ascii=False)}\n\n"
-
-            current_job = repository.get_job(profile_id=profile_id, job_id=job_id)
-            if current_job is not None and current_job.status in {"done", "error"}:
-                if not events:
-                    break
-            await asyncio.sleep(0.8)
-
-    return StreamingResponse(_event_stream(), media_type="text/event-stream")
 
 
 @app.post("/finance/releves/import")
