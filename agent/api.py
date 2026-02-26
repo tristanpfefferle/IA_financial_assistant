@@ -1381,16 +1381,58 @@ def _is_internal_transfer_payload(row: dict[str, Any]) -> bool:
     category = row.get("categorie")
     return isinstance(category, str) and category.strip().lower() in {"transferts internes", "transfert interne"}
 
-def _build_spending_pdf_url(*, month: str | None = None, start_date: str | None = None, end_date: str | None = None) -> str:
+def _build_spending_pdf_url(
+    *,
+    month: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    bank_account_id: str | None = None,
+) -> str:
     """Build relative spending report endpoint URL with optional period filters."""
 
+    bank_account_query = ""
+    if isinstance(bank_account_id, str) and bank_account_id.strip():
+        bank_account_query = f"&bank_account_id={bank_account_id.strip()}"
+
     if isinstance(month, str) and month.strip():
-        return f"/finance/reports/spending.pdf?month={month.strip()}"
+        return f"/finance/reports/spending.pdf?month={month.strip()}{bank_account_query}"
 
     if isinstance(start_date, str) and isinstance(end_date, str) and start_date.strip() and end_date.strip():
-        return f"/finance/reports/spending.pdf?start_date={start_date.strip()}&end_date={end_date.strip()}"
+        return f"/finance/reports/spending.pdf?start_date={start_date.strip()}&end_date={end_date.strip()}{bank_account_query}"
 
     return "/finance/reports/spending.pdf"
+
+
+def _resolve_last_report_filters(state_dict: dict[str, Any] | None) -> tuple[str | None, str | None, str | None]:
+    """Resolve report date range and bank account filters from conversation state."""
+
+    if not isinstance(state_dict, dict):
+        return None, None, None
+
+    last_import = state_dict.get("last_import")
+    if isinstance(last_import, dict):
+        date_range = last_import.get("date_range")
+        if isinstance(date_range, dict):
+            start_raw = date_range.get("start_date")
+            end_raw = date_range.get("end_date")
+            if isinstance(start_raw, str) and isinstance(end_raw, str) and start_raw.strip() and end_raw.strip():
+                bank_account = last_import.get("bank_account_id")
+                bank_account_value = bank_account.strip() if isinstance(bank_account, str) and bank_account.strip() else None
+                return start_raw.strip(), end_raw.strip(), bank_account_value
+
+    last_query = state_dict.get("last_query")
+    if isinstance(last_query, dict):
+        filters = last_query.get("filters") if isinstance(last_query.get("filters"), dict) else None
+        date_range = filters.get("date_range") if isinstance(filters, dict) else None
+        if isinstance(date_range, dict):
+            start_raw = date_range.get("start_date")
+            end_raw = date_range.get("end_date")
+            if isinstance(start_raw, str) and isinstance(end_raw, str) and start_raw.strip() and end_raw.strip():
+                bank_account = filters.get("bank_account_id") if isinstance(filters, dict) else None
+                bank_account_value = bank_account.strip() if isinstance(bank_account, str) and bank_account.strip() else None
+                return start_raw.strip(), end_raw.strip(), bank_account_value
+
+    return None, None, None
 
 
 def _extract_import_date_range(result: dict[str, Any]) -> dict[str, str] | None:
@@ -4531,20 +4573,15 @@ def agent_chat(
                     month_value: str | None = None
                     start_date_value: str | None = None
                     end_date_value: str | None = None
+                    bank_account_id_value: str | None = None
 
                     last_query = state_dict.get("last_query") if isinstance(state_dict, dict) else None
                     if isinstance(last_query, dict):
                         if isinstance(last_query.get("month"), str) and str(last_query.get("month")).strip():
                             month_value = str(last_query.get("month")).strip()
-                        if month_value is None:
-                            filters = last_query.get("filters") if isinstance(last_query.get("filters"), dict) else None
-                            date_range = filters.get("date_range") if isinstance(filters, dict) else None
-                            if isinstance(date_range, dict):
-                                start_raw = date_range.get("start_date")
-                                end_raw = date_range.get("end_date")
-                                if isinstance(start_raw, str) and isinstance(end_raw, str):
-                                    start_date_value = start_raw
-                                    end_date_value = end_raw
+
+                    if month_value is None:
+                        start_date_value, end_date_value, bank_account_id_value = _resolve_last_report_filters(state_dict)
 
                     if month_value is None and (start_date_value is None or end_date_value is None):
                         resolved_start, resolved_end = _resolve_report_date_range(
@@ -4561,6 +4598,7 @@ def agent_chat(
                         month=month_value,
                         start_date=start_date_value,
                         end_date=end_date_value,
+                        bank_account_id=bank_account_id_value,
                     )
                     updated_global_state = _build_onboarding_global_state(
                         global_state,
@@ -6353,6 +6391,16 @@ def finalize_import_job_chat(
                 resolved_end_date = None
 
         if resolved_start_date and resolved_end_date:
+            last_import_payload: dict[str, Any] = {
+                "date_range": {
+                    "start_date": resolved_start_date,
+                    "end_date": resolved_end_date,
+                }
+            }
+            if isinstance(bank_account_id, str) and bank_account_id.strip():
+                last_import_payload["bank_account_id"] = bank_account_id.strip()
+            state_dict["last_import"] = last_import_payload
+
             last_query = state_dict.get("last_query") if isinstance(state_dict.get("last_query"), dict) else {}
             filters = last_query.get("filters") if isinstance(last_query.get("filters"), dict) else {}
             filters["date_range"] = {
@@ -6372,6 +6420,8 @@ def finalize_import_job_chat(
             onboarding_substep="report_offer",
         )
     )
+
+    state_dict["global_state"] = updated_global_state
 
     registry = get_loop_registry()
     loop_reply = route_message(

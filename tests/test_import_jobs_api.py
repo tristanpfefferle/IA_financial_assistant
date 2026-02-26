@@ -200,6 +200,8 @@ def test_import_job_endpoints_create_upload_and_events(monkeypatch) -> None:
     persisted_global_state = profiles_repo.chat_state.get("state", {}).get("global_state", {})
     assert persisted_global_state.get("onboarding_step") == "report"
     assert persisted_global_state.get("onboarding_substep") == "report_offer"
+    persisted_last_import = profiles_repo.chat_state.get("state", {}).get("last_import", {})
+    assert persisted_last_import.get("date_range") == {"start_date": "2026-01-01", "end_date": "2026-01-31"}
     persisted_last_query = profiles_repo.chat_state.get("state", {}).get("last_query", {})
     date_range = persisted_last_query.get("filters", {}).get("date_range", {})
     assert date_range == {"start_date": "2026-01-01", "end_date": "2026-01-31"}
@@ -624,6 +626,10 @@ def test_finalize_chat_uses_import_date_range_for_report_url(monkeypatch) -> Non
     finalize_response = client.post(f"/imports/jobs/{job_id}/finalize-chat", headers=headers)
     assert finalize_response.status_code == 200
 
+    persisted_last_import = profiles_repo.chat_state["state"]["last_import"]
+    assert persisted_last_import["date_range"] == {"start_date": "2026-01-01", "end_date": "2026-03-31"}
+    assert persisted_last_import["bank_account_id"] == imported_bank_account_id
+
     persisted_filters = profiles_repo.chat_state["state"]["last_query"]["filters"]
     assert persisted_filters["date_range"] == {"start_date": "2026-01-01", "end_date": "2026-03-31"}
     assert persisted_filters["bank_account_id"] == imported_bank_account_id
@@ -634,7 +640,10 @@ def test_finalize_chat_uses_import_date_range_for_report_url(monkeypatch) -> Non
         json={"message": "Oui"},
     )
     assert yes_response.status_code == 200
-    assert yes_response.json()["tool_result"]["url"] == "/finance/reports/spending.pdf?start_date=2026-01-01&end_date=2026-03-31"
+    assert yes_response.json()["tool_result"]["url"] == (
+        "/finance/reports/spending.pdf?start_date=2026-01-01&end_date=2026-03-31"
+        "&bank_account_id=11111111-1111-1111-1111-111111111111"
+    )
 
 
 def test_finalize_import_job_chat_requires_done_status(monkeypatch) -> None:
