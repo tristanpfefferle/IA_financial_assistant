@@ -158,6 +158,28 @@ export function toOpenPdfUiAction(value: unknown): OpenPdfUiAction | null {
   }
 }
 
+export function toAnyPdfUiRequest(value: unknown): { url: string; label: string; title: string } | null {
+  const pdfUiRequest = toPdfUiRequest(value)
+  if (pdfUiRequest) {
+    return {
+      url: pdfUiRequest.url,
+      label: 'Ouvrir le PDF',
+      title: 'Rapport mensuel (PDF)',
+    }
+  }
+
+  const openPdfAction = toOpenPdfUiAction(value)
+  if (openPdfAction) {
+    return {
+      url: openPdfAction.url,
+      label: openPdfAction.label,
+      title: openPdfAction.title,
+    }
+  }
+
+  return null
+}
+
 export function toQuickReplyYesNoUiAction(value: unknown): QuickReplyYesNoUiAction | null {
   if (!value || typeof value !== 'object') {
     return null

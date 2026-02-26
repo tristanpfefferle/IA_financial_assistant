@@ -587,8 +587,11 @@ def test_categories_bootstrap_creates_categories_classifies_merchants_and_skips_
 
     assert response.status_code == 200
     payload = response.json()
-    assert "Import terminé ✅" in payload["reply"]
-    assert "Es-tu prêt à voir ton rapport mensuel ?" in payload["reply"]
+    assert payload["reply"] == (
+        "Import terminé ✅\n\n"
+        "Je viens de classer tes transactions et de générer ton premier rapport financier.\n\n"
+        "Es-tu prêt à le découvrir ?"
+    )
     assert len(repo.profile_categories) == len(agent_api._SYSTEM_CATEGORIES)
     assert repo.merchants[0]["category"] == "Alimentation"
     assert repo.merchants[1]["category"] == "Autres"
@@ -2087,8 +2090,9 @@ def test_report_offer_flow_yes_returns_pdf_tool_result(monkeypatch) -> None:
 
     response = client.post("/agent/chat", json={"message": "oui"}, headers=_auth_headers())
     payload = response.json()
+    assert payload["tool_result"]["type"] == "ui_request"
     assert payload["tool_result"]["name"] == "open_pdf_report"
-    assert "Parfait, le voici" in payload["reply"]
+    assert payload["reply"] == "Voici ton premier rapport financier !"
 
 
 def test_report_offer_flow_no_keeps_state(monkeypatch) -> None:

@@ -4,8 +4,8 @@ import { buildFormSubmitPayload } from './formSubmit'
 import {
   toFormUiAction,
   toLegacyImportUiRequest,
+  toAnyPdfUiRequest,
   toOpenImportPanelUiAction,
-  toOpenPdfUiAction,
   toQuickReplyYesNoUiAction,
 } from '../pages/chatUiRequests'
 
@@ -19,7 +19,7 @@ export function ChatInteractiveCard({ toolResult, onSubmit, onImport }: Interact
   const quickRepliesAction = toQuickReplyYesNoUiAction(toolResult)
   const formAction = toFormUiAction(toolResult)
   const openImportPanel = toOpenImportPanelUiAction(toolResult)
-  const openPdfAction = toOpenPdfUiAction(toolResult)
+  const openPdfAction = toAnyPdfUiRequest(toolResult)
   const legacyImportRequest = toLegacyImportUiRequest(toolResult)
 
   const [values, setValues] = useState<Record<string, string>>(() => {
