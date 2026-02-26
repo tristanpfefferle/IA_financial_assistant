@@ -637,10 +637,22 @@ def test_finalize_chat_then_yes_routes_to_report_and_not_import(monkeypatch) -> 
     )
     assert yes_response.status_code == 200
     payload = yes_response.json()
-    assert payload["reply"] == "Voici ton premier rapport financier !"
     assert payload["tool_result"]["type"] == "ui_request"
     assert payload["tool_result"]["name"] == "open_pdf_report"
+    assert payload["reply"] == "Prends un moment pour consulter ton rapport.\nDis-moi quand tu l’as vu 🙂"
     assert payload["tool_result"]["url"]
+
+    report_seen_response = client.post(
+        "/agent/chat",
+        headers=headers,
+        json={"message": "Je l’ai vu"},
+    )
+    assert report_seen_response.status_code == 200
+    report_seen_payload = report_seen_response.json()
+    assert "Réponds : Allons-y !" in report_seen_payload["reply"]
+    persisted_global_state = profiles_repo.chat_state.get("state", {}).get("global_state", {})
+    assert persisted_global_state.get("mode") == "confidence_improvement"
+    assert persisted_global_state.get("confidence_step") == "waiting_start"
 
 
 def test_finalize_chat_uses_import_date_range_for_report_url(monkeypatch) -> None:
