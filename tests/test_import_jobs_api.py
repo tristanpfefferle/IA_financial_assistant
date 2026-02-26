@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 import agent.api as agent_api
 from agent.api import app
+from shared.models import RelevesImportMode
 
 
 @dataclass
@@ -111,10 +112,14 @@ def test_import_job_endpoints_create_upload_and_events(monkeypatch) -> None:
 
     monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: profiles_repo)
 
+    captured_import_mode: RelevesImportMode | None = None
+
     class _BackendClient:
         def finance_releves_import_files(self, *, request: Any, on_progress: Any):
+            nonlocal captured_import_mode
             assert request.files[0].filename == "sample.csv"
             assert str(request.bank_account_id) == "11111111-1111-1111-1111-111111111111"
+            captured_import_mode = request.import_mode
             on_progress("parsed_total", 47, 47)
             on_progress("categorization", 47, 47)
             return {
@@ -155,6 +160,7 @@ def test_import_job_endpoints_create_upload_and_events(monkeypatch) -> None:
     status_response = client.get(f"/imports/jobs/{job_id}", headers=headers)
     assert status_response.status_code == 200
     assert status_response.json()["status"] == "done"
+    assert captured_import_mode == RelevesImportMode.COMMIT
     assert repo.jobs[UUID(job_id)].result is not None
     assert repo.jobs[UUID(job_id)].result["bank_account_id"] == "11111111-1111-1111-1111-111111111111"
     assert repo.jobs[UUID(job_id)].result["import_start_date"] == "2026-01-01"

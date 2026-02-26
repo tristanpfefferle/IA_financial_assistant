@@ -59,7 +59,7 @@ from backend.repositories.shared_expenses_repository import SharedExpensesReposi
 from backend.repositories.import_jobs_repository import SupabaseImportJobsRepository
 from backend.services.shared_expenses.effective_spending_adapter import compute_effective_spending_summary_safe
 from backend.services.shared_expenses.suggestion_generator import generate_initial_shared_expense_suggestions
-from shared.models import DateRange, RelevesDirection, RelevesImportRequest, ToolError, ToolErrorCode
+from shared.models import DateRange, RelevesDirection, RelevesImportMode, RelevesImportRequest, ToolError, ToolErrorCode
 
 
 logger = logging.getLogger(__name__)
@@ -6089,14 +6089,24 @@ def _run_import_job_pipeline(*, repository: SupabaseImportJobsRepository, profil
 
         request_payload = {
             "files": files_payload,
-            "import_mode": payload.import_mode,
             "modified_action": payload.modified_action,
             "profile_id": str(profile_id),
         }
+        if "import_mode" in payload.model_fields_set:
+            request_payload["import_mode"] = payload.import_mode
+        request_payload.setdefault("import_mode", RelevesImportMode.COMMIT.value)
         if selected_bank_account_id:
             request_payload["bank_account_id"] = selected_bank_account_id
 
         request_model = RelevesImportRequest.model_validate(request_payload)
+        if request_model.import_mode != RelevesImportMode.COMMIT:
+            logger.warning(
+                "import_job_pipeline_forced_commit_mode job_id=%s profile_id=%s import_mode=%s",
+                job_id,
+                profile_id,
+                request_model.import_mode,
+            )
+            request_model = request_model.model_copy(update={"import_mode": RelevesImportMode.COMMIT})
         tool_router = get_tool_router()
 
         def _on_import_progress(stage: str, done: int, total: int) -> None:
