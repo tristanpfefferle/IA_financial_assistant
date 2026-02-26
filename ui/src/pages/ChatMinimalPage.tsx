@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
-import { createImportJob, finalizeImportJobChat, hardResetProfile, sendChatMessage, streamImportJobEvents, uploadImportFileToJob } from '../api/agentApi'
+import { createImportJob, finalizeImportJobChat, hardResetProfile, openPdfFromUrl, sendChatMessage, streamImportJobEvents, uploadImportFileToJob } from '../api/agentApi'
 import { ChatInteractiveCard } from '../chat/ChatInteractiveCard'
 import { InlineAction } from '../chat/InlineAction'
 import { normalizeQuickReplyDisplay } from '../chat/formatters'
@@ -117,12 +117,12 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
     return Boolean(toFormUiAction(toolResult))
   }
 
-  function toQuickRepliesOnlyAction(toolResult: Record<string, unknown>): Record<string, unknown> | null {
-    const quickReplies = toQuickReplyYesNoUiAction(toolResult)
-    if (!quickReplies) {
+  function toQuickRepliesAction(toolResult: Record<string, unknown>): Record<string, unknown> | null {
+    const quickRepliesAction = toQuickReplyYesNoUiAction(toolResult)
+    if (!quickRepliesAction) {
       return null
     }
-    return quickReplies as unknown as Record<string, unknown>
+    return quickRepliesAction as unknown as Record<string, unknown>
   }
 
   function isPdfReportRequest(toolResult: Record<string, unknown>): boolean {
@@ -625,9 +625,20 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
                     <div className={messageClasses}>{message.content}</div>
                     {message.role === 'assistant' && message.toolResult && isPdfReportRequest(message.toolResult) ? (
                       <div className="msg msg-assistant">
-                        <a href={toPdfUiRequest(message.toolResult)?.url} target="_blank" rel="noopener noreferrer">
+                        <button
+                          type="button"
+                          className="link-button"
+                          onClick={(event) => {
+                            event.preventDefault()
+                            const pdfUi = toPdfUiRequest(message.toolResult as Record<string, unknown>)
+                            if (!pdfUi) {
+                              return
+                            }
+                            void openPdfFromUrl(pdfUi.url)
+                          }}
+                        >
                           📄 Ouvrir le rapport PDF
-                        </a>
+                        </button>
                       </div>
                     ) : null}
                     {message.role === 'assistant'
@@ -667,9 +678,9 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
                     && message.toolResult
                     && pendingInteractiveIndex === index
                     && isPdfReportRequest(message.toolResult)
-                    && toQuickRepliesOnlyAction(message.toolResult) ? (
+                    && toQuickRepliesAction(message.toolResult) ? (
                       <InlineAction
-                        actionState={toQuickRepliesOnlyAction(message.toolResult) as Record<string, unknown>}
+                        actionState={toQuickRepliesAction(message.toolResult) as Record<string, unknown>}
                         disabled={isSending || isAssistantTyping}
                         onChoose={(value, label) => {
                           const display = label ? normalizeQuickReplyDisplay(label, value) : normalizeQuickReplyDisplay(undefined, value)
