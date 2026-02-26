@@ -5514,7 +5514,7 @@ def _fetch_spending_transactions(
     *,
     profile_id: UUID,
     payload: dict[str, Any],
-) -> tuple[list[SpendingTransactionRow], bool, bool]:
+) -> tuple[list[SpendingTransactionRow], bool, bool, list[dict[str, Any]]]:
     """Fetch all period transactions for spending PDF detail page."""
 
     router = get_tool_router()
@@ -5524,6 +5524,8 @@ def _fetch_spending_transactions(
         "offset": 0,
         "include_internal_transfers": True,
     }
+    if payload.get("bank_account_id"):
+        query_payload["bank_account_id"] = payload.get("bank_account_id")
     result = router.call("finance_releves_search", query_payload, profile_id=profile_id)
 
     if isinstance(result, ToolError) and result.code == ToolErrorCode.UNKNOWN_TOOL:
@@ -5538,12 +5540,12 @@ def _fetch_spending_transactions(
                 "error_message": result.message,
             },
         )
-        return [], False, True
+        return [], False, True, []
 
     payload_dict = jsonable_encoder(result)
     items = payload_dict.get("items") if isinstance(payload_dict, dict) else None
     if not isinstance(items, list):
-        return [], False, False
+        return [], False, False, []
 
     rows: list[SpendingTransactionRow] = []
     profiles_repository = get_profiles_repository()
@@ -5652,7 +5654,7 @@ def _fetch_spending_transactions(
 
     total = payload_dict.get("total") if isinstance(payload_dict, dict) else None
     truncated = isinstance(total, int) and total > len(rows)
-    return rows, truncated, False
+    return rows, truncated, False, [item for item in items if isinstance(item, dict)]
 
 
 def _serialize_effective_spending_summary(summary: dict[str, Decimal]) -> dict[str, str]:
@@ -5666,11 +5668,90 @@ def _serialize_effective_spending_summary(summary: dict[str, Decimal]) -> dict[s
     }
 
 
+def _compute_categorization_confidence_metrics(
+    *,
+    transactions: list[dict[str, Any]],
+    profiles_repository: ProfilesRepository,
+) -> tuple[int | None, int | None]:
+    """Compute weighted categorization confidence and scored transaction coverage."""
+
+    relevant_transactions = [
+        tx
+        for tx in transactions
+        if isinstance(tx, dict) and not _is_internal_transfer_payload(tx)
+    ]
+    if not relevant_transactions:
+        return None, None
+
+    merchant_entity_ids: set[UUID] = set()
+    for tx in relevant_transactions:
+        raw_merchant_entity_id = tx.get("merchant_entity_id")
+        if raw_merchant_entity_id is None:
+            continue
+        try:
+            merchant_entity_id = (
+                raw_merchant_entity_id if isinstance(raw_merchant_entity_id, UUID) else UUID(str(raw_merchant_entity_id))
+            )
+        except (TypeError, ValueError):
+            continue
+        merchant_entity_ids.add(merchant_entity_id)
+
+    confidence_by_entity_id: dict[UUID, Decimal] = {}
+    get_confidence_map = getattr(profiles_repository, "get_merchant_entity_suggested_confidence_by_ids", None)
+    if callable(get_confidence_map) and merchant_entity_ids:
+        confidence_by_entity_id = get_confidence_map(
+            merchant_entity_ids=sorted(merchant_entity_ids, key=str),
+        )
+
+    total_weight = Decimal("0")
+    scored_weight = Decimal("0")
+    scored_count = 0
+
+    for tx in relevant_transactions:
+        raw_amount = tx.get("montant")
+        try:
+            weight = abs(Decimal(str(raw_amount)))
+        except (InvalidOperation, TypeError, ValueError):
+            continue
+        total_weight += weight
+
+        confidence = Decimal("0")
+        raw_merchant_entity_id = tx.get("merchant_entity_id")
+        if raw_merchant_entity_id is not None:
+            try:
+                merchant_entity_id = (
+                    raw_merchant_entity_id if isinstance(raw_merchant_entity_id, UUID) else UUID(str(raw_merchant_entity_id))
+                )
+            except (TypeError, ValueError):
+                merchant_entity_id = None
+            if merchant_entity_id is not None:
+                raw_confidence = confidence_by_entity_id.get(merchant_entity_id)
+                if raw_confidence is not None:
+                    confidence = max(Decimal("0"), min(Decimal("1"), Decimal(str(raw_confidence))))
+                    scored_count += 1
+
+        scored_weight += weight * confidence
+
+    score_percent = None
+    if total_weight > 0:
+        score_percent = int((Decimal("100") * scored_weight / total_weight).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+    total_count = len(relevant_transactions)
+    coverage_percent = None
+    if total_count > 0:
+        coverage_percent = int(
+            (Decimal("100") * Decimal(scored_count) / Decimal(total_count)).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+        )
+
+    return score_percent, coverage_percent
+
+
 def _build_spending_report_payload(
     *,
     profile_id: UUID,
     period_start: date,
     period_end: date,
+    bank_account_id: str | None = None,
 ) -> dict[str, Any]:
     """Build spending report payload shared by JSON and PDF endpoints."""
 
@@ -5681,6 +5762,7 @@ def _build_spending_report_payload(
         },
         "direction": RelevesDirection.DEBIT_ONLY.value,
         "include_internal_transfers": False,
+        "bank_account_id": bank_account_id,
     }
     tool_router = get_tool_router()
     backend_client = getattr(tool_router, "backend_client", None)
@@ -5751,9 +5833,14 @@ def _build_spending_report_payload(
         shared_expenses_repository=shared_repository,
     )
 
-    transactions, transactions_truncated, transactions_unavailable = _fetch_spending_transactions(
+    transactions, transactions_truncated, transactions_unavailable, raw_transactions = _fetch_spending_transactions(
         profile_id=profile_id,
         payload=payload,
+    )
+    profiles_repository = get_profiles_repository()
+    confidence_score_percent, confidence_coverage_percent = _compute_categorization_confidence_metrics(
+        transactions=raw_transactions,
+        profiles_repository=profiles_repository,
     )
 
     return {
@@ -5791,6 +5878,8 @@ def _build_spending_report_payload(
         "transactions_truncated": transactions_truncated,
         "transactions_unavailable": transactions_unavailable,
         "effective_spending": _serialize_effective_spending_summary(effective_spending_summary),
+        "categorization_confidence_score_percent": confidence_score_percent,
+        "categorization_confidence_coverage_percent": confidence_coverage_percent,
     }
 
 
@@ -5821,6 +5910,16 @@ def _build_spending_report_pdf_data(payload: dict[str, Any]) -> SpendingReportDa
         shared_outgoing=Decimal(str(effective_spending.get("outgoing") or "0")),
         shared_incoming=Decimal(str(effective_spending.get("incoming") or "0")),
         shared_net_balance=Decimal(str(effective_spending.get("net_balance") or "0")),
+        categorization_confidence_score_percent=(
+            int(payload.get("categorization_confidence_score_percent"))
+            if payload.get("categorization_confidence_score_percent") is not None
+            else None
+        ),
+        categorization_confidence_coverage_percent=(
+            int(payload.get("categorization_confidence_coverage_percent"))
+            if payload.get("categorization_confidence_coverage_percent") is not None
+            else None
+        ),
         categories=[
             SpendingCategoryRow(name=str(row.get("name") or "Autres"), amount=Decimal(str(row.get("amount") or "0")))
             for row in categories_payload
@@ -5849,6 +5948,7 @@ def get_spending_report_json(
     start_date: str | None = None,
     end_date: str | None = None,
     month: str | None = None,
+    bank_account_id: str | None = None,
 ) -> dict[str, Any]:
     try:
         auth_user_id, profile_id = _resolve_authenticated_profile(request, authorization)
@@ -5872,7 +5972,7 @@ def get_spending_report_json(
                 "format": "json",
             },
         )
-        return _build_spending_report_payload(profile_id=profile_id, period_start=period_start, period_end=period_end)
+        return _build_spending_report_payload(profile_id=profile_id, period_start=period_start, period_end=period_end, bank_account_id=bank_account_id)
     except Exception:
         logger.exception("spending_report_failed", extra={"format": "json"})
         raise
@@ -5885,6 +5985,7 @@ def get_spending_report_pdf(
     start_date: str | None = None,
     end_date: str | None = None,
     month: str | None = None,
+    bank_account_id: str | None = None,
 ) -> Response:
     try:
         auth_user_id, profile_id = _resolve_authenticated_profile(request, authorization)
@@ -5909,7 +6010,7 @@ def get_spending_report_pdf(
             },
         )
 
-        report_payload = _build_spending_report_payload(profile_id=profile_id, period_start=period_start, period_end=period_end)
+        report_payload = _build_spending_report_payload(profile_id=profile_id, period_start=period_start, period_end=period_end, bank_account_id=bank_account_id)
 
         filename_period = (
             period_start.strftime("%Y-%m") if period_start.day == 1 else f"{period_start.isoformat()}_{period_end.isoformat()}"
