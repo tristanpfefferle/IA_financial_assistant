@@ -8,6 +8,7 @@ from decimal import Decimal
 from uuid import UUID
 
 from fastapi.testclient import TestClient
+import pytest
 
 import agent.api as agent_api
 from agent.api import app
@@ -17,6 +18,12 @@ from shared.models import ToolError, ToolErrorCode
 
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def _clear_spending_pdf_cache() -> None:
+    agent_api._SPENDING_PDF_CACHE.clear()
+
 AUTH_USER_ID = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
 PROFILE_ID = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 
@@ -948,6 +955,62 @@ def test_spending_report_pdf_returns_pdf_two_pages_and_calls_search(monkeypatch)
     assert search_calls[0]["date_range"] == {"start_date": "2026-01-01", "end_date": "2026-01-31"}
     assert search_calls[0]["include_internal_transfers"] is True
     assert "direction" not in search_calls[0]
+
+
+def test_spending_report_pdf_uses_ttl_cache(monkeypatch) -> None:
+    _mock_authenticated(monkeypatch)
+    agent_api._SPENDING_PDF_CACHE.clear()
+
+    class _Repo:
+        def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None):
+            assert auth_user_id == AUTH_USER_ID
+            assert email == "user@example.com"
+            return PROFILE_ID
+
+        def get_chat_state(self, *, profile_id: UUID, user_id: UUID):
+            assert profile_id == PROFILE_ID
+            assert user_id == AUTH_USER_ID
+            return {}
+
+        def update_chat_state(self, *, profile_id: UUID, user_id: UUID, chat_state: dict[str, Any]) -> None:
+            return None
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: _Repo())
+
+    class _Router:
+        def call(self, tool_name: str, payload: dict, *, profile_id: UUID | None = None):
+            assert profile_id == PROFILE_ID
+            if tool_name == "finance_releves_sum":
+                return {"total": "0", "count": 0, "average": "0", "currency": "CHF"}
+            if tool_name == "finance_releves_aggregate":
+                return {"group_by": payload.get("group_by"), "currency": "CHF", "groups": {}}
+            if tool_name == "finance_releves_search":
+                return {"items": [], "limit": 500, "offset": 0, "total": 0}
+            raise AssertionError(tool_name)
+
+    monkeypatch.setattr(agent_api, "get_tool_router", lambda: _Router())
+
+    calls = {"count": 0}
+
+    def _fake_generate(_data):
+        calls["count"] += 1
+        return b"%PDF-1.4 cache-test"
+
+    monkeypatch.setattr(agent_api, "generate_spending_report_pdf", _fake_generate)
+
+    first = client.get(
+        "/finance/reports/spending.pdf?start_date=2099-01-01&end_date=2099-01-31",
+        headers=_auth_headers(),
+    )
+    second = client.get(
+        "/finance/reports/spending.pdf?start_date=2099-01-01&end_date=2099-01-31",
+        headers=_auth_headers(),
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert calls["count"] == 1
+    agent_api._SPENDING_PDF_CACHE.clear()
 
 
 def test_spending_report_pdf_uses_last_query_filters_date_range(monkeypatch) -> None:

@@ -2074,8 +2074,16 @@ def test_report_view_confirmation_enters_confidence_improvement(monkeypatch) -> 
 
     assert response.status_code == 200
     payload = response.json()
-    assert "Ton rapport est actuellement précis à 76%." in payload["reply"]
-    assert payload["reply"] == "Ton rapport est actuellement précis à 76%.\nJe peux l’améliorer en te posant 2-3 questions rapides."
+    assert payload["reply"] == (
+        "Très bien ! Ce premier rapport donne une indication des entrées et sorties de ton compte et de la répartition de tes dépenses sur la période du relevé bancaire que tu as importé.\n\n"
+        "Notre système utilise une catégorisation automatique par IA. Dans ton cas, le taux de précision estimé est de 76% — ça donne déjà une bonne idée d’où est parti ton argent.\n\n"
+        "Pour rendre le rapport encore plus pertinent, j’aimerais te poser quelques questions. L’objectif est d’atteindre une précision supérieure à 95%, afin d’être dans les meilleures dispositions pour construire ton budget.\n\n"
+        "Es-tu prêt ? Ça ne te prendra que quelques minutes 🙂"
+    )
+    assert payload["tool_result"]["options"] == [
+        {"id": "yes", "label": "✅", "value": "oui"},
+        {"id": "no", "label": "❌", "value": "non"},
+    ]
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
     assert persisted["mode"] == "confidence_improvement"
     assert persisted["onboarding_step"] is None
@@ -2083,7 +2091,7 @@ def test_report_view_confirmation_enters_confidence_improvement(monkeypatch) -> 
     assert persisted["confidence_step"] == "waiting_start"
 
 
-def test_confidence_waiting_start_allons_y_moves_to_shared_expenses_offer(monkeypatch) -> None:
+def test_confidence_waiting_start_yes_moves_to_shared_expenses_offer(monkeypatch) -> None:
     _mock_auth(monkeypatch)
     repo = _Repo(
         initial_chat_state={
@@ -2100,15 +2108,85 @@ def test_confidence_waiting_start_allons_y_moves_to_shared_expenses_offer(monkey
     monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
     monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
 
-    response = client.post("/agent/chat", json={"message": "Allons-y !"}, headers=_auth_headers())
+    response = client.post("/agent/chat", json={"message": "oui"}, headers=_auth_headers())
 
     assert response.status_code == 200
-    assert response.json()["reply"] == "Commençons par un point important :\nCertaines dépenses sont-elles partagées avec quelqu’un ?"
+    assert response.json()["reply"] == (
+        "Commençons par vérifier que les transactions de ton compte représentent bien ta réalité.\n\n"
+        "Dans certaines situations (colocation, concubinage), une personne paie des dépenses communes puis se fait rembourser ensuite via des virements bancaires ou TWINT.\n\n"
+        "Ce fonctionnement peut fausser la lecture du rapport. Pour gérer ça, on a un système de partage de transactions qui garantit une précision optimale pour chaque personne concernée.\n\n"
+        "Es-tu intéressé par cette fonctionnalité ? (c’est surtout utile si ça arrive régulièrement chaque mois)"
+    )
+    assert response.json()["tool_result"]["options"] == [
+        {"id": "yes", "label": "✅", "value": "oui"},
+        {"id": "no", "label": "❌", "value": "non"},
+    ]
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
     assert persisted["mode"] == "confidence_improvement"
     assert persisted["confidence_step"] == "shared_expenses_offer"
 
 
+
+
+
+def test_confidence_waiting_start_no_keeps_waiting_start(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "confidence_improvement",
+                    "onboarding_step": None,
+                    "onboarding_substep": None,
+                    "confidence_step": "waiting_start",
+                }
+            }
+        }
+    )
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
+
+    response = client.post("/agent/chat", json={"message": "non"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert response.json()["reply"] == "Ok 🙂 Dis-moi quand tu seras prêt."
+    assert response.json()["tool_result"]["options"] == [
+        {"id": "yes", "label": "✅", "value": "oui"},
+        {"id": "no", "label": "❌", "value": "non"},
+    ]
+    assert repo.update_calls == []
+
+
+def test_confidence_shared_expenses_offer_yes_starts_account_link_setup(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={
+            "state": {
+                "global_state": {
+                    "mode": "confidence_improvement",
+                    "onboarding_step": None,
+                    "onboarding_substep": None,
+                    "confidence_step": "shared_expenses_offer",
+                }
+            },
+            "active_task": None,
+        }
+    )
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
+
+    response = client.post("/agent/chat", json={"message": "oui"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert response.json()["reply"] == "Parfait 🙂 On va configurer le partage."
+    persisted_chat_state = repo.update_calls[-1]["chat_state"]
+    persisted_global_state = persisted_chat_state["state"]["global_state"]
+    assert persisted_global_state["confidence_step"] is None
+    assert persisted_chat_state["active_task"] == {
+        "type": "account_link_setup",
+        "step": "ask_has_shared_expenses",
+        "draft": {},
+    }
 
 def test_reconnect_onboarding_substep_without_loop_answers_expected_question(monkeypatch) -> None:
     _mock_auth(monkeypatch)

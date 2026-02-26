@@ -631,8 +631,17 @@ def test_finalize_chat_then_yes_routes_to_report_and_not_import(monkeypatch) -> 
     )
     assert report_seen_response.status_code == 200
     report_seen_payload = report_seen_response.json()
-    assert report_seen_payload["reply"] == "Ton rapport est actuellement précis à 0%.\nJe peux l’améliorer en te posant 2-3 questions rapides."
+    assert report_seen_payload["reply"] == (
+        "Très bien ! Ce premier rapport donne une indication des entrées et sorties de ton compte et de la répartition de tes dépenses sur la période du relevé bancaire que tu as importé.\n\n"
+        "Notre système utilise une catégorisation automatique par IA. Dans ton cas, le taux de précision estimé est de 0% — ça donne déjà une bonne idée d’où est parti ton argent.\n\n"
+        "Pour rendre le rapport encore plus pertinent, j’aimerais te poser quelques questions. L’objectif est d’atteindre une précision supérieure à 95%, afin d’être dans les meilleures dispositions pour construire ton budget.\n\n"
+        "Es-tu prêt ? Ça ne te prendra que quelques minutes 🙂"
+    )
     assert report_seen_payload["tool_result"]["action"] == "quick_replies"
+    assert report_seen_payload["tool_result"]["options"] == [
+        {"id": "yes", "label": "✅", "value": "oui"},
+        {"id": "no", "label": "❌", "value": "non"},
+    ]
     persisted_global_state = profiles_repo.chat_state.get("state", {}).get("global_state", {})
     assert persisted_global_state.get("mode") == "confidence_improvement"
     assert persisted_global_state.get("confidence_step") == "waiting_start"

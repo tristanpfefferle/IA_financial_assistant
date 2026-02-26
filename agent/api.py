@@ -65,6 +65,95 @@ from shared.models import DateRange, RelevesDirection, RelevesImportMode, Releve
 logger = logging.getLogger(__name__)
 
 
+_SPENDING_PDF_CACHE_TTL_SECONDS = 10 * 60
+_SPENDING_PDF_CACHE_MAX_ENTRIES = 32
+_SPENDING_PDF_CACHE: dict[str, tuple[float, bytes]] = {}
+
+
+def _build_spending_pdf_cache_key(*, profile_id: UUID, period_start: date, period_end: date, bank_account_id: str | None) -> str:
+    """Return the in-memory PDF cache key."""
+
+    return f"{profile_id}:{period_start.isoformat()}:{period_end.isoformat()}:{bank_account_id or ''}"
+
+
+def _purge_spending_pdf_cache(now_ts: float | None = None) -> None:
+    """Remove expired cache entries and evict oldest records above max size."""
+
+    now = now_ts if isinstance(now_ts, float) else time.time()
+    expired_keys = [key for key, (created_at, _bytes) in _SPENDING_PDF_CACHE.items() if now - created_at >= _SPENDING_PDF_CACHE_TTL_SECONDS]
+    for key in expired_keys:
+        _SPENDING_PDF_CACHE.pop(key, None)
+
+    while len(_SPENDING_PDF_CACHE) > _SPENDING_PDF_CACHE_MAX_ENTRIES:
+        oldest_key = next(iter(_SPENDING_PDF_CACHE), None)
+        if oldest_key is None:
+            break
+        _SPENDING_PDF_CACHE.pop(oldest_key, None)
+
+
+def _get_or_create_spending_pdf_bytes(
+    *,
+    profile_id: UUID,
+    period_start: date,
+    period_end: date,
+    bank_account_id: str | None,
+    report_payload: dict[str, Any],
+) -> bytes:
+    """Return spending report PDF bytes from cache or generate and cache them."""
+
+    now_ts = time.time()
+    _purge_spending_pdf_cache(now_ts)
+    cache_key = _build_spending_pdf_cache_key(
+        profile_id=profile_id,
+        period_start=period_start,
+        period_end=period_end,
+        bank_account_id=bank_account_id,
+    )
+    cached_entry = _SPENDING_PDF_CACHE.get(cache_key)
+    if cached_entry and now_ts - cached_entry[0] < _SPENDING_PDF_CACHE_TTL_SECONDS:
+        return cached_entry[1]
+
+    pdf_bytes = generate_spending_report_pdf(_build_spending_report_pdf_data(report_payload))
+    _SPENDING_PDF_CACHE.pop(cache_key, None)
+    _SPENDING_PDF_CACHE[cache_key] = (time.time(), pdf_bytes)
+    _purge_spending_pdf_cache()
+    return pdf_bytes
+
+
+def _warm_spending_pdf_cache(
+    *,
+    profile_id: UUID,
+    period_start: date,
+    period_end: date,
+    bank_account_id: str | None,
+) -> None:
+    """Warm spending report PDF cache on a best-effort basis."""
+
+    try:
+        report_payload = _build_spending_report_payload(
+            profile_id=profile_id,
+            period_start=period_start,
+            period_end=period_end,
+            bank_account_id=bank_account_id,
+        )
+        _get_or_create_spending_pdf_bytes(
+            profile_id=profile_id,
+            period_start=period_start,
+            period_end=period_end,
+            bank_account_id=bank_account_id,
+            report_payload=report_payload,
+        )
+    except Exception:
+        logger.exception(
+            "spending_report_pdf_cache_warmup_failed",
+            extra={
+                "profile_id": str(profile_id),
+                "start_date": period_start.isoformat(),
+                "end_date": period_end.isoformat(),
+            },
+        )
+
+
 def _is_debug_request(request: Request, x_debug: str | None = None) -> bool:
     """Return whether debug error details should be included in responses."""
 
@@ -2125,8 +2214,21 @@ def _build_confidence_intro_reply(state_dict: dict[str, Any]) -> str:
     except (TypeError, ValueError):
         score_value = 0
     return (
-        f"Ton rapport est actuellement précis à {score_value}%.\n"
-        "Je peux l’améliorer en te posant 2-3 questions rapides."
+        "Très bien ! Ce premier rapport donne une indication des entrées et sorties de ton compte et de la répartition de tes dépenses sur la période du relevé bancaire que tu as importé.\n\n"
+        f"Notre système utilise une catégorisation automatique par IA. Dans ton cas, le taux de précision estimé est de {score_value}% — ça donne déjà une bonne idée d’où est parti ton argent.\n\n"
+        "Pour rendre le rapport encore plus pertinent, j’aimerais te poser quelques questions. L’objectif est d’atteindre une précision supérieure à 95%, afin d’être dans les meilleures dispositions pour construire ton budget.\n\n"
+        "Es-tu prêt ? Ça ne te prendra que quelques minutes 🙂"
+    )
+
+
+def _build_shared_expenses_offer_reply() -> str:
+    """Return shared expenses explanation shown during confidence improvement."""
+
+    return (
+        "Commençons par vérifier que les transactions de ton compte représentent bien ta réalité.\n\n"
+        "Dans certaines situations (colocation, concubinage), une personne paie des dépenses communes puis se fait rembourser ensuite via des virements bancaires ou TWINT.\n\n"
+        "Ce fonctionnement peut fausser la lecture du rapport. Pour gérer ça, on a un système de partage de transactions qui garantit une précision optimale pour chaque personne concernée.\n\n"
+        "Es-tu intéressé par cette fonctionnalité ? (c’est surtout utile si ça arrive régulièrement chaque mois)"
     )
 
 
@@ -4674,6 +4776,20 @@ def agent_chat(
                         bank_account_id=bank_account_id_value,
                     )
 
+                    warm_start, warm_end = _resolve_report_date_range(
+                        month=month_value,
+                        start_date=start_date_value,
+                        end_date=end_date_value,
+                        state_dict=state_dict,
+                        profile_id=profile_id,
+                    )
+                    _warm_spending_pdf_cache(
+                        profile_id=profile_id,
+                        period_start=warm_start,
+                        period_end=warm_end,
+                        bank_account_id=bank_account_id_value,
+                    )
+
                     updated_global_state = _build_onboarding_global_state(
                         global_state,
                         onboarding_step="report",
@@ -4719,7 +4835,7 @@ def agent_chat(
                     )
                     return _chat_response(
                         reply=_build_confidence_intro_reply(state_dict),
-                        tool_result=_build_onboarding_intro_quick_replies_ui_action(),
+                        tool_result=_build_quick_reply_yes_no_ui_action(),
                         plan=None,
                     )
                 month_value: str | None = None
@@ -4759,7 +4875,7 @@ def agent_chat(
                 )
 
             if mode == "confidence_improvement" and global_state.get("confidence_step") == "waiting_start":
-                if _is_allons_y(payload.message):
+                if _is_yes(payload.message):
                     updated_global_state = {
                         **dict(global_state),
                         "confidence_step": "shared_expenses_offer",
@@ -4773,13 +4889,67 @@ def agent_chat(
                         chat_state=updated_chat_state,
                     )
                     return _chat_response(
-                        reply="Commençons par un point important :\nCertaines dépenses sont-elles partagées avec quelqu’un ?",
+                        reply=_build_shared_expenses_offer_reply(),
+                        tool_result=_build_quick_reply_yes_no_ui_action(),
+                        plan=None,
+                    )
+                if _is_no(payload.message):
+                    return _chat_response(
+                        reply="Ok 🙂 Dis-moi quand tu seras prêt.",
+                        tool_result=_build_quick_reply_yes_no_ui_action(),
+                        plan=None,
+                    )
+                return _chat_response(
+                    reply="Réponds simplement par oui ou non 🙂",
+                    tool_result=_build_quick_reply_yes_no_ui_action(),
+                    plan=None,
+                )
+
+            if mode == "confidence_improvement" and global_state.get("confidence_step") == "shared_expenses_offer":
+                if _is_yes(payload.message):
+                    next_global_state = {
+                        **dict(global_state),
+                        "confidence_step": None,
+                    }
+                    state_dict["global_state"] = next_global_state
+                    updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                    updated_chat_state["state"] = state_dict
+                    updated_chat_state["active_task"] = {
+                        "type": "account_link_setup",
+                        "step": "ask_has_shared_expenses",
+                        "draft": {},
+                    }
+                    profiles_repository.update_chat_state(
+                        profile_id=profile_id,
+                        user_id=auth_user_id,
+                        chat_state=updated_chat_state,
+                    )
+                    return _chat_response(
+                        reply="Parfait 🙂 On va configurer le partage.",
+                        tool_result=None,
+                        plan=None,
+                    )
+                if _is_no(payload.message):
+                    next_global_state = {
+                        **dict(global_state),
+                        "confidence_step": None,
+                    }
+                    state_dict["global_state"] = next_global_state
+                    updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                    updated_chat_state["state"] = state_dict
+                    profiles_repository.update_chat_state(
+                        profile_id=profile_id,
+                        user_id=auth_user_id,
+                        chat_state=updated_chat_state,
+                    )
+                    return _chat_response(
+                        reply="Ok 🙂 Pas de souci. On passera au point suivant (catégories) juste après.",
                         tool_result=None,
                         plan=None,
                     )
                 return _chat_response(
-                    reply="Quand tu veux, on lance l’amélioration.",
-                    tool_result=_build_onboarding_intro_quick_replies_ui_action(),
+                    reply="Réponds simplement par oui ou non 🙂",
+                    tool_result=_build_quick_reply_yes_no_ui_action(),
                     plan=None,
                 )
 
@@ -6126,7 +6296,13 @@ def get_spending_report_pdf(
         filename_period = (
             period_start.strftime("%Y-%m") if period_start.day == 1 else f"{period_start.isoformat()}_{period_end.isoformat()}"
         )
-        pdf_bytes = generate_spending_report_pdf(_build_spending_report_pdf_data(report_payload))
+        pdf_bytes = _get_or_create_spending_pdf_bytes(
+            profile_id=profile_id,
+            period_start=period_start,
+            period_end=period_end,
+            bank_account_id=bank_account_id,
+            report_payload=report_payload,
+        )
         return Response(
             content=pdf_bytes,
             media_type="application/pdf",
@@ -6716,6 +6892,20 @@ def finalize_import_job_chat(
         month=month_value,
         start_date=start_date_value,
         end_date=end_date_value,
+        bank_account_id=bank_account_id_value,
+    )
+
+    warm_start, warm_end = _resolve_report_date_range(
+        month=month_value,
+        start_date=start_date_value,
+        end_date=end_date_value,
+        state_dict=state_dict,
+        profile_id=profile_id,
+    )
+    _warm_spending_pdf_cache(
+        profile_id=profile_id,
+        period_start=warm_start,
+        period_end=warm_end,
         bank_account_id=bank_account_id_value,
     )
 
