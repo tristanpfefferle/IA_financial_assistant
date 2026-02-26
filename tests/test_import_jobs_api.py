@@ -329,6 +329,12 @@ def test_import_job_pipeline_auto_selects_detected_bank_account(monkeypatch) -> 
     )
     assert upload_response.status_code == 200
     assert captured_request["bank_account_id"] == "11111111-1111-1111-1111-111111111111"
+    events = repo.events[UUID(job_id)]
+    bank_detected_event = next(event for event in events if event.kind == "bank_detected")
+    assert bank_detected_event.message == "Banque détectée : UBS\nCompte associé : UBS"
+    bank_detected_index = next(index for index, event in enumerate(events) if event.kind == "bank_detected")
+    started_index = next(index for index, event in enumerate(events) if event.kind == "started")
+    assert bank_detected_index < started_index
 
 
 def test_import_job_pipeline_errors_when_detected_bank_has_no_account(monkeypatch) -> None:

@@ -4142,29 +4142,6 @@ def agent_chat(
                                 user_id=auth_user_id,
                                 chat_state=updated_chat_state,
                             )
-                        elif len(existing_accounts) > 1:
-                            updated_global_state = _build_onboarding_global_state(
-                                global_state,
-                                onboarding_step="import",
-                                onboarding_substep="import_select_account",
-                            )
-                            state_dict["global_state"] = updated_global_state
-                            updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
-                            updated_chat_state["state"] = state_dict
-                            profiles_repository.update_chat_state(
-                                profile_id=profile_id,
-                                user_id=auth_user_id,
-                                chat_state=updated_chat_state,
-                            )
-                            return _chat_response(
-                                reply=(
-                                    "J’ai besoin du compte cible avant l’import. "
-                                    f"Comptes dispo: {_format_accounts_for_reply(existing_accounts)}."
-                                ),
-                                tool_result=None,
-                                plan=None,
-                            )
-
                     return _chat_response(
                         reply="Parfait 🙂\n\nClique sur « Importer maintenant » pour sélectionner ton fichier CSV.",
                         tool_result=_build_import_file_ui_request(state_dict.get("import_context")),
@@ -5946,23 +5923,6 @@ def _run_import_job_pipeline(*, repository: SupabaseImportJobsRepository, profil
     """Execute CSV import in background and persist progress events."""
 
     try:
-        _emit_import_job_event(
-            repository=repository,
-            profile_id=profile_id,
-            job_id=job_id,
-            kind="started",
-            message="Import lancé.",
-            progress=0.01,
-        )
-        _emit_import_job_event(
-            repository=repository,
-            profile_id=profile_id,
-            job_id=job_id,
-            kind="parsing",
-            message="Lecture du fichier CSV…",
-            progress=0.08,
-        )
-
         total_transactions_hint = 1
         parsed_total_received = False
         emit_progress = _build_throttled_import_progress_emitter(
@@ -5982,8 +5942,8 @@ def _run_import_job_pipeline(*, repository: SupabaseImportJobsRepository, profil
         files_payload = [{"filename": file.filename, "content_base64": file.content_base64} for file in payload.files]
         detected_bank_code = _detect_bank_code_from_import_files(files_payload)
 
+        profiles_repository = get_profiles_repository()
         if not selected_bank_account_id and detected_bank_code:
-            profiles_repository = get_profiles_repository()
             try:
                 selected_bank_account_id = _resolve_bank_account_id_from_bank_code(
                     profiles_repository,
@@ -6023,6 +5983,46 @@ def _run_import_job_pipeline(*, repository: SupabaseImportJobsRepository, profil
                     job_patch={"status": "error", "error_message": error_message},
                 )
                 return
+
+        selected_bank_account_name: str | None = None
+        if selected_bank_account_id and hasattr(profiles_repository, "list_bank_accounts"):
+            bank_accounts = profiles_repository.list_bank_accounts(profile_id=profile_id)
+            for account in bank_accounts:
+                account_id = str(account.get("id") or "").strip()
+                if account_id != selected_bank_account_id:
+                    continue
+                candidate_name = str(account.get("name") or "").strip()
+                if candidate_name:
+                    selected_bank_account_name = candidate_name
+                break
+
+        if detected_bank_code and selected_bank_account_id:
+            account_label = selected_bank_account_name or selected_bank_account_id
+            _emit_import_job_event(
+                repository=repository,
+                profile_id=profile_id,
+                job_id=job_id,
+                kind="bank_detected",
+                message=f"Banque détectée : {detected_bank_code.upper()}\nCompte associé : {account_label}",
+                progress=0.01,
+            )
+
+        _emit_import_job_event(
+            repository=repository,
+            profile_id=profile_id,
+            job_id=job_id,
+            kind="started",
+            message="Import lancé.",
+            progress=0.02,
+        )
+        _emit_import_job_event(
+            repository=repository,
+            profile_id=profile_id,
+            job_id=job_id,
+            kind="parsing",
+            message="Lecture du fichier CSV…",
+            progress=0.08,
+        )
 
         request_payload = {
             "files": files_payload,
