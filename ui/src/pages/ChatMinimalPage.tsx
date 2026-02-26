@@ -381,12 +381,6 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
       return
     }
 
-    const pendingToolResult = pendingInteractiveIndex >= 0 ? messages[pendingInteractiveIndex]?.toolResult : null
-    const openImportAction = pendingToolResult ? toOpenImportPanelUiAction(pendingToolResult) : null
-    const legacyImportRequest = pendingToolResult ? toLegacyImportUiRequest(pendingToolResult) : null
-    const selectedBankAccountId = openImportAction?.bank_account_id ?? legacyImportRequest?.bank_account_id
-
-
     setSubmitErrorMessage(null)
     setMessages((current) => [
       ...current,
@@ -412,7 +406,6 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
             content_base64: contentBase64,
           },
         ],
-        ...(selectedBankAccountId ? { bank_account_id: selectedBankAccountId } : {}),
       })
 
       pushAssistantStatus('OK — import en cours. Je te tiens au courant étape par étape.')
@@ -453,7 +446,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
             return
           }
 
-          const isProgressEvent = event.kind.endsWith('_progress')
+          const isProgressEvent = event.kind.endsWith('_progress') && event.kind !== 'bank_detected'
           if (isProgressEvent) {
             const lastProgressMessageId = lastProgressMessageIdRef.current
             if (lastProgressMessageId) {
