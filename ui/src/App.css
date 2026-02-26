@@ -362,19 +362,58 @@ button:disabled {
 }
 
 .msg-quick-reply {
-  opacity: 0.82;
+  opacity: 1;
   cursor: pointer;
-  transition: opacity 120ms ease, transform 120ms ease;
+  transition: transform 120ms ease, box-shadow 160ms ease, border-color 160ms ease, background-color 160ms ease;
   text-align: left;
 }
 
-.msg-quick-reply:hover:not(:disabled) {
-  opacity: 1;
+.msg-quick-reply--pending {
+  background: rgba(90, 120, 255, 0.2);
+  border: 1px solid rgba(120, 150, 255, 0.55);
+  box-shadow: 0 0 0 1px rgba(120, 150, 255, 0.35), 0 10px 30px rgba(90, 120, 255, 0.18);
+  color: #eaf0ff;
+  animation: quickReplyIn 180ms cubic-bezier(0.2, 0.9, 0.3, 1) both;
+}
+
+.msg-quick-reply--pending::after {
+  background: rgba(90, 120, 255, 0.2);
+  border-right: 1px solid rgba(120, 150, 255, 0.55);
+  border-bottom: 1px solid rgba(120, 150, 255, 0.55);
+}
+
+.msg-quick-reply--pending:hover:not(:disabled) {
   transform: translateY(-1px);
+  box-shadow: 0 0 0 1px rgba(138, 163, 255, 0.5), 0 14px 34px rgba(90, 120, 255, 0.28);
+}
+
+.msg-quick-reply--pending:active:not(:disabled) {
+  transform: scale(0.98);
+  box-shadow: 0 0 0 1px rgba(138, 163, 255, 0.46), 0 9px 18px rgba(90, 120, 255, 0.22);
 }
 
 .msg-quick-reply:disabled {
   cursor: not-allowed;
+}
+
+@keyframes quickReplyIn {
+  from {
+    opacity: 0;
+    transform: translateX(7px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .msg-quick-reply,
+  .msg-quick-reply--pending {
+    transition: none;
+    animation: none;
+  }
 }
 
 .input-field {

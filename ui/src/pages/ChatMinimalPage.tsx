@@ -720,7 +720,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
                           <button
                             key={option.id}
                             type="button"
-                            className="msg msg-user msg-quick-reply"
+                            className="msg msg-user msg-quick-reply msg-quick-reply--pending"
                             disabled={isSending || isAssistantTyping}
                             onClick={() => {
                               const display = normalizeQuickReplyDisplay(option.label, option.value)
