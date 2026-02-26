@@ -22,6 +22,7 @@ class _Job:
     processed_transactions: int | None = None
     total_llm_items: int | None = None
     processed_llm_items: int | None = None
+    result: dict[str, Any] | None = None
 
 
 @dataclass
@@ -117,6 +118,11 @@ def test_import_job_endpoints_create_upload_and_events(monkeypatch) -> None:
     status_response = client.get(f"/imports/jobs/{job_id}", headers=headers)
     assert status_response.status_code == 200
     assert status_response.json()["status"] == "done"
+    assert repo.jobs[UUID(job_id)].result is not None
+
+    finalize_response = client.post(f"/imports/jobs/{job_id}/finalize-chat", headers=headers)
+    assert finalize_response.status_code == 200
+    assert "reply" in finalize_response.json()
 
     events = repo.events[UUID(job_id)]
     kinds = [event.kind for event in events]
@@ -124,3 +130,32 @@ def test_import_job_endpoints_create_upload_and_events(monkeypatch) -> None:
     assert "parsing" in kinds
     assert "parsed" in kinds
     assert "done" in kinds
+
+
+def test_finalize_import_job_chat_requires_done_status(monkeypatch) -> None:
+    auth_user_id = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+
+    monkeypatch.setattr(
+        agent_api,
+        "get_user_from_bearer_token",
+        lambda _token: {"id": str(auth_user_id), "email": "user@example.com"},
+    )
+
+    class _ProfilesRepo:
+        def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None):
+            assert auth_user_id
+            return profile_id
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: _ProfilesRepo())
+
+    repo = _Repo()
+    job_id = repo.create_job(profile_id=profile_id)
+    repo.patch_job(profile_id=profile_id, job_id=job_id, payload={"status": "running"})
+    monkeypatch.setattr(agent_api, "_get_import_jobs_repository_or_501", lambda: repo)
+
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer token"}
+
+    response = client.post(f"/imports/jobs/{job_id}/finalize-chat", headers=headers)
+    assert response.status_code == 409

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Callable
 from uuid import UUID
 
 from backend.services.tools import BackendToolService
@@ -71,8 +72,9 @@ class BackendClient:
         self,
         *,
         request: RelevesImportRequest,
+        on_progress: Callable[[str, int, int], None] | None = None,
     ) -> RelevesImportResult | ToolError:
-        return self.tool_service.finance_releves_import_files(request=request)
+        return self.tool_service.finance_releves_import_files(request=request, on_progress=on_progress)
 
     def finance_categories_list(self, profile_id: UUID) -> CategoriesListResult | ToolError:
         return self.tool_service.finance_categories_list(profile_id=profile_id)

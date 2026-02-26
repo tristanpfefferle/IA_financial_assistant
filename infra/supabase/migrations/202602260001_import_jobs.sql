@@ -44,3 +44,6 @@ create trigger trg_import_jobs_touch_updated_at
 before update on public.import_jobs
 for each row
 execute function import_jobs_touch_updated_at();
+
+alter table public.import_jobs
+    add column if not exists result jsonb null;

@@ -8,7 +8,7 @@ import re
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal
-from typing import Any
+from typing import Any, Callable
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from backend.repositories.profiles_repository import ProfilesRepository
@@ -505,20 +505,35 @@ class RelevesImportService:
 
         return updated
 
-    def import_releves(self, request: RelevesImportRequest) -> RelevesImportResult:
+    def import_releves(
+        self,
+        request: RelevesImportRequest,
+        *,
+        on_progress: Callable[[str, int, int], None] | None = None,
+    ) -> RelevesImportResult:
         errors: list[RelevesImportError] = []
         normalized_rows: list[dict[str, object]] = []
 
         merchant_suggestions_created_count = 0
 
+        parsed_batches: list[tuple[str, str, list[dict[str, object]]]] = []
+        total_rows_to_categorize = 0
+
         for file in request.files:
             try:
                 content = base64.b64decode(file.content_base64)
                 source, parsed_rows = route_bank_parser(file.filename, content)
+                parsed_batches.append((file.filename, source, parsed_rows))
+                total_rows_to_categorize += len(parsed_rows)
             except Exception as exc:
                 errors.append(RelevesImportError(file=file.filename, message=str(exc)))
                 continue
 
+        if on_progress and total_rows_to_categorize > 0:
+            on_progress("categorization", 0, total_rows_to_categorize)
+
+        categorized_rows_count = 0
+        for file_name, source, parsed_rows in parsed_batches:
             for index, parsed_row in enumerate(parsed_rows):
                 try:
                     normalized = self._normalize_row(
@@ -533,7 +548,7 @@ class RelevesImportService:
                         debug_detail = " [debug branch=normalize_row step=row_normalization_failed]"
                     errors.append(
                         RelevesImportError(
-                            file=file.filename,
+                            file=file_name,
                             row_index=index,
                             message=f"{exc}{debug_detail}",
                         )
@@ -543,7 +558,7 @@ class RelevesImportService:
                 if normalized is None:
                     errors.append(
                         RelevesImportError(
-                            file=file.filename,
+                            file=file_name,
                             row_index=index,
                             message="Ligne incomplète (date/montant).",
                         )
@@ -553,6 +568,9 @@ class RelevesImportService:
                     merchant_suggestions_created_count += 1
                 normalized.pop("merchant_suggestion_created", None)
                 normalized_rows.append(normalized)
+                categorized_rows_count += 1
+                if on_progress and total_rows_to_categorize > 0:
+                    on_progress("categorization", categorized_rows_count, total_rows_to_categorize)
 
         existing_rows = self.releves_repository.list_releves_for_import(
             profile_id=request.profile_id,

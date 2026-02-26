@@ -7,6 +7,7 @@ All business logic must stay in backend and should be delegated to the existing
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Callable
 from uuid import UUID
 
 from pydantic import ValidationError
@@ -90,13 +91,14 @@ class BackendToolService:
         self,
         *,
         request: RelevesImportRequest,
+        on_progress: Callable[[str, int, int], None] | None = None,
     ) -> RelevesImportResult | ToolError:
         try:
             service = RelevesImportService(
                 releves_repository=self.releves_repository,
                 profiles_repository=self.profiles_repository,
             )
-            return service.import_releves(request)
+            return service.import_releves(request, on_progress=on_progress)
         except Exception as exc:
             return ToolError(code=ToolErrorCode.BACKEND_ERROR, message=str(exc))
 

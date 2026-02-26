@@ -22,6 +22,7 @@ class ImportJobRow:
     processed_transactions: int | None
     total_llm_items: int | None
     processed_llm_items: int | None
+    result: dict[str, Any] | None
 
 
 @dataclass(slots=True)
@@ -123,6 +124,7 @@ class SupabaseImportJobsRepository:
             processed_transactions=_to_int_or_none(row.get("processed_transactions")),
             total_llm_items=_to_int_or_none(row.get("total_llm_items")),
             processed_llm_items=_to_int_or_none(row.get("processed_llm_items")),
+            result=row.get("result") if isinstance(row.get("result"), dict) else None,
         )
 
     @staticmethod
