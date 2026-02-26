@@ -2285,6 +2285,62 @@ def _detect_bank_account_for_import(
     return None
 
 
+def _detect_bank_code_from_import_files(files: list[dict[str, Any]]) -> str | None:
+    """Detect bank code from import files using existing CSV bank detector."""
+
+    for file in files:
+        if not isinstance(file, dict):
+            continue
+        filename = str(file.get("filename") or "").strip()
+        if filename and not filename.lower().endswith(".csv"):
+            continue
+        content_base64 = file.get("content_base64")
+        if not isinstance(content_base64, str) or not content_base64:
+            continue
+        try:
+            preview_bytes = base64.b64decode(content_base64, validate=False)[:65536]
+        except Exception:
+            logger.warning("import_bank_detection_decode_failed filename=%s", filename)
+            continue
+        detected_bank_code = detect_bank_from_csv_bytes(preview_bytes)
+        if isinstance(detected_bank_code, str) and detected_bank_code.strip():
+            return detected_bank_code.strip().lower()
+    return None
+
+
+def _resolve_bank_account_id_from_bank_code(
+    profiles_repository: Any,
+    profile_id: UUID,
+    bank_code: str,
+) -> str | None:
+    """Resolve one account id for a detected bank code; raise on ambiguity."""
+
+    if not bank_code.strip() or not hasattr(profiles_repository, "list_bank_accounts"):
+        return None
+
+    normalized_bank_code = _normalize_text(bank_code)
+    bank_keywords = BANK_CODE_KEYWORDS.get(normalized_bank_code, (normalized_bank_code,))
+    accounts = profiles_repository.list_bank_accounts(profile_id=profile_id)
+
+    matched_account_ids: list[str] = []
+    for account in accounts:
+        if not isinstance(account, dict):
+            continue
+        account_id = str(account.get("id") or "").strip()
+        account_name = str(account.get("name") or "").strip()
+        if not account_id or not account_name:
+            continue
+        normalized_name = _normalize_text(account_name)
+        if any(keyword in normalized_name for keyword in bank_keywords):
+            matched_account_ids.append(account_id)
+
+    if len(matched_account_ids) == 1:
+        return matched_account_ids[0]
+    if len(matched_account_ids) > 1:
+        raise ValueError("ambiguous_bank_account")
+    return None
+
+
 def _build_onboarding_reminder(global_state: dict[str, Any] | None) -> str | None:
     if not isinstance(global_state, dict) or global_state.get("mode") != "onboarding":
         return None
@@ -5923,9 +5979,53 @@ def _run_import_job_pipeline(*, repository: SupabaseImportJobsRepository, profil
             if isinstance(candidate, str) and candidate.strip():
                 persisted_bank_account_id = candidate.strip()
         selected_bank_account_id = payload.bank_account_id or persisted_bank_account_id
+        files_payload = [{"filename": file.filename, "content_base64": file.content_base64} for file in payload.files]
+        detected_bank_code = _detect_bank_code_from_import_files(files_payload)
+
+        if not selected_bank_account_id and detected_bank_code:
+            profiles_repository = get_profiles_repository()
+            try:
+                selected_bank_account_id = _resolve_bank_account_id_from_bank_code(
+                    profiles_repository,
+                    profile_id,
+                    detected_bank_code,
+                )
+            except ValueError as exc:
+                if str(exc) == "ambiguous_bank_account":
+                    error_message = f"Plusieurs comptes {detected_bank_code.upper()} trouvés. Choisis le compte."
+                    error_payload = {
+                        "needs_account_selection": True,
+                        "bank_code": detected_bank_code,
+                    }
+                    _emit_import_job_event(
+                        repository=repository,
+                        profile_id=profile_id,
+                        job_id=job_id,
+                        kind="error",
+                        message=error_message,
+                        progress=1.0,
+                        payload=error_payload,
+                        job_patch={"status": "error", "error_message": error_message, "result": error_payload},
+                    )
+                    return
+                raise
+
+            if not selected_bank_account_id:
+                error_message = f"Aucun compte {detected_bank_code.upper()} trouvé. Ajoute/active ce compte."
+                _emit_import_job_event(
+                    repository=repository,
+                    profile_id=profile_id,
+                    job_id=job_id,
+                    kind="error",
+                    message=error_message,
+                    progress=1.0,
+                    payload={"bank_code": detected_bank_code},
+                    job_patch={"status": "error", "error_message": error_message},
+                )
+                return
 
         request_payload = {
-            "files": [{"filename": file.filename, "content_base64": file.content_base64} for file in payload.files],
+            "files": files_payload,
             "import_mode": payload.import_mode,
             "modified_action": payload.modified_action,
             "profile_id": str(profile_id),
@@ -5984,7 +6084,7 @@ def _run_import_job_pipeline(*, repository: SupabaseImportJobsRepository, profil
             result_obj = tool_router.call(
                 "finance_releves_import_files",
                 {
-                    "files": [{"filename": file.filename, "content_base64": file.content_base64} for file in payload.files],
+                    "files": files_payload,
                     "import_mode": payload.import_mode,
                     "modified_action": payload.modified_action,
                     **({"bank_account_id": selected_bank_account_id} if selected_bank_account_id else {}),
