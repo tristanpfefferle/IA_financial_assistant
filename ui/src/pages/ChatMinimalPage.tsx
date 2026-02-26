@@ -2,9 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 import { hardResetProfile, importReleves, sendChatMessage } from '../api/agentApi'
-import { ActionBar } from '../chat/ActionBar'
 import { ChatInteractiveCard } from '../chat/ChatInteractiveCard'
-import { extractQuickReplies } from '../chat/extractQuickReplies'
+import { InlineAction } from '../chat/InlineAction'
 import { normalizeQuickReplyDisplay } from '../chat/formatters'
 import { supabase } from '../lib/supabaseClient'
 import {
@@ -48,19 +47,6 @@ function splitIntoSentences(text: string): string[] {
   return sentences.length > 1 ? sentences : [trimmed]
 }
 
-function hasInteractiveUi(toolResult: Record<string, unknown> | null | undefined): boolean {
-  if (!toolResult) {
-    return false
-  }
-
-  return Boolean(
-    toQuickReplyYesNoUiAction(toolResult)
-      || toFormUiAction(toolResult)
-      || toOpenImportPanelUiAction(toolResult)
-      || toLegacyImportUiRequest(toolResult),
-  )
-}
-
 export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
   const navigate = useNavigate()
   const scrollRef = useRef<HTMLDivElement | null>(null)
@@ -76,11 +62,32 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
   const isMountedRef = useRef(true)
   const assistantSequenceRef = useRef(0)
 
-  const latestAssistant = useMemo(() => [...messages].reverse().find((message) => message.role === 'assistant') ?? null, [messages])
-  const actionBarQuickReplies = useMemo(
-    () => extractQuickReplies((latestAssistant?.toolResult as Record<string, unknown> | null | undefined) ?? undefined),
-    [latestAssistant?.toolResult],
-  )
+  const pendingInlineActionIndex = useMemo(() => {
+    let actionIndex = -1
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index]
+      if (message.role !== 'assistant' || !message.toolResult) {
+        continue
+      }
+
+      const isActionable = Boolean(
+        toQuickReplyYesNoUiAction(message.toolResult)
+        || toOpenImportPanelUiAction(message.toolResult)
+        || toLegacyImportUiRequest(message.toolResult)
+      )
+      if (isActionable) {
+        actionIndex = index
+        break
+      }
+    }
+
+    if (actionIndex === -1) {
+      return -1
+    }
+
+    const hasUserResponseAfter = messages.some((message, index) => message.role === 'user' && index > actionIndex)
+    return hasUserResponseAfter ? -1 : actionIndex
+  }, [messages])
 
   function handleScroll() {
     if (!scrollRef.current) {
@@ -481,7 +488,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
                 return (
                   <div key={message.id}>
                     <div className={messageClasses}>{message.content}</div>
-                    {message.role === 'assistant' && message.toolResult && hasInteractiveUi(message.toolResult) ? (
+                    {message.role === 'assistant' && message.toolResult && toFormUiAction(message.toolResult) ? (
                       <ChatInteractiveCard
                         toolResult={message.toolResult}
                         onSubmit={({ message: nextMessage, humanText }) => {
@@ -489,6 +496,19 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
                           void submitMessage(nextMessage, display, true)
                         }}
                         onImport={(file) => {
+                          void handleImportFile(file)
+                        }}
+                      />
+                    ) : null}
+                    {message.role === 'assistant' && message.toolResult && pendingInlineActionIndex === index ? (
+                      <InlineAction
+                        actionState={message.toolResult}
+                        disabled={isSending || isAssistantTyping}
+                        onChoose={(value, label) => {
+                          const display = label ? normalizeQuickReplyDisplay(label, value) : normalizeQuickReplyDisplay(undefined, value)
+                          void submitMessage(value, display, true)
+                        }}
+                        onImportFile={(file) => {
                           void handleImportFile(file)
                         }}
                       />
@@ -511,13 +531,6 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
             ) : null}
           </div>
 
-          <ActionBar
-            onSend={(text) => {
-              void submitMessage(text)
-            }}
-            quickReplies={actionBarQuickReplies}
-            disabled={isSending || isAssistantTyping}
-          />
           {submitErrorMessage ? <p className="subtle-text">{submitErrorMessage}</p> : null}
         </div>
       </div>

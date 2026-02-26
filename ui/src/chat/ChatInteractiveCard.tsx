@@ -154,8 +154,8 @@ export function ChatInteractiveCard({ toolResult, onSubmit, onImport }: Interact
           ))}
         </div>
         <div className="dock-footer">
-          <button type="submit" className="dock-send-btn" aria-label="Continuer">
-            ➤
+          <button type="submit" className="form-submit-btn" aria-label={formAction.submit_label}>
+            {formAction.submit_label || 'Valider'}
           </button>
         </div>
       </form>
