@@ -2,6 +2,7 @@
 
 import base64
 import re
+from typing import Any
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from uuid import UUID
@@ -1541,6 +1542,54 @@ def test_spending_report_json_includes_effective_spending_when_repository_availa
         "incoming": "10",
         "net_balance": "-20",
         "effective_total": "100",
+    }
+
+
+
+def test_spending_report_json_persists_last_spending_report_payload(monkeypatch) -> None:
+    _mock_authenticated(monkeypatch)
+
+    class _Repo:
+        def __init__(self) -> None:
+            self.chat_state = {"state": {"some_key": "some_value"}}
+
+        def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None):
+            assert auth_user_id == AUTH_USER_ID
+            assert email == "user@example.com"
+            return PROFILE_ID
+
+        def get_chat_state(self, *, profile_id: UUID, user_id: UUID):
+            assert profile_id == PROFILE_ID
+            assert user_id == AUTH_USER_ID
+            return self.chat_state
+
+        def update_chat_state(self, *, profile_id: UUID, user_id: UUID, chat_state: dict[str, Any]) -> None:
+            assert profile_id == PROFILE_ID
+            assert user_id == AUTH_USER_ID
+            self.chat_state = chat_state
+
+    repo = _Repo()
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+
+    monkeypatch.setattr(
+        agent_api,
+        "_build_spending_report_payload",
+        lambda **_kwargs: {
+            "categorization_confidence_score_percent": 83,
+            "categorization_confidence_coverage_percent": 72,
+            "period": {"start_date": "2026-01-01", "end_date": "2026-01-31", "label": "janvier 2026"},
+        },
+    )
+
+    response = client.get("/finance/reports/spending?month=2026-01", headers=_auth_headers())
+
+    assert response.status_code == 200
+    persisted = repo.chat_state["state"]["last_spending_report_payload"]
+    assert persisted == {
+        "categorization_confidence_score_percent": 83,
+        "categorization_confidence_coverage_percent": 72,
+        "period": {"start_date": "2026-01-01", "end_date": "2026-01-31", "label": "janvier 2026"},
+        "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-31", "label": "janvier 2026"},
     }
 
 

@@ -116,7 +116,6 @@ _GLOBAL_STATE_ONBOARDING_SUBSTEPS = {
     "import_wait_ready",
     "categories_intro",
     "categories_bootstrap",
-    "report_offer",
     "report_sent",
     "report_wait_view_confirmation",
     None,
@@ -422,7 +421,6 @@ _ONBOARDING_SUBSTEP_TO_LOOP_ID: dict[str, str] = {
     "import_wait_ready": "onboarding.import_wait_ready",
     "categories_intro": "onboarding.categories_intro",
     "categories_bootstrap": "onboarding.categories_bootstrap",
-    "report_offer": "onboarding.report",
     "report_sent": "onboarding.report",
     "report_wait_view_confirmation": "onboarding.report",
 }
@@ -1858,14 +1856,14 @@ def _normalize_onboarding_step_substep(global_state: dict[str, Any]) -> dict[str
         "bank_accounts": {"bank_accounts_collect", "bank_accounts_confirm", "bank_accounts_fix_select"},
         "import": {"import_select_account", "import_wait_ready"},
         "categories": {"categories_intro", "categories_bootstrap"},
-        "report": {"report_offer", "report_sent", "report_wait_view_confirmation"},
+        "report": {"report_sent", "report_wait_view_confirmation"},
     }
     default_substep_by_step = {
         "profile": "profile_intro",
         "bank_accounts": "bank_accounts_collect",
         "import": "import_wait_ready",
         "categories": "categories_bootstrap",
-        "report": "report_offer",
+        "report": "report_wait_view_confirmation",
     }
 
     if step == "categories" and substep == "categories_intro":
@@ -2102,7 +2100,7 @@ def _is_allons_y(message: str) -> bool:
 def _is_report_view_confirmed(message: str) -> bool:
     normalized = _normalize_text(re.sub(r"[!?.,;:]+$", "", message))
     compact = re.sub(r"[^a-z0-9]", "", normalized)
-    if compact == "jaiconsultemonrapport":
+    if compact in {"jaiconsultemonrapport", "rapportconsulte", "rapportdejaconsulte"}:
         return True
     confirmation_tokens = {
         "vu",
@@ -2122,23 +2120,45 @@ def _is_report_view_confirmed(message: str) -> bool:
 def _build_confidence_intro_reply(state_dict: dict[str, Any]) -> str:
     report_payload = state_dict.get("last_spending_report_payload") if isinstance(state_dict.get("last_spending_report_payload"), dict) else {}
     score = report_payload.get("categorization_confidence_score_percent")
-    coverage = report_payload.get("categorization_confidence_coverage_percent")
     try:
         score_value = int(score) if score is not None else 0
     except (TypeError, ValueError):
         score_value = 0
-    try:
-        coverage_value = int(coverage) if coverage is not None else 0
-    except (TypeError, ValueError):
-        coverage_value = 0
-
     return (
         f"Ton rapport est actuellement précis à {score_value}%.\n"
-        f"Nous avons des informations pour {coverage_value}% de tes dépenses.\n\n"
-        "Pour améliorer encore la fiabilité de ton analyse,\n"
-        "j’ai besoin de te poser quelques questions rapides.\n\n"
-        "On améliore ça ensemble ?\n"
-        "Réponds : Allons-y !"
+        "Je peux l’améliorer en te posant 2-3 questions rapides."
+    )
+
+
+def _persist_last_spending_report_payload(
+    *,
+    profiles_repository: Any,
+    profile_id: UUID,
+    user_id: UUID,
+    state_dict: dict[str, Any] | None,
+    report_payload: dict[str, Any],
+    fallback_date_range: dict[str, str],
+) -> None:
+    """Persist minimal spending report fields required by onboarding confidence intro."""
+
+    period_payload = report_payload.get("period") if isinstance(report_payload.get("period"), dict) else None
+    persisted_date_range = period_payload if period_payload else fallback_date_range
+
+    next_state = dict(state_dict) if isinstance(state_dict, dict) else {}
+    next_state["last_spending_report_payload"] = {
+        "categorization_confidence_score_percent": report_payload.get("categorization_confidence_score_percent"),
+        "categorization_confidence_coverage_percent": report_payload.get("categorization_confidence_coverage_percent"),
+        "period": period_payload,
+        "date_range": persisted_date_range,
+    }
+
+    if not hasattr(profiles_repository, "update_chat_state"):
+        return
+
+    profiles_repository.update_chat_state(
+        profile_id=profile_id,
+        user_id=user_id,
+        chat_state={"state": next_state},
     )
 
 
@@ -2481,8 +2501,6 @@ def _build_onboarding_reminder(global_state: dict[str, Any] | None) -> str | Non
         return "(Pour continuer l’onboarding : démarrons le bootstrap des catégories.)"
     if substep == "categories_bootstrap":
         return "(Pour continuer l’onboarding : je prépare automatiquement les catégories et les marchands.)"
-    if substep == "report_offer":
-        return "(Pour continuer l’onboarding : réponds oui ou non pour ouvrir le rapport PDF.)"
     if substep == "report_wait_view_confirmation":
         return "(Pour continuer l’onboarding : clique sur « J’ai consulté mon rapport ».)"
     return None
@@ -4682,65 +4700,6 @@ def agent_chat(
                     )
 
 
-            if mode == "onboarding" and onboarding_step == "report" and global_state.get("onboarding_substep") == "report_offer":
-                if _is_yes(payload.message):
-                    month_value: str | None = None
-                    start_date_value: str | None = None
-                    end_date_value: str | None = None
-                    bank_account_id_value: str | None = None
-
-                    last_query = state_dict.get("last_query") if isinstance(state_dict, dict) else None
-                    if isinstance(last_query, dict):
-                        if isinstance(last_query.get("month"), str) and str(last_query.get("month")).strip():
-                            month_value = str(last_query.get("month")).strip()
-
-                    if month_value is None:
-                        start_date_value, end_date_value, bank_account_id_value = _resolve_last_report_filters(state_dict)
-
-                    if month_value is None and (start_date_value is None or end_date_value is None):
-                        resolved_start, resolved_end = _resolve_report_date_range(
-                            month=None,
-                            start_date=None,
-                            end_date=None,
-                            state_dict=state_dict,
-                            profile_id=profile_id,
-                        )
-                        start_date_value = resolved_start.isoformat()
-                        end_date_value = resolved_end.isoformat()
-
-                    report_url = _build_spending_pdf_url(
-                        month=month_value,
-                        start_date=start_date_value,
-                        end_date=end_date_value,
-                        bank_account_id=bank_account_id_value,
-                    )
-                    updated_global_state = _build_onboarding_global_state(
-                        global_state,
-                        onboarding_step="report",
-                        onboarding_substep="report_wait_view_confirmation",
-                    )
-                    updated_global_state = _normalize_onboarding_step_substep(updated_global_state)
-                    state_dict["global_state"] = updated_global_state
-                    updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
-                    updated_chat_state["state"] = state_dict
-                    profiles_repository.update_chat_state(
-                        profile_id=profile_id,
-                        user_id=auth_user_id,
-                        chat_state=updated_chat_state,
-                    )
-                    return _chat_response(
-                        reply="Prends un moment pour consulter ton rapport.\nDis-moi quand tu l’as vu 🙂",
-                        tool_result=_build_open_pdf_ui_request(report_url),
-                        plan=None,
-                    )
-                if _is_no(payload.message):
-                    return _chat_response(
-                        reply="Ok 🙂 Dis-moi quand tu veux le voir.",
-                        tool_result=None,
-                        plan=None,
-                    )
-                return _chat_response(reply="Réponds par oui ou non.", tool_result=None, plan=None)
-
             if mode == "onboarding" and onboarding_step == "report" and global_state.get("onboarding_substep") == "report_wait_view_confirmation":
                 if _is_report_view_confirmed(payload.message):
                     updated_global_state = {
@@ -4763,9 +4722,39 @@ def agent_chat(
                         tool_result=_build_onboarding_intro_quick_replies_ui_action(),
                         plan=None,
                     )
+                month_value: str | None = None
+                start_date_value: str | None = None
+                end_date_value: str | None = None
+                bank_account_id_value: str | None = None
+
+                last_query = state_dict.get("last_query") if isinstance(state_dict, dict) else None
+                if isinstance(last_query, dict):
+                    if isinstance(last_query.get("month"), str) and str(last_query.get("month")).strip():
+                        month_value = str(last_query.get("month")).strip()
+
+                if month_value is None:
+                    start_date_value, end_date_value, bank_account_id_value = _resolve_last_report_filters(state_dict)
+
+                if month_value is None and (start_date_value is None or end_date_value is None):
+                    resolved_start, resolved_end = _resolve_report_date_range(
+                        month=None,
+                        start_date=None,
+                        end_date=None,
+                        state_dict=state_dict,
+                        profile_id=profile_id,
+                    )
+                    start_date_value = resolved_start.isoformat()
+                    end_date_value = resolved_end.isoformat()
+
+                report_url = _build_spending_pdf_url(
+                    month=month_value,
+                    start_date=start_date_value,
+                    end_date=end_date_value,
+                    bank_account_id=bank_account_id_value,
+                )
                 return _chat_response(
                     reply="Ouvre le rapport puis clique « J’ai consulté mon rapport » 🙂",
-                    tool_result=_build_quick_reply_report_view_confirmed_ui_action(),
+                    tool_result=_build_open_pdf_with_report_view_confirmed_ui_request(report_url),
                     plan=None,
                 )
 
@@ -4789,7 +4778,7 @@ def agent_chat(
                         plan=None,
                     )
                 return _chat_response(
-                    reply="On améliore ça ensemble ?\nRéponds : Allons-y !",
+                    reply="Quand tu veux, on lance l’amélioration.",
                     tool_result=_build_onboarding_intro_quick_replies_ui_action(),
                     plan=None,
                 )
@@ -6067,7 +6056,21 @@ def get_spending_report_json(
                 "format": "json",
             },
         )
-        return _build_spending_report_payload(profile_id=profile_id, period_start=period_start, period_end=period_end, bank_account_id=bank_account_id)
+        report_payload = _build_spending_report_payload(
+            profile_id=profile_id,
+            period_start=period_start,
+            period_end=period_end,
+            bank_account_id=bank_account_id,
+        )
+        _persist_last_spending_report_payload(
+            profiles_repository=profiles_repository,
+            profile_id=profile_id,
+            user_id=auth_user_id,
+            state_dict=state_dict if isinstance(state_dict, dict) else None,
+            report_payload=report_payload,
+            fallback_date_range={"start_date": period_start.isoformat(), "end_date": period_end.isoformat()},
+        )
+        return report_payload
     except Exception:
         logger.exception("spending_report_failed", extra={"format": "json"})
         raise
@@ -6105,7 +6108,20 @@ def get_spending_report_pdf(
             },
         )
 
-        report_payload = _build_spending_report_payload(profile_id=profile_id, period_start=period_start, period_end=period_end, bank_account_id=bank_account_id)
+        report_payload = _build_spending_report_payload(
+            profile_id=profile_id,
+            period_start=period_start,
+            period_end=period_end,
+            bank_account_id=bank_account_id,
+        )
+        _persist_last_spending_report_payload(
+            profiles_repository=profiles_repository,
+            profile_id=profile_id,
+            user_id=auth_user_id,
+            state_dict=state_dict if isinstance(state_dict, dict) else None,
+            report_payload=report_payload,
+            fallback_date_range={"start_date": period_start.isoformat(), "end_date": period_end.isoformat()},
+        )
 
         filename_period = (
             period_start.strftime("%Y-%m") if period_start.day == 1 else f"{period_start.isoformat()}_{period_end.isoformat()}"
