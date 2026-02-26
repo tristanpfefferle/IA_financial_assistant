@@ -337,7 +337,7 @@ def test_import_job_pipeline_auto_selects_detected_bank_account(monkeypatch) -> 
     assert bank_detected_index < started_index
 
 
-def test_import_job_pipeline_errors_when_detected_bank_has_no_account(monkeypatch) -> None:
+def test_import_job_pipeline_uses_single_account_when_detected_bank_has_no_match(monkeypatch) -> None:
     auth_user_id = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
     profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 
@@ -359,9 +359,12 @@ def test_import_job_pipeline_errors_when_detected_bank_has_no_account(monkeypatc
 
     monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: _ProfilesRepo())
 
+    captured_request: dict[str, str] = {}
+
     class _BackendClient:
         def finance_releves_import_files(self, *, request: Any, on_progress: Any):
-            raise AssertionError("import tool should not be called when no account matches")
+            captured_request["bank_account_id"] = str(request.bank_account_id)
+            return {"imported_count": 1}
 
     class _Router:
         def __init__(self) -> None:
@@ -393,13 +396,11 @@ def test_import_job_pipeline_errors_when_detected_bank_has_no_account(monkeypatc
 
     status_response = client.get(f"/imports/jobs/{job_id}", headers=headers)
     assert status_response.status_code == 200
-    assert status_response.json()["status"] == "error"
-
-    error_event = next(event for event in repo.events[UUID(job_id)] if event.kind == "error")
-    assert error_event.message == "Aucun compte UBS trouvé. Ajoute/active ce compte."
+    assert status_response.json()["status"] == "done"
+    assert captured_request["bank_account_id"] == "22222222-2222-2222-2222-222222222222"
 
 
-def test_import_job_pipeline_errors_when_detected_bank_is_ambiguous(monkeypatch) -> None:
+def test_import_job_pipeline_uses_first_account_and_warns_when_detected_bank_is_ambiguous(monkeypatch) -> None:
     auth_user_id = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
     profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 
@@ -424,9 +425,12 @@ def test_import_job_pipeline_errors_when_detected_bank_is_ambiguous(monkeypatch)
 
     monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: _ProfilesRepo())
 
+    captured_request: dict[str, str] = {}
+
     class _BackendClient:
         def finance_releves_import_files(self, *, request: Any, on_progress: Any):
-            raise AssertionError("import tool should not be called when account resolution is ambiguous")
+            captured_request["bank_account_id"] = str(request.bank_account_id)
+            return {"imported_count": 1}
 
     class _Router:
         def __init__(self) -> None:
@@ -458,11 +462,14 @@ def test_import_job_pipeline_errors_when_detected_bank_is_ambiguous(monkeypatch)
 
     status_response = client.get(f"/imports/jobs/{job_id}", headers=headers)
     assert status_response.status_code == 200
-    assert status_response.json()["status"] == "error"
-
-    error_event = next(event for event in repo.events[UUID(job_id)] if event.kind == "error")
-    assert error_event.message == "Plusieurs comptes UBS trouvés. Choisis le compte."
-    assert error_event.payload == {"needs_account_selection": True, "bank_code": "ubs"}
+    assert status_response.json()["status"] == "done"
+    assert captured_request["bank_account_id"] == "11111111-1111-1111-1111-111111111111"
+    warning_event = next(event for event in repo.events[UUID(job_id)] if event.kind == "warning")
+    assert warning_event.message == (
+        "Aucun compte bancaire n’a pu être détecté automatiquement. "
+        "Le premier compte a été sélectionné par défaut."
+    )
+    assert warning_event.payload == {"bank_account_id": "11111111-1111-1111-1111-111111111111"}
 
 def test_finalize_chat_then_yes_routes_to_report_and_not_import(monkeypatch) -> None:
     auth_user_id = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
@@ -565,3 +572,56 @@ def test_finalize_import_job_chat_requires_done_status(monkeypatch) -> None:
 
     response = client.post(f"/imports/jobs/{job_id}/finalize-chat", headers=headers)
     assert response.status_code == 409
+
+
+def test_run_import_job_pipeline_autoselects_single_bank_account(monkeypatch) -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    job_id = uuid4()
+    expected_account_id = "11111111-1111-1111-1111-111111111111"
+    captured_request: dict[str, Any] = {}
+
+    class _ProfilesRepo:
+        def list_bank_accounts(self, *, profile_id: UUID) -> list[dict[str, Any]]:
+            assert profile_id
+            return [{"id": expected_account_id, "name": "UBS"}]
+
+    class _BackendClient:
+        def finance_releves_import_files(self, *, request: Any, on_progress: Any):
+            captured_request["request"] = request
+            assert request.bank_account_id == UUID(expected_account_id)
+            on_progress("parsed_total", 1, 1)
+            on_progress("categorization", 1, 1)
+            return {"imported_count": 1}
+
+    class _Router:
+        def __init__(self) -> None:
+            self.backend_client = _BackendClient()
+
+    repo = _Repo()
+    repo.jobs[job_id] = _Job(id=job_id, profile_id=profile_id, status="running")
+    repo.events[job_id] = []
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: _ProfilesRepo())
+    monkeypatch.setattr(agent_api, "get_tool_router", lambda: _Router())
+
+    payload = agent_api.ImportRequestPayload(
+        files=[
+            agent_api.ImportFilePayload(
+                filename="sample.csv",
+                content_base64="ZGF0ZSxtb250YW50XG4yMDI2LTAxLTAxLDEw",
+            )
+        ]
+    )
+
+    agent_api._run_import_job_pipeline(
+        repository=repo,
+        profile_id=profile_id,
+        payload=payload,
+        job_id=job_id,
+    )
+
+    assert "request" in captured_request
+    assert captured_request["request"].bank_account_id == UUID(expected_account_id)
+    assert repo.jobs[job_id].status == "done"
+    assert repo.jobs[job_id].result is not None
+    assert repo.jobs[job_id].result["bank_account_id"] == expected_account_id

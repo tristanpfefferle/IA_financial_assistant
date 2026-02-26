@@ -5939,10 +5939,51 @@ def _run_import_job_pipeline(*, repository: SupabaseImportJobsRepository, profil
             if isinstance(candidate, str) and candidate.strip():
                 persisted_bank_account_id = candidate.strip()
         selected_bank_account_id = payload.bank_account_id or persisted_bank_account_id
+        selected_bank_account_name: str | None = None
         files_payload = [{"filename": file.filename, "content_base64": file.content_base64} for file in payload.files]
         detected_bank_code = _detect_bank_code_from_import_files(files_payload)
 
         profiles_repository = get_profiles_repository()
+        existing_accounts = profiles_repository.list_bank_accounts(profile_id=profile_id) if hasattr(profiles_repository, "list_bank_accounts") else []
+        if not selected_bank_account_id:
+            first_filename = payload.files[0].filename if payload.files else ""
+            first_file_bytes: bytes | None = None
+            if payload.files:
+                try:
+                    decoded = base64.b64decode(payload.files[0].content_base64, validate=False)
+                    first_file_bytes = decoded[:65536]
+                except Exception:
+                    logger.warning("import_job_bank_detection_decode_failed profile_id=%s", profile_id)
+
+            detection_result = _detect_bank_account_for_import(
+                filename=first_filename,
+                file_bytes=first_file_bytes,
+                existing_accounts=existing_accounts,
+            )
+            if isinstance(detection_result, dict):
+                selected_bank_account_id = str(detection_result.get("id") or "").strip() or None
+                selected_bank_account_name = str(detection_result.get("name") or "").strip() or None
+            elif detection_result in {"ambiguous", None}:
+                if len(existing_accounts) == 1:
+                    selected_bank_account_id = str(existing_accounts[0].get("id") or "").strip() or None
+                    selected_bank_account_name = str(existing_accounts[0].get("name") or "").strip() or None
+                elif len(existing_accounts) > 1:
+                    selected_bank_account_id = str(existing_accounts[0].get("id") or "").strip() or None
+                    selected_bank_account_name = str(existing_accounts[0].get("name") or "").strip() or None
+                    if selected_bank_account_id:
+                        _emit_import_job_event(
+                            repository=repository,
+                            profile_id=profile_id,
+                            job_id=job_id,
+                            kind="warning",
+                            message=(
+                                "Aucun compte bancaire n’a pu être détecté automatiquement. "
+                                "Le premier compte a été sélectionné par défaut."
+                            ),
+                            progress=0.01,
+                            payload={"bank_account_id": selected_bank_account_id},
+                        )
+
         if not selected_bank_account_id and detected_bank_code:
             try:
                 selected_bank_account_id = _resolve_bank_account_id_from_bank_code(
@@ -5984,10 +6025,8 @@ def _run_import_job_pipeline(*, repository: SupabaseImportJobsRepository, profil
                 )
                 return
 
-        selected_bank_account_name: str | None = None
-        if selected_bank_account_id and hasattr(profiles_repository, "list_bank_accounts"):
-            bank_accounts = profiles_repository.list_bank_accounts(profile_id=profile_id)
-            for account in bank_accounts:
+        if selected_bank_account_id and existing_accounts:
+            for account in existing_accounts:
                 account_id = str(account.get("id") or "").strip()
                 if account_id != selected_bank_account_id:
                     continue
@@ -6118,8 +6157,7 @@ def _run_import_job_pipeline(*, repository: SupabaseImportJobsRepository, profil
 
         processed_transactions = None
         if isinstance(result, dict):
-            if selected_bank_account_id:
-                result.setdefault("bank_account_id", selected_bank_account_id)
+            result.setdefault("bank_account_id", selected_bank_account_id)
             value = result.get("transactions_imported") or result.get("imported_count")
             if isinstance(value, (int, float)):
                 processed_transactions = int(value)
