@@ -6338,13 +6338,29 @@ def finalize_import_job_chat(
     if isinstance(job.result, dict):
         start_date = job.result.get("import_start_date")
         end_date = job.result.get("import_end_date")
+        bank_account_id = job.result.get("bank_account_id")
+        resolved_start_date: str | None = None
+        resolved_end_date: str | None = None
+
         if isinstance(start_date, str) and isinstance(end_date, str) and start_date.strip() and end_date.strip():
+            try:
+                start_value = date.fromisoformat(start_date.strip())
+                end_value = date.fromisoformat(end_date.strip())
+                resolved_start_date = min(start_value, end_value).isoformat()
+                resolved_end_date = max(start_value, end_value).isoformat()
+            except ValueError:
+                resolved_start_date = None
+                resolved_end_date = None
+
+        if resolved_start_date and resolved_end_date:
             last_query = state_dict.get("last_query") if isinstance(state_dict.get("last_query"), dict) else {}
             filters = last_query.get("filters") if isinstance(last_query.get("filters"), dict) else {}
             filters["date_range"] = {
-                "start_date": start_date.strip(),
-                "end_date": end_date.strip(),
+                "start_date": resolved_start_date,
+                "end_date": resolved_end_date,
             }
+            if isinstance(bank_account_id, str) and bank_account_id.strip():
+                filters["bank_account_id"] = bank_account_id.strip()
             last_query["filters"] = filters
             state_dict["last_query"] = last_query
 
