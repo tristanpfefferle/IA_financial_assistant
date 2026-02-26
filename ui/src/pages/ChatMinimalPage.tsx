@@ -62,7 +62,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
   const isMountedRef = useRef(true)
   const assistantSequenceRef = useRef(0)
 
-  const pendingInlineActionIndex = useMemo(() => {
+  const pendingInteractiveIndex = useMemo(() => {
     let actionIndex = -1
     for (let index = messages.length - 1; index >= 0; index -= 1) {
       const message = messages[index]
@@ -71,7 +71,8 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
       }
 
       const isActionable = Boolean(
-        toQuickReplyYesNoUiAction(message.toolResult)
+        toFormUiAction(message.toolResult)
+        || toQuickReplyYesNoUiAction(message.toolResult)
         || toOpenImportPanelUiAction(message.toolResult)
         || toLegacyImportUiRequest(message.toolResult)
       )
@@ -88,6 +89,18 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
     const hasUserResponseAfter = messages.some((message, index) => message.role === 'user' && index > actionIndex)
     return hasUserResponseAfter ? -1 : actionIndex
   }, [messages])
+
+  function isInlineActionableToolResult(toolResult: Record<string, unknown>): boolean {
+    return Boolean(
+      toQuickReplyYesNoUiAction(toolResult)
+      || toOpenImportPanelUiAction(toolResult)
+      || toLegacyImportUiRequest(toolResult),
+    )
+  }
+
+  function isFormToolResult(toolResult: Record<string, unknown>): boolean {
+    return Boolean(toFormUiAction(toolResult))
+  }
 
   function handleScroll() {
     if (!scrollRef.current) {
@@ -488,7 +501,10 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
                 return (
                   <div key={message.id}>
                     <div className={messageClasses}>{message.content}</div>
-                    {message.role === 'assistant' && message.toolResult && toFormUiAction(message.toolResult) ? (
+                    {message.role === 'assistant'
+                    && message.toolResult
+                    && pendingInteractiveIndex === index
+                    && isFormToolResult(message.toolResult) ? (
                       <ChatInteractiveCard
                         toolResult={message.toolResult}
                         onSubmit={({ message: nextMessage, humanText }) => {
@@ -500,7 +516,11 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
                         }}
                       />
                     ) : null}
-                    {message.role === 'assistant' && message.toolResult && pendingInlineActionIndex === index ? (
+                    {message.role === 'assistant'
+                    && message.toolResult
+                    && pendingInteractiveIndex === index
+                    && !isFormToolResult(message.toolResult)
+                    && isInlineActionableToolResult(message.toolResult) ? (
                       <InlineAction
                         actionState={message.toolResult}
                         disabled={isSending || isAssistantTyping}
