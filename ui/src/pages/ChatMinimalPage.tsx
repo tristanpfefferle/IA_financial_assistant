@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
-import { createImportJob, hardResetProfile, sendChatMessage, streamImportJobEvents, uploadImportFileToJob } from '../api/agentApi'
+import { hardResetProfile, importReleves, sendChatMessage } from '../api/agentApi'
 import { ChatInteractiveCard } from '../chat/ChatInteractiveCard'
 import { InlineAction } from '../chat/InlineAction'
 import { normalizeQuickReplyDisplay } from '../chat/formatters'
@@ -28,6 +28,15 @@ type ChatMinimalPageProps = {
 
 const THINKING_DELAY_MS = { min: 500, max: 900 }
 const BETWEEN_SENTENCE_DELAY_MS = { min: 350, max: 650 }
+const IMPORT_HEARTBEAT_INTERVAL_MS = 2000
+const IMPORT_PROGRESS_MESSAGES = [
+  'Lecture du fichier…',
+  'Détection du format…',
+  'Extraction des transactions…',
+  'Catégorisation en cours…',
+  'Génération du rapport…',
+]
+
 function createMessageId(): string {
   return typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`
 }
@@ -60,6 +69,8 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
   const [submitErrorMessage, setSubmitErrorMessage] = useState<string | null>(null)
   const isMountedRef = useRef(true)
   const assistantSequenceRef = useRef(0)
+  const importHeartbeatIntervalRef = useRef<number | null>(null)
+  const importHeartbeatIndexRef = useRef(0)
 
   const pendingInteractiveIndex = useMemo(() => {
     let actionIndex = -1
@@ -185,6 +196,29 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
     ])
   }
 
+  function stopImportHeartbeat() {
+    if (importHeartbeatIntervalRef.current !== null) {
+      window.clearInterval(importHeartbeatIntervalRef.current)
+      importHeartbeatIntervalRef.current = null
+    }
+  }
+
+  function pushNextImportHeartbeatStatus() {
+    const message = IMPORT_PROGRESS_MESSAGES[importHeartbeatIndexRef.current % IMPORT_PROGRESS_MESSAGES.length]
+    pushAssistantStatus(message)
+    importHeartbeatIndexRef.current += 1
+  }
+
+  function startImportHeartbeat() {
+    stopImportHeartbeat()
+    importHeartbeatIndexRef.current = 0
+    pushAssistantStatus('Ok — je récupère ton fichier…')
+    pushNextImportHeartbeatStatus()
+    importHeartbeatIntervalRef.current = window.setInterval(() => {
+      pushNextImportHeartbeatStatus()
+    }, IMPORT_HEARTBEAT_INTERVAL_MS)
+  }
+
   useEffect(() => {
     if (isNearBottom) {
       scrollToBottom()
@@ -287,6 +321,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
     return () => {
       isMountedRef.current = false
       assistantSequenceRef.current += 1
+      stopImportHeartbeat()
     }
   }, [])
 
@@ -359,12 +394,11 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
     ])
 
     setIsSending(true)
-    setIsAssistantTyping(false)
+    startImportHeartbeat()
 
     try {
       const contentBase64 = await toBase64(file)
-      const { job_id: jobId } = await createImportJob()
-      await uploadImportFileToJob(jobId, {
+      const importResult = await importReleves({
         files: [
           {
             filename: file.name,
@@ -373,65 +407,17 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
         ],
       })
 
-      pushAssistantStatus('OK — import en cours. Je te tiens au courant étape par étape.')
+      if ('type' in importResult && importResult.type === 'clarification') {
+        stopImportHeartbeat()
+        await appendAssistantReplyInSequence(importResult.message)
+        return
+      }
 
-      const displayedSeq = new Set<number>()
-      let gotFirstEvent = false
-      let idleMessageShown = false
-      let stopStreaming: (() => void) | null = null
-      let idleTimer: number | null = window.setTimeout(() => {
-        if (!gotFirstEvent && !idleMessageShown) {
-          idleMessageShown = true
-          pushAssistantStatus('Toujours en cours…')
-        }
-      }, 3000)
-
-      stopStreaming = await streamImportJobEvents(
-        jobId,
-        async (event) => {
-          gotFirstEvent = true
-          if (idleTimer !== null) {
-            window.clearTimeout(idleTimer)
-            idleTimer = null
-          }
-          if (displayedSeq.has(event.seq)) {
-            return
-          }
-          displayedSeq.add(event.seq)
-          pushAssistantStatus(event.message)
-
-          if (event.kind === 'done') {
-            if (stopStreaming) {
-              stopStreaming()
-            }
-            const response = await sendChatMessage('', { debug: debugMode, requestGreeting: true })
-            await appendAssistantReplyInSequence(response.reply, response.tool_result)
-            setIsSending(false)
-          }
-
-          if (event.kind === 'error') {
-            if (stopStreaming) {
-              stopStreaming()
-            }
-            setSubmitErrorMessage(event.message)
-            setIsSending(false)
-          }
-        },
-        (errorMessage) => {
-          setSubmitErrorMessage(errorMessage)
-          setMessages((current) => [
-            ...current,
-            {
-              id: createMessageId(),
-              role: 'assistant',
-              content: errorMessage,
-              createdAt: Date.now(),
-            },
-          ])
-          setIsSending(false)
-        },
-      )
+      stopImportHeartbeat()
+      const response = await sendChatMessage('', { debug: debugMode, requestGreeting: true })
+      await appendAssistantReplyInSequence(response.reply, response.tool_result)
     } catch (error) {
+      stopImportHeartbeat()
       const content = error instanceof Error ? error.message : 'Erreur inconnue.'
       setSubmitErrorMessage(content)
       setMessages((current) => [
@@ -443,7 +429,10 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
           createdAt: Date.now(),
         },
       ])
+    } finally {
+      stopImportHeartbeat()
       setIsSending(false)
+      setIsAssistantTyping(false)
     }
   }
 
