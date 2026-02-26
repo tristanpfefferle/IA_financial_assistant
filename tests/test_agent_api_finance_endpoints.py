@@ -2,7 +2,7 @@
 
 import base64
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from uuid import UUID
 
@@ -1771,3 +1771,52 @@ def test_spending_report_json_parses_string_metadata_for_category_and_flow_type(
     payload = response.json()
     assert payload["transactions"][0]["category"] == "Alimentation"
     assert payload["transactions"][0]["flow_type"] == "expense"
+
+
+def test_spending_report_builder_computes_categorization_confidence_weighted_score(monkeypatch) -> None:
+    entity_a = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    entity_b = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+
+    class _Repo:
+        def get_merchant_entity_suggested_confidence_by_ids(self, *, merchant_entity_ids: list[UUID]) -> dict[UUID, Decimal]:
+            assert merchant_entity_ids == sorted([entity_a, entity_b], key=str)
+            return {
+                entity_a: Decimal("0.8"),
+                entity_b: Decimal("1.0"),
+            }
+
+        def get_profile_category_name_by_id(self, *, profile_id: UUID, category_id: UUID) -> str | None:
+            return None
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: _Repo())
+    monkeypatch.setattr(agent_api, "_try_get_shared_expenses_repository", lambda: None)
+
+    class _Router:
+        backend_client = None
+
+        def call(self, tool_name: str, payload: dict, *, profile_id: UUID | None = None):
+            if tool_name == "finance_releves_sum":
+                return {"total": "-500", "count": 3, "currency": "CHF"}
+            if tool_name == "finance_releves_aggregate":
+                return {"group_by": "categorie", "currency": "CHF", "groups": {"Courses": {"total": "-500", "count": 3}}}
+            if tool_name == "finance_releves_search":
+                return {
+                    "items": [
+                        {"date": "2026-01-01", "montant": "-100", "merchant_entity_id": str(entity_a), "categorie": "Courses"},
+                        {"date": "2026-01-02", "montant": "-300", "merchant_entity_id": str(entity_b), "categorie": "Courses"},
+                        {"date": "2026-01-03", "montant": "-100", "merchant_entity_id": None, "categorie": "Courses"},
+                    ],
+                    "total": 3,
+                }
+            raise AssertionError(tool_name)
+
+    monkeypatch.setattr(agent_api, "get_tool_router", lambda: _Router())
+
+    payload = agent_api._build_spending_report_payload(
+        profile_id=PROFILE_ID,
+        period_start=date(2026, 1, 1),
+        period_end=date(2026, 1, 31),
+    )
+
+    assert payload["categorization_confidence_score_percent"] == 76
+    assert payload["categorization_confidence_coverage_percent"] == 67

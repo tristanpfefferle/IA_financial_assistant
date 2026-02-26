@@ -61,6 +61,8 @@ class SpendingReportData:
     shared_outgoing: Decimal = Decimal("0")
     shared_incoming: Decimal = Decimal("0")
     shared_net_balance: Decimal = Decimal("0")
+    categorization_confidence_score_percent: int | None = None
+    categorization_confidence_coverage_percent: int | None = None
 
 
 @dataclass(slots=True)
@@ -383,8 +385,28 @@ def generate_spending_report_pdf(data: SpendingReportData) -> bytes:
         textColor=colors.HexColor("#6B7280"),
     )
 
+    confidence_score_label = (
+        f"Score de confiance (catégorisation): {data.categorization_confidence_score_percent}%"
+        if data.categorization_confidence_score_percent is not None
+        else "Score de confiance (catégorisation): n/a"
+    )
+    confidence_coverage_label = (
+        f"Couverture: {data.categorization_confidence_coverage_percent}%"
+        if data.categorization_confidence_coverage_percent is not None
+        else "Couverture: n/a"
+    )
+
     story = [
-        Paragraph("Rapport de dépenses", styles["Title"]),
+        Table(
+            [[
+                Paragraph("Rapport de dépenses", styles["Title"]),
+                Paragraph(
+                    f"<para align=right><b>{confidence_score_label}</b><br/>{confidence_coverage_label}</para>",
+                    styles["BodyText"],
+                ),
+            ]],
+            colWidths=[120 * mm, 56 * mm],
+        ),
         Spacer(1, 1 * mm),
         Paragraph(f"Période: {data.period_label}", styles["BodyText"]),
         Paragraph(f"Généré le {date.today().isoformat()}", subtitle_style),

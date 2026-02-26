@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
+from decimal import Decimal, InvalidOperation
 import logging
 import re
 from typing import Any, Protocol
@@ -1144,6 +1145,41 @@ class SupabaseProfilesRepository:
             canonical_names[merchant_entity_id] = cleaned_name
 
         return canonical_names
+
+    def get_merchant_entity_suggested_confidence_by_ids(
+        self,
+        *,
+        merchant_entity_ids: list[UUID],
+    ) -> dict[UUID, Decimal]:
+        unique_ids = sorted({str(entity_id) for entity_id in merchant_entity_ids if entity_id}, key=str)
+        if not unique_ids:
+            return {}
+
+        rows, _ = self._client.get_rows(
+            table="merchant_entities",
+            query={
+                "select": "id,suggested_confidence",
+                "id": f"in.({','.join(unique_ids)})",
+                "limit": max(1, len(unique_ids)),
+            },
+            with_count=False,
+            use_anon_key=False,
+        )
+
+        confidence_by_id: dict[UUID, Decimal] = {}
+        for row in rows:
+            raw_id = row.get("id")
+            raw_confidence = row.get("suggested_confidence")
+            if raw_id is None or raw_confidence is None:
+                continue
+            try:
+                merchant_entity_id = raw_id if isinstance(raw_id, UUID) else UUID(str(raw_id))
+                confidence = Decimal(str(raw_confidence))
+            except (TypeError, ValueError, InvalidOperation):
+                continue
+            confidence_by_id[merchant_entity_id] = confidence
+
+        return confidence_by_id
 
     def list_merchant_entities_missing_suggested_category(self, *, limit: int = 200) -> list[dict[str, Any]]:
         rows, _ = self._client.get_rows(
