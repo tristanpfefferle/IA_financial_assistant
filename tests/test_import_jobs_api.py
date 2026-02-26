@@ -265,6 +265,199 @@ def test_import_job_pipeline_marks_error_on_tool_error_payload(monkeypatch) -> N
     assert finalize_response.status_code == 409
 
 
+
+def test_import_job_pipeline_auto_selects_detected_bank_account(monkeypatch) -> None:
+    auth_user_id = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+
+    monkeypatch.setattr(
+        agent_api,
+        "get_user_from_bearer_token",
+        lambda _token: {"id": str(auth_user_id), "email": "user@example.com"},
+    )
+
+    class _ProfilesRepo:
+        def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None):
+            assert auth_user_id
+            return profile_id
+
+        def list_bank_accounts(self, *, profile_id: UUID):
+            assert profile_id
+            return [
+                {"id": "11111111-1111-1111-1111-111111111111", "name": "UBS"},
+                {"id": "22222222-2222-2222-2222-222222222222", "name": "Revolut"},
+            ]
+
+        def get_chat_state(self, *, profile_id: UUID, user_id: UUID) -> dict[str, Any]:
+            return {"state": {}}
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: _ProfilesRepo())
+
+    captured_request: dict[str, Any] = {}
+
+    class _BackendClient:
+        def finance_releves_import_files(self, *, request: Any, on_progress: Any):
+            captured_request["bank_account_id"] = str(request.bank_account_id) if request.bank_account_id else None
+            return {"imported_count": 1}
+
+    class _Router:
+        def __init__(self) -> None:
+            self.backend_client = _BackendClient()
+
+    monkeypatch.setattr(agent_api, "get_tool_router", lambda: _Router())
+
+    repo = _Repo()
+    monkeypatch.setattr(agent_api, "_get_import_jobs_repository_or_501", lambda: repo)
+
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer token"}
+
+    create_response = client.post("/imports/jobs", headers=headers)
+    job_id = create_response.json()["job_id"]
+
+    upload_response = client.post(
+        f"/imports/jobs/{job_id}/files",
+        headers=headers,
+        json={
+            "files": [
+                {
+                    "filename": "ubs.csv",
+                    "content_base64": "Qm9va2luZyBEYXRlLFZhbHVlIERhdGUsVHJhbnNhY3Rpb24gRGV0YWlscyxEZWJpdCxDcmVkaXRcbjIwMjYtMDEtMDEsMjAyNi0wMS0wMSxQQUlFTUVOVCwxMC4wMCwwLjAw",
+                }
+            ]
+        },
+    )
+    assert upload_response.status_code == 200
+    assert captured_request["bank_account_id"] == "11111111-1111-1111-1111-111111111111"
+
+
+def test_import_job_pipeline_errors_when_detected_bank_has_no_account(monkeypatch) -> None:
+    auth_user_id = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+
+    monkeypatch.setattr(
+        agent_api,
+        "get_user_from_bearer_token",
+        lambda _token: {"id": str(auth_user_id), "email": "user@example.com"},
+    )
+
+    class _ProfilesRepo:
+        def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None):
+            return profile_id
+
+        def list_bank_accounts(self, *, profile_id: UUID):
+            return [{"id": "22222222-2222-2222-2222-222222222222", "name": "Revolut"}]
+
+        def get_chat_state(self, *, profile_id: UUID, user_id: UUID) -> dict[str, Any]:
+            return {"state": {}}
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: _ProfilesRepo())
+
+    class _BackendClient:
+        def finance_releves_import_files(self, *, request: Any, on_progress: Any):
+            raise AssertionError("import tool should not be called when no account matches")
+
+    class _Router:
+        def __init__(self) -> None:
+            self.backend_client = _BackendClient()
+
+    monkeypatch.setattr(agent_api, "get_tool_router", lambda: _Router())
+
+    repo = _Repo()
+    monkeypatch.setattr(agent_api, "_get_import_jobs_repository_or_501", lambda: repo)
+
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer token"}
+
+    create_response = client.post("/imports/jobs", headers=headers)
+    job_id = create_response.json()["job_id"]
+
+    client.post(
+        f"/imports/jobs/{job_id}/files",
+        headers=headers,
+        json={
+            "files": [
+                {
+                    "filename": "ubs.csv",
+                    "content_base64": "Qm9va2luZyBEYXRlLFZhbHVlIERhdGUsVHJhbnNhY3Rpb24gRGV0YWlscyxEZWJpdCxDcmVkaXRcbjIwMjYtMDEtMDEsMjAyNi0wMS0wMSxQQUlFTUVOVCwxMC4wMCwwLjAw",
+                }
+            ]
+        },
+    )
+
+    status_response = client.get(f"/imports/jobs/{job_id}", headers=headers)
+    assert status_response.status_code == 200
+    assert status_response.json()["status"] == "error"
+
+    error_event = next(event for event in repo.events[UUID(job_id)] if event.kind == "error")
+    assert error_event.message == "Aucun compte UBS trouvé. Ajoute/active ce compte."
+
+
+def test_import_job_pipeline_errors_when_detected_bank_is_ambiguous(monkeypatch) -> None:
+    auth_user_id = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+
+    monkeypatch.setattr(
+        agent_api,
+        "get_user_from_bearer_token",
+        lambda _token: {"id": str(auth_user_id), "email": "user@example.com"},
+    )
+
+    class _ProfilesRepo:
+        def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None):
+            return profile_id
+
+        def list_bank_accounts(self, *, profile_id: UUID):
+            return [
+                {"id": "11111111-1111-1111-1111-111111111111", "name": "UBS privé"},
+                {"id": "33333333-3333-3333-3333-333333333333", "name": "UBS commun"},
+            ]
+
+        def get_chat_state(self, *, profile_id: UUID, user_id: UUID) -> dict[str, Any]:
+            return {"state": {}}
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: _ProfilesRepo())
+
+    class _BackendClient:
+        def finance_releves_import_files(self, *, request: Any, on_progress: Any):
+            raise AssertionError("import tool should not be called when account resolution is ambiguous")
+
+    class _Router:
+        def __init__(self) -> None:
+            self.backend_client = _BackendClient()
+
+    monkeypatch.setattr(agent_api, "get_tool_router", lambda: _Router())
+
+    repo = _Repo()
+    monkeypatch.setattr(agent_api, "_get_import_jobs_repository_or_501", lambda: repo)
+
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer token"}
+
+    create_response = client.post("/imports/jobs", headers=headers)
+    job_id = create_response.json()["job_id"]
+
+    client.post(
+        f"/imports/jobs/{job_id}/files",
+        headers=headers,
+        json={
+            "files": [
+                {
+                    "filename": "ubs.csv",
+                    "content_base64": "Qm9va2luZyBEYXRlLFZhbHVlIERhdGUsVHJhbnNhY3Rpb24gRGV0YWlscyxEZWJpdCxDcmVkaXRcbjIwMjYtMDEtMDEsMjAyNi0wMS0wMSxQQUlFTUVOVCwxMC4wMCwwLjAw",
+                }
+            ]
+        },
+    )
+
+    status_response = client.get(f"/imports/jobs/{job_id}", headers=headers)
+    assert status_response.status_code == 200
+    assert status_response.json()["status"] == "error"
+
+    error_event = next(event for event in repo.events[UUID(job_id)] if event.kind == "error")
+    assert error_event.message == "Plusieurs comptes UBS trouvés. Choisis le compte."
+    assert error_event.payload == {"needs_account_selection": True, "bank_code": "ubs"}
+
 def test_finalize_chat_then_yes_routes_to_report_and_not_import(monkeypatch) -> None:
     auth_user_id = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
     profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")

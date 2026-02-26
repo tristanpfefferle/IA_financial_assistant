@@ -386,10 +386,6 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
     const legacyImportRequest = pendingToolResult ? toLegacyImportUiRequest(pendingToolResult) : null
     const selectedBankAccountId = openImportAction?.bank_account_id ?? legacyImportRequest?.bank_account_id
 
-    if (!selectedBankAccountId) {
-      setSubmitErrorMessage('Je dois savoir sur quel compte importer ce relevé. Sélectionne d’abord le compte.')
-      return
-    }
 
     setSubmitErrorMessage(null)
     setMessages((current) => [
@@ -416,7 +412,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
             content_base64: contentBase64,
           },
         ],
-        bank_account_id: selectedBankAccountId,
+        ...(selectedBankAccountId ? { bank_account_id: selectedBankAccountId } : {}),
       })
 
       pushAssistantStatus('OK — import en cours. Je te tiens au courant étape par étape.')
