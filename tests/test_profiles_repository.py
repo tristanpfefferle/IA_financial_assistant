@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from backend.repositories.profiles_repository import SupabaseProfilesRepository
@@ -1369,8 +1370,31 @@ def test_get_merchant_entity_canonical_names_by_ids_returns_uuid_name_map() -> N
 
     assert result == {first_entity_id: "Coop"}
     assert client.calls[0]["table"] == "merchant_entities"
-    assert client.calls[0]["query"]["id"] == f"in.({first_entity_id},{second_entity_id})"
+    assert client.calls[0]["query"]["id"] == f'in.("{first_entity_id}","{second_entity_id}")'
 
+
+
+
+def test_get_merchant_entity_suggested_confidence_by_ids_returns_uuid_confidence_map() -> None:
+    first_entity_id = UUID("11111111-1111-1111-1111-111111111111")
+    second_entity_id = UUID("22222222-2222-2222-2222-222222222222")
+    client = _ClientStub(
+        responses=[
+            [
+                {"id": str(first_entity_id), "suggested_confidence": "0.87"},
+                {"id": str(second_entity_id), "suggested_confidence": None},
+            ]
+        ]
+    )
+    repository = SupabaseProfilesRepository(client=client)
+
+    result = repository.get_merchant_entity_suggested_confidence_by_ids(
+        merchant_entity_ids=[second_entity_id, first_entity_id],
+    )
+
+    assert result == {first_entity_id: Decimal("0.87")}
+    assert client.calls[0]["table"] == "merchant_entities"
+    assert client.calls[0]["query"]["id"] == f'in.("{first_entity_id}","{second_entity_id}")'
 
 def test_create_merchant_entity_defaults_suggested_source_to_import_when_none() -> None:
     created_entity_id = UUID("33333333-3333-3333-3333-333333333333")

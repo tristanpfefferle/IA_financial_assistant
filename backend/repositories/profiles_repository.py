@@ -1117,12 +1117,13 @@ class SupabaseProfilesRepository:
         unique_ids = sorted({str(entity_id) for entity_id in merchant_entity_ids if entity_id}, key=str)
         if not unique_ids:
             return {}
+        quoted_ids = ",".join([f'"{uid}"' for uid in unique_ids])
 
         rows, _ = self._client.get_rows(
             table="merchant_entities",
             query={
                 "select": "id,canonical_name",
-                "id": f"in.({','.join(unique_ids)})",
+                "id": f"in.({quoted_ids})",
                 "limit": max(1, len(unique_ids)),
             },
             with_count=False,
@@ -1154,12 +1155,13 @@ class SupabaseProfilesRepository:
         unique_ids = sorted({str(entity_id) for entity_id in merchant_entity_ids if entity_id}, key=str)
         if not unique_ids:
             return {}
+        quoted_ids = ",".join([f'"{uid}"' for uid in unique_ids])
 
         rows, _ = self._client.get_rows(
             table="merchant_entities",
             query={
                 "select": "id,suggested_confidence",
-                "id": f"in.({','.join(unique_ids)})",
+                "id": f"in.({quoted_ids})",
                 "limit": max(1, len(unique_ids)),
             },
             with_count=False,
