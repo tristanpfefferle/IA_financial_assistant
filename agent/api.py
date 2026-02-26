@@ -620,8 +620,22 @@ def _build_quick_reply_report_view_confirmed_ui_action() -> dict[str, Any]:
     return {
         "type": "ui_action",
         "action": "quick_replies",
-        "options": [{"id": "seen", "label": "Je l’ai vu", "value": "je l’ai vu"}],
+        "options": [
+            {
+                "id": "seen",
+                "label": "J’ai consulté mon rapport",
+                "value": "j_ai_consulte_mon_rapport",
+            }
+        ],
     }
+
+
+def _build_open_pdf_with_report_view_confirmed_ui_request(url: str) -> dict[str, Any]:
+    """Return PDF open UI request with embedded quick reply confirmation."""
+
+    payload: dict[str, Any] = _build_open_pdf_ui_request(url)
+    payload["quick_replies"] = _build_quick_reply_report_view_confirmed_ui_action()["options"]
+    return payload
 
 
 def _build_quick_reply_profile_fix_ui_action() -> dict[str, Any]:
@@ -2087,9 +2101,22 @@ def _is_allons_y(message: str) -> bool:
 
 def _is_report_view_confirmed(message: str) -> bool:
     normalized = _normalize_text(re.sub(r"[!?.,;:]+$", "", message))
-    if normalized in {"vu", "ok vu", "cest vu", "c est vu"}:
+    compact = re.sub(r"[^a-z0-9]", "", normalized)
+    if compact == "jaiconsultemonrapport":
         return True
-    return "vu" in normalized and ("je" in normalized or "j" in normalized)
+    confirmation_tokens = {
+        "vu",
+        "consulted",
+        "consulte",
+        "consultee",
+        "consultees",
+        "consulter",
+        "read",
+        "lu",
+    }
+    if normalized in {"ok vu", "cest vu", "c est vu", "jai vu", "je lai vu", "je l ai vu"}:
+        return True
+    return any(token in normalized for token in confirmation_tokens)
 
 
 def _build_confidence_intro_reply(state_dict: dict[str, Any]) -> str:
@@ -2457,7 +2484,7 @@ def _build_onboarding_reminder(global_state: dict[str, Any] | None) -> str | Non
     if substep == "report_offer":
         return "(Pour continuer l’onboarding : réponds oui ou non pour ouvrir le rapport PDF.)"
     if substep == "report_wait_view_confirmation":
-        return "(Pour continuer l’onboarding : dis-moi quand tu as vu le rapport.)"
+        return "(Pour continuer l’onboarding : clique sur « J’ai consulté mon rapport ».)"
     return None
 
 
@@ -4598,10 +4625,41 @@ def agent_chat(
                         profile_id=profile_id,
                     )
 
+                    month_value: str | None = None
+                    start_date_value: str | None = None
+                    end_date_value: str | None = None
+                    bank_account_id_value: str | None = None
+
+                    last_query = state_dict.get("last_query") if isinstance(state_dict, dict) else None
+                    if isinstance(last_query, dict):
+                        if isinstance(last_query.get("month"), str) and str(last_query.get("month")).strip():
+                            month_value = str(last_query.get("month")).strip()
+
+                    if month_value is None:
+                        start_date_value, end_date_value, bank_account_id_value = _resolve_last_report_filters(state_dict)
+
+                    if month_value is None and (start_date_value is None or end_date_value is None):
+                        resolved_start, resolved_end = _resolve_report_date_range(
+                            month=None,
+                            start_date=None,
+                            end_date=None,
+                            state_dict=state_dict,
+                            profile_id=profile_id,
+                        )
+                        start_date_value = resolved_start.isoformat()
+                        end_date_value = resolved_end.isoformat()
+
+                    report_url = _build_spending_pdf_url(
+                        month=month_value,
+                        start_date=start_date_value,
+                        end_date=end_date_value,
+                        bank_account_id=bank_account_id_value,
+                    )
+
                     updated_global_state = _build_onboarding_global_state(
                         global_state,
                         onboarding_step="report",
-                        onboarding_substep="report_offer",
+                        onboarding_substep="report_wait_view_confirmation",
                     )
                     updated_global_state = _normalize_onboarding_step_substep(updated_global_state)
                     state_dict["global_state"] = updated_global_state
@@ -4614,8 +4672,12 @@ def agent_chat(
                     )
 
                     return _chat_response(
-                        reply=_build_import_done_reply(None),
-                        tool_result=_build_quick_reply_yes_no_ui_action(),
+                        reply=(
+                            "Import terminé ✅\n\n"
+                            "Je viens de générer ton premier rapport financier.\n"
+                            "Ouvre-le, puis dis-moi quand tu l’as consulté 🙂"
+                        ),
+                        tool_result=_build_open_pdf_with_report_view_confirmed_ui_request(report_url),
                         plan=None,
                     )
 
@@ -4702,7 +4764,7 @@ def agent_chat(
                         plan=None,
                     )
                 return _chat_response(
-                    reply="Prends un moment pour consulter ton rapport.\nDis-moi quand tu l’as vu 🙂",
+                    reply="Ouvre le rapport puis clique « J’ai consulté mon rapport » 🙂",
                     tool_result=_build_quick_reply_report_view_confirmed_ui_action(),
                     plan=None,
                 )
@@ -6596,34 +6658,12 @@ def finalize_import_job_chat(
         _build_onboarding_global_state(
             global_state,
             onboarding_step="report",
-            onboarding_substep="report_offer",
+            onboarding_substep="report_wait_view_confirmation",
         )
     )
 
     state_dict["global_state"] = updated_global_state
-
-    registry = get_loop_registry()
-    loop_reply = route_message(
-        message="__import_done__",
-        current_loop=None,
-        global_state=updated_global_state,
-        services={
-            "profiles_repository": profiles_repository,
-            "tool_router": get_tool_router(),
-            "global_state": updated_global_state,
-            "state": state_dict,
-        },
-        profile_id=profile_id,
-        user_id=_auth_user_id,
-        llm_judge=None,
-        registry=registry,
-    )
-
-    state_dict["global_state"] = updated_global_state
-    if loop_reply.next_loop is None:
-        state_dict.pop("loop", None)
-    else:
-        state_dict["loop"] = serialize_loop_context(loop_reply.next_loop)
+    state_dict.pop("loop", None)
     updated_chat_state = dict(chat_state)
     updated_chat_state["state"] = state_dict
     profiles_repository.update_chat_state(
@@ -6632,9 +6672,44 @@ def finalize_import_job_chat(
         chat_state=updated_chat_state,
     )
 
+    month_value: str | None = None
+    start_date_value: str | None = None
+    end_date_value: str | None = None
+    bank_account_id_value: str | None = None
+
+    last_query = state_dict.get("last_query") if isinstance(state_dict, dict) else None
+    if isinstance(last_query, dict):
+        if isinstance(last_query.get("month"), str) and str(last_query.get("month")).strip():
+            month_value = str(last_query.get("month")).strip()
+
+    if month_value is None:
+        start_date_value, end_date_value, bank_account_id_value = _resolve_last_report_filters(state_dict)
+
+    if month_value is None and (start_date_value is None or end_date_value is None):
+        resolved_start, resolved_end = _resolve_report_date_range(
+            month=None,
+            start_date=None,
+            end_date=None,
+            state_dict=state_dict,
+            profile_id=profile_id,
+        )
+        start_date_value = resolved_start.isoformat()
+        end_date_value = resolved_end.isoformat()
+
+    report_url = _build_spending_pdf_url(
+        month=month_value,
+        start_date=start_date_value,
+        end_date=end_date_value,
+        bank_account_id=bank_account_id_value,
+    )
+
     return ChatResponse(
-        reply=_build_import_done_reply(job.total_transactions),
-        tool_result=_build_quick_reply_yes_no_ui_action(),
+        reply=(
+            "Import terminé ✅\n\n"
+            "Je viens de générer ton premier rapport financier.\n"
+            "Ouvre-le, puis dis-moi quand tu l’as consulté 🙂"
+        ),
+        tool_result=_build_open_pdf_with_report_view_confirmed_ui_request(report_url),
     )
 
 

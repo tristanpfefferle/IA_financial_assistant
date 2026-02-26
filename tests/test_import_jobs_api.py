@@ -169,15 +169,14 @@ def test_import_job_endpoints_create_upload_and_events(monkeypatch) -> None:
     finalize_response = client.post(f"/imports/jobs/{job_id}/finalize-chat", headers=headers)
     assert finalize_response.status_code == 200
     payload = finalize_response.json()
-    assert payload["reply"] == (
-        "Import terminé ✅\n\n"
-        "Je viens de classer tes 47 transactions et de générer ton premier rapport financier.\n\n"
-        "Es-tu prêt à le découvrir ?"
-    )
-    assert "(oui/non)" not in payload["reply"]
-    assert payload["tool_result"]["type"] == "ui_action"
-    assert payload["tool_result"]["action"] == "quick_replies"
-    assert len(payload["tool_result"]["options"]) == 2
+    assert "Import terminé ✅" in payload["reply"]
+    assert "Ouvre-le" in payload["reply"]
+    assert payload["tool_result"]["type"] == "ui_request"
+    assert payload["tool_result"]["name"] == "open_pdf_report"
+    assert payload["tool_result"]["url"]
+    assert payload["tool_result"]["quick_replies"] == [
+        {"id": "seen", "label": "J’ai consulté mon rapport", "value": "j_ai_consulte_mon_rapport"}
+    ]
 
     events = repo.events[UUID(job_id)]
     kinds = [event.kind for event in events]
@@ -199,7 +198,7 @@ def test_import_job_endpoints_create_upload_and_events(monkeypatch) -> None:
 
     persisted_global_state = profiles_repo.chat_state.get("state", {}).get("global_state", {})
     assert persisted_global_state.get("onboarding_step") == "report"
-    assert persisted_global_state.get("onboarding_substep") == "report_offer"
+    assert persisted_global_state.get("onboarding_substep") == "report_wait_view_confirmation"
     persisted_last_import = profiles_repo.chat_state.get("state", {}).get("last_import", {})
     assert persisted_last_import.get("date_range") == {"start_date": "2026-01-01", "end_date": "2026-01-31"}
     persisted_last_query = profiles_repo.chat_state.get("state", {}).get("last_query", {})
@@ -287,13 +286,8 @@ def test_import_job_prefers_explicit_full_range_over_preview_for_report_url(monk
     persisted_last_import = profiles_repo.chat_state["state"]["last_import"]
     assert persisted_last_import["date_range"] == {"start_date": "2026-01-01", "end_date": "2026-03-31"}
 
-    yes_response = client.post(
-        "/agent/chat",
-        headers=headers,
-        json={"message": "Oui"},
-    )
-    assert yes_response.status_code == 200
-    assert yes_response.json()["tool_result"]["url"] == (
+    finalize_payload = finalize_response.json()
+    assert finalize_payload["tool_result"]["url"] == (
         "/finance/reports/spending.pdf?start_date=2026-01-01&end_date=2026-03-31"
     )
 
@@ -628,24 +622,12 @@ def test_finalize_chat_then_yes_routes_to_report_and_not_import(monkeypatch) -> 
 
     finalize_response = client.post(f"/imports/jobs/{job_id}/finalize-chat", headers=headers)
     assert finalize_response.status_code == 200
-    assert "Es-tu prêt à le découvrir ?" in finalize_response.json()["reply"]
-
-    yes_response = client.post(
-        "/agent/chat",
-        headers=headers,
-        json={"message": "Oui"},
-    )
-    assert yes_response.status_code == 200
-    payload = yes_response.json()
-    assert payload["tool_result"]["type"] == "ui_request"
-    assert payload["tool_result"]["name"] == "open_pdf_report"
-    assert payload["reply"] == "Prends un moment pour consulter ton rapport.\nDis-moi quand tu l’as vu 🙂"
-    assert payload["tool_result"]["url"]
+    assert "Ouvre-le" in finalize_response.json()["reply"]
 
     report_seen_response = client.post(
         "/agent/chat",
         headers=headers,
-        json={"message": "Je l’ai vu"},
+        json={"message": "J’ai consulté mon rapport"},
     )
     assert report_seen_response.status_code == 200
     report_seen_payload = report_seen_response.json()
@@ -736,13 +718,8 @@ def test_finalize_chat_uses_import_date_range_for_report_url(monkeypatch) -> Non
     assert persisted_filters["date_range"] == {"start_date": "2026-01-01", "end_date": "2026-03-31"}
     assert persisted_filters["bank_account_id"] == imported_bank_account_id
 
-    yes_response = client.post(
-        "/agent/chat",
-        headers=headers,
-        json={"message": "Oui"},
-    )
-    assert yes_response.status_code == 200
-    assert yes_response.json()["tool_result"]["url"] == (
+    finalize_payload = finalize_response.json()
+    assert finalize_payload["tool_result"]["url"] == (
         "/finance/reports/spending.pdf?start_date=2026-01-01&end_date=2026-03-31"
         "&bank_account_id=11111111-1111-1111-1111-111111111111"
     )
