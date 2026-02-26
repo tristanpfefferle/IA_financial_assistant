@@ -134,16 +134,13 @@ export function InlineAction({ actionState, disabled, onChoose, onImportFile }: 
             setPdfErrorMessage(null)
             try {
               await openPdfFromUrl(pdf.url)
-            } catch (error) {
-              const message = error instanceof Error && error.message === 'popup_blocked'
-                ? 'Le navigateur a bloqué l’ouverture du nouvel onglet. Autorise les pop-ups puis réessaie.'
-                : 'Impossible d’ouvrir le PDF pour le moment. Réessaie dans quelques instants.'
-              setPdfErrorMessage(message)
+            } catch {
+              setPdfErrorMessage('Impossible d’ouvrir le PDF pour le moment. Réessaie dans quelques instants.')
             }
           }}
           aria-label={pdf.title}
         >
-          📄 Ouvrir le PDF
+          📄 {pdf.label}
         </button>
         {pdfErrorMessage ? <p className="subtle-text">{pdfErrorMessage}</p> : null}
       </div>
