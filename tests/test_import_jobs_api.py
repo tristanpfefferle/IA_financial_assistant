@@ -1,0 +1,126 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any
+from uuid import UUID, uuid4
+
+from fastapi.testclient import TestClient
+
+import agent.api as agent_api
+from agent.api import app
+
+
+@dataclass
+class _Job:
+    id: UUID
+    profile_id: UUID
+    status: str = "pending"
+    error_message: str | None = None
+    updated_at: datetime | None = None
+    total_transactions: int | None = None
+    processed_transactions: int | None = None
+    total_llm_items: int | None = None
+    processed_llm_items: int | None = None
+
+
+@dataclass
+class _Event:
+    seq: int
+    kind: str
+    message: str
+    progress: float | None
+    payload: dict[str, Any] | None
+
+
+class _Repo:
+    def __init__(self) -> None:
+        self.jobs: dict[UUID, _Job] = {}
+        self.events: dict[UUID, list[_Event]] = {}
+
+    def create_job(self, *, profile_id: UUID) -> UUID:
+        job_id = uuid4()
+        self.jobs[job_id] = _Job(id=job_id, profile_id=profile_id, updated_at=datetime.now(timezone.utc))
+        self.events[job_id] = []
+        return job_id
+
+    def get_job(self, *, profile_id: UUID, job_id: UUID):
+        job = self.jobs.get(job_id)
+        if job is None or job.profile_id != profile_id:
+            return None
+        return job
+
+    def patch_job(self, *, profile_id: UUID, job_id: UUID, payload: dict[str, Any]) -> None:
+        job = self.jobs[job_id]
+        if job.profile_id != profile_id:
+            return
+        for key, value in payload.items():
+            setattr(job, key, value)
+        job.updated_at = datetime.now(timezone.utc)
+
+    def next_event_seq(self, *, job_id: UUID) -> int:
+        return len(self.events[job_id]) + 1
+
+    def create_event(self, *, job_id: UUID, seq: int, kind: str, message: str, progress: float | None, payload: dict[str, Any] | None):
+        event = _Event(seq=seq, kind=kind, message=message, progress=progress, payload=payload)
+        self.events[job_id].append(event)
+        return event
+
+    def list_events_since(self, *, job_id: UUID, after_seq: int, limit: int = 200):
+        return [event for event in self.events[job_id] if event.seq > after_seq][:limit]
+
+
+def test_import_job_endpoints_create_upload_and_events(monkeypatch) -> None:
+    auth_user_id = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+
+    monkeypatch.setattr(
+        agent_api,
+        "get_user_from_bearer_token",
+        lambda _token: {"id": str(auth_user_id), "email": "user@example.com"},
+    )
+
+    class _ProfilesRepo:
+        def get_profile_id_for_auth_user(self, *, auth_user_id: UUID, email: str | None):
+            assert auth_user_id
+            return profile_id
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: _ProfilesRepo())
+
+    class _Router:
+        def call(self, tool_name: str, payload: dict[str, Any], *, profile_id: UUID | None = None):
+            assert tool_name == "finance_releves_import_files"
+            assert profile_id == UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+            assert payload["files"][0]["filename"] == "sample.csv"
+            return {"imported_count": 2}
+
+    monkeypatch.setattr(agent_api, "get_tool_router", lambda: _Router())
+
+    repo = _Repo()
+    monkeypatch.setattr(agent_api, "_get_import_jobs_repository_or_501", lambda: repo)
+
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer token"}
+
+    create_response = client.post("/imports/jobs", headers=headers)
+    assert create_response.status_code == 200
+    job_id = create_response.json()["job_id"]
+
+    upload_response = client.post(
+        f"/imports/jobs/{job_id}/files",
+        headers=headers,
+        json={"files": [{"filename": "sample.csv", "content_base64": "ZGF0ZSxtb250YW50XG4yMDI2LTAxLTAxLDEw"}]},
+    )
+    assert upload_response.status_code == 200
+    assert upload_response.json()["ok"] is True
+
+    status_response = client.get(f"/imports/jobs/{job_id}", headers=headers)
+    assert status_response.status_code == 200
+    assert status_response.json()["status"] == "done"
+
+    events = repo.events[UUID(job_id)]
+    kinds = [event.kind for event in events]
+    assert "started" in kinds
+    assert "parsing" in kinds
+    assert "parsed" in kinds
+    assert "done" in kinds

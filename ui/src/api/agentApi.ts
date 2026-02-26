@@ -84,6 +84,31 @@ export type ImportRequestPayload = {
   modified_action?: 'keep' | 'replace'
 }
 
+
+export type ImportJobCreateResponse = {
+  job_id: string
+}
+
+export type ImportJobStatus = {
+  job_id: string
+  status: 'pending' | 'running' | 'done' | 'error'
+  error_message?: string | null
+  updated_at?: string | null
+  total_transactions?: number | null
+  processed_transactions?: number | null
+  total_llm_items?: number | null
+  processed_llm_items?: number | null
+}
+
+export type ImportJobEvent = {
+  seq: number
+  kind: string
+  message: string
+  progress?: number | null
+  payload?: Record<string, unknown> | null
+}
+
+
 export type ResolvePendingMerchantAliasesPayload = {
   limit?: number
   max_batches?: number
@@ -311,6 +336,144 @@ export async function listBankAccounts(): Promise<BankAccountsListResult> {
   }
 
   return (await response.json()) as BankAccountsListResult
+}
+
+export async function createImportJob(): Promise<ImportJobCreateResponse> {
+  const response = await fetch(`${getBaseUrl()}/imports/jobs`, {
+    method: 'POST',
+    headers: await buildAuthHeaders(),
+    body: JSON.stringify({}),
+  })
+
+  if (!response.ok) {
+    const detail = await extractErrorDetail(response)
+    throw new Error(`Erreur API import job (${response.status}): ${detail}`)
+  }
+
+  return (await response.json()) as ImportJobCreateResponse
+}
+
+export async function uploadImportFileToJob(jobId: string, payload: ImportRequestPayload): Promise<{ ok: boolean }> {
+  const response = await fetch(`${getBaseUrl()}/imports/jobs/${encodeURIComponent(jobId)}/files`, {
+    method: 'POST',
+    headers: await buildAuthHeaders(),
+    body: JSON.stringify(payload),
+  })
+
+  if (!response.ok) {
+    const detail = await extractErrorDetail(response)
+    throw new Error(`Erreur API upload import (${response.status}): ${detail}`)
+  }
+
+  return (await response.json()) as { ok: boolean }
+}
+
+export async function getImportJobStatus(jobId: string): Promise<ImportJobStatus> {
+  const response = await fetch(`${getBaseUrl()}/imports/jobs/${encodeURIComponent(jobId)}`, {
+    method: 'GET',
+    headers: await buildAuthHeaders(),
+  })
+
+  if (!response.ok) {
+    const detail = await extractErrorDetail(response)
+    throw new Error(`Erreur API status import (${response.status}): ${detail}`)
+  }
+
+  return (await response.json()) as ImportJobStatus
+}
+
+export async function streamImportJobEvents(
+  jobId: string,
+  onEvent: (event: ImportJobEvent) => void,
+  onError: (error: string) => void,
+): Promise<() => void> {
+  if (typeof EventSource === 'undefined') {
+    let stopped = false
+    const timer = window.setInterval(async () => {
+      if (stopped) {
+        return
+      }
+      try {
+        const status = await getImportJobStatus(jobId)
+        if (status.status === 'done') {
+          onEvent({ seq: Date.now(), kind: 'done', message: 'Import terminé ✅', progress: 1 })
+          stopped = true
+          window.clearInterval(timer)
+        } else if (status.status === 'error') {
+          onEvent({ seq: Date.now(), kind: 'error', message: status.error_message ?? 'Import interrompu.', progress: 1 })
+          stopped = true
+          window.clearInterval(timer)
+        }
+      } catch (error) {
+        stopped = true
+        window.clearInterval(timer)
+        onError(error instanceof Error ? error.message : String(error))
+      }
+    }, 1000)
+
+    return () => {
+      stopped = true
+      window.clearInterval(timer)
+    }
+  }
+
+  const accessToken = await getAccessToken()
+  let stopped = false
+  let currentSource: EventSource | null = null
+  let reconnectTimer: number | null = null
+  let lastSeenEventId = '0'
+
+  const buildEventsUrl = (lastEventId: string): string => {
+    const baseUrl = `${getBaseUrl()}/imports/jobs/${encodeURIComponent(jobId)}/events?last_event_id=${encodeURIComponent(lastEventId)}`
+    return accessToken ? appendAccessTokenToUrl(baseUrl, accessToken) : baseUrl
+  }
+
+  const connect = (): void => {
+    if (stopped) {
+      return
+    }
+
+    const source = new EventSource(buildEventsUrl(lastSeenEventId))
+    currentSource = source
+
+    source.addEventListener('progress', (rawEvent) => {
+      const event = rawEvent as MessageEvent
+      if (event.lastEventId) {
+        lastSeenEventId = event.lastEventId
+      }
+      try {
+        onEvent(JSON.parse(event.data) as ImportJobEvent)
+      } catch (error) {
+        onError(error instanceof Error ? error.message : String(error))
+      }
+    })
+
+    source.onerror = () => {
+      source.close()
+      if (stopped) {
+        return
+      }
+      if (reconnectTimer !== null) {
+        window.clearTimeout(reconnectTimer)
+      }
+      reconnectTimer = window.setTimeout(() => {
+        connect()
+      }, 1000)
+    }
+  }
+
+  connect()
+
+  return () => {
+    stopped = true
+    if (reconnectTimer !== null) {
+      window.clearTimeout(reconnectTimer)
+    }
+    if (currentSource) {
+      currentSource.close()
+      currentSource = null
+    }
+  }
 }
 
 export async function importReleves(payload: ImportRequestPayload): Promise<RelevesImportResult | ImportClarificationResult> {
