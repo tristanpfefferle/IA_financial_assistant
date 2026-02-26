@@ -1396,6 +1396,30 @@ def test_get_merchant_entity_suggested_confidence_by_ids_returns_uuid_confidence
     assert client.calls[0]["table"] == "merchant_entities"
     assert client.calls[0]["query"]["id"] == f'in.("{first_entity_id}","{second_entity_id}")'
 
+
+def test_get_merchant_entity_suggested_confidence_by_ids_clamps_between_zero_and_one() -> None:
+    first_entity_id = UUID("11111111-1111-1111-1111-111111111111")
+    second_entity_id = UUID("22222222-2222-2222-2222-222222222222")
+    client = _ClientStub(
+        responses=[
+            [
+                {"id": str(first_entity_id), "suggested_confidence": "-0.2"},
+                {"id": str(second_entity_id), "suggested_confidence": "1.25"},
+            ]
+        ]
+    )
+    repository = SupabaseProfilesRepository(client=client)
+
+    result = repository.get_merchant_entity_suggested_confidence_by_ids(
+        merchant_entity_ids=[second_entity_id, first_entity_id],
+    )
+
+    assert result == {
+        first_entity_id: Decimal("0"),
+        second_entity_id: Decimal("1"),
+    }
+    assert client.calls[0]["query"]["id"] == f'in.("{first_entity_id}","{second_entity_id}")'
+
 def test_create_merchant_entity_defaults_suggested_source_to_import_when_none() -> None:
     created_entity_id = UUID("33333333-3333-3333-3333-333333333333")
     client = _ClientStub(

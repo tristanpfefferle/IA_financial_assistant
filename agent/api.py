@@ -5781,7 +5781,7 @@ def _build_spending_report_payload(
         cashflow_summary = releves_repository.compute_cashflow_summary(
             profile_id=profile_id,
             date_range=DateRange(start_date=period_start, end_date=period_end),
-            bank_account_id=None,
+            bank_account_id=bank_account_id,
         )
 
     sum_result = tool_router.call("finance_releves_sum", payload, profile_id=profile_id)
