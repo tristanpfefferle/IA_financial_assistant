@@ -76,7 +76,12 @@ function toInlineOptions(actionState: Record<string, unknown>): InlineOption[] |
         id: typeof record.id === 'string' ? record.id : `${action}-${index}`,
         label: record.label,
         value: record.value,
-        tone: action === 'single_primary' ? 'primary' : 'neutral',
+        tone:
+          action === 'single_primary'
+            ? /allons/i.test(record.label) || /allons/i.test(record.value)
+              ? 'positive'
+              : 'primary'
+            : 'neutral',
       }
     })
     .filter((option): option is InlineOption => option !== null)

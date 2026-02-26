@@ -28,6 +28,14 @@ type ChatMinimalPageProps = {
 
 const THINKING_DELAY_MS = { min: 500, max: 900 }
 const BETWEEN_SENTENCE_DELAY_MS = { min: 350, max: 650 }
+const IMPORT_HEARTBEAT_INTERVAL_MS = 2000
+const IMPORT_PROGRESS_MESSAGES = [
+  'Lecture du fichier…',
+  'Détection du format…',
+  'Extraction des transactions…',
+  'Catégorisation en cours…',
+  'Génération du rapport…',
+]
 
 function createMessageId(): string {
   return typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`
@@ -61,6 +69,8 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
   const [submitErrorMessage, setSubmitErrorMessage] = useState<string | null>(null)
   const isMountedRef = useRef(true)
   const assistantSequenceRef = useRef(0)
+  const importHeartbeatIntervalRef = useRef<number | null>(null)
+  const importHeartbeatIndexRef = useRef(0)
 
   const pendingInteractiveIndex = useMemo(() => {
     let actionIndex = -1
@@ -174,6 +184,41 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
     }
   }
 
+  function pushAssistantStatus(content: string) {
+    setMessages((current) => [
+      ...current,
+      {
+        id: createMessageId(),
+        role: 'assistant',
+        content,
+        createdAt: Date.now(),
+      },
+    ])
+  }
+
+  function stopImportHeartbeat() {
+    if (importHeartbeatIntervalRef.current !== null) {
+      window.clearInterval(importHeartbeatIntervalRef.current)
+      importHeartbeatIntervalRef.current = null
+    }
+  }
+
+  function pushNextImportHeartbeatStatus() {
+    const message = IMPORT_PROGRESS_MESSAGES[importHeartbeatIndexRef.current % IMPORT_PROGRESS_MESSAGES.length]
+    pushAssistantStatus(message)
+    importHeartbeatIndexRef.current += 1
+  }
+
+  function startImportHeartbeat() {
+    stopImportHeartbeat()
+    importHeartbeatIndexRef.current = 0
+    pushAssistantStatus('Ok — je récupère ton fichier…')
+    pushNextImportHeartbeatStatus()
+    importHeartbeatIntervalRef.current = window.setInterval(() => {
+      pushNextImportHeartbeatStatus()
+    }, IMPORT_HEARTBEAT_INTERVAL_MS)
+  }
+
   useEffect(() => {
     if (isNearBottom) {
       scrollToBottom()
@@ -276,6 +321,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
     return () => {
       isMountedRef.current = false
       assistantSequenceRef.current += 1
+      stopImportHeartbeat()
     }
   }, [])
 
@@ -348,7 +394,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
     ])
 
     setIsSending(true)
-    setIsAssistantTyping(true)
+    startImportHeartbeat()
 
     try {
       const contentBase64 = await toBase64(file)
@@ -362,24 +408,16 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
       })
 
       if ('type' in importResult && importResult.type === 'clarification') {
+        stopImportHeartbeat()
         await appendAssistantReplyInSequence(importResult.message)
         return
       }
 
-      setMessages((current) => [
-        ...current,
-        {
-          id: createMessageId(),
-          role: 'assistant',
-          content: 'Import terminé.',
-          createdAt: Date.now(),
-          toolResult: importResult as unknown as Record<string, unknown>,
-        },
-      ])
-
+      stopImportHeartbeat()
       const response = await sendChatMessage('', { debug: debugMode, requestGreeting: true })
       await appendAssistantReplyInSequence(response.reply, response.tool_result)
     } catch (error) {
+      stopImportHeartbeat()
       const content = error instanceof Error ? error.message : 'Erreur inconnue.'
       setSubmitErrorMessage(content)
       setMessages((current) => [
@@ -392,6 +430,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
         },
       ])
     } finally {
+      stopImportHeartbeat()
       setIsSending(false)
       setIsAssistantTyping(false)
     }
