@@ -5822,29 +5822,13 @@ def _run_import_job_pipeline(*, repository: SupabaseImportJobsRepository, profil
             message="Lecture du fichier CSV…",
             progress=0.08,
         )
-        _emit_import_job_event(
-            repository=repository,
-            profile_id=profile_id,
-            job_id=job_id,
-            kind="db_insert_progress",
-            message="Import en base de données… (0/1)",
-            progress=0.35,
-        )
 
         total_transactions_hint = 1
+        parsed_total_received = False
         emit_progress = _build_throttled_import_progress_emitter(
             repository=repository,
             profile_id=profile_id,
             job_id=job_id,
-        )
-        emit_progress(
-            kind="categorization_progress",
-            message=f"Catégorisation… (0/{total_transactions_hint})",
-            done=0,
-            total=total_transactions_hint,
-            force=True,
-            progress=0.45,
-            job_patch={"total_llm_items": total_transactions_hint, "processed_llm_items": 0},
         )
 
         request_payload = {
@@ -5860,11 +5844,12 @@ def _run_import_job_pipeline(*, repository: SupabaseImportJobsRepository, profil
         tool_router = get_tool_router()
 
         def _on_import_progress(stage: str, done: int, total: int) -> None:
-            nonlocal total_transactions_hint
+            nonlocal parsed_total_received, total_transactions_hint
 
             if stage == "parsed_total":
                 parsed_total = max(total, 0)
-                total_transactions_hint = parsed_total if parsed_total > 0 else 1
+                total_transactions_hint = max(parsed_total, 1)
+                parsed_total_received = True
                 _emit_import_job_event(
                     repository=repository,
                     profile_id=profile_id,
@@ -5875,9 +5860,18 @@ def _run_import_job_pipeline(*, repository: SupabaseImportJobsRepository, profil
                     payload={"total_transactions": parsed_total},
                     job_patch={"total_transactions": parsed_total},
                 )
+                emit_progress(
+                    kind="categorization_progress",
+                    message=f"Catégorisation… (0/{total_transactions_hint})",
+                    done=0,
+                    total=total_transactions_hint,
+                    force=True,
+                    progress=0.45,
+                    job_patch={"total_llm_items": total_transactions_hint, "processed_llm_items": 0},
+                )
                 return
 
-            if stage != "categorization":
+            if stage != "categorization" or not parsed_total_received:
                 return
 
             emit_progress(
@@ -5926,6 +5920,15 @@ def _run_import_job_pipeline(*, repository: SupabaseImportJobsRepository, profil
             profile_id=profile_id,
             job_id=job_id,
             kind="db_insert_progress",
+            message="Import en base de données… (0/1)",
+            progress=0.9,
+        )
+
+        _emit_import_job_event(
+            repository=repository,
+            profile_id=profile_id,
+            job_id=job_id,
+            kind="db_insert_progress",
             message="Import en base de données… (1/1)",
             progress=0.92,
             job_patch={"processed_transactions": processed_transactions},
@@ -5935,7 +5938,7 @@ def _run_import_job_pipeline(*, repository: SupabaseImportJobsRepository, profil
             profile_id=profile_id,
             job_id=job_id,
             kind="done",
-            message="Import terminé ✅",
+            message="Traitement terminé.",
             progress=1.0,
             payload={"result": result if isinstance(result, dict) else None},
             job_patch={"status": "done", "processed_transactions": processed_transactions, "result": result if isinstance(result, dict) else None},
@@ -6029,25 +6032,62 @@ def finalize_import_job_chat(
 
     _auth_user_id, profile_id = _resolve_authenticated_profile(request, authorization)
     repository = _get_import_jobs_repository_or_501()
+    profiles_repository = get_profiles_repository()
     job = repository.get_job(profile_id=profile_id, job_id=job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
     if job.status != "done":
         raise HTTPException(status_code=409, detail="job not done")
 
-    result_payload = job.result if isinstance(job.result, dict) else None
-    return ChatResponse(
-        reply="Import terminé ✅\n\nVeux-tu afficher ton rapport mensuel maintenant ?",
-        tool_result={
-            "type": "ui_action",
-            "action": "quick_reply_yes_no",
-            "question": "Veux-tu afficher ton rapport mensuel maintenant ?",
-            "options": [
-                {"id": "yes", "label": "Oui", "value": "Oui"},
-                {"id": "no", "label": "Non", "value": "Non"},
-            ],
-            "result": result_payload,
+    chat_state = _normalize_chat_state(
+        profiles_repository.get_chat_state(profile_id=profile_id, user_id=_auth_user_id)
+    )
+    state_dict = dict(chat_state.get("state")) if isinstance(chat_state.get("state"), dict) else {}
+    global_state = state_dict.get("global_state") if _is_valid_global_state(state_dict.get("global_state")) else None
+    updated_global_state = _normalize_onboarding_step_substep(
+        _build_onboarding_global_state(
+            global_state,
+            onboarding_step="report",
+            onboarding_substep="report_offer",
+        )
+    )
+
+    registry = get_loop_registry()
+    loop_reply = route_message(
+        message="__import_done__",
+        current_loop=None,
+        global_state=updated_global_state,
+        services={
+            "profiles_repository": profiles_repository,
+            "tool_router": get_tool_router(),
+            "global_state": updated_global_state,
+            "state": state_dict,
         },
+        profile_id=profile_id,
+        user_id=_auth_user_id,
+        llm_judge=None,
+        registry=registry,
+    )
+
+    state_dict["global_state"] = updated_global_state
+    if loop_reply.next_loop is None:
+        state_dict.pop("loop", None)
+    else:
+        state_dict["loop"] = serialize_loop_context(loop_reply.next_loop)
+    updated_chat_state = dict(chat_state)
+    updated_chat_state["state"] = state_dict
+    profiles_repository.update_chat_state(
+        profile_id=profile_id,
+        user_id=_auth_user_id,
+        chat_state=updated_chat_state,
+    )
+
+    report_loop = registry.get("onboarding.report")
+    report_prompt = report_loop.prompt if hasattr(report_loop, "prompt") else "Veux-tu générer ton premier rapport ? (oui/non)"
+    reply = loop_reply.reply.strip() if isinstance(loop_reply.reply, str) and loop_reply.reply.strip() else report_prompt
+    return ChatResponse(
+        reply=f"Import terminé ✅\n\nJe viens de classer tes dépenses et de générer ton rapport mensuel.\n\n{reply}",
+        tool_result=_build_quick_reply_yes_no_ui_action(),
     )
 
 
@@ -6158,7 +6198,7 @@ def import_releves(request: Request, payload: ImportRequestPayload, authorizatio
             selected_bank_account_name = str(detection_result.get("name") or "").strip() or None
         elif detection_result == "ambiguous":
             chat_state = _normalize_chat_state(
-                profiles_repository.get_chat_state(profile_id=profile_id, user_id=auth_user_id)
+                profiles_repository.get_chat_state(profile_id=profile_id, user_id=_auth_user_id)
             )
             state = chat_state.get("state")
             state_dict = dict(state) if isinstance(state, dict) else {}
@@ -6174,7 +6214,7 @@ def import_releves(request: Request, payload: ImportRequestPayload, authorizatio
             updated_chat_state["state"] = state_dict
             profiles_repository.update_chat_state(
                 profile_id=profile_id,
-                user_id=auth_user_id,
+                user_id=_auth_user_id,
                 chat_state=updated_chat_state,
             )
             account_names = " / ".join(account["name"] for account in import_context["clarification_accounts"])
@@ -6233,7 +6273,7 @@ def import_releves(request: Request, payload: ImportRequestPayload, authorizatio
     try:
         profiles_repository = get_profiles_repository()
         chat_state = _normalize_chat_state(
-            profiles_repository.get_chat_state(profile_id=profile_id, user_id=auth_user_id)
+            profiles_repository.get_chat_state(profile_id=profile_id, user_id=_auth_user_id)
         )
         state = chat_state.get("state")
         state_dict = dict(state) if isinstance(state, dict) else {}
@@ -6262,7 +6302,7 @@ def import_releves(request: Request, payload: ImportRequestPayload, authorizatio
         updated_chat_state["state"] = state_dict
         profiles_repository.update_chat_state(
             profile_id=profile_id,
-            user_id=auth_user_id,
+            user_id=_auth_user_id,
             chat_state=updated_chat_state,
         )
     except Exception:

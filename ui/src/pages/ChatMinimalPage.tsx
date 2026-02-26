@@ -412,12 +412,6 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
             if (stopStreaming) {
               stopStreaming()
             }
-            const lastProgressMessageId = lastProgressMessageIdRef.current
-            if (lastProgressMessageId) {
-              updateAssistantStatus(lastProgressMessageId, 'Import terminé ✅')
-            } else {
-              pushAssistantStatus('Import terminé ✅')
-            }
             lastProgressMessageIdRef.current = null
             const response = await finalizeImportJobChat(jobId)
             await appendAssistantReplyInSequence(response.reply, response.tool_result)
