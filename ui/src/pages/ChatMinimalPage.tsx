@@ -7,6 +7,7 @@ import { InlineAction } from '../chat/InlineAction'
 import { normalizeQuickReplyDisplay } from '../chat/formatters'
 import { supabase } from '../lib/supabaseClient'
 import {
+  toAnyPdfUiRequest,
   toFormUiAction,
   toLegacyImportUiRequest,
   toOpenImportPanelUiAction,
@@ -61,6 +62,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
   const isMountedRef = useRef(true)
   const assistantSequenceRef = useRef(0)
   const lastProgressMessageIdRef = useRef<string | null>(null)
+  const importMessageIdsRef = useRef<string[]>([])
 
   const pendingInteractiveIndex = useMemo(() => {
     let actionIndex = -1
@@ -75,6 +77,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
         || toQuickReplyYesNoUiAction(message.toolResult)
         || toOpenImportPanelUiAction(message.toolResult)
         || toLegacyImportUiRequest(message.toolResult)
+        || toAnyPdfUiRequest(message.toolResult)
       )
       if (isActionable) {
         actionIndex = index
@@ -94,7 +97,8 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
     return Boolean(
       toQuickReplyYesNoUiAction(toolResult)
       || toOpenImportPanelUiAction(toolResult)
-      || toLegacyImportUiRequest(toolResult),
+      || toLegacyImportUiRequest(toolResult)
+      || toAnyPdfUiRequest(toolResult),
     )
   }
 
@@ -185,13 +189,25 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
         createdAt: Date.now(),
       },
     ])
+    importMessageIdsRef.current.push(id)
     return id
   }
 
   function updateAssistantStatus(messageId: string, content: string) {
+    if (!importMessageIdsRef.current.includes(messageId)) {
+      importMessageIdsRef.current.push(messageId)
+    }
     setMessages((current) => current.map((message) => (
       message.id === messageId ? { ...message, content } : message
     )))
+  }
+
+  function clearImportStreamingMessages() {
+    const ids = new Set(importMessageIdsRef.current)
+    if (ids.size > 0) {
+      setMessages((current) => current.filter((message) => !ids.has(message.id)))
+    }
+    importMessageIdsRef.current = []
   }
 
   useEffect(() => {
@@ -369,6 +385,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
 
     setIsSending(true)
     setIsAssistantTyping(false)
+    importMessageIdsRef.current = []
 
     try {
       const contentBase64 = await toBase64(file)
@@ -413,6 +430,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
               stopStreaming()
             }
             lastProgressMessageIdRef.current = null
+            clearImportStreamingMessages()
             const response = await finalizeImportJobChat(jobId)
             await appendAssistantReplyInSequence(response.reply, response.tool_result)
             setIsSending(false)
@@ -437,6 +455,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
               stopStreaming()
             }
             setSubmitErrorMessage(event.message)
+            importMessageIdsRef.current = []
             setIsSending(false)
             return
           }

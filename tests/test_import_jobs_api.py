@@ -150,7 +150,11 @@ def test_import_job_endpoints_create_upload_and_events(monkeypatch) -> None:
     finalize_response = client.post(f"/imports/jobs/{job_id}/finalize-chat", headers=headers)
     assert finalize_response.status_code == 200
     payload = finalize_response.json()
-    assert "Es-tu prêt à voir ton premier rapport ?" in payload["reply"]
+    assert payload["reply"] == (
+        "Import terminé ✅\n\n"
+        "Je viens de classer tes 47 transactions et de générer ton premier rapport financier.\n\n"
+        "Es-tu prêt à le découvrir ?"
+    )
     assert "(oui/non)" not in payload["reply"]
     assert payload["tool_result"]["type"] == "ui_action"
     assert payload["tool_result"]["action"] == "quick_replies"
@@ -238,7 +242,7 @@ def test_finalize_chat_then_yes_routes_to_report_and_not_import(monkeypatch) -> 
 
     finalize_response = client.post(f"/imports/jobs/{job_id}/finalize-chat", headers=headers)
     assert finalize_response.status_code == 200
-    assert "Es-tu prêt à voir ton premier rapport ?" in finalize_response.json()["reply"]
+    assert "Es-tu prêt à le découvrir ?" in finalize_response.json()["reply"]
 
     yes_response = client.post(
         "/agent/chat",
@@ -248,8 +252,8 @@ def test_finalize_chat_then_yes_routes_to_report_and_not_import(monkeypatch) -> 
     assert yes_response.status_code == 200
     payload = yes_response.json()
     assert payload["reply"] == "Voici ton premier rapport financier !"
-    assert payload["tool_result"]["type"] == "ui_action"
-    assert payload["tool_result"]["action"] == "open_pdf"
+    assert payload["tool_result"]["type"] == "ui_request"
+    assert payload["tool_result"]["name"] == "open_pdf_report"
     assert payload["tool_result"]["url"]
 
 
