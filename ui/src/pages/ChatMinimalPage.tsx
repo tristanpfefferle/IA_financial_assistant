@@ -39,7 +39,9 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
   const navigate = useNavigate()
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const profileMenuRef = useRef<HTMLDivElement | null>(null)
-  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [activeTab, setActiveTab] = useState<'af' | 'help'>('af')
+  const [messagesAf, setMessagesAf] = useState<ChatMessage[]>([])
+  const [messagesHelp, setMessagesHelp] = useState<ChatMessage[]>([])
   const [isSending, setIsSending] = useState(false)
   const [isAssistantTyping, setIsAssistantTyping] = useState(false)
   const [isNearBottom, setIsNearBottom] = useState(true)
@@ -55,10 +57,12 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
   const lastProgressMessageIdRef = useRef<string | null>(null)
   const importMessageIdsRef = useRef<string[]>([])
 
+  const displayedMessages = activeTab === 'af' ? messagesAf : messagesHelp
+
   const pendingInteractiveIndex = useMemo(() => {
     let actionIndex = -1
-    for (let index = messages.length - 1; index >= 0; index -= 1) {
-      const message = messages[index]
+    for (let index = messagesAf.length - 1; index >= 0; index -= 1) {
+      const message = messagesAf[index]
       if (message.role !== 'assistant' || !message.toolResult) {
         continue
       }
@@ -80,9 +84,9 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
       return -1
     }
 
-    const hasUserResponseAfter = messages.some((message, index) => message.role === 'user' && index > actionIndex)
+    const hasUserResponseAfter = messagesAf.some((message, index) => message.role === 'user' && index > actionIndex)
     return hasUserResponseAfter ? -1 : actionIndex
-  }, [messages])
+  }, [messagesAf])
 
   function isInlineActionableToolResult(toolResult: Record<string, unknown>): boolean {
     return Boolean(
@@ -152,7 +156,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
       return
     }
 
-    setMessages((current) => [
+    setMessagesAf((current) => [
       ...current,
       {
         id: assistantMessageId,
@@ -185,7 +189,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
 
   function pushAssistantStatus(content: string): string {
     const id = createMessageId()
-    setMessages((current) => [
+    setMessagesAf((current) => [
       ...current,
       {
         id,
@@ -202,7 +206,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
     if (!importMessageIdsRef.current.includes(messageId)) {
       importMessageIdsRef.current.push(messageId)
     }
-    setMessages((current) => current.map((message) => (
+    setMessagesAf((current) => current.map((message) => (
       message.id === messageId ? { ...message, content } : message
     )))
   }
@@ -210,7 +214,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
   function clearImportStreamingMessages() {
     const ids = new Set(importMessageIdsRef.current)
     if (ids.size > 0) {
-      setMessages((current) => current.filter((message) => !ids.has(message.id)))
+      setMessagesAf((current) => current.filter((message) => !ids.has(message.id)))
     }
     importMessageIdsRef.current = []
   }
@@ -219,7 +223,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
     if (isNearBottom) {
       scrollToBottom()
     }
-  }, [messages.length, isAssistantTyping, isNearBottom])
+  }, [displayedMessages.length, isAssistantTyping, isNearBottom])
 
   useEffect(() => {
     if (!scrollRef.current) {
@@ -228,7 +232,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
 
     const { scrollHeight, clientHeight } = scrollRef.current
     setCanScroll(scrollHeight > clientHeight + 8)
-  }, [messages.length, isAssistantTyping])
+  }, [displayedMessages.length, isAssistantTyping])
 
   useEffect(() => {
     localStorage.setItem('ui_debug_mode', String(debugMode))
@@ -251,14 +255,14 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
   }, [])
 
   async function startConversation() {
-    setMessages([])
+    setMessagesAf([])
     setIsSending(false)
     try {
       const response = await sendChatMessage('', { debug: debugMode, requestGreeting: true })
-      setMessages([])
+      setMessagesAf([])
       await appendAssistantReplyInSequence(response.reply, response.tool_result)
     } catch {
-      setMessages([
+      setMessagesAf([
         {
           id: createMessageId(),
           role: 'assistant',
@@ -281,14 +285,14 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
           return
         }
 
-        setMessages([])
+        setMessagesAf([])
         await appendAssistantReplyInSequence(response.reply, response.tool_result)
       } catch {
         if (!isMountedRef.current) {
           return
         }
 
-        setMessages([
+        setMessagesAf([
           {
             id: createMessageId(),
             role: 'assistant',
@@ -313,7 +317,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
 
   async function submitMessage(text: string, displayContent?: string, fromQuickReply = false) {
     const trimmed = text.trim()
-    if (!trimmed || isSending) {
+    if (!trimmed || isSending || activeTab !== 'af') {
       return
     }
 
@@ -325,7 +329,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
       fromQuickReply,
     }
 
-    setMessages((current) => [...current, userMessage])
+    setMessagesAf((current) => [...current, userMessage])
     setSubmitErrorMessage(null)
     setPendingActionMessageId(null)
     setRevealedActionMessageId(null)
@@ -338,7 +342,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
     } catch (error) {
       const content = error instanceof Error ? error.message : 'Erreur inconnue.'
       setSubmitErrorMessage(content)
-      setMessages((current) => [
+      setMessagesAf((current) => [
         ...current,
         {
           id: createMessageId(),
@@ -371,7 +375,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
     }
 
     setSubmitErrorMessage(null)
-    setMessages((current) => [
+    setMessagesAf((current) => [
       ...current,
       {
         id: createMessageId(),
@@ -464,7 +468,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
         },
         (errorMessage) => {
           setSubmitErrorMessage(errorMessage)
-          setMessages((current) => [
+          setMessagesAf((current) => [
             ...current,
             {
               id: createMessageId(),
@@ -479,7 +483,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
     } catch (error) {
       const content = error instanceof Error ? error.message : 'Erreur inconnue.'
       setSubmitErrorMessage(content)
-      setMessages((current) => [
+      setMessagesAf((current) => [
         ...current,
         {
           id: createMessageId(),
@@ -495,7 +499,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
 
   function resetLocalChatState() {
     lastProgressMessageIdRef.current = null
-    setMessages([])
+    setMessagesAf([])
     setIsSending(false)
     setIsAssistantTyping(false)
     setIsNearBottom(true)
@@ -519,7 +523,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
       resetLocalChatState()
       await startConversation()
     } catch (error) {
-      setMessages((current) => [
+      setMessagesAf((current) => [
         ...current,
         {
           id: createMessageId(),
@@ -531,22 +535,29 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
     }
   }
 
-  function handleHelpPlaceholder() {
-    setMessages((current) => [
-      ...current,
-      {
-        id: createMessageId(),
-        role: 'assistant',
-        content: 'Aide (bientôt) 🙂\n- Sécurité des données\n- Fonctionnement de l’IA\n- Import CSV\n\nCette section sera disponible prochainement.',
-        createdAt: Date.now(),
-      },
-    ])
+  function openHelpTab() {
+    setActiveTab('help')
+    setIsAssistantTyping(false)
+    setMessagesHelp((current) => {
+      if (current.length > 0) {
+        return current
+      }
+
+      return [
+        {
+          id: createMessageId(),
+          role: 'assistant',
+          content: 'Aide (bientôt) 🙂\n- Sécurité des données\n- Fonctionnement de l’IA\n- Import CSV\n\nCette section sera disponible prochainement.',
+          createdAt: Date.now(),
+        },
+      ]
+    })
   }
 
   async function handleLogout() {
     const { error } = await supabase.auth.signOut()
     if (error) {
-      setMessages((current) => [
+      setMessagesAf((current) => [
         ...current,
         {
           id: createMessageId(),
@@ -566,14 +577,24 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
       <div className="chat-frame">
         <div className="chat-stack">
           <header className="chat-min-header">
-            <button type="button" className="icon-avatar-button" aria-label="Assistant financier">
+            <button
+              type="button"
+              className={`icon-avatar-button ${activeTab === 'af' ? 'tab-button-selected' : ''}`}
+              aria-label="Assistant financier"
+              onClick={() => setActiveTab('af')}
+            >
               <span className="icon-avatar">AF</span>
             </button>
             <div className="chat-title-wrap">
               <strong className="chat-title">Assistant financier</strong>
             </div>
             <div className="chat-header-actions">
-              <button type="button" className="icon-button" onClick={handleHelpPlaceholder} aria-label="Aide">
+              <button
+                type="button"
+                className={`icon-button ${activeTab === 'help' ? 'tab-button-selected' : ''}`}
+                onClick={openHelpTab}
+                aria-label="Aide"
+              >
                 ?
               </button>
               <label className="debug-toggle" htmlFor="debug-mode-toggle">
@@ -622,9 +643,9 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
 
           <div className="message-area">
             <div ref={scrollRef} className="chat-scroll" onScroll={handleScroll}>
-              {messages.map((message, index) => {
+              {displayedMessages.map((message, index) => {
                 const isLastAssistantMessage =
-                  message.role === 'assistant' && !messages.slice(index + 1).some((nextMessage) => nextMessage.role === 'assistant')
+                  message.role === 'assistant' && !displayedMessages.slice(index + 1).some((nextMessage) => nextMessage.role === 'assistant')
                 const isShort = message.content.trim().length <= 18 && message.content.indexOf('\n') === -1
                 const messageClasses = [
                   'msg',
@@ -669,6 +690,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
                     ) : null}
                     {message.role === 'assistant'
                     && message.toolResult
+                    && activeTab === 'af'
                     && pendingInteractiveIndex === index
                     && pendingActionMessageId !== message.id
                     && revealedActionMessageId === message.id
@@ -686,6 +708,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
                     ) : null}
                     {message.role === 'assistant'
                     && message.toolResult
+                    && activeTab === 'af'
                     && pendingInteractiveIndex === index
                     && pendingActionMessageId !== message.id
                     && revealedActionMessageId === message.id
@@ -706,6 +729,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
                     ) : null}
                     {message.role === 'assistant'
                     && message.toolResult
+                    && activeTab === 'af'
                     && pendingInteractiveIndex === index
                     && pendingActionMessageId !== message.id
                     && revealedActionMessageId === message.id
@@ -732,7 +756,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
                   </div>
                 )
               })}
-              {isAssistantTyping ? <div className="msg msg-assistant">...</div> : null}
+              {activeTab === 'af' && isAssistantTyping ? <div className="msg msg-assistant">...</div> : null}
             </div>
             {canScroll && !isNearBottom ? (
               <button type="button" className="scroll-down-btn" onClick={scrollToBottom} aria-label="Aller en bas">
