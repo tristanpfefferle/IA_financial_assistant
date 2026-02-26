@@ -9,8 +9,6 @@ import os
 import re
 import base64
 import asyncio
-import csv
-import io
 import secrets
 import unicodedata
 import calendar
@@ -5729,24 +5727,6 @@ def get_spending_report_pdf(
 
 
 
-def _estimate_csv_transactions_count(files: list[ImportFilePayload]) -> int | None:
-    """Return approximate CSV transaction count from uploaded files."""
-
-    total = 0
-    for import_file in files:
-        try:
-            decoded = base64.b64decode(import_file.content_base64, validate=False)
-            content = decoded.decode("utf-8", errors="ignore")
-            rows = list(csv.reader(io.StringIO(content)))
-            if not rows:
-                continue
-            total += max(len(rows) - 1, 0)
-        except Exception:
-            logger.warning("import_jobs_csv_estimation_failed filename=%s", import_file.filename)
-            return None
-    return total
-
-
 def _emit_import_job_event(
     *,
     repository: SupabaseImportJobsRepository,
@@ -5842,22 +5822,6 @@ def _run_import_job_pipeline(*, repository: SupabaseImportJobsRepository, profil
             message="Lecture du fichier CSV…",
             progress=0.08,
         )
-        total_transactions = _estimate_csv_transactions_count(payload.files)
-        parsed_message = (
-            f"CSV lu: {total_transactions} transactions détectées."
-            if total_transactions is not None
-            else "CSV lu: transactions détectées."
-        )
-        _emit_import_job_event(
-            repository=repository,
-            profile_id=profile_id,
-            job_id=job_id,
-            kind="parsed",
-            message=parsed_message,
-            progress=0.2,
-            payload={"total_transactions": total_transactions} if total_transactions is not None else None,
-            job_patch={"total_transactions": total_transactions},
-        )
         _emit_import_job_event(
             repository=repository,
             profile_id=profile_id,
@@ -5867,7 +5831,7 @@ def _run_import_job_pipeline(*, repository: SupabaseImportJobsRepository, profil
             progress=0.35,
         )
 
-        total_transactions_hint = total_transactions if isinstance(total_transactions, int) and total_transactions > 0 else 1
+        total_transactions_hint = 1
         emit_progress = _build_throttled_import_progress_emitter(
             repository=repository,
             profile_id=profile_id,
@@ -5896,8 +5860,26 @@ def _run_import_job_pipeline(*, repository: SupabaseImportJobsRepository, profil
         tool_router = get_tool_router()
 
         def _on_import_progress(stage: str, done: int, total: int) -> None:
+            nonlocal total_transactions_hint
+
+            if stage == "parsed_total":
+                parsed_total = max(total, 0)
+                total_transactions_hint = parsed_total if parsed_total > 0 else 1
+                _emit_import_job_event(
+                    repository=repository,
+                    profile_id=profile_id,
+                    job_id=job_id,
+                    kind="parsed",
+                    message=f"Transactions détectées : {parsed_total}.",
+                    progress=0.2,
+                    payload={"total_transactions": parsed_total},
+                    job_patch={"total_transactions": parsed_total},
+                )
+                return
+
             if stage != "categorization":
                 return
+
             emit_progress(
                 kind="categorization_progress",
                 message=f"Catégorisation… ({done}/{total})",
@@ -6055,8 +6037,17 @@ def finalize_import_job_chat(
 
     result_payload = job.result if isinstance(job.result, dict) else None
     return ChatResponse(
-        reply="Import terminé ✅",
-        tool_result=result_payload,
+        reply="Import terminé ✅\n\nVeux-tu afficher ton rapport mensuel maintenant ?",
+        tool_result={
+            "type": "ui_action",
+            "action": "quick_reply_yes_no",
+            "question": "Veux-tu afficher ton rapport mensuel maintenant ?",
+            "options": [
+                {"id": "yes", "label": "Oui", "value": "Oui"},
+                {"id": "no", "label": "Non", "value": "Non"},
+            ],
+            "result": result_payload,
+        },
     )
 
 

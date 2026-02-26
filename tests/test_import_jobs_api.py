@@ -88,12 +88,16 @@ def test_import_job_endpoints_create_upload_and_events(monkeypatch) -> None:
 
     monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: _ProfilesRepo())
 
-    class _Router:
-        def call(self, tool_name: str, payload: dict[str, Any], *, profile_id: UUID | None = None):
-            assert tool_name == "finance_releves_import_files"
-            assert profile_id == UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
-            assert payload["files"][0]["filename"] == "sample.csv"
+    class _BackendClient:
+        def finance_releves_import_files(self, *, request: Any, on_progress: Any):
+            assert request.files[0].filename == "sample.csv"
+            on_progress("parsed_total", 47, 47)
+            on_progress("categorization", 47, 47)
             return {"imported_count": 2}
+
+    class _Router:
+        def __init__(self) -> None:
+            self.backend_client = _BackendClient()
 
     monkeypatch.setattr(agent_api, "get_tool_router", lambda: _Router())
 
@@ -122,13 +126,20 @@ def test_import_job_endpoints_create_upload_and_events(monkeypatch) -> None:
 
     finalize_response = client.post(f"/imports/jobs/{job_id}/finalize-chat", headers=headers)
     assert finalize_response.status_code == 200
-    assert "reply" in finalize_response.json()
+    payload = finalize_response.json()
+    assert "Veux-tu afficher ton rapport mensuel maintenant ?" in payload["reply"]
+    assert payload["tool_result"]["type"] == "ui_action"
+    assert payload["tool_result"]["action"] == "quick_reply_yes_no"
+    assert len(payload["tool_result"]["options"]) == 2
 
     events = repo.events[UUID(job_id)]
     kinds = [event.kind for event in events]
     assert "started" in kinds
     assert "parsing" in kinds
     assert "parsed" in kinds
+    parsed_events = [event for event in events if event.kind == "parsed"]
+    assert parsed_events
+    assert parsed_events[0].message == "Transactions détectées : 47."
     assert "done" in kinds
 
 
