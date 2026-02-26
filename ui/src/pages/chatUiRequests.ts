@@ -4,6 +4,14 @@ export type PdfUiRequest = {
   url: string
 }
 
+export type OpenPdfUiAction = {
+  type: 'ui_action'
+  action: 'open_pdf'
+  title: string
+  label: string
+  url: string
+}
+
 export type OpenImportPanelUiAction = {
   type: 'ui_action'
   action: 'open_import_panel'
@@ -123,6 +131,32 @@ export function toOpenImportPanelUiAction(value: unknown): OpenImportPanelUiActi
   }
 }
 
+
+export function toOpenPdfUiAction(value: unknown): OpenPdfUiAction | null {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+
+  const record = value as Record<string, unknown>
+  if (record.type !== 'ui_action' || record.action !== 'open_pdf') {
+    return null
+  }
+
+  const title = typeof record.title === 'string' && record.title.trim() ? record.title.trim() : 'Rapport mensuel (PDF)'
+  const label = typeof record.label === 'string' && record.label.trim() ? record.label.trim() : 'Ouvrir le PDF'
+  const url = typeof record.url === 'string' ? record.url.trim() : ''
+  if (!url) {
+    return null
+  }
+
+  return {
+    type: 'ui_action',
+    action: 'open_pdf',
+    title,
+    label,
+    url,
+  }
+}
 
 export function toQuickReplyYesNoUiAction(value: unknown): QuickReplyYesNoUiAction | null {
   if (!value || typeof value !== 'object') {

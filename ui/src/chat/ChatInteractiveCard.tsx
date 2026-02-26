@@ -5,6 +5,7 @@ import {
   toFormUiAction,
   toLegacyImportUiRequest,
   toOpenImportPanelUiAction,
+  toOpenPdfUiAction,
   toQuickReplyYesNoUiAction,
 } from '../pages/chatUiRequests'
 
@@ -18,6 +19,7 @@ export function ChatInteractiveCard({ toolResult, onSubmit, onImport }: Interact
   const quickRepliesAction = toQuickReplyYesNoUiAction(toolResult)
   const formAction = toFormUiAction(toolResult)
   const openImportPanel = toOpenImportPanelUiAction(toolResult)
+  const openPdfAction = toOpenPdfUiAction(toolResult)
   const legacyImportRequest = toLegacyImportUiRequest(toolResult)
 
   const [values, setValues] = useState<Record<string, string>>(() => {
@@ -160,6 +162,21 @@ export function ChatInteractiveCard({ toolResult, onSubmit, onImport }: Interact
           </button>
         </div>
       </form>
+    )
+  }
+
+  if (openPdfAction) {
+    return (
+      <div className="chat-card">
+        <button
+          type="button"
+          className="console-btn console-btn-neutral"
+          onClick={() => window.open(openPdfAction.url, '_blank', 'noopener,noreferrer')}
+          aria-label={openPdfAction.title}
+        >
+          📄 {openPdfAction.label}
+        </button>
+      </div>
     )
   }
 

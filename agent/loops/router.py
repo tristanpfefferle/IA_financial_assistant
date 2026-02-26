@@ -51,7 +51,7 @@ def _onboarding_help_prompt(loop_id: str, *, services: Any, profile_id: Any) -> 
         "onboarding.import_wait_ready": "Ton CSV est-il prêt ? (oui/non)",
         "onboarding.categories_intro": "On va préparer tes catégories personnalisées.",
         "onboarding.categories_bootstrap": "Je crée les catégories système.",
-        "onboarding.report": "Veux-tu générer ton premier rapport ? (oui/non)",
+        "onboarding.report": "Es-tu prêt à voir ton premier rapport ?",
     }
     return prompts.get(loop_id)
 
