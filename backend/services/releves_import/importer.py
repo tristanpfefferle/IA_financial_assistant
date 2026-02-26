@@ -655,6 +655,20 @@ class RelevesImportService:
             for row in normalized_rows[:20]
         ]
 
+        all_dates: list[date] = []
+        for row in normalized_rows:
+            row_date = row.get("date")
+            if isinstance(row_date, date):
+                all_dates.append(row_date)
+            elif isinstance(row_date, str):
+                try:
+                    all_dates.append(date.fromisoformat(row_date))
+                except ValueError:
+                    continue
+
+        import_start_date = min(all_dates).isoformat() if all_dates else None
+        import_end_date = max(all_dates).isoformat() if all_dates else None
+
         return RelevesImportResult(
             imported_count=imported_count,
             failed_count=len(errors),
@@ -670,4 +684,6 @@ class RelevesImportService:
             errors=errors,
             preview=preview,
             merchant_suggestions_created_count=merchant_suggestions_created_count,
+            import_start_date=import_start_date,
+            import_end_date=import_end_date,
         )

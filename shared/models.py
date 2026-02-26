@@ -428,6 +428,8 @@ class RelevesImportResult(BaseModel):
     merchant_suggestions_created_count: int = 0
     errors: list[RelevesImportError]
     preview: list[RelevesImportPreviewItem]
+    import_start_date: str | None = None
+    import_end_date: str | None = None
 
 
 PROFILE_ALLOWED_FIELDS: frozenset[str] = frozenset(
