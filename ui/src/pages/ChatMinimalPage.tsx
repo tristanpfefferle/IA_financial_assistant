@@ -8,6 +8,7 @@ import { normalizeQuickReplyDisplay } from '../chat/formatters'
 import { shouldRenderImportEvent } from '../chat/importEventVisibility'
 import { supabase } from '../lib/supabaseClient'
 import {
+  type QuickReplyYesNoUiAction,
   toAnyPdfUiRequest,
   toFormUiAction,
   toLegacyImportUiRequest,
@@ -91,8 +92,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
 
   function isInlineActionableToolResult(toolResult: Record<string, unknown>): boolean {
     return Boolean(
-      toQuickReplyYesNoUiAction(toolResult)
-      || toOpenImportPanelUiAction(toolResult)
+      toOpenImportPanelUiAction(toolResult)
       || toLegacyImportUiRequest(toolResult)
       || toAnyPdfUiRequest(toolResult),
     )
@@ -102,12 +102,8 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
     return Boolean(toFormUiAction(toolResult))
   }
 
-  function toQuickRepliesAction(toolResult: Record<string, unknown>): Record<string, unknown> | null {
-    const quickRepliesAction = toQuickReplyYesNoUiAction(toolResult)
-    if (!quickRepliesAction) {
-      return null
-    }
-    return quickRepliesAction as unknown as Record<string, unknown>
+  function toQuickRepliesOptions(toolResult: Record<string, unknown>): QuickReplyYesNoUiAction['options'] {
+    return toQuickReplyYesNoUiAction(toolResult)?.options ?? []
   }
 
   function isPdfReportRequest(toolResult: Record<string, unknown>): boolean {
@@ -718,20 +714,23 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
                     && pendingInteractiveIndex === index
                     && pendingActionMessageId !== message.id
                     && revealedActionMessageId === message.id
-                    && !isFormToolResult(message.toolResult)
-                    && isInlineActionableToolResult(message.toolResult)
-                    && !isPdfReportRequest(message.toolResult) ? (
-                      <InlineAction
-                        actionState={message.toolResult}
-                        disabled={isSending || isAssistantTyping}
-                        onChoose={(value, label) => {
-                          const display = label ? normalizeQuickReplyDisplay(label, value) : normalizeQuickReplyDisplay(undefined, value)
-                          void submitMessage(value, display, true)
-                        }}
-                        onImportFile={(file) => {
-                          void handleImportFile(file)
-                        }}
-                      />
+                    && toQuickRepliesOptions(message.toolResult).length > 0 ? (
+                      <div className="quick-replies-stack" role="group" aria-label="Réponses rapides">
+                        {toQuickRepliesOptions(message.toolResult).map((option) => (
+                          <button
+                            key={option.id}
+                            type="button"
+                            className="msg msg-user msg-quick-reply"
+                            disabled={isSending || isAssistantTyping}
+                            onClick={() => {
+                              const display = normalizeQuickReplyDisplay(option.label, option.value)
+                              void submitMessage(option.value, display, true)
+                            }}
+                          >
+                            {option.label}
+                          </button>
+                        ))}
+                      </div>
                     ) : null}
                     {message.role === 'assistant'
                     && message.toolResult
@@ -739,10 +738,12 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
                     && pendingInteractiveIndex === index
                     && pendingActionMessageId !== message.id
                     && revealedActionMessageId === message.id
-                    && isPdfReportRequest(message.toolResult)
-                    && toQuickRepliesAction(message.toolResult) ? (
+                    && !isFormToolResult(message.toolResult)
+                    && isInlineActionableToolResult(message.toolResult)
+                    && !isPdfReportRequest(message.toolResult)
+                    && toQuickRepliesOptions(message.toolResult).length === 0 ? (
                       <InlineAction
-                        actionState={toQuickRepliesAction(message.toolResult) as Record<string, unknown>}
+                        actionState={message.toolResult}
                         disabled={isSending || isAssistantTyping}
                         onChoose={(value, label) => {
                           const display = label ? normalizeQuickReplyDisplay(label, value) : normalizeQuickReplyDisplay(undefined, value)
