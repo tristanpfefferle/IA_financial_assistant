@@ -2049,6 +2049,106 @@ def test_import_wait_ready_confirmation_returns_import_file(monkeypatch) -> None
     assert payload["tool_result"]["accepted_types"] == ["csv"]
 
 
+def test_import_wait_ready_help_enters_help_menu(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={"state": {"global_state": {"mode": "onboarding", "onboarding_step": "import", "onboarding_substep": "import_wait_ready"}}},
+    )
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
+
+    response = client.post(
+        "/agent/chat",
+        json={"message": "Non, j'ai besoin de plus d'informations avant."},
+        headers=_auth_headers(),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["reply"] == "Très bien, comment puis-je t'aider ?"
+    assert payload["tool_result"]["options"] == [
+        {
+            "id": "help_csv",
+            "label": "Je ne sais pas comment extraire un fichier .csv de mon e-banking.",
+            "value": "import_help_csv",
+        },
+        {
+            "id": "help_security",
+            "label": "Est-ce que mes données bancaires sont collectées ?",
+            "value": "import_help_security",
+        },
+    ]
+    persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
+    assert persisted["onboarding_substep"] == "import_help_menu"
+
+
+def test_import_help_menu_csv_goes_to_bank_select(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={"state": {"global_state": {"mode": "onboarding", "onboarding_step": "import", "onboarding_substep": "import_help_menu"}}},
+    )
+    repo.bank_accounts = [{"id": "bank-1", "name": "UBS"}, {"id": "bank-2", "name": "Revolut"}]
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
+
+    response = client.post("/agent/chat", json={"message": "import_help_csv"}, headers=_auth_headers())
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["reply"] == "Chez quelle banque souhaites-tu extraire ces données ?"
+    option_labels = [option["label"] for option in payload["tool_result"]["options"]]
+    assert option_labels == ["UBS", "Revolut"]
+    persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
+    assert persisted["onboarding_substep"] == "import_help_bank_select"
+
+
+def test_import_help_bank_select_then_back_to_import_shows_short_question_only(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={"state": {"global_state": {"mode": "onboarding", "onboarding_step": "import", "onboarding_substep": "import_help_bank_select"}}},
+    )
+    repo.bank_accounts = [{"id": "bank-1", "name": "UBS"}]
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
+
+    first = client.post("/agent/chat", json={"message": "import_help_bank:UBS"}, headers=_auth_headers())
+    assert first.status_code == 200
+    assert first.json()["tool_result"]["options"][0]["value"] == "import_help_back_to_import"
+
+    second = client.post("/agent/chat", json={"message": "import_help_back_to_import"}, headers=_auth_headers())
+    assert second.status_code == 200
+    payload = second.json()
+    assert payload["reply"] == "Ton fichier CSV est-il prêt pour l’import ?"
+    assert payload["tool_result"]["options"] == [
+        {"id": "import_ready_yes", "label": "Oui, je suis prêt à te le transmettre !", "value": "import_ready_yes"},
+        {
+            "id": "import_ready_help",
+            "label": "Non, j'ai besoin de plus d'informations avant.",
+            "value": "import_ready_help",
+        },
+    ]
+    assert "la prochaine étape consiste à importer" not in payload["reply"].lower()
+
+
+def test_import_help_security_then_back_to_menu(monkeypatch) -> None:
+    _mock_auth(monkeypatch)
+    repo = _Repo(
+        initial_chat_state={"state": {"global_state": {"mode": "onboarding", "onboarding_step": "import", "onboarding_substep": "import_help_menu"}}},
+    )
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
+    monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
+
+    first = client.post("/agent/chat", json={"message": "import_help_security"}, headers=_auth_headers())
+    assert first.status_code == 200
+    assert "retirant toutes les données sensibles" in first.json()["reply"]
+
+    second = client.post("/agent/chat", json={"message": "import_help_back_to_menu"}, headers=_auth_headers())
+    assert second.status_code == 200
+    payload = second.json()
+    assert payload["reply"] == "Très bien, comment puis-je t'aider ?"
+    assert [opt["value"] for opt in payload["tool_result"]["options"]] == ["import_help_csv", "import_help_security"]
+
+
 def test_report_view_confirmation_enters_confidence_improvement(monkeypatch) -> None:
     _mock_auth(monkeypatch)
     repo = _Repo(
