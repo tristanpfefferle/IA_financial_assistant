@@ -948,6 +948,28 @@ button:disabled {
   gap: 12px;
 }
 
+.report-month-selector {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.month-chip {
+  border: 1px solid #334155;
+  border-radius: 999px;
+  background: rgba(30, 41, 59, 0.6);
+  color: #cbd5e1;
+  padding: 4px 10px;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.month-chip.active {
+  border-color: #38bdf8;
+  background: rgba(56, 189, 248, 0.2);
+  color: #e2e8f0;
+}
+
 .report-summary-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -962,6 +984,20 @@ button:disabled {
 .report-summary-note {
   margin-top: 10px;
   font-size: 0.8rem;
+}
+
+.amount-positive {
+  color: #39d98a;
+  font-weight: 700;
+}
+
+.amount-negative {
+  color: #ff6b6b;
+  font-weight: 700;
+}
+
+.amount-neutral {
+  font-weight: 700;
 }
 
 .report-split-grid {
