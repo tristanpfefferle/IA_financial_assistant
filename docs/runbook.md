@@ -24,6 +24,7 @@ En production (`APP_ENV=prod`), le chargement dotenv n'est pas requis : Render i
 - `SUPABASE_SERVICE_ROLE_KEY` (backend server-only)
 - `AGENT_LLM_ENABLED` (`1`/`true` pour activer le planner LLM, désactivé par défaut)
 - `AGENT_LLM_BACKGROUND_ENABLED` (`1`/`true` par défaut; permet les tâches LLM en arrière-plan comme l'auto-résolution des alias après import)
+- `AGENT_AUTO_RESOLVE_MERCHANT_ALIASES_MAX_PER_RUN` (`0`/`unlimited`/`none` = illimité; sinon entier >= 1, défaut `5000`)
 - `AGENT_LLM_MODEL` (optionnel, recommandé: `gpt-4.1-mini` en prod Render)
 - `AGENT_LLM_STRICT` (`1`/`true` pour activer le mode strict de clarification)
 - `OPENAI_API_KEY` (agent, requis pour le chat LLM et pour les tâches LLM en arrière-plan)

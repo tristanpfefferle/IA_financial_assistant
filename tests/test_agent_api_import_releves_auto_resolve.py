@@ -260,3 +260,47 @@ def test_import_releves_auto_resolve_skips_in_analyze_mode(monkeypatch) -> None:
     payload = response.json()
     assert payload["merchant_alias_auto_resolve"]["attempted"] is False
     assert payload["merchant_alias_auto_resolve"]["skipped_reason"] == "merchant_alias_auto_resolve_analyze_mode"
+
+def test_import_releves_auto_resolve_unlimited_processes_all_pending(monkeypatch) -> None:
+    class _Repo(_BaseRepo):
+        def __init__(self) -> None:
+            self.pending = 450
+
+        def list_map_alias_suggestions(self, *, profile_id: UUID, limit: int = 100, include_failed: bool = False):
+            assert profile_id == PROFILE_ID
+            assert include_failed is False
+            return [{"id": str(i)} for i in range(min(self.pending, limit))]
+
+        def count_map_alias_suggestions(self, *, profile_id: UUID, include_failed: bool = False):
+            assert profile_id == PROFILE_ID
+            assert include_failed is False
+            return self.pending
+
+    repo = _Repo()
+    _mock_common(monkeypatch, repo)
+    monkeypatch.setattr(agent_api._config, "llm_enabled", lambda: True)
+    monkeypatch.setattr(agent_api._config, "llm_background_enabled", lambda: True)
+    monkeypatch.setattr(agent_api._config, "auto_resolve_merchant_aliases_enabled", lambda: True)
+    monkeypatch.setattr(agent_api._config, "auto_resolve_merchant_aliases_limit", lambda: 100)
+    monkeypatch.setattr(agent_api._config, "auto_resolve_merchant_aliases_max_per_run", lambda: 0)
+
+    resolver_calls: list[int] = []
+
+    def _resolve(**kwargs):
+        current = min(repo.pending, kwargs["limit"])
+        resolver_calls.append(current)
+        repo.pending = max(0, repo.pending - current)
+        return {"processed": current, "applied": current, "failed": 0}
+
+    monkeypatch.setattr(agent_api, "resolve_pending_map_alias", _resolve)
+
+    response = client.post(
+        "/finance/releves/import",
+        headers=_headers(),
+        json={"files": [{"filename": "x.csv", "content_base64": "YQ=="}], "import_mode": "commit"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert resolver_calls == [100, 100, 100, 100, 50]
+    assert payload["merchant_alias_auto_resolve"]["remaining_pending_count"] == 0

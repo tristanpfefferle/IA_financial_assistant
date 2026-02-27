@@ -7576,9 +7576,10 @@ def _resolve_pending_map_alias_batches(
 
     processed_budget = 0
     pending_remaining = pending_total_count
+    unlimited_budget = max_per_run == 0
 
-    while processed_budget < max_per_run and pending_remaining > 0:
-        current_batch_limit = min(limit_per_batch, max_per_run - processed_budget)
+    while pending_remaining > 0 and (unlimited_budget or processed_budget < max_per_run):
+        current_batch_limit = limit_per_batch if unlimited_budget else min(limit_per_batch, max_per_run - processed_budget)
         if current_batch_limit <= 0:
             break
 
@@ -7628,7 +7629,8 @@ def _resolve_pending_map_alias_batches(
 
         if callable(on_progress):
             try:
-                on_progress(processed_budget, min(pending_total_count, max_per_run))
+                progress_total = pending_total_count if unlimited_budget else min(pending_total_count, max_per_run)
+                on_progress(processed_budget, progress_total)
             except Exception:
                 logger.exception("merchant_alias_auto_resolve_progress_callback_failed profile_id=%s", profile_id)
 
@@ -7667,7 +7669,7 @@ def _resolve_pending_map_alias_batches(
         "pending_total_count": pending_total_count,
         "remaining_pending_count": pending_remaining,
         "processed_budget": processed_budget,
-        "max_per_run_reached": bool(pending_remaining > 0 and processed_budget >= max_per_run),
+        "max_per_run_reached": bool((not unlimited_budget) and pending_remaining > 0 and processed_budget >= max_per_run),
         "no_progress": "merchant_alias_auto_resolve_no_progress" in warning_values,
     }
 

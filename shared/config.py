@@ -144,9 +144,9 @@ def auto_resolve_merchant_aliases_limit() -> int:
 
 
 def auto_resolve_merchant_aliases_max_per_run() -> int:
-    """Return max pending map_alias suggestions processed in a single auto-resolve run."""
+    """Return max pending map_alias suggestions processed in a single auto-resolve run (0 = unlimited)."""
 
-    default_limit = 200
+    default_limit = 5000
     raw_value = (
         get_env(
             "AGENT_AUTO_RESOLVE_MERCHANT_ALIASES_MAX_PER_RUN",
@@ -154,6 +154,10 @@ def auto_resolve_merchant_aliases_max_per_run() -> int:
         )
         or str(default_limit)
     ).strip()
+
+    if raw_value.lower() in {"0", "unlimited", "none"}:
+        return 0
+
     try:
         return max(1, int(raw_value))
     except ValueError:
