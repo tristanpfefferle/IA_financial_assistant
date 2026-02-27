@@ -125,6 +125,28 @@ def auto_resolve_merchant_aliases_limit() -> int:
         return default_limit
 
 
+def auto_resolve_merchant_aliases_max_per_run() -> int:
+    """Return max pending map_alias suggestions processed in a single auto-resolve run."""
+
+    default_limit = 200
+    raw_value = (
+        get_env(
+            "AGENT_AUTO_RESOLVE_MERCHANT_ALIASES_MAX_PER_RUN",
+            get_env("AGENT_AUTO_RESOLVE_MERCHANT_ALIASES_LIMIT", str(default_limit)) or str(default_limit),
+        )
+        or str(default_limit)
+    ).strip()
+    try:
+        return max(1, int(raw_value))
+    except ValueError:
+        logger.warning(
+            "invalid_auto_resolve_merchant_aliases_max_per_run value=%s default=%s",
+            raw_value,
+            default_limit,
+        )
+        return default_limit
+
+
 def llm_strict() -> bool:
     """Return whether strict LLM clarification behavior is enabled."""
     raw_value = get_env("AGENT_LLM_STRICT", "") or ""
