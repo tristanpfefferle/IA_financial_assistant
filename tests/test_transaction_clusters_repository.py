@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from backend.repositories.transaction_clusters_repository import SupabaseTransactionClustersRepository
 
 
@@ -213,9 +215,5 @@ def test_apply_cluster_category_raises_when_cluster_profile_mismatch() -> None:
     client = _ClientStub(get_responses=[[]])
     repository = SupabaseTransactionClustersRepository(client=client)
 
-    try:
+    with pytest.raises(ValueError, match="cluster_not_found_or_forbidden"):
         repository.apply_cluster_category(cluster_id="cluster-1", category_id="cat-1", profile_id="profile-1")
-    except ValueError as exc:
-        assert str(exc) == "cluster_not_found_or_forbidden"
-    else:
-        raise AssertionError("ValueError not raised")
