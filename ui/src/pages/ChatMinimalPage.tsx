@@ -65,6 +65,17 @@ function isValidChatMessage(value: unknown): value is ChatMessage {
     && typeof message.createdAt === 'number'
 }
 
+function getLastInteractiveAssistantMessageId(messages: ChatMessage[]): string | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (message.role === 'assistant' && message.toolResult) {
+      return message.id
+    }
+  }
+
+  return null
+}
+
 function loadPersistedChatState(userId: string, threadId: string): PersistedChatState | null {
   try {
     const raw = window.localStorage.getItem(buildChatStorageKey(userId, threadId))
@@ -376,6 +387,11 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
 
         if (persistedMain) {
           setMessagesAf(persistedMain.messages)
+          const interactiveCandidateId = getLastInteractiveAssistantMessageId(persistedMain.messages)
+          setRevealedActionMessageId(interactiveCandidateId)
+          setPendingActionMessageId(null)
+          setIsSending(false)
+          setIsAssistantTyping(false)
           if (persistedMain.debugMode !== undefined) {
             setDebugMode(persistedMain.debugMode)
           }
@@ -758,6 +774,9 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
                 const persistedMain = loadPersistedChatState(currentUserId, 'main')
                 if (persistedMain) {
                   setMessagesAf(persistedMain.messages)
+                  const interactiveCandidateId = getLastInteractiveAssistantMessageId(persistedMain.messages)
+                  setRevealedActionMessageId(interactiveCandidateId)
+                  setPendingActionMessageId(null)
                   if (persistedMain.debugMode !== undefined) {
                     setDebugMode(persistedMain.debugMode)
                   }
