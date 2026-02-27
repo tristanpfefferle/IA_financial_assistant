@@ -157,29 +157,65 @@ def test_list_clusters_returns_stats_fields_and_items_count() -> None:
 
 def test_apply_cluster_category_updates_transactions_and_cluster() -> None:
     client = _ClientStub(
-        get_responses=[[{"transaction_id": "tx-1"}, {"transaction_id": "tx-2"}]],
+        get_responses=[
+            [{"id": "cluster-1", "profile_id": "profile-1"}],
+            [{"transaction_id": "tx-1"}, {"transaction_id": "tx-2"}],
+        ],
     )
     repository = SupabaseTransactionClustersRepository(client=client)
 
-    repository.apply_cluster_category(cluster_id="cluster-1", category_id="cat-1")
+    repository.apply_cluster_category(cluster_id="cluster-1", category_id="cat-1", profile_id="profile-1")
+
+    assert client.get_calls[0]["table"] == "transaction_clusters"
+    assert client.get_calls[0]["query"] == {
+        "select": "id,profile_id",
+        "id": "eq.cluster-1",
+        "profile_id": "eq.profile-1",
+        "limit": 1,
+    }
+    assert client.get_calls[1]["table"] == "transaction_cluster_items"
+    assert client.get_calls[1]["query"] == {
+        "select": "transaction_id",
+        "cluster_id": "eq.cluster-1",
+        "limit": 5000,
+    }
 
     assert len(client.patch_calls) == 2
     assert client.patch_calls[0]["table"] == "releves_bancaires"
     assert client.patch_calls[0]["query"] == [("id", "in.(tx-1,tx-2)")]
     assert client.patch_calls[0]["payload"] == {"category_id": "cat-1"}
     assert client.patch_calls[1]["table"] == "transaction_clusters"
-    assert client.patch_calls[1]["query"] == {"id": "eq.cluster-1"}
+    assert client.patch_calls[1]["query"] == {"id": "eq.cluster-1", "profile_id": "eq.profile-1"}
     assert client.patch_calls[1]["payload"]["status"] == "applied"
     assert client.patch_calls[1]["payload"]["suggested_category_id"] == "cat-1"
 
 
 def test_dismiss_cluster_marks_cluster_as_dismissed() -> None:
-    client = _ClientStub()
+    client = _ClientStub(get_responses=[[{"id": "cluster-1", "profile_id": "profile-1"}]])
     repository = SupabaseTransactionClustersRepository(client=client)
 
-    repository.dismiss_cluster(cluster_id="cluster-1")
+    repository.dismiss_cluster(cluster_id="cluster-1", profile_id="profile-1")
 
+    assert client.get_calls[0]["table"] == "transaction_clusters"
+    assert client.get_calls[0]["query"] == {
+        "select": "id,profile_id",
+        "id": "eq.cluster-1",
+        "profile_id": "eq.profile-1",
+        "limit": 1,
+    }
     assert len(client.patch_calls) == 1
     assert client.patch_calls[0]["table"] == "transaction_clusters"
-    assert client.patch_calls[0]["query"] == {"id": "eq.cluster-1"}
+    assert client.patch_calls[0]["query"] == {"id": "eq.cluster-1", "profile_id": "eq.profile-1"}
     assert client.patch_calls[0]["payload"]["status"] == "dismissed"
+
+
+def test_apply_cluster_category_raises_when_cluster_profile_mismatch() -> None:
+    client = _ClientStub(get_responses=[[]])
+    repository = SupabaseTransactionClustersRepository(client=client)
+
+    try:
+        repository.apply_cluster_category(cluster_id="cluster-1", category_id="cat-1", profile_id="profile-1")
+    except ValueError as exc:
+        assert str(exc) == "cluster_not_found_or_forbidden"
+    else:
+        raise AssertionError("ValueError not raised")
