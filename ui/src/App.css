@@ -930,7 +930,7 @@ button:disabled {
 }
 
 .report-page {
-  width: min(100%, 640px);
+  width: min(100%, 860px);
   margin: 0 auto;
   display: grid;
   gap: 14px;
@@ -944,6 +944,95 @@ button:disabled {
 .report-grid {
   display: grid;
   gap: 12px;
+}
+
+.report-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.report-summary-grid div {
+  display: grid;
+  gap: 6px;
+}
+
+.report-split-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+}
+
+.report-chart-wrap {
+  min-height: 220px;
+}
+
+.report-categories-table {
+  display: grid;
+  gap: 8px;
+}
+
+.report-categories-head,
+.report-categories-row {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+}
+
+.report-categories-head {
+  color: #94a3b8;
+  font-size: 0.8rem;
+}
+
+.report-transactions-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.report-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #cbd5e1;
+  font-size: 0.82rem;
+}
+
+.report-month-group {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.report-month-group h4 {
+  margin: 0;
+  color: #cbd5e1;
+  font-size: 0.9rem;
+}
+
+.report-transactions-list {
+  display: grid;
+  gap: 8px;
+}
+
+.report-transaction-row {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(100px, 130px) minmax(0, 1fr) auto;
+  border: 1px solid #1f2a44;
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.report-transaction-row p {
+  margin: 0;
+}
+
+.report-transaction-amount {
+  text-align: right;
+  align-self: center;
 }
 
 .report-card {
@@ -976,7 +1065,20 @@ button:disabled {
   gap: 8px;
 }
 
-.report-cta {
-  margin-top: 8px;
-  width: 100%;
+@media (max-width: 840px) {
+  .report-split-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .report-chart-wrap {
+    min-height: 180px;
+  }
+
+  .report-transaction-row {
+    grid-template-columns: 1fr;
+  }
+
+  .report-transaction-amount {
+    text-align: left;
+  }
 }

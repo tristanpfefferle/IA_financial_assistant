@@ -176,6 +176,18 @@ export type SpendingReportApi = {
     name: string
     amount: string
   }>
+  transactions: Array<{
+    id?: string
+    date: string
+    label?: string | null
+    merchant?: string | null
+    category_label?: string | null
+    category_norm?: string | null
+    amount: string
+    currency?: string | null
+    is_internal_transfer?: boolean
+    flow_type?: string
+  }>
 }
 
 export type SpendingReport = {
@@ -205,6 +217,17 @@ export type SpendingReport = {
   categories: Array<{
     name: string
     amount: number
+  }>
+  transactions: Array<{
+    id: string
+    date: string
+    label: string
+    merchant: string
+    category_label: string
+    category_norm: string
+    amount: number
+    currency: string
+    is_internal_transfer: boolean
   }>
 }
 
@@ -645,6 +668,22 @@ export function normalizeSpendingReport(api: SpendingReportApi): SpendingReport 
       name: category.name,
       amount: toNumberOrZero(category.amount),
     })),
+    transactions: (Array.isArray(api.transactions) ? api.transactions : []).map((transaction, index) => {
+      const flowType = typeof transaction.flow_type === 'string' ? transaction.flow_type : ''
+      return {
+        id: typeof transaction.id === 'string' && transaction.id.trim() ? transaction.id : `${transaction.date}-${index}`,
+        date: transaction.date,
+        label: typeof transaction.label === 'string' ? transaction.label : '',
+        merchant: typeof transaction.merchant === 'string' ? transaction.merchant : '',
+        category_label: typeof transaction.category_label === 'string' ? transaction.category_label : (transaction as { category?: string }).category ?? '',
+        category_norm: typeof transaction.category_norm === 'string' ? transaction.category_norm : '',
+        amount: toNumberOrZero(transaction.amount),
+        currency: typeof transaction.currency === 'string' && transaction.currency.trim() ? transaction.currency : api.currency,
+        is_internal_transfer: typeof transaction.is_internal_transfer === 'boolean'
+          ? transaction.is_internal_transfer
+          : flowType === 'internal_transfer',
+      }
+    }),
   }
 }
 
