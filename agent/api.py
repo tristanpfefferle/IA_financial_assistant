@@ -910,22 +910,6 @@ def _build_csv_export_guidance_reply(profiles_repository: Any, profile_id: UUID)
     )
 
 
-def _build_quick_reply_report_view_confirmed_ui_action() -> dict[str, Any]:
-    """Return quick reply payload used after opening the onboarding report PDF."""
-
-    return {
-        "type": "ui_action",
-        "action": "quick_replies",
-        "options": [
-            {
-                "id": "seen",
-                "label": "J’ai consulté mon rapport.",
-                "value": "j_ai_consulte_mon_rapport",
-            }
-        ],
-    }
-
-
 def _build_quick_reply_confidence_start_ui_action() -> dict[str, Any]:
     """Return confidence intro start quick reply payload."""
 
@@ -963,12 +947,31 @@ def _build_quick_reply_shared_expenses_offer_ui_action() -> dict[str, Any]:
     }
 
 
-def _build_open_pdf_with_report_view_confirmed_ui_request(url: str) -> dict[str, Any]:
-    """Return PDF open UI request with embedded quick reply confirmation."""
+def _build_open_report_ui_request(
+    *,
+    month: str | None,
+    start_date: str | None,
+    end_date: str | None,
+    bank_account_id: str | None,
+) -> dict[str, Any]:
+    """Return UI request payload for opening the in-app spending report view."""
 
-    payload: dict[str, Any] = _build_open_pdf_ui_request(url)
-    payload["quick_replies"] = _build_quick_reply_report_view_confirmed_ui_action()["options"]
-    return payload
+    query: dict[str, str] = {}
+    if month:
+        query["month"] = month
+    if start_date:
+        query["start_date"] = start_date
+    if end_date:
+        query["end_date"] = end_date
+    if bank_account_id:
+        query["bank_account_id"] = bank_account_id
+
+    return {
+        "type": "ui_request",
+        "name": "open_report",
+        "report_kind": "spending",
+        "query": query,
+    }
 
 
 def _build_quick_reply_profile_fix_ui_action() -> dict[str, Any]:
@@ -1183,16 +1186,6 @@ def _extract_required_form_value(values: dict[str, Any], field_id: str) -> str:
     if not isinstance(raw, str) or not raw.strip():
         raise ValueError(f"missing_{field_id}")
     return raw.strip()
-
-
-def _build_open_pdf_ui_request(url: str) -> dict[str, str]:
-    """Return the legacy-compatible UI request payload for opening a PDF report."""
-
-    return {
-        "type": "ui_request",
-        "name": "open_pdf_report",
-        "url": url,
-    }
 
 
 def _build_import_done_reply(total_transactions: int | None) -> str:
@@ -5182,13 +5175,6 @@ def agent_chat(
                         start_date_value = resolved_start.isoformat()
                         end_date_value = resolved_end.isoformat()
 
-                    report_url = _build_spending_pdf_url(
-                        month=month_value,
-                        start_date=start_date_value,
-                        end_date=end_date_value,
-                        bank_account_id=bank_account_id_value,
-                    )
-
                     warm_start, warm_end = _resolve_report_date_range(
                         month=month_value,
                         start_date=start_date_value,
@@ -5224,7 +5210,12 @@ def agent_chat(
                             "Je viens de générer ton premier rapport financier.\n"
                             "Ouvre-le, puis dis-moi quand tu l’as consulté 🙂"
                         ),
-                        tool_result=_build_open_pdf_with_report_view_confirmed_ui_request(report_url),
+                        tool_result=_build_open_report_ui_request(
+                            month=month_value,
+                            start_date=start_date_value,
+                            end_date=end_date_value,
+                            bank_account_id=bank_account_id_value,
+                        ),
                         plan=None,
                     )
 
@@ -5275,15 +5266,14 @@ def agent_chat(
                     start_date_value = resolved_start.isoformat()
                     end_date_value = resolved_end.isoformat()
 
-                report_url = _build_spending_pdf_url(
-                    month=month_value,
-                    start_date=start_date_value,
-                    end_date=end_date_value,
-                    bank_account_id=bank_account_id_value,
-                )
                 return _chat_response(
                     reply="Ouvre le rapport puis clique « J’ai consulté mon rapport. » 🙂",
-                    tool_result=_build_open_pdf_with_report_view_confirmed_ui_request(report_url),
+                    tool_result=_build_open_report_ui_request(
+                        month=month_value,
+                        start_date=start_date_value,
+                        end_date=end_date_value,
+                        bank_account_id=bank_account_id_value,
+                    ),
                     plan=None,
                 )
 
@@ -5633,11 +5623,6 @@ def agent_chat(
                 state_dict=state_dict if isinstance(state_dict, dict) else None,
                 profile_id=profile_id,
             )
-            report_url = _build_spending_pdf_url(
-                month=month_value,
-                start_date=start_date_value,
-                end_date=end_date_value,
-            )
             period_label = month_value or (
                 f"du {start_date_value} au {end_date_value}"
                 if start_date_value and end_date_value
@@ -5650,8 +5635,13 @@ def agent_chat(
                 plan_payload["start_date"] = start_date_value
                 plan_payload["end_date"] = end_date_value
             return _chat_response(
-                reply=f"Voici ton rapport PDF pour {period_label} : [Ouvrir le PDF]({report_url})",
-                tool_result=_build_open_pdf_ui_request(report_url),
+                reply=f"Voici ton rapport de dépenses pour {period_label}.",
+                tool_result=_build_open_report_ui_request(
+                    month=month_value,
+                    start_date=start_date_value,
+                    end_date=end_date_value,
+                    bank_account_id=None,
+                ),
                 plan={"tool_name": "finance_report_spending_pdf", "payload": plan_payload},
             )
 
@@ -7295,13 +7285,6 @@ def finalize_import_job_chat(
         start_date_value = resolved_start.isoformat()
         end_date_value = resolved_end.isoformat()
 
-    report_url = _build_spending_pdf_url(
-        month=month_value,
-        start_date=start_date_value,
-        end_date=end_date_value,
-        bank_account_id=bank_account_id_value,
-    )
-
     warm_start, warm_end = _resolve_report_date_range(
         month=month_value,
         start_date=start_date_value,
@@ -7322,7 +7305,12 @@ def finalize_import_job_chat(
             "Je viens de générer ton premier rapport financier.\n"
             "Ouvre-le, puis dis-moi quand tu l’as consulté 🙂"
         ),
-        tool_result=_build_open_pdf_with_report_view_confirmed_ui_request(report_url),
+        tool_result=_build_open_report_ui_request(
+            month=month_value,
+            start_date=start_date_value,
+            end_date=end_date_value,
+            bank_account_id=bank_account_id_value,
+        ),
     )
 
 

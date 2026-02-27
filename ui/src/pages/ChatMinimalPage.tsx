@@ -4,17 +4,17 @@ import { useNavigate } from 'react-router-dom'
 import { createImportJob, finalizeImportJobChat, hardResetProfile, sendChatMessage, streamImportJobEvents, uploadImportFileToJob } from '../api/agentApi'
 import { ChatInteractiveCard } from '../chat/ChatInteractiveCard'
 import { InlineAction } from '../chat/InlineAction'
+import { ReportPage } from './ReportPage'
 import { normalizeQuickReplyDisplay } from '../chat/formatters'
 import { shouldRenderImportEvent } from '../chat/importEventVisibility'
 import { supabase } from '../lib/supabaseClient'
 import {
   type QuickReplyYesNoUiAction,
-  toAnyPdfUiRequest,
   toFormUiAction,
   toLegacyImportUiRequest,
   toOpenImportPanelUiAction,
-  toPdfUiRequest,
   toQuickReplyYesNoUiAction,
+  toReportUiRequest,
 } from './chatUiRequests'
 
 type ChatMessage = {
@@ -109,7 +109,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
   const navigate = useNavigate()
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const profileMenuRef = useRef<HTMLDivElement | null>(null)
-  const [activeTab, setActiveTab] = useState<'af' | 'help'>('af')
+  const [activeTab, setActiveTab] = useState<'af' | 'help' | 'report'>('af')
   const [messagesAf, setMessagesAf] = useState<ChatMessage[]>([])
   const [messagesHelp, setMessagesHelp] = useState<ChatMessage[]>([])
   const [currentUserId, setCurrentUserId] = useState<string | null>(null)
@@ -124,14 +124,16 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false)
   const [pendingActionMessageId, setPendingActionMessageId] = useState<string | null>(null)
   const [revealedActionMessageId, setRevealedActionMessageId] = useState<string | null>(null)
-  const [openingPdfByMessageId, setOpeningPdfByMessageId] = useState<Record<string, boolean>>({})
-  const [pdfOpenedByMessageId, setPdfOpenedByMessageId] = useState<Record<string, boolean>>({})
+  const [reportAvailable, setReportAvailable] = useState(false)
+  const [reportOpened, setReportOpened] = useState(false)
+  const [reportParams, setReportParams] = useState<{ month?: string; start_date?: string; end_date?: string; bank_account_id?: string }>({})
   const isMountedRef = useRef(true)
   const assistantSequenceRef = useRef(0)
   const lastProgressMessageIdRef = useRef<string | null>(null)
   const importMessageIdsRef = useRef<string[]>([])
 
   const displayedMessages = activeTab === 'af' ? messagesAf : messagesHelp
+  const shouldHighlightReportTab = reportAvailable && !reportOpened
 
   const pendingInteractiveIndex = useMemo(() => {
     let actionIndex = -1
@@ -146,7 +148,6 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
         || toQuickReplyYesNoUiAction(message.toolResult)
         || toOpenImportPanelUiAction(message.toolResult)
         || toLegacyImportUiRequest(message.toolResult)
-        || toAnyPdfUiRequest(message.toolResult)
       )
       if (isActionable) {
         actionIndex = index
@@ -165,8 +166,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
   function isInlineActionableToolResult(toolResult: Record<string, unknown>): boolean {
     return Boolean(
       toOpenImportPanelUiAction(toolResult)
-      || toLegacyImportUiRequest(toolResult)
-      || toAnyPdfUiRequest(toolResult),
+      || toLegacyImportUiRequest(toolResult),
     )
   }
 
@@ -178,9 +178,6 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
     return toQuickReplyYesNoUiAction(toolResult)?.options ?? []
   }
 
-  function isPdfReportRequest(toolResult: Record<string, unknown>): boolean {
-    return Boolean(toPdfUiRequest(toolResult))
-  }
 
   function handleScroll() {
     if (!scrollRef.current) {
@@ -250,6 +247,11 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
       ])
 
       if (isLastSegment && toolResult) {
+        const reportUiRequest = toReportUiRequest(toolResult)
+        if (reportUiRequest) {
+          setReportAvailable(true)
+          setReportParams(reportUiRequest.query)
+        }
         setPendingActionMessageId(null)
         setRevealedActionMessageId(assistantMessageId)
       }
@@ -421,6 +423,21 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
   }, [])
 
   useEffect(() => {
+    for (let index = messagesAf.length - 1; index >= 0; index -= 1) {
+      const toolResult = messagesAf[index].toolResult
+      if (!toolResult) {
+        continue
+      }
+      const reportUiRequest = toReportUiRequest(toolResult)
+      if (reportUiRequest) {
+        setReportAvailable(true)
+        setReportParams(reportUiRequest.query)
+        return
+      }
+    }
+  }, [messagesAf])
+
+  useEffect(() => {
     if (!didHydrateFromStorage || !currentUserId) {
       return
     }
@@ -444,7 +461,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
 
   async function submitMessage(text: string, displayContent?: string, fromQuickReply = false) {
     const trimmed = text.trim()
-    if (!trimmed || isSending || activeTab !== 'af') {
+    if (!trimmed || isSending || activeTab === 'help') {
       return
     }
 
@@ -632,7 +649,9 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
     setIsNearBottom(true)
     setPendingActionMessageId(null)
     setRevealedActionMessageId(null)
-    setOpeningPdfByMessageId({})
+    setReportAvailable(false)
+    setReportOpened(false)
+    setReportParams({})
 
     const chatStorageKeys = ['chat_messages', 'chat_debug_payload', 'chat_console_state']
     for (const key of chatStorageKeys) {
@@ -762,6 +781,19 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
               >
                 ?
               </button>
+              {reportAvailable ? (
+                <button
+                  type="button"
+                  className={`icon-button ${activeTab === 'report' ? 'tab-button-selected' : ''} ${shouldHighlightReportTab ? 'report-tab-pulse' : ''}`}
+                  onClick={() => {
+                    setActiveTab('report')
+                    setReportOpened(true)
+                  }}
+                  aria-label="Rapport"
+                >
+                  📊
+                </button>
+              ) : null}
               <label className="debug-toggle" htmlFor="debug-mode-toggle">
                 <input
                   id="debug-mode-toggle"
@@ -806,136 +838,117 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
             </div>
           </header>
 
-          <div className="message-area">
-            <div ref={scrollRef} className="chat-scroll" onScroll={handleScroll}>
-              {displayedMessages.map((message, index) => {
-                const isLastAssistantMessage =
-                  message.role === 'assistant' && !displayedMessages.slice(index + 1).some((nextMessage) => nextMessage.role === 'assistant')
-                const isShort = message.content.trim().length <= 18 && message.content.indexOf('\n') === -1
-                const messageClasses = [
-                  'msg',
-                  message.role === 'user' ? 'msg-user' : 'msg-assistant',
-                  ...(isShort ? ['msg-short'] : []),
-                  ...(message.role === 'user' && message.fromQuickReply ? ['msg-chip'] : []),
-                ].join(' ')
-                const messageIsPdfRequest = message.toolResult ? isPdfReportRequest(message.toolResult) : false
-                const canRenderMessageQuickReplies = !messageIsPdfRequest || Boolean(pdfOpenedByMessageId[message.id])
+          <div className={`message-area ${shouldHighlightReportTab && activeTab === 'af' ? 'message-area-blurred' : ''}`}>
+            {activeTab === 'report' ? (
+              <div className="chat-scroll report-scroll">
+                <ReportPage
+                  params={reportParams}
+                  isSending={isSending || isAssistantTyping}
+                  onConfirmViewed={() => {
+                    setReportOpened(true)
+                    setActiveTab('af')
+                    void submitMessage('j_ai_consulte_mon_rapport', 'J’ai consulté mon rapport.', true)
+                  }}
+                />
+              </div>
+            ) : (
+              <>
+                <div ref={scrollRef} className="chat-scroll" onScroll={handleScroll}>
+                  {displayedMessages.map((message, index) => {
+                    const isLastAssistantMessage =
+                      message.role === 'assistant' && !displayedMessages.slice(index + 1).some((nextMessage) => nextMessage.role === 'assistant')
+                    const isShort = message.content.trim().length <= 18 && message.content.indexOf('\n') === -1
+                    const messageClasses = [
+                      'msg',
+                      message.role === 'user' ? 'msg-user' : 'msg-assistant',
+                      ...(isShort ? ['msg-short'] : []),
+                      ...(message.role === 'user' && message.fromQuickReply ? ['msg-chip'] : []),
+                    ].join(' ')
 
-                return (
-                  <div key={message.id} className="msg-row">
-                    <div className={messageClasses}>{message.content}</div>
-                    {message.role === 'assistant' && message.toolResult && messageIsPdfRequest ? (
-                      <div className="msg msg-assistant">
-                        <button
-                          type="button"
-                          className="link-button"
-                          disabled={Boolean(openingPdfByMessageId[message.id])}
-                          onClick={(event) => {
-                            event.preventDefault()
-                            if (openingPdfByMessageId[message.id]) {
-                              return
-                            }
-                            const pdfUi = toPdfUiRequest(message.toolResult as Record<string, unknown>)
-                            if (!pdfUi) {
-                              return
-                            }
-                            setOpeningPdfByMessageId((current) => ({ ...current, [message.id]: true }))
-                            setPdfOpenedByMessageId((current) => ({ ...current, [message.id]: true }))
-                            window.open(pdfUi.url, '_blank', 'noopener,noreferrer')
-                            window.setTimeout(() => {
-                              setOpeningPdfByMessageId((current) => ({ ...current, [message.id]: false }))
-                            }, 800)
-                          }}
-                        >
-                          {openingPdfByMessageId[message.id] ? (
-                            <span className="pdf-opening-label" aria-live="polite">
-                              Ouverture… <span className="pdf-opening-dots" aria-hidden="true">...</span>
-                            </span>
-                          ) : '📄 Ouvrir le rapport PDF'}
-                        </button>
-                      </div>
-                    ) : null}
-                    {message.role === 'assistant'
-                    && message.toolResult
-                    && activeTab === 'af'
-                    && pendingInteractiveIndex === index
-                    && pendingActionMessageId !== message.id
-                    && revealedActionMessageId === message.id
-                    && isFormToolResult(message.toolResult) ? (
-                      <ChatInteractiveCard
-                        toolResult={message.toolResult}
-                        onSubmit={({ message: nextMessage, humanText }) => {
-                          const display = humanText ?? normalizeQuickReplyDisplay(undefined, nextMessage)
-                          void submitMessage(nextMessage, display, true)
-                        }}
-                        onImport={(file) => {
-                          void handleImportFile(file)
-                        }}
-                      />
-                    ) : null}
-                    {message.role === 'assistant'
-                    && message.toolResult
-                    && activeTab === 'af'
-                    && pendingInteractiveIndex === index
-                    && pendingActionMessageId !== message.id
-                    && revealedActionMessageId === message.id
-                    && canRenderMessageQuickReplies
-                    && toQuickRepliesOptions(message.toolResult).length > 0 ? (
-                      <div className="quick-replies-stack" role="group" aria-label="Réponses rapides">
-                        {toQuickRepliesOptions(message.toolResult).map((option) => (
-                          <button
-                            key={option.id}
-                            type="button"
-                            className="msg msg-user msg-quick-reply msg-quick-reply--pending"
-                            disabled={isSending || isAssistantTyping}
-                            onClick={() => {
-                              const display = normalizeQuickReplyDisplay(option.label, option.value)
-                              void submitMessage(option.value, display, true)
+                    return (
+                      <div key={message.id} className="msg-row">
+                        <div className={messageClasses}>{message.content}</div>
+                        {message.role === 'assistant'
+                        && message.toolResult
+                        && activeTab === 'af'
+                        && pendingInteractiveIndex === index
+                        && pendingActionMessageId !== message.id
+                        && revealedActionMessageId === message.id
+                        && isFormToolResult(message.toolResult) ? (
+                          <ChatInteractiveCard
+                            toolResult={message.toolResult}
+                            onSubmit={({ message: nextMessage, humanText }) => {
+                              const display = humanText ?? normalizeQuickReplyDisplay(undefined, nextMessage)
+                              void submitMessage(nextMessage, display, true)
                             }}
-                          >
-                            {option.label}
-                          </button>
-                        ))}
+                            onImport={(file) => {
+                              void handleImportFile(file)
+                            }}
+                          />
+                        ) : null}
+                        {message.role === 'assistant'
+                        && message.toolResult
+                        && activeTab === 'af'
+                        && pendingInteractiveIndex === index
+                        && pendingActionMessageId !== message.id
+                        && revealedActionMessageId === message.id
+                        && toQuickRepliesOptions(message.toolResult).length > 0 ? (
+                          <div className="quick-replies-stack" role="group" aria-label="Réponses rapides">
+                            {toQuickRepliesOptions(message.toolResult).map((option) => (
+                              <button
+                                key={option.id}
+                                type="button"
+                                className="msg msg-user msg-quick-reply msg-quick-reply--pending"
+                                disabled={isSending || isAssistantTyping}
+                                onClick={() => {
+                                  const display = normalizeQuickReplyDisplay(option.label, option.value)
+                                  void submitMessage(option.value, display, true)
+                                }}
+                              >
+                                {option.label}
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
+                        {message.role === 'assistant'
+                        && message.toolResult
+                        && activeTab === 'af'
+                        && pendingInteractiveIndex === index
+                        && pendingActionMessageId !== message.id
+                        && revealedActionMessageId === message.id
+                        && !isFormToolResult(message.toolResult)
+                        && isInlineActionableToolResult(message.toolResult)
+                        && toQuickRepliesOptions(message.toolResult).length === 0 ? (
+                          <InlineAction
+                            actionState={message.toolResult}
+                            disabled={isSending || isAssistantTyping}
+                            onChoose={(value, label) => {
+                              const display = label ? normalizeQuickReplyDisplay(label, value) : normalizeQuickReplyDisplay(undefined, value)
+                              void submitMessage(value, display, true)
+                            }}
+                            onImportFile={(file) => {
+                              void handleImportFile(file)
+                            }}
+                          />
+                        ) : null}
+                        {debugMode && isLastAssistantMessage ? (
+                          <details>
+                            <summary>Debug payload</summary>
+                            <pre>{JSON.stringify(message.toolResult ?? null, null, 2)}</pre>
+                          </details>
+                        ) : null}
                       </div>
-                    ) : null}
-                    {message.role === 'assistant'
-                    && message.toolResult
-                    && activeTab === 'af'
-                    && pendingInteractiveIndex === index
-                    && pendingActionMessageId !== message.id
-                    && revealedActionMessageId === message.id
-                    && !isFormToolResult(message.toolResult)
-                    && isInlineActionableToolResult(message.toolResult)
-                    && !isPdfReportRequest(message.toolResult)
-                    && toQuickRepliesOptions(message.toolResult).length === 0 ? (
-                      <InlineAction
-                        actionState={message.toolResult}
-                        disabled={isSending || isAssistantTyping}
-                        onChoose={(value, label) => {
-                          const display = label ? normalizeQuickReplyDisplay(label, value) : normalizeQuickReplyDisplay(undefined, value)
-                          void submitMessage(value, display, true)
-                        }}
-                        onImportFile={(file) => {
-                          void handleImportFile(file)
-                        }}
-                      />
-                    ) : null}
-                    {debugMode && isLastAssistantMessage ? (
-                      <details>
-                        <summary>Debug payload</summary>
-                        <pre>{JSON.stringify(message.toolResult ?? null, null, 2)}</pre>
-                      </details>
-                    ) : null}
-                  </div>
-                )
-              })}
-              {activeTab === 'af' && isAssistantTyping ? <div className="msg msg-assistant">...</div> : null}
-            </div>
-            {canScroll && !isNearBottom ? (
-              <button type="button" className="scroll-down-btn" onClick={scrollToBottom} aria-label="Aller en bas">
-                ↓
-              </button>
-            ) : null}
+                    )
+                  })}
+                  {activeTab === 'af' && isAssistantTyping ? <div className="msg msg-assistant">...</div> : null}
+                </div>
+                {canScroll && !isNearBottom ? (
+                  <button type="button" className="scroll-down-btn" onClick={scrollToBottom} aria-label="Aller en bas">
+                    ↓
+                  </button>
+                ) : null}
+              </>
+            )}
           </div>
 
           {submitErrorMessage ? <p className="subtle-text">{submitErrorMessage}</p> : null}

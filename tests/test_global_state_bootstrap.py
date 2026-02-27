@@ -604,8 +604,9 @@ def test_categories_bootstrap_creates_categories_classifies_merchants_and_skips_
     assert repo.merchants[1]["category"] == "Autres"
     assert repo.merchants[2]["category"] == ""
     assert payload["tool_result"]["type"] == "ui_request"
-    assert payload["tool_result"]["name"] == "open_pdf_report"
-    assert payload["tool_result"]["quick_replies"] == [{"id": "seen", "label": "J’ai consulté mon rapport.", "value": "j_ai_consulte_mon_rapport"}]
+    assert payload["tool_result"]["name"] == "open_report"
+    assert payload["tool_result"]["report_kind"] == "spending"
+    assert payload["tool_result"]["query"]
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
     assert persisted["mode"] == "onboarding"
     assert persisted["onboarding_step"] == "report"
@@ -641,9 +642,9 @@ def test_import_classification_direct_to_pdf_when_already_classified(monkeypatch
     payload = response.json()
     assert "Import terminé ✅" in payload["reply"]
     assert payload["tool_result"]["type"] == "ui_request"
-    assert payload["tool_result"]["name"] == "open_pdf_report"
-    assert payload["tool_result"]["quick_replies"] == [{"id": "seen", "label": "J’ai consulté mon rapport.", "value": "j_ai_consulte_mon_rapport"}]
-
+    assert payload["tool_result"]["name"] == "open_report"
+    assert payload["tool_result"]["report_kind"] == "spending"
+    assert payload["tool_result"]["query"]
 
 
 
@@ -667,7 +668,7 @@ def test_classify_merchants_without_category_invalid_ids_not_counted_as_remainin
     assert repo.merchants[1]["category"] == ""
 
 
-def test_free_chat_rapport_pdf_generates_ui_request(monkeypatch) -> None:
+def test_free_chat_rapport_generates_ui_request(monkeypatch) -> None:
     _mock_auth(monkeypatch)
     repo = _Repo(
         initial_chat_state={
@@ -692,8 +693,8 @@ def test_free_chat_rapport_pdf_generates_ui_request(monkeypatch) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["tool_result"]["type"] == "ui_request"
-    assert payload["tool_result"]["name"] == "open_pdf_report"
-    assert "month=2026-01" in payload["tool_result"]["url"]
+    assert payload["tool_result"]["name"] == "open_report"
+    assert payload["tool_result"]["query"]["month"] == "2026-01"
     assert payload["plan"]["tool_name"] == "finance_report_spending_pdf"
     assert payload["plan"]["payload"]["month"] == "2026-01"
     assert loop.called is False
