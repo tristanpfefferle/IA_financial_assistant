@@ -5914,11 +5914,16 @@ def apply_cluster(
 
     _, profile_id = _resolve_authenticated_profile(request, authorization)
     repository = _get_transaction_clusters_repository_or_501()
-    repository.apply_cluster_category(
-        cluster_id=str(cluster_id),
-        category_id=str(payload.category_id),
-        profile_id=str(profile_id),
-    )
+    try:
+        repository.apply_cluster_category(
+            cluster_id=str(cluster_id),
+            category_id=str(payload.category_id),
+            profile_id=str(profile_id),
+        )
+    except ValueError as exc:
+        if str(exc) == "cluster_not_found_or_forbidden":
+            raise HTTPException(status_code=404, detail="cluster not found") from exc
+        raise
     return {
         "type": "cluster_applied",
         "cluster_id": str(cluster_id),
@@ -5936,7 +5941,12 @@ def dismiss_cluster(
 
     _, profile_id = _resolve_authenticated_profile(request, authorization)
     repository = _get_transaction_clusters_repository_or_501()
-    repository.dismiss_cluster(cluster_id=str(cluster_id), profile_id=str(profile_id))
+    try:
+        repository.dismiss_cluster(cluster_id=str(cluster_id), profile_id=str(profile_id))
+    except ValueError as exc:
+        if str(exc) == "cluster_not_found_or_forbidden":
+            raise HTTPException(status_code=404, detail="cluster not found") from exc
+        raise
     return {"type": "cluster_dismissed", "cluster_id": str(cluster_id)}
 
 

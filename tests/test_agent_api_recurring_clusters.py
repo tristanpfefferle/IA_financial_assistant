@@ -111,6 +111,25 @@ def test_apply_recurring_cluster_calls_repository(monkeypatch) -> None:
     }
 
 
+def test_apply_recurring_cluster_returns_404_when_cluster_not_found(monkeypatch) -> None:
+    _mock_authenticated(monkeypatch)
+
+    class _FakeRepository:
+        def apply_cluster_category(self, *, cluster_id: str, category_id: str, profile_id: str | None = None) -> None:
+            raise ValueError("cluster_not_found_or_forbidden")
+
+    monkeypatch.setattr(agent_api, "_get_transaction_clusters_repository_or_501", lambda: _FakeRepository())
+
+    response = client.post(
+        f"/clusters/{CLUSTER_ID}/apply",
+        headers=_auth_headers(),
+        json={"category_id": str(CATEGORY_ID)},
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "cluster not found"}
+
+
 def test_dismiss_recurring_cluster_calls_repository(monkeypatch) -> None:
     _mock_authenticated(monkeypatch)
     called: dict[str, str] = {}
@@ -133,3 +152,18 @@ def test_dismiss_recurring_cluster_calls_repository(monkeypatch) -> None:
         "cluster_id": str(CLUSTER_ID),
         "profile_id": str(PROFILE_ID),
     }
+
+
+def test_dismiss_recurring_cluster_returns_404_when_cluster_not_found(monkeypatch) -> None:
+    _mock_authenticated(monkeypatch)
+
+    class _FakeRepository:
+        def dismiss_cluster(self, *, cluster_id: str, profile_id: str | None = None) -> None:
+            raise ValueError("cluster_not_found_or_forbidden")
+
+    monkeypatch.setattr(agent_api, "_get_transaction_clusters_repository_or_501", lambda: _FakeRepository())
+
+    response = client.post(f"/clusters/{CLUSTER_ID}/dismiss", headers=_auth_headers())
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "cluster not found"}

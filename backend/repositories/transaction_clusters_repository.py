@@ -145,13 +145,28 @@ class SupabaseTransactionClustersRepository:
         return result
 
     def apply_cluster_category(self, *, cluster_id: str, category_id: str, profile_id: str | None = None) -> None:
+        normalized_profile_id = profile_id.strip() if isinstance(profile_id, str) and profile_id.strip() else None
+
+        if normalized_profile_id:
+            cluster_rows, _ = self._client.get_rows(
+                table="transaction_clusters",
+                query={
+                    "select": "id,profile_id",
+                    "id": f"eq.{cluster_id}",
+                    "profile_id": f"eq.{normalized_profile_id}",
+                    "limit": 1,
+                },
+                with_count=False,
+                use_anon_key=False,
+            )
+            if not cluster_rows:
+                raise ValueError("cluster_not_found_or_forbidden")
+
         items_query: dict[str, Any] = {
             "select": "transaction_id",
             "cluster_id": f"eq.{cluster_id}",
             "limit": 5000,
         }
-        if isinstance(profile_id, str) and profile_id.strip():
-            items_query["profile_id"] = f"eq.{profile_id.strip()}"
 
         item_rows, _ = self._client.get_rows(
             table="transaction_cluster_items",
@@ -171,8 +186,8 @@ class SupabaseTransactionClustersRepository:
             )
 
         clusters_query = {"id": f"eq.{cluster_id}"}
-        if isinstance(profile_id, str) and profile_id.strip():
-            clusters_query["profile_id"] = f"eq.{profile_id.strip()}"
+        if normalized_profile_id:
+            clusters_query["profile_id"] = f"eq.{normalized_profile_id}"
 
         self._client.patch_rows(
             table="transaction_clusters",
@@ -186,9 +201,26 @@ class SupabaseTransactionClustersRepository:
         )
 
     def dismiss_cluster(self, *, cluster_id: str, profile_id: str | None = None) -> None:
+        normalized_profile_id = profile_id.strip() if isinstance(profile_id, str) and profile_id.strip() else None
+
+        if normalized_profile_id:
+            cluster_rows, _ = self._client.get_rows(
+                table="transaction_clusters",
+                query={
+                    "select": "id,profile_id",
+                    "id": f"eq.{cluster_id}",
+                    "profile_id": f"eq.{normalized_profile_id}",
+                    "limit": 1,
+                },
+                with_count=False,
+                use_anon_key=False,
+            )
+            if not cluster_rows:
+                raise ValueError("cluster_not_found_or_forbidden")
+
         query = {"id": f"eq.{cluster_id}"}
-        if isinstance(profile_id, str) and profile_id.strip():
-            query["profile_id"] = f"eq.{profile_id.strip()}"
+        if normalized_profile_id:
+            query["profile_id"] = f"eq.{normalized_profile_id}"
 
         self._client.patch_rows(
             table="transaction_clusters",
