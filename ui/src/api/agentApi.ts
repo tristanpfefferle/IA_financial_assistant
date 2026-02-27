@@ -228,6 +228,7 @@ export type SpendingReport = {
     amount: number
     currency: string
     is_internal_transfer: boolean
+    flow_type: string
   }>
 }
 
@@ -682,6 +683,7 @@ export function normalizeSpendingReport(api: SpendingReportApi): SpendingReport 
         is_internal_transfer: typeof transaction.is_internal_transfer === 'boolean'
           ? transaction.is_internal_transfer
           : flowType === 'internal_transfer',
+        flow_type: flowType,
       }
     }),
   }

@@ -957,6 +957,11 @@ button:disabled {
   gap: 6px;
 }
 
+.report-summary-note {
+  margin-top: 10px;
+  font-size: 0.8rem;
+}
+
 .report-split-grid {
   display: grid;
   gap: 14px;
@@ -985,21 +990,6 @@ button:disabled {
   font-size: 0.8rem;
 }
 
-.report-transactions-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.report-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: #cbd5e1;
-  font-size: 0.82rem;
-}
-
 .report-month-group {
   display: grid;
   gap: 8px;
@@ -1014,25 +1004,71 @@ button:disabled {
 
 .report-transactions-list {
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .report-transaction-row {
   display: grid;
   gap: 8px;
-  grid-template-columns: minmax(100px, 130px) minmax(0, 1fr) auto;
+  grid-template-columns: 92px minmax(0, 1fr) auto;
   border: 1px solid #1f2a44;
   border-radius: 10px;
-  padding: 10px;
+  padding: 8px 10px;
+  align-items: center;
 }
 
 .report-transaction-row p {
   margin: 0;
 }
 
+.report-transaction-date {
+  color: #94a3b8;
+  font-size: 0.78rem;
+}
+
+.report-transaction-main {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.report-transaction-merchant {
+  font-weight: 700;
+  color: #e2e8f0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.report-transaction-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.report-category-badge {
+  display: inline-flex;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.12);
+  color: rgba(226, 232, 240, 0.85);
+  font-size: 0.68rem;
+  white-space: nowrap;
+}
+
+.report-secondary-label {
+  color: #94a3b8;
+  font-size: 0.72rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .report-transaction-amount {
   text-align: right;
   align-self: center;
+  white-space: nowrap;
 }
 
 .report-card {
@@ -1075,10 +1111,26 @@ button:disabled {
   }
 
   .report-transaction-row {
-    grid-template-columns: 1fr;
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      'date amount'
+      'main amount';
+    align-items: start;
+  }
+
+  .report-transaction-date {
+    grid-area: date;
+  }
+
+  .report-transaction-main {
+    grid-area: main;
   }
 
   .report-transaction-amount {
-    text-align: left;
+    grid-area: amount;
+  }
+
+  .report-transaction-amount {
+    text-align: right;
   }
 }
