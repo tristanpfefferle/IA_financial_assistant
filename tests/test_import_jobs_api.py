@@ -187,7 +187,7 @@ def test_import_job_endpoints_create_upload_and_events(monkeypatch) -> None:
     assert parsed_events
     assert parsed_events[0].message == "Transactions détectées : 47."
     first_categorization = next(event for event in events if event.kind == "categorization_progress")
-    assert first_categorization.message == "Catégorisation… (0/47)"
+    assert first_categorization.message == "Extraction des transactions… (0/47)"
     parsed_index = next(index for index, event in enumerate(events) if event.kind == "parsed")
     first_categorization_index = next(index for index, event in enumerate(events) if event.kind == "categorization_progress")
     assert parsed_index < first_categorization_index
@@ -817,3 +817,168 @@ def test_run_import_job_pipeline_autoselects_single_bank_account(monkeypatch) ->
     assert repo.jobs[job_id].status == "done"
     assert repo.jobs[job_id].result is not None
     assert repo.jobs[job_id].result["bank_account_id"] == expected_account_id
+
+
+
+def test_run_import_job_pipeline_calls_alias_resolution_only_for_commit(monkeypatch) -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+
+    class _ProfilesRepo:
+        def __init__(self, pending_counts: list[int]) -> None:
+            self.pending_counts = pending_counts
+
+        def list_bank_accounts(self, *, profile_id: UUID) -> list[dict[str, Any]]:
+            assert profile_id
+            return []
+
+        def count_map_alias_suggestions(self, *, profile_id: UUID, include_failed: bool = False) -> int:
+            assert profile_id
+            assert include_failed is False
+            if len(self.pending_counts) > 1:
+                return self.pending_counts.pop(0)
+            return self.pending_counts[0]
+
+    class _BackendClient:
+        def finance_releves_import_files(self, *, request: Any, on_progress: Any):
+            on_progress("parsed_total", 2, 2)
+            on_progress("categorization", 2, 2)
+            return {"imported_count": 2}
+
+    class _Router:
+        def __init__(self) -> None:
+            self.backend_client = _BackendClient()
+
+    calls: list[int] = []
+
+    def _fake_resolve_pending_map_alias(*, profile_id: UUID, profiles_repository: Any, limit: int) -> dict[str, Any]:
+        assert profile_id
+        assert profiles_repository
+        calls.append(limit)
+        return {
+            "processed": 2,
+            "applied": 1,
+            "failed": 0,
+            "created_entities": 1,
+            "linked_aliases": 1,
+            "updated_transactions": 2,
+            "usage": {"prompt_tokens": 10, "completion_tokens": 3, "total_tokens": 13},
+            "llm_run_id": "run_123",
+            "warnings": [],
+        }
+
+    monkeypatch.setattr(agent_api, "get_tool_router", lambda: _Router())
+    monkeypatch.setattr(agent_api._config, "auto_resolve_merchant_aliases_enabled", lambda: True)
+    monkeypatch.setattr(agent_api._config, "llm_background_enabled", lambda: True)
+    monkeypatch.setattr(agent_api._config, "auto_resolve_merchant_aliases_limit", lambda: 20)
+    monkeypatch.setattr(agent_api._config, "auto_resolve_merchant_aliases_max_per_run", lambda: 200)
+    monkeypatch.setattr(agent_api, "resolve_pending_map_alias", _fake_resolve_pending_map_alias)
+
+    commit_repo = _Repo()
+    commit_job_id = uuid4()
+    commit_repo.jobs[commit_job_id] = _Job(id=commit_job_id, profile_id=profile_id, status="running")
+    commit_repo.events[commit_job_id] = []
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: _ProfilesRepo([2, 2, 0]))
+
+    commit_payload = agent_api.ImportRequestPayload(
+        files=[agent_api.ImportFilePayload(filename="sample.csv", content_base64="ZGF0ZSxtb250YW50")],
+        import_mode=RelevesImportMode.COMMIT,
+    )
+
+    agent_api._run_import_job_pipeline(
+        repository=commit_repo,
+        profile_id=profile_id,
+        payload=commit_payload,
+        job_id=commit_job_id,
+    )
+
+    analyze_repo = _Repo()
+    analyze_job_id = uuid4()
+    analyze_repo.jobs[analyze_job_id] = _Job(id=analyze_job_id, profile_id=profile_id, status="running")
+    analyze_repo.events[analyze_job_id] = []
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: _ProfilesRepo([2, 2]))
+
+    analyze_payload = agent_api.ImportRequestPayload(
+        files=[agent_api.ImportFilePayload(filename="sample.csv", content_base64="ZGF0ZSxtb250YW50")],
+        import_mode=RelevesImportMode.ANALYZE,
+    )
+
+    agent_api._run_import_job_pipeline(
+        repository=analyze_repo,
+        profile_id=profile_id,
+        payload=analyze_payload,
+        job_id=analyze_job_id,
+    )
+
+    assert calls == [20]
+
+
+def test_run_import_job_pipeline_emits_categorization_events(monkeypatch) -> None:
+    profile_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    job_id = uuid4()
+
+    class _ProfilesRepo:
+        def __init__(self) -> None:
+            self.pending_counts = [1, 1, 0]
+
+        def list_bank_accounts(self, *, profile_id: UUID) -> list[dict[str, Any]]:
+            assert profile_id
+            return []
+
+        def count_map_alias_suggestions(self, *, profile_id: UUID, include_failed: bool = False) -> int:
+            assert profile_id
+            assert include_failed is False
+            if len(self.pending_counts) > 1:
+                return self.pending_counts.pop(0)
+            return self.pending_counts[0]
+
+    class _BackendClient:
+        def finance_releves_import_files(self, *, request: Any, on_progress: Any):
+            on_progress("parsed_total", 1, 1)
+            on_progress("categorization", 1, 1)
+            return {"imported_count": 1}
+
+    class _Router:
+        def __init__(self) -> None:
+            self.backend_client = _BackendClient()
+
+    monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: _ProfilesRepo())
+    monkeypatch.setattr(agent_api, "get_tool_router", lambda: _Router())
+    monkeypatch.setattr(agent_api._config, "auto_resolve_merchant_aliases_enabled", lambda: True)
+    monkeypatch.setattr(agent_api._config, "llm_background_enabled", lambda: True)
+    monkeypatch.setattr(agent_api._config, "auto_resolve_merchant_aliases_limit", lambda: 5)
+    monkeypatch.setattr(agent_api._config, "auto_resolve_merchant_aliases_max_per_run", lambda: 10)
+    monkeypatch.setattr(
+        agent_api,
+        "resolve_pending_map_alias",
+        lambda **_kwargs: {
+            "processed": 1,
+            "applied": 1,
+            "failed": 0,
+            "created_entities": 1,
+            "linked_aliases": 1,
+            "updated_transactions": 1,
+            "usage": {"total_tokens": 7},
+            "llm_run_id": "run_456",
+            "warnings": [],
+        },
+    )
+
+    repo = _Repo()
+    repo.jobs[job_id] = _Job(id=job_id, profile_id=profile_id, status="running")
+    repo.events[job_id] = []
+
+    payload = agent_api.ImportRequestPayload(
+        files=[agent_api.ImportFilePayload(filename="sample.csv", content_base64="ZGF0ZSxtb250YW50")],
+        import_mode=RelevesImportMode.COMMIT,
+    )
+
+    agent_api._run_import_job_pipeline(
+        repository=repo,
+        profile_id=profile_id,
+        payload=payload,
+        job_id=job_id,
+    )
+
+    kinds = [event.kind for event in repo.events[job_id]]
+    assert "categorization_start" in kinds
+    assert "categorization_done" in kinds
