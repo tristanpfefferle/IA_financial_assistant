@@ -80,12 +80,6 @@ function isInternalTransfer(transaction: CategorizedTransaction): boolean {
   )
 }
 
-function isIncome(transaction: CategorizedTransaction): boolean {
-  const normalizedCategory = transaction.category_norm.toLowerCase()
-  const normalizedLabel = transaction.category_label.toLowerCase()
-  return normalizedCategory === 'income' || normalizedCategory === 'revenu' || normalizedLabel.includes('revenu') || normalizedLabel.includes('income')
-}
-
 function computeReportMetrics(transactions: CategorizedTransaction[], selectedMonths: Set<string>) {
   const selectedTransactions = transactions.filter((transaction) => selectedMonths.has(getMonthKey(transaction.date)))
 
@@ -114,7 +108,7 @@ function computeReportMetrics(transactions: CategorizedTransaction[], selectedMo
       continue
     }
 
-    if (transaction.amount > 0 && isIncome(transaction)) {
+    if (transaction.amount > 0) {
       incomesTotal += transaction.amount
       continue
     }
