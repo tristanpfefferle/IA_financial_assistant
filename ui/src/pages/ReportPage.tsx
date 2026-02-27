@@ -30,18 +30,24 @@ function getMonthKey(dateValue: string): string {
   return dateValue.slice(0, 7)
 }
 
-function formatMonthLabel(monthKey: string): string {
-  const [yearRaw, monthRaw] = monthKey.split('-')
-  const year = Number(yearRaw)
-  const month = Number(monthRaw)
-  if (!Number.isFinite(year) || !Number.isFinite(month)) {
-    return monthKey
+function formatMonthShort(monthKey: string): string {
+  const shortLabels: Record<string, string> = {
+    '01': 'J',
+    '02': 'F',
+    '03': 'M',
+    '04': 'A',
+    '05': 'M',
+    '06': 'J',
+    '07': 'J',
+    '08': 'A',
+    '09': 'S',
+    '10': 'O',
+    '11': 'N',
+    '12': 'D',
   }
 
-  return new Intl.DateTimeFormat('fr-CH', {
-    month: 'long',
-    year: 'numeric',
-  }).format(new Date(year, month - 1, 1))
+  const month = monthKey.slice(5, 7)
+  return shortLabels[month] ?? monthKey
 }
 
 function isInternalTransfer(transaction: CategorizedTransaction): boolean {
@@ -157,6 +163,7 @@ export function ReportPage({ params }: ReportPageProps) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [selectedMonths, setSelectedMonths] = useState<Set<string>>(new Set())
+  const [activeYear, setActiveYear] = useState<string | null>(null)
 
   useEffect(() => {
     let active = true
@@ -187,35 +194,66 @@ export function ReportPage({ params }: ReportPageProps) {
     }
   }, [params])
 
-  const availableMonths = useMemo(() => {
+  const { availableMonths, availableYears, monthsByYear } = useMemo(() => {
     if (!report) {
-      return [] as string[]
+      return {
+        availableMonths: [] as string[],
+        availableYears: [] as string[],
+        monthsByYear: {} as Record<string, string[]>,
+      }
     }
 
-    return [...new Set(report.transactions.map((transaction) => getMonthKey(transaction.date)))].sort((left, right) => left.localeCompare(right))
+    const availableMonthKeys = [...new Set(report.transactions.map((transaction) => getMonthKey(transaction.date)))].sort((left, right) => left.localeCompare(right))
+    const groupedMonths = availableMonthKeys.reduce<Record<string, string[]>>((accumulator, monthKey) => {
+      const year = monthKey.slice(0, 4)
+      accumulator[year] = [...(accumulator[year] ?? []), monthKey]
+      return accumulator
+    }, {})
+
+    const years = Object.keys(groupedMonths).sort((left, right) => right.localeCompare(left))
+
+    return {
+      availableMonths: availableMonthKeys,
+      availableYears: years,
+      monthsByYear: groupedMonths,
+    }
   }, [report])
 
   useEffect(() => {
-    if (availableMonths.length === 0) {
+    if (availableYears.length === 0) {
+      setActiveYear(null)
       setSelectedMonths(new Set())
       return
     }
 
+    setActiveYear((previous) => {
+      if (previous && availableYears.includes(previous)) {
+        return previous
+      }
+
+      return availableYears[0]
+    })
+  }, [availableYears])
+
+  useEffect(() => {
+    if (!activeYear || availableMonths.length === 0) {
+      return
+    }
+
+    const monthsInActiveYear = monthsByYear[activeYear] ?? []
+    const availableMonthSet = new Set(availableMonths)
+
     setSelectedMonths((previous) => {
       if (previous.size > 0) {
-        const kept = availableMonths.filter((month) => previous.has(month))
+        const kept = [...previous].filter((month) => availableMonthSet.has(month))
         if (kept.length > 0) {
           return new Set(kept)
         }
       }
 
-      if (availableMonths.length === 1) {
-        return new Set([availableMonths[0]])
-      }
-
-      return new Set(availableMonths)
+      return new Set(monthsInActiveYear)
     })
-  }, [availableMonths])
+  }, [activeYear, availableMonths, monthsByYear])
 
   const metrics = useMemo(() => {
     if (!report || selectedMonths.size === 0) {
@@ -238,23 +276,6 @@ export function ReportPage({ params }: ReportPageProps) {
       }))
   }, [metrics])
 
-  const isAllMonthsSelected = availableMonths.length > 0 && selectedMonths.size === availableMonths.length
-
-  const periodLabel = useMemo(() => {
-    if (availableMonths.length === 0 || selectedMonths.size === 0) {
-      return report?.period.label || `${report?.period.start_date ?? ''} → ${report?.period.end_date ?? ''}`
-    }
-
-    const selected = availableMonths.filter((month) => selectedMonths.has(month))
-    if (selected.length === 1) {
-      return formatMonthLabel(selected[0])
-    }
-    if (selected.length === availableMonths.length) {
-      return `${formatMonthLabel(selected[0])} → ${formatMonthLabel(selected[selected.length - 1])}`
-    }
-    return `${selected.length} mois sélectionnés`
-  }, [availableMonths, report, selectedMonths])
-
   const toggleMonth = (month: string): void => {
     setSelectedMonths((previous) => {
       const next = new Set(previous)
@@ -265,7 +286,7 @@ export function ReportPage({ params }: ReportPageProps) {
       }
 
       if (next.size === 0) {
-        return new Set(availableMonths)
+        return new Set(activeYear ? monthsByYear[activeYear] ?? [] : availableMonths)
       }
       return next
     })
@@ -278,29 +299,39 @@ export function ReportPage({ params }: ReportPageProps) {
       {error ? <p className="error-text">{error}</p> : null}
       {report ? (
         <>
-          {availableMonths.length > 1 ? (
-            <div className="report-month-selector" role="group" aria-label="Sélection des mois du rapport">
-              <button
-                type="button"
-                className={`month-chip ${isAllMonthsSelected ? 'active' : ''}`}
-                onClick={() => setSelectedMonths(new Set(availableMonths))}
-              >
-                Tous
-              </button>
-              {availableMonths.map((month) => (
+          {availableYears.length > 0 ? (
+            <div className="report-period-selector">
+              <div className="report-year-tabs" role="tablist" aria-label="Sélection de l'année du rapport">
+                {availableYears.map((year) => (
+                  <button
+                    key={year}
+                    type="button"
+                    role="tab"
+                    aria-selected={activeYear === year}
+                    className={`year-tab ${activeYear === year ? 'active' : ''}`}
+                    onClick={() => {
+                      setActiveYear(year)
+                      setSelectedMonths(new Set(monthsByYear[year] ?? []))
+                    }}
+                  >
+                    {year}
+                  </button>
+                ))}
+              </div>
+              <div className="report-month-chips" role="group" aria-label="Sélection des mois du rapport">
+                {(activeYear ? monthsByYear[activeYear] ?? [] : []).map((month) => (
                 <button
                   key={month}
                   type="button"
                   className={`month-chip ${selectedMonths.has(month) ? 'active' : ''}`}
                   onClick={() => toggleMonth(month)}
                 >
-                  {formatMonthLabel(month)}
+                  {formatMonthShort(month)}
                 </button>
               ))}
+              </div>
             </div>
           ) : null}
-
-          <p className="subtle-text">Période : {periodLabel}</p>
 
           <article className="report-card">
             <h3>Synthèse</h3>
