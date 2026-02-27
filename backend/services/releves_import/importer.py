@@ -6,7 +6,7 @@ import base64
 import logging
 import re
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Callable
 from uuid import NAMESPACE_URL, UUID, uuid5
@@ -307,45 +307,27 @@ class RelevesImportService:
             if row.get("id") is not None
         ]
 
-    def _resolve_transaction_clusters_repository(self) -> SupabaseTransactionClustersRepository | None:
-        if self.transaction_clusters_repository is not None:
-            return self.transaction_clusters_repository
-
-        supabase_url = config.supabase_url()
-        supabase_key = config.supabase_service_role_key()
-        if not supabase_url or not supabase_key:
-            return None
-
-        return SupabaseTransactionClustersRepository(
-            client=SupabaseClient(
-                settings=SupabaseSettings(
-                    url=supabase_url,
-                    service_role_key=supabase_key,
-                    anon_key=config.supabase_anon_key(),
-                )
-            )
-        )
-
     def _detect_and_persist_recurring_clusters(
         self,
         *,
         profile_id: UUID,
-        import_batch_marker: str,
         imported_date_min: date | None,
         imported_date_max: date | None,
     ) -> int:
         if imported_date_min is None or imported_date_max is None:
             return 0
 
-        repository = self._resolve_transaction_clusters_repository()
+        repository = self.transaction_clusters_repository
         if repository is None:
             return 0
 
+        window_start = imported_date_min - timedelta(days=400)
+        window_end = imported_date_max + timedelta(days=30)
+
         scoped_rows = self.releves_repository.list_releves_for_cluster_detection(
             profile_id=profile_id,
-            import_batch_marker=import_batch_marker,
-            start_date=imported_date_min,
-            end_date=imported_date_max,
+            start_date=window_start,
+            end_date=window_end,
             limit=self._MAX_RECURRING_CLUSTER_SCOPE_ROWS,
         )
         if not scoped_rows:
@@ -713,7 +695,6 @@ class RelevesImportService:
                 try:
                     recurring_clusters_detected = self._detect_and_persist_recurring_clusters(
                         profile_id=request.profile_id,
-                        import_batch_marker=import_batch_marker,
                         imported_date_min=min(imported_dates),
                         imported_date_max=max(imported_dates),
                     )
