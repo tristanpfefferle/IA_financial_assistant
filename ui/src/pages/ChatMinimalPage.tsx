@@ -92,7 +92,7 @@ function isInteractiveUiToolResult(toolResult: Record<string, unknown> | null | 
   ]).has(action)
 }
 
-function findActiveInteractiveMessageId(messages: ChatMessage[]): string | null {
+function getLastInteractiveAssistantMessageId(messages: ChatMessage[]): string | null {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index]
     if (message.role !== 'assistant' || !isInteractiveUiToolResult(message.toolResult)) {
@@ -264,6 +264,26 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
     return toQuickReplyYesNoUiAction(toolResult)?.options ?? []
   }
 
+  function isQuickRepliesToolResult(toolResult: Record<string, unknown>): boolean {
+    if (toolResult.type !== 'ui_action') {
+      return false
+    }
+
+    return toolResult.action === 'quick_replies' || toolResult.action === 'quick_reply_yes_no'
+  }
+
+  function shouldRenderMessageActions(message: ChatMessage): boolean {
+    if (!message.toolResult) {
+      return false
+    }
+
+    if (!isQuickRepliesToolResult(message.toolResult)) {
+      return true
+    }
+
+    return revealedActionMessageId === message.id && pendingActionMessageId !== message.id
+  }
+
 
   function handleScroll() {
     if (!scrollRef.current) {
@@ -297,6 +317,18 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
     return !isMountedRef.current || assistantSequenceRef.current !== sequenceId
   }
 
+  function abortPendingAssistantSequence() {
+    assistantSequenceRef.current += 1
+    setIsAssistantTyping(false)
+    setIsSending(false)
+    setPendingActionMessageId((currentPendingId) => {
+      if (currentPendingId) {
+        setRevealedActionMessageId(currentPendingId)
+      }
+      return null
+    })
+  }
+
   function splitAssistantReply(reply: string): string[] {
     return reply
       .split('\n\n')
@@ -314,13 +346,22 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
       const isLastSegment = index === normalizedSegments.length - 1
       const assistantMessageId = createMessageId()
 
+      if (isSequenceCancelled(sequenceId)) {
+        return
+      }
       setIsAssistantTyping(true)
       await wait(ASSISTANT_STEP_DELAY_MS)
       if (isSequenceCancelled(sequenceId)) {
         return
       }
 
+      if (isSequenceCancelled(sequenceId)) {
+        return
+      }
       setIsAssistantTyping(false)
+      if (isSequenceCancelled(sequenceId)) {
+        return
+      }
       setMessagesAf((current) => [
         ...current,
         {
@@ -333,10 +374,19 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
       ])
 
       if (isLastSegment && toolResult) {
+        if (isSequenceCancelled(sequenceId)) {
+          return
+        }
         const reportUiRequest = toReportUiRequest(toolResult)
         if (reportUiRequest) {
+          if (isSequenceCancelled(sequenceId)) {
+            return
+          }
           setReportAvailable(true)
           setReportParams(reportUiRequest.query)
+        }
+        if (isSequenceCancelled(sequenceId)) {
+          return
         }
         setPendingActionMessageId(null)
         setRevealedActionMessageId(assistantMessageId)
@@ -462,8 +512,8 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
 
         if (persistedMain) {
           setMessagesAf(persistedMain.messages)
-          const interactiveCandidateId = findActiveInteractiveMessageId(persistedMain.messages)
-          setRevealedActionMessageId(interactiveCandidateId)
+          const lastInteractiveId = getLastInteractiveAssistantMessageId(persistedMain.messages)
+          setRevealedActionMessageId(lastInteractiveId)
           setPendingActionMessageId(null)
           setIsSending(false)
           setIsAssistantTyping(false)
@@ -511,8 +561,8 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
     void hydrateConversation()
 
     return () => {
+      abortPendingAssistantSequence()
       isMountedRef.current = false
-      assistantSequenceRef.current += 1
     }
   }, [])
 
@@ -536,7 +586,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
       return
     }
 
-    const activeId = findActiveInteractiveMessageId(messagesAf)
+    const activeId = getLastInteractiveAssistantMessageId(messagesAf)
     setRevealedActionMessageId(activeId)
     setPendingActionMessageId(null)
   }, [isAssistantTyping, isSending, messagesAf])
@@ -834,6 +884,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
   }
 
   async function handleLogout() {
+    abortPendingAssistantSequence()
     const { error } = await supabase.auth.signOut()
     if (error) {
       setMessagesAf((current) => [
@@ -868,8 +919,8 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
                 const persistedMain = loadPersistedChatState(currentUserId, 'main')
                 if (persistedMain) {
                   setMessagesAf(persistedMain.messages)
-                  const interactiveCandidateId = findActiveInteractiveMessageId(persistedMain.messages)
-                  setRevealedActionMessageId(interactiveCandidateId)
+                  const lastInteractiveId = getLastInteractiveAssistantMessageId(persistedMain.messages)
+                  setRevealedActionMessageId(lastInteractiveId)
                   setPendingActionMessageId(null)
                   if (persistedMain.debugMode !== undefined) {
                     setDebugMode(persistedMain.debugMode)
@@ -980,8 +1031,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
                         && message.toolResult
                         && activeTab === 'af'
                         && pendingInteractiveIndex === index
-                        && pendingActionMessageId !== message.id
-                        && revealedActionMessageId === message.id
+                        && shouldRenderMessageActions(message)
                         && isFormToolResult(message.toolResult) ? (
                           <ChatInteractiveCard
                             toolResult={message.toolResult}
@@ -998,8 +1048,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
                         && message.toolResult
                         && activeTab === 'af'
                         && pendingInteractiveIndex === index
-                        && pendingActionMessageId !== message.id
-                        && revealedActionMessageId === message.id
+                        && shouldRenderMessageActions(message)
                         && toQuickRepliesOptions(message.toolResult).length > 0 ? (
                           <div className="quick-replies-stack" role="group" aria-label="Réponses rapides">
                             {toQuickRepliesOptions(message.toolResult).map((option) => (
@@ -1022,8 +1071,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
                         && message.toolResult
                         && activeTab === 'af'
                         && pendingInteractiveIndex === index
-                        && pendingActionMessageId !== message.id
-                        && revealedActionMessageId === message.id
+                        && shouldRenderMessageActions(message)
                         && !isFormToolResult(message.toolResult)
                         && isInlineActionableToolResult(message.toolResult)
                         && toQuickRepliesOptions(message.toolResult).length === 0 ? (
