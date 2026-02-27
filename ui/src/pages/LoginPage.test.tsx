@@ -44,7 +44,17 @@ describe('LoginPage', () => {
       )
     })
 
-    const [emailInput, passwordInput] = Array.from(container.querySelectorAll('input')) as HTMLInputElement[]
+    const switchToSignupButton = Array.from(container.querySelectorAll('button')).find((btn) =>
+      btn.textContent?.includes('Créer un compte'),
+    )
+
+    await act(async () => {
+      switchToSignupButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    const emailInput = container.querySelector('#auth-email') as HTMLInputElement
+    const passwordInput = container.querySelector('#auth-password') as HTMLInputElement
+
     await act(async () => {
       const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
       valueSetter?.call(emailInput, 'new@example.com')
@@ -53,9 +63,9 @@ describe('LoginPage', () => {
       passwordInput.dispatchEvent(new Event('input', { bubbles: true }))
     })
 
-    const createButton = Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.includes('Créer un compte'))
+    const form = container.querySelector('form')
     await act(async () => {
-      createButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      form?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
       await Promise.resolve()
     })
 
