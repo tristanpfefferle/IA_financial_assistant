@@ -657,7 +657,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
                 ].join(' ')
 
                 return (
-                  <div key={message.id}>
+                  <div key={message.id} className="msg-row">
                     <div className={messageClasses}>{message.content}</div>
                     {message.role === 'assistant' && message.toolResult && isPdfReportRequest(message.toolResult) ? (
                       <div className="msg msg-assistant">
