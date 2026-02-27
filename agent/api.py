@@ -3471,9 +3471,11 @@ class MerchantSuggestionApplyPayload(BaseModel):
 
 
 class MerchantAliasResolvePayload(BaseModel):
-    """Payload for map_alias suggestion batch resolver endpoint."""
+    """Payload for manual map_alias suggestions resolution endpoint."""
 
-    limit: int = 100
+    limit: int | None = None
+    max_per_run: int | None = None
+    dry_run: bool = False
 
 
 class ResolvePendingMerchantAliasesPayload(BaseModel):
@@ -7378,6 +7380,190 @@ async def stream_import_job_events(
     return StreamingResponse(_event_stream(), media_type="text/event-stream")
 
 
+def _merchant_alias_auto_resolve_debug(*, limit_per_batch: int, max_per_run: int) -> dict[str, Any]:
+    """Return structured debug metadata for merchant alias auto-resolve diagnostics."""
+
+    return {
+        "auto_resolve_enabled": _config.auto_resolve_merchant_aliases_enabled(),
+        "llm_enabled": _config.llm_enabled(),
+        "llm_background_enabled": _config.llm_background_enabled(),
+        "openai_api_key_configured": bool((_config.openai_api_key() or "").strip()),
+        "llm_model": _config.llm_model(),
+        "limit_per_batch": limit_per_batch,
+        "max_per_run": max_per_run,
+    }
+
+
+def _count_pending_map_alias_suggestions(*, profiles_repository: Any, profile_id: UUID, include_failed: bool = False) -> int | None:
+    """Return pending map_alias suggestions count when repository supports it."""
+
+    if not hasattr(profiles_repository, "count_map_alias_suggestions"):
+        return None
+
+    try:
+        counted = profiles_repository.count_map_alias_suggestions(profile_id=profile_id, include_failed=include_failed)
+    except TypeError:
+        counted = profiles_repository.count_map_alias_suggestions(profile_id=profile_id, include_failed=False)
+
+    return counted if isinstance(counted, int) else None
+
+
+def _list_pending_map_alias_suggestions(*, profiles_repository: Any, profile_id: UUID, limit: int, include_failed: bool = False) -> list[dict[str, Any]]:
+    """Return pending map_alias suggestions when repository supports listing."""
+
+    if not hasattr(profiles_repository, "list_map_alias_suggestions"):
+        return []
+
+    try:
+        rows = profiles_repository.list_map_alias_suggestions(
+            profile_id=profile_id,
+            limit=limit,
+            include_failed=include_failed,
+        )
+    except TypeError:
+        rows = profiles_repository.list_map_alias_suggestions(profile_id=profile_id, limit=limit)
+
+    return rows if isinstance(rows, list) else []
+
+
+def _resolve_pending_map_alias_batches(
+    *,
+    profile_id: UUID,
+    profiles_repository: Any,
+    limit_per_batch: int,
+    max_per_run: int,
+) -> dict[str, Any]:
+    """Resolve pending map_alias suggestions in batches until exhausted or budget reached."""
+
+    pending_total_count = _count_pending_map_alias_suggestions(
+        profiles_repository=profiles_repository,
+        profile_id=profile_id,
+        include_failed=False,
+    )
+    if pending_total_count is None:
+        pending_total_count = len(
+            _list_pending_map_alias_suggestions(
+                profiles_repository=profiles_repository,
+                profile_id=profile_id,
+                limit=limit_per_batch + 1,
+                include_failed=False,
+            )
+        )
+
+    logger.info(
+        "merchant_alias_auto_resolve_started profile_id=%s pending_total_count=%s batch_limit=%s max_per_run=%s",
+        profile_id,
+        pending_total_count,
+        limit_per_batch,
+        max_per_run,
+    )
+
+    usage_totals: dict[str, int] = {}
+    warning_values: set[str] = set()
+    aggregated_stats: dict[str, Any] = {
+        "processed": 0,
+        "applied": 0,
+        "failed": 0,
+        "created_entities": 0,
+        "linked_aliases": 0,
+        "updated_transactions": 0,
+        "warnings": [],
+        "usage": {},
+        "llm_run_id": None,
+    }
+
+    processed_budget = 0
+    pending_remaining = pending_total_count
+
+    while processed_budget < max_per_run and pending_remaining > 0:
+        current_batch_limit = min(limit_per_batch, max_per_run - processed_budget)
+        if current_batch_limit <= 0:
+            break
+
+        stats = resolve_pending_map_alias(
+            profile_id=profile_id,
+            profiles_repository=profiles_repository,
+            limit=current_batch_limit,
+        )
+
+        processed_in_batch = 0
+        if isinstance(stats, dict):
+            for key in (
+                "processed",
+                "applied",
+                "failed",
+                "created_entities",
+                "linked_aliases",
+                "updated_transactions",
+            ):
+                value = stats.get(key)
+                if isinstance(value, int):
+                    aggregated_stats[key] += value
+                    if key == "processed":
+                        processed_in_batch = value
+
+            usage = stats.get("usage")
+            if isinstance(usage, dict):
+                for usage_key, usage_value in usage.items():
+                    if isinstance(usage_value, int):
+                        usage_totals[usage_key] = usage_totals.get(usage_key, 0) + usage_value
+
+            warnings = stats.get("warnings")
+            if isinstance(warnings, list):
+                for warning in warnings:
+                    if isinstance(warning, str):
+                        warning_values.add(warning)
+
+            llm_run_id = stats.get("llm_run_id")
+            if isinstance(llm_run_id, str) and llm_run_id.strip():
+                aggregated_stats["llm_run_id"] = llm_run_id
+
+        if processed_in_batch <= 0:
+            warning_values.add("merchant_alias_auto_resolve_no_progress")
+            break
+
+        processed_budget += processed_in_batch
+
+        pending_remaining_count = _count_pending_map_alias_suggestions(
+            profiles_repository=profiles_repository,
+            profile_id=profile_id,
+            include_failed=False,
+        )
+        if pending_remaining_count is None:
+            pending_remaining_count = len(
+                _list_pending_map_alias_suggestions(
+                    profiles_repository=profiles_repository,
+                    profile_id=profile_id,
+                    limit=limit_per_batch + 1,
+                    include_failed=False,
+                )
+            )
+        pending_remaining = max(0, pending_remaining_count)
+
+    aggregated_stats["usage"] = usage_totals
+    aggregated_stats["warnings"] = sorted(warning_values)
+
+    logger.info(
+        "merchant_alias_auto_resolve_completed profile_id=%s processed=%s applied=%s failed=%s created_entities=%s updated_transactions=%s remaining_pending_count=%s",
+        profile_id,
+        aggregated_stats["processed"],
+        aggregated_stats["applied"],
+        aggregated_stats["failed"],
+        aggregated_stats["created_entities"],
+        aggregated_stats["updated_transactions"],
+        pending_remaining,
+    )
+
+    return {
+        "stats": aggregated_stats,
+        "pending_total_count": pending_total_count,
+        "remaining_pending_count": pending_remaining,
+        "processed_budget": processed_budget,
+        "max_per_run_reached": bool(pending_remaining > 0 and processed_budget >= max_per_run),
+        "no_progress": "merchant_alias_auto_resolve_no_progress" in warning_values,
+    }
+
+
 @app.post("/finance/releves/import")
 def import_releves(request: Request, payload: ImportRequestPayload, authorization: str | None = Header(default=None)) -> Any:
     """Import bank statements using backend tool router."""
@@ -7578,6 +7764,8 @@ def import_releves(request: Request, payload: ImportRequestPayload, authorizatio
         else:
             response_payload["warnings"] = ["merchant_linking_failed"]
 
+    auto_resolve_limit = _config.auto_resolve_merchant_aliases_limit()
+    auto_resolve_max_per_run = _config.auto_resolve_merchant_aliases_max_per_run()
     merchant_alias_auto_resolve_payload: dict[str, Any] = {
         "attempted": False,
         "skipped_reason": None,
@@ -7585,6 +7773,10 @@ def import_releves(request: Request, payload: ImportRequestPayload, authorizatio
         "pending_total_count": None,
         "remaining_pending_count": None,
         "max_per_run_reached": False,
+        "debug": _merchant_alias_auto_resolve_debug(
+            limit_per_batch=auto_resolve_limit,
+            max_per_run=auto_resolve_max_per_run,
+        ),
     }
     response_payload["merchant_alias_auto_resolve"] = merchant_alias_auto_resolve_payload
 
@@ -7615,20 +7807,22 @@ def import_releves(request: Request, payload: ImportRequestPayload, authorizatio
                 merchant_alias_auto_resolve_payload["skipped_reason"] = "merchant_alias_auto_resolve_unsupported"
                 _log_auto_resolve_skip("merchant_alias_auto_resolve_unsupported")
             else:
-                auto_resolve_limit = _config.auto_resolve_merchant_aliases_limit()
-                max_per_run = _config.auto_resolve_merchant_aliases_max_per_run()
-                pending_map_alias_suggestions = profiles_repository.list_map_alias_suggestions(
+                pending_probe = _list_pending_map_alias_suggestions(
+                    profiles_repository=profiles_repository,
                     profile_id=profile_id,
                     limit=auto_resolve_limit + 1,
+                    include_failed=False,
                 )
-                pending_total_count = len(pending_map_alias_suggestions)
-                if hasattr(profiles_repository, "count_map_alias_suggestions"):
-                    counted_pending_total = profiles_repository.count_map_alias_suggestions(profile_id=profile_id)
-                    if isinstance(counted_pending_total, int):
-                        pending_total_count = counted_pending_total
-                merchant_alias_auto_resolve_payload["pending_total_count"] = pending_total_count
+                pending_total_count = _count_pending_map_alias_suggestions(
+                    profiles_repository=profiles_repository,
+                    profile_id=profile_id,
+                    include_failed=False,
+                )
+                merchant_alias_auto_resolve_payload["pending_total_count"] = (
+                    pending_total_count if pending_total_count is not None else len(pending_probe)
+                )
 
-                if not pending_map_alias_suggestions:
+                if not pending_probe:
                     merchant_alias_auto_resolve_payload["skipped_reason"] = "merchant_alias_auto_resolve_no_suggestions"
                     _log_auto_resolve_skip("merchant_alias_auto_resolve_no_suggestions")
                 elif payload.import_mode == "analyze":
@@ -7636,99 +7830,27 @@ def import_releves(request: Request, payload: ImportRequestPayload, authorizatio
                     _log_auto_resolve_skip("merchant_alias_auto_resolve_analyze_mode")
                 else:
                     merchant_alias_auto_resolve_payload["attempted"] = True
-                    usage_totals: dict[str, int] = {}
-                    warning_values: set[str] = set()
-                    aggregated_stats: dict[str, Any] = {
-                        "processed": 0,
-                        "applied": 0,
-                        "failed": 0,
-                        "created_entities": 0,
-                        "linked_aliases": 0,
-                        "updated_transactions": 0,
-                        "warnings": [],
-                        "usage": {},
-                        "llm_run_id": None,
-                    }
+                    resolution_result = _resolve_pending_map_alias_batches(
+                        profile_id=profile_id,
+                        profiles_repository=profiles_repository,
+                        limit_per_batch=auto_resolve_limit,
+                        max_per_run=auto_resolve_max_per_run,
+                    )
+                    merchant_alias_auto_resolve_payload["stats"] = resolution_result["stats"]
+                    merchant_alias_auto_resolve_payload["pending_total_count"] = resolution_result["pending_total_count"]
+                    merchant_alias_auto_resolve_payload["remaining_pending_count"] = resolution_result["remaining_pending_count"]
+                    merchant_alias_auto_resolve_payload["max_per_run_reached"] = resolution_result["max_per_run_reached"]
 
-                    processed_budget = 0
-                    pending_remaining = pending_total_count
-                    while processed_budget < max_per_run and (pending_remaining is None or pending_remaining > 0):
-                        current_batch_limit = min(auto_resolve_limit, max_per_run - processed_budget)
-                        if current_batch_limit <= 0:
-                            break
-
-                        stats = resolve_pending_map_alias(
-                            profile_id=profile_id,
-                            profiles_repository=profiles_repository,
-                            limit=current_batch_limit,
-                        )
-
-                        processed_in_batch = 0
-                        if isinstance(stats, dict):
-                            for key in (
-                                "processed",
-                                "applied",
-                                "failed",
-                                "created_entities",
-                                "linked_aliases",
-                                "updated_transactions",
-                            ):
-                                value = stats.get(key)
-                                if isinstance(value, int):
-                                    aggregated_stats[key] += value
-                                    if key == "processed":
-                                        processed_in_batch = value
-
-                            usage = stats.get("usage")
-                            if isinstance(usage, dict):
-                                for usage_key, usage_value in usage.items():
-                                    if isinstance(usage_value, int):
-                                        usage_totals[usage_key] = usage_totals.get(usage_key, 0) + usage_value
-
-                            warnings = stats.get("warnings")
-                            if isinstance(warnings, list):
-                                for warning in warnings:
-                                    if isinstance(warning, str):
-                                        warning_values.add(warning)
-
-                            llm_run_id = stats.get("llm_run_id")
-                            if isinstance(llm_run_id, str) and llm_run_id.strip():
-                                aggregated_stats["llm_run_id"] = llm_run_id
-
-                        if processed_in_batch <= 0:
-                            warning_values.add("merchant_alias_auto_resolve_no_progress")
-                            break
-
-                        processed_budget += processed_in_batch
-
-                        recounted_pending_total = None
-                        if hasattr(profiles_repository, "count_map_alias_suggestions"):
-                            recounted_pending_total = profiles_repository.count_map_alias_suggestions(profile_id=profile_id)
-                        if isinstance(recounted_pending_total, int):
-                            pending_remaining = max(0, recounted_pending_total)
-                        else:
-                            pending_probe = profiles_repository.list_map_alias_suggestions(
-                                profile_id=profile_id,
-                                limit=auto_resolve_limit + 1,
-                            )
-                            pending_remaining = len(pending_probe)
-
-                    aggregated_stats["usage"] = usage_totals
-                    aggregated_stats["warnings"] = sorted(warning_values)
-                    merchant_alias_auto_resolve_payload["stats"] = aggregated_stats
-                    merchant_alias_auto_resolve_payload["remaining_pending_count"] = pending_remaining
-
-                    if pending_remaining and pending_remaining > 0:
+                    if resolution_result["remaining_pending_count"] > 0:
                         warnings = response_payload.get("warnings")
-                        if processed_budget >= max_per_run:
-                            merchant_alias_auto_resolve_payload["max_per_run_reached"] = True
+                        if resolution_result["max_per_run_reached"]:
                             merchant_alias_auto_resolve_payload["skipped_reason"] = "merchant_alias_auto_resolve_cap_reached"
                             _log_auto_resolve_skip("merchant_alias_auto_resolve_cap_reached")
                             if isinstance(warnings, list):
                                 warnings.append("merchant_alias_auto_resolve_cap_reached")
                             else:
                                 response_payload["warnings"] = ["merchant_alias_auto_resolve_cap_reached"]
-                        elif "merchant_alias_auto_resolve_no_progress" in warning_values:
+                        elif resolution_result["no_progress"]:
                             merchant_alias_auto_resolve_payload["skipped_reason"] = "merchant_alias_auto_resolve_no_progress"
                             _log_auto_resolve_skip("merchant_alias_auto_resolve_no_progress")
                             if isinstance(warnings, list):
@@ -7745,6 +7867,10 @@ def import_releves(request: Request, payload: ImportRequestPayload, authorizatio
             merchant_alias_auto_resolve_payload["attempted"] = True
             merchant_alias_auto_resolve_payload["skipped_reason"] = "merchant_alias_auto_resolve_failed"
             merchant_alias_auto_resolve_payload["stats"] = None
+
+    if merchant_alias_auto_resolve_payload["attempted"] is False and merchant_alias_auto_resolve_payload["skipped_reason"] is None:
+        merchant_alias_auto_resolve_payload["skipped_reason"] = "merchant_alias_auto_resolve_not_attempted"
+        _log_auto_resolve_skip("merchant_alias_auto_resolve_not_attempted")
 
     response_payload["merchant_suggestions_pending_count"] = 0
     response_payload["merchant_suggestions_applied_count"] = 0
@@ -7890,38 +8016,85 @@ def _maybe_auto_apply_suggestion(
 @app.post("/finance/merchants/suggestions/resolve")
 def resolve_merchant_alias_suggestions(
     request: Request,
-    payload: MerchantAliasResolvePayload,
+    payload: MerchantAliasResolvePayload | None = None,
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    """Resolve pending/failed map_alias suggestions for authenticated profile."""
-
-    if not _config.llm_enabled():
-        raise HTTPException(status_code=400, detail="LLM is disabled (set AGENT_LLM_ENABLED=1)")
+    """Resolve pending map_alias suggestions for authenticated profile."""
 
     _, profile_id = _resolve_authenticated_profile(request, authorization)
     profiles_repository = get_profiles_repository()
 
-    limit = max(1, min(int(payload.limit), 500))
+    default_limit = _config.auto_resolve_merchant_aliases_limit()
+    default_max_per_run = _config.auto_resolve_merchant_aliases_max_per_run()
+    limit = max(1, min(int((payload.limit if payload else None) or default_limit), 500))
+    max_per_run = max(1, min(int((payload.max_per_run if payload else None) or default_max_per_run), 5000))
+    dry_run = bool(payload.dry_run) if payload else False
+
+    debug = _merchant_alias_auto_resolve_debug(limit_per_batch=limit, max_per_run=max_per_run)
+
+    if not _config.auto_resolve_merchant_aliases_enabled():
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "Merchant alias auto-resolve is disabled (set AGENT_AUTO_RESOLVE_MERCHANT_ALIASES=1)",
+                "debug": debug,
+            },
+        )
+
+    if not _config.llm_background_enabled():
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "Background LLM resolver is disabled (set AGENT_LLM_BACKGROUND_ENABLED=1 and configure OPENAI_API_KEY)",
+                "debug": debug,
+            },
+        )
+
+    if dry_run:
+        pending_total_count = _count_pending_map_alias_suggestions(
+            profiles_repository=profiles_repository,
+            profile_id=profile_id,
+            include_failed=False,
+        )
+        if pending_total_count is None:
+            pending_total_count = len(
+                _list_pending_map_alias_suggestions(
+                    profiles_repository=profiles_repository,
+                    profile_id=profile_id,
+                    limit=limit + 1,
+                    include_failed=False,
+                )
+            )
+        return {
+            "ok": True,
+            "type": "merchant_alias_resolve_result",
+            "dry_run": True,
+            "pending_total_count": pending_total_count,
+            "remaining_pending_count": pending_total_count,
+            "stats": None,
+            "debug": debug,
+        }
+
     try:
-        stats = resolve_pending_map_alias(
+        resolution_result = _resolve_pending_map_alias_batches(
             profile_id=profile_id,
             profiles_repository=profiles_repository,
-            limit=limit,
+            limit_per_batch=limit,
+            max_per_run=max_per_run,
         )
     except Exception as exc:
         logger.exception("resolve_map_alias_suggestions_failed profile_id=%s", profile_id)
         raise HTTPException(status_code=500, detail="Failed to resolve map_alias suggestions") from exc
-    response_payload = dict(jsonable_encoder(stats))
-    bootstrap_summary = _bootstrap_merchants_from_imported_releves(
-        profiles_repository=profiles_repository,
-        profile_id=profile_id,
-        limit=2000,
-    )
-    response_payload["bootstrap_summary"] = bootstrap_summary
 
-    return response_payload
-
-
+    return {
+        "ok": True,
+        "type": "merchant_alias_resolve_result",
+        "dry_run": False,
+        "pending_total_count": resolution_result["pending_total_count"],
+        "remaining_pending_count": resolution_result["remaining_pending_count"],
+        "stats": resolution_result["stats"],
+        "debug": debug,
+    }
 
 
 @app.get("/finance/transactions/pending")
@@ -7984,13 +8157,13 @@ def get_pending_merchant_aliases_count(request: Request, authorization: str | No
 
     pending_total_count: int | None = None
     if hasattr(profiles_repository, "count_map_alias_suggestions"):
-        counted = profiles_repository.count_map_alias_suggestions(profile_id=profile_id)
+        counted = profiles_repository.count_map_alias_suggestions(profile_id=profile_id, include_failed=False)
         if isinstance(counted, int):
             pending_total_count = counted
 
     if pending_total_count is None:
         if hasattr(profiles_repository, "list_map_alias_suggestions"):
-            suggestions = profiles_repository.list_map_alias_suggestions(profile_id=profile_id, limit=1000)
+            suggestions = profiles_repository.list_map_alias_suggestions(profile_id=profile_id, limit=1000, include_failed=False)
             pending_total_count = len(suggestions)
         else:
             logger.warning(
@@ -8024,7 +8197,7 @@ def resolve_pending_merchant_aliases(
 
     pending_before: int | None = None
     if hasattr(profiles_repository, "count_map_alias_suggestions"):
-        counted = profiles_repository.count_map_alias_suggestions(profile_id=profile_id)
+        counted = profiles_repository.count_map_alias_suggestions(profile_id=profile_id, include_failed=False)
         if isinstance(counted, int):
             pending_before = counted
 
@@ -8089,7 +8262,7 @@ def resolve_pending_merchant_aliases(
                 pending_after = None
                 break
 
-            recounted_pending = profiles_repository.count_map_alias_suggestions(profile_id=profile_id)
+            recounted_pending = profiles_repository.count_map_alias_suggestions(profile_id=profile_id, include_failed=False)
             pending_after = recounted_pending if isinstance(recounted_pending, int) else None
             if pending_after is None:
                 break

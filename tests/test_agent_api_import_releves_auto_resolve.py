@@ -70,13 +70,15 @@ def test_import_releves_auto_resolve_batches_until_pending_zero(monkeypatch) -> 
         def __init__(self) -> None:
             self.pending = 5
 
-        def list_map_alias_suggestions(self, *, profile_id: UUID, limit: int = 100):
+        def list_map_alias_suggestions(self, *, profile_id: UUID, limit: int = 100, include_failed: bool = False):
             assert profile_id == PROFILE_ID
             assert limit == 3
+            assert include_failed is False
             return [{"id": str(i)} for i in range(self.pending)]
 
-        def count_map_alias_suggestions(self, *, profile_id: UUID):
+        def count_map_alias_suggestions(self, *, profile_id: UUID, include_failed: bool = False):
             assert profile_id == PROFILE_ID
+            assert include_failed is False
             return self.pending
 
     repo = _Repo()
@@ -110,6 +112,13 @@ def test_import_releves_auto_resolve_batches_until_pending_zero(monkeypatch) -> 
     assert payload["merchant_alias_auto_resolve"]["pending_total_count"] == 5
     assert payload["merchant_alias_auto_resolve"]["remaining_pending_count"] == 0
     assert payload["merchant_alias_auto_resolve"]["stats"]["processed"] == 6
+    debug = payload["merchant_alias_auto_resolve"]["debug"]
+    assert debug["auto_resolve_enabled"] is True
+    assert debug["llm_enabled"] is True
+    assert debug["llm_background_enabled"] is True
+    assert debug["openai_api_key_configured"] is False
+    assert debug["limit_per_batch"] == 2
+    assert debug["max_per_run"] == 10
 
 
 def test_import_releves_auto_resolve_signals_cap_reached(monkeypatch) -> None:
@@ -117,13 +126,15 @@ def test_import_releves_auto_resolve_signals_cap_reached(monkeypatch) -> None:
         def __init__(self) -> None:
             self.pending = 6
 
-        def list_map_alias_suggestions(self, *, profile_id: UUID, limit: int = 100):
+        def list_map_alias_suggestions(self, *, profile_id: UUID, limit: int = 100, include_failed: bool = False):
             assert profile_id == PROFILE_ID
             assert limit == 3
+            assert include_failed is False
             return [{"id": str(i)} for i in range(self.pending)]
 
-        def count_map_alias_suggestions(self, *, profile_id: UUID):
+        def count_map_alias_suggestions(self, *, profile_id: UUID, include_failed: bool = False):
             assert profile_id == PROFILE_ID
+            assert include_failed is False
             return self.pending
 
     repo = _Repo()
@@ -159,12 +170,13 @@ def test_import_releves_auto_resolve_runs_when_chat_llm_disabled_but_background_
         def __init__(self) -> None:
             self.pending = 1
 
-        def list_map_alias_suggestions(self, *, profile_id: UUID, limit: int = 100):
+        def list_map_alias_suggestions(self, *, profile_id: UUID, limit: int = 100, include_failed: bool = False):
             assert profile_id == PROFILE_ID
             return [{"id": "1"}] if self.pending > 0 else []
 
-        def count_map_alias_suggestions(self, *, profile_id: UUID):
+        def count_map_alias_suggestions(self, *, profile_id: UUID, include_failed: bool = False):
             assert profile_id == PROFILE_ID
+            assert include_failed is False
             return self.pending
 
     repo = _Repo()
@@ -198,7 +210,7 @@ def test_import_releves_auto_resolve_runs_when_chat_llm_disabled_but_background_
 
 def test_import_releves_auto_resolve_skips_when_background_llm_disabled(monkeypatch) -> None:
     class _Repo(_BaseRepo):
-        def list_map_alias_suggestions(self, *, profile_id: UUID, limit: int = 100):
+        def list_map_alias_suggestions(self, *, profile_id: UUID, limit: int = 100, include_failed: bool = False):
             raise AssertionError("should not be called")
 
     repo = _Repo()
@@ -218,16 +230,17 @@ def test_import_releves_auto_resolve_skips_when_background_llm_disabled(monkeypa
     assert payload["merchant_alias_auto_resolve"]["attempted"] is False
     assert payload["merchant_alias_auto_resolve"]["pending_total_count"] is None
     assert payload["merchant_alias_auto_resolve"]["skipped_reason"] == "merchant_alias_auto_resolve_llm_disabled"
+    assert payload["merchant_alias_auto_resolve"]["debug"]["llm_background_enabled"] is False
 
 
 def test_import_releves_auto_resolve_skips_in_analyze_mode(monkeypatch) -> None:
     class _Repo(_BaseRepo):
-        def list_map_alias_suggestions(self, *, profile_id: UUID, limit: int = 100):
+        def list_map_alias_suggestions(self, *, profile_id: UUID, limit: int = 100, include_failed: bool = False):
             assert profile_id == PROFILE_ID
             assert limit == 3
             return [{"id": "1"}]
 
-        def count_map_alias_suggestions(self, *, profile_id: UUID):
+        def count_map_alias_suggestions(self, *, profile_id: UUID, include_failed: bool = False):
             return 1
 
     repo = _Repo()
