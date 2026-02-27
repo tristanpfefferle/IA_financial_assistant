@@ -203,6 +203,10 @@ _GLOBAL_STATE_ONBOARDING_SUBSTEPS = {
     "bank_accounts_fix_select",
     "import_select_account",
     "import_wait_ready",
+    "import_help_menu",
+    "import_help_bank_select",
+    "import_help_bank_instructions",
+    "import_help_data_security",
     "categories_intro",
     "categories_bootstrap",
     "report_sent",
@@ -510,6 +514,10 @@ _ONBOARDING_SUBSTEP_TO_LOOP_ID: dict[str, str] = {
     "bank_accounts_confirm": "onboarding.bank_accounts_confirm",
     "import_select_account": "onboarding.import_select_account",
     "import_wait_ready": "onboarding.import_wait_ready",
+    "import_help_menu": "onboarding.import_wait_ready",
+    "import_help_bank_select": "onboarding.import_wait_ready",
+    "import_help_bank_instructions": "onboarding.import_wait_ready",
+    "import_help_data_security": "onboarding.import_wait_ready",
     "categories_intro": "onboarding.categories_intro",
     "categories_bootstrap": "onboarding.categories_bootstrap",
     "report_sent": "onboarding.report",
@@ -736,10 +744,125 @@ def _build_quick_reply_import_wait_ready_ui_action() -> dict[str, Any]:
         "type": "ui_action",
         "action": "quick_replies",
         "options": [
-            {"id": "yes", "label": "Oui, je suis prêt à te le transmettre !", "value": "oui"},
-            {"id": "no", "label": "Non, j’ai besoin de plus d’informations avant.", "value": "non"},
+            {"id": "import_ready_yes", "label": "Oui, je suis prêt à te le transmettre !", "value": "import_ready_yes"},
+            {
+                "id": "import_ready_help",
+                "label": "Non, j'ai besoin de plus d'informations avant.",
+                "value": "import_ready_help",
+            },
         ],
     }
+
+
+def _build_import_help_menu_ui_action() -> dict[str, Any]:
+    """Return quick replies for onboarding import help menu."""
+
+    return {
+        "type": "ui_action",
+        "action": "quick_replies",
+        "options": [
+            {
+                "id": "help_csv",
+                "label": "Je ne sais pas comment extraire un fichier .csv de mon e-banking.",
+                "value": "import_help_csv",
+            },
+            {
+                "id": "help_security",
+                "label": "Est-ce que mes données bancaires sont collectées ?",
+                "value": "import_help_security",
+            },
+        ],
+    }
+
+
+def _build_import_help_bank_select_ui_action(bank_names: list[str]) -> dict[str, Any]:
+    """Return bank selection quick replies for CSV export guidance."""
+
+    sanitized_names = [name.strip() for name in bank_names if isinstance(name, str) and name.strip()]
+    options_source = sanitized_names or list(_ONBOARDING_BANK_ACCOUNT_PRESET_OPTIONS)
+
+    options: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for bank_name in options_source:
+        if bank_name.lower() in seen:
+            continue
+        seen.add(bank_name.lower())
+        options.append(
+            {
+                "id": f"import_help_bank_{len(options) + 1}",
+                "label": bank_name,
+                "value": f"import_help_bank:{bank_name}",
+            }
+        )
+    return {"type": "ui_action", "action": "quick_replies", "options": options}
+
+
+def _build_import_help_after_answer_ui_action(*, security_variant: bool = False) -> dict[str, Any]:
+    """Return post-help quick replies to route back to menu or import."""
+
+    if security_variant:
+        options = [
+            {
+                "id": "import_help_back_to_import",
+                "label": "Très bien, je comprends. On peut retourner à l'importation.",
+                "value": "import_help_back_to_import",
+            },
+            {
+                "id": "import_help_back_to_menu",
+                "label": "Très bien, je comprends. J'ai encore une question.",
+                "value": "import_help_back_to_menu",
+            },
+        ]
+    else:
+        options = [
+            {
+                "id": "import_help_back_to_import",
+                "label": "Ok, on peut passer à l'importation !",
+                "value": "import_help_back_to_import",
+            },
+            {
+                "id": "import_help_back_to_menu",
+                "label": "Très bien. J'ai encore une autre question.",
+                "value": "import_help_back_to_menu",
+            },
+        ]
+    return {"type": "ui_action", "action": "quick_replies", "options": options}
+
+
+def _build_csv_export_instructions(bank_name: str) -> str:
+    """Return concise CSV export instructions by bank with safe generic wording."""
+
+    normalized = _normalize_text(bank_name)
+    if "ubs" in normalized:
+        return (
+            "Pour UBS, ouvre ton e-banking puis va dans Comptes → Relevés/Transactions → Exporter. "
+            "Choisis CSV (ou Excel puis CSV), la période souhaitée, puis télécharge le fichier. "
+            "Les intitulés peuvent varier selon la version."
+        )
+    if "revolut" in normalized:
+        return (
+            "Pour Revolut, va dans Analytics/Statements puis Export, et choisis le format CSV. "
+            "Sélectionne la période avant de télécharger. Les intitulés peuvent varier."
+        )
+    if "postfinance" in normalized:
+        return (
+            "Pour PostFinance, cherche la section compte/relevés ou transactions, puis l'option Exporter/Télécharger en CSV. "
+            "Choisis la période voulue. Les intitulés peuvent varier selon l'interface."
+        )
+    if "raiffeisen" in normalized:
+        return (
+            "Pour Raiffeisen, ouvre le compte concerné, puis historique/relevés des transactions et exporte en CSV. "
+            "Définis la période avant téléchargement. Les intitulés peuvent varier selon ton e-banking."
+        )
+    if "bcv" in normalized:
+        return (
+            "Pour BCV, ouvre la vue des transactions/relevés, puis utilise Exporter/Télécharger au format CSV. "
+            "Choisis la période, puis télécharge. Les intitulés peuvent varier selon la version."
+        )
+    return (
+        f"Pour {bank_name}, cherche dans ton e-banking la section transactions/relevés puis l'option Exporter/Télécharger en CSV. "
+        "Choisis la période souhaitée, puis télécharge le fichier. Les intitulés peuvent varier selon l'interface."
+    )
 
 
 def _build_csv_export_guidance_reply(profiles_repository: Any, profile_id: UUID) -> str:
@@ -2029,7 +2152,14 @@ def _normalize_onboarding_step_substep(global_state: dict[str, Any]) -> dict[str
             "profile_fix_birth_date",
         },
         "bank_accounts": {"bank_accounts_collect", "bank_accounts_confirm", "bank_accounts_fix_select"},
-        "import": {"import_select_account", "import_wait_ready"},
+        "import": {
+            "import_select_account",
+            "import_wait_ready",
+            "import_help_menu",
+            "import_help_bank_select",
+            "import_help_bank_instructions",
+            "import_help_data_security",
+        },
         "categories": {"categories_intro", "categories_bootstrap"},
         "report": {"report_sent", "report_wait_view_confirmation"},
     }
@@ -2685,6 +2815,12 @@ def _build_onboarding_reminder(global_state: dict[str, Any] | None) -> str | Non
         return "(Pour continuer : indique le compte à importer.)"
     if substep == "import_wait_ready":
         return "(Pour continuer : dis-moi quand ton fichier est prêt pour l’import.)"
+    if substep == "import_help_menu":
+        return "(Pour continuer : choisis l'aide dont tu as besoin avant l'import.)"
+    if substep == "import_help_bank_select":
+        return "(Pour continuer : choisis la banque pour laquelle tu veux une aide CSV.)"
+    if substep in {"import_help_bank_instructions", "import_help_data_security"}:
+        return "(Pour continuer : choisis de revenir à l'import ou de poser une autre question.)"
     if substep == "categories_intro":
         return "(Pour continuer l’onboarding : démarrons le bootstrap des catégories.)"
     if substep == "categories_bootstrap":
@@ -4444,47 +4580,200 @@ def agent_chat(
             mode = global_state.get("mode")
             onboarding_step = global_state.get("onboarding_step")
 
-            if mode == "onboarding" and onboarding_step == "import" and global_state.get("onboarding_substep") == "import_wait_ready":
-                if _is_yes(payload.message):
-                    import_context = state_dict.get("import_context") if isinstance(state_dict.get("import_context"), dict) else {}
-                    selected_bank_account_id = None
-                    if isinstance(import_context, dict):
-                        selected_bank_account_id = import_context.get("bank_account_id") or import_context.get("selected_bank_account_id")
+            if mode == "onboarding" and onboarding_step == "import":
+                import_substep = global_state.get("onboarding_substep")
+                normalized_import_message = _normalize_text(payload.message)
+                if import_substep == "import_wait_ready":
+                    if payload.message == "import_ready_yes" or _is_yes(payload.message):
+                        import_context = state_dict.get("import_context") if isinstance(state_dict.get("import_context"), dict) else {}
+                        selected_bank_account_id = None
+                        if isinstance(import_context, dict):
+                            selected_bank_account_id = import_context.get("bank_account_id") or import_context.get("selected_bank_account_id")
 
-                    if (not selected_bank_account_id) and hasattr(profiles_repository, "list_bank_accounts"):
-                        existing_accounts = profiles_repository.list_bank_accounts(profile_id=profile_id)
-                        if len(existing_accounts) == 1:
-                            selected_account = existing_accounts[0]
-                            selected_bank_account_id = str(selected_account.get("id") or "").strip() or None
-                            account_name = str(selected_account.get("name") or "").strip()
-                            state_dict["import_context"] = {
-                                "bank_account_id": selected_bank_account_id,
-                                "selected_bank_account_id": selected_bank_account_id,
-                                "selected_bank_account_name": account_name,
-                            }
-                            updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
-                            updated_chat_state["state"] = state_dict
-                            profiles_repository.update_chat_state(
-                                profile_id=profile_id,
-                                user_id=auth_user_id,
-                                chat_state=updated_chat_state,
-                            )
+                        if (not selected_bank_account_id) and hasattr(profiles_repository, "list_bank_accounts"):
+                            existing_accounts = profiles_repository.list_bank_accounts(profile_id=profile_id)
+                            if len(existing_accounts) == 1:
+                                selected_account = existing_accounts[0]
+                                selected_bank_account_id = str(selected_account.get("id") or "").strip() or None
+                                account_name = str(selected_account.get("name") or "").strip()
+                                state_dict["import_context"] = {
+                                    "bank_account_id": selected_bank_account_id,
+                                    "selected_bank_account_id": selected_bank_account_id,
+                                    "selected_bank_account_name": account_name,
+                                }
+                                updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                                updated_chat_state["state"] = state_dict
+                                profiles_repository.update_chat_state(
+                                    profile_id=profile_id,
+                                    user_id=auth_user_id,
+                                    chat_state=updated_chat_state,
+                                )
+                        return _chat_response(
+                            reply="Parfait 🙂\n\nClique sur « Importer maintenant » pour sélectionner ton fichier CSV.",
+                            tool_result=_build_import_file_ui_request(state_dict.get("import_context")),
+                            plan=None,
+                        )
+
+                    is_help_request = payload.message == "import_ready_help" or normalized_import_message in {
+                        "non, j'ai besoin de plus d'informations avant.",
+                        "non, jai besoin de plus dinformations avant.",
+                    }
+                    if is_help_request:
+                        updated_global_state = _build_onboarding_global_state(
+                            global_state,
+                            onboarding_step="import",
+                            onboarding_substep="import_help_menu",
+                        )
+                        state_dict["global_state"] = updated_global_state
+                        updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                        updated_chat_state["state"] = state_dict
+                        profiles_repository.update_chat_state(
+                            profile_id=profile_id,
+                            user_id=auth_user_id,
+                            chat_state=updated_chat_state,
+                        )
+                        return _chat_response(
+                            reply="Très bien, comment puis-je t'aider ?",
+                            tool_result=_build_import_help_menu_ui_action(),
+                            plan=None,
+                        )
                     return _chat_response(
-                        reply="Parfait 🙂\n\nClique sur « Importer maintenant » pour sélectionner ton fichier CSV.",
-                        tool_result=_build_import_file_ui_request(state_dict.get("import_context")),
-                        plan=None,
-                    )
-                if _is_no(payload.message):
-                    return _chat_response(
-                        reply=_build_csv_export_guidance_reply(profiles_repository, profile_id),
+                        reply=_IMPORT_WAIT_READY_REPLY,
                         tool_result=_build_quick_reply_import_wait_ready_ui_action(),
                         plan=None,
                     )
-                return _chat_response(
-                    reply=_IMPORT_WAIT_READY_REPLY,
-                    tool_result=_build_quick_reply_import_wait_ready_ui_action(),
-                    plan=None,
-                )
+
+                if import_substep == "import_help_menu":
+                    if payload.message == "import_help_csv":
+                        bank_names: list[str] = []
+                        if hasattr(profiles_repository, "list_bank_accounts"):
+                            accounts = profiles_repository.list_bank_accounts(profile_id=profile_id)
+                            bank_names = [str(account.get("name") or "").strip() for account in accounts if str(account.get("name") or "").strip()]
+                        updated_global_state = _build_onboarding_global_state(
+                            global_state,
+                            onboarding_step="import",
+                            onboarding_substep="import_help_bank_select",
+                        )
+                        state_dict["global_state"] = updated_global_state
+                        updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                        updated_chat_state["state"] = state_dict
+                        profiles_repository.update_chat_state(
+                            profile_id=profile_id,
+                            user_id=auth_user_id,
+                            chat_state=updated_chat_state,
+                        )
+                        return _chat_response(
+                            reply="Chez quelle banque souhaites-tu extraire ces données ?",
+                            tool_result=_build_import_help_bank_select_ui_action(bank_names),
+                            plan=None,
+                        )
+                    if payload.message == "import_help_security":
+                        updated_global_state = _build_onboarding_global_state(
+                            global_state,
+                            onboarding_step="import",
+                            onboarding_substep="import_help_data_security",
+                        )
+                        state_dict["global_state"] = updated_global_state
+                        updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                        updated_chat_state["state"] = state_dict
+                        profiles_repository.update_chat_state(
+                            profile_id=profile_id,
+                            user_id=auth_user_id,
+                            chat_state=updated_chat_state,
+                        )
+                        return _chat_response(
+                            reply=(
+                                "L'extraction de ton relevé bancaire passe à travers un filtre retirant toutes les données sensibles. "
+                                "Toutes les informations récoltées sont ensuite cryptées et stockées. Elles sont rendues accessibles "
+                                "uniquement par le compte concerné."
+                            ),
+                            tool_result=_build_import_help_after_answer_ui_action(security_variant=True),
+                            plan=None,
+                        )
+                    return _chat_response(
+                        reply="Choisis une option.",
+                        tool_result=_build_import_help_menu_ui_action(),
+                        plan=None,
+                    )
+
+                if import_substep == "import_help_bank_select":
+                    if payload.message.startswith("import_help_bank:"):
+                        selected_bank_name = payload.message.split(":", 1)[1].strip() or "ta banque"
+                        updated_global_state = _build_onboarding_global_state(
+                            global_state,
+                            onboarding_step="import",
+                            onboarding_substep="import_help_bank_instructions",
+                        )
+                        state_dict["global_state"] = updated_global_state
+                        updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                        updated_chat_state["state"] = state_dict
+                        profiles_repository.update_chat_state(
+                            profile_id=profile_id,
+                            user_id=auth_user_id,
+                            chat_state=updated_chat_state,
+                        )
+                        return _chat_response(
+                            reply=_build_csv_export_instructions(selected_bank_name),
+                            tool_result=_build_import_help_after_answer_ui_action(),
+                            plan=None,
+                        )
+                    bank_names = []
+                    if hasattr(profiles_repository, "list_bank_accounts"):
+                        accounts = profiles_repository.list_bank_accounts(profile_id=profile_id)
+                        bank_names = [str(account.get("name") or "").strip() for account in accounts if str(account.get("name") or "").strip()]
+                    return _chat_response(
+                        reply="Choisis ta banque.",
+                        tool_result=_build_import_help_bank_select_ui_action(bank_names),
+                        plan=None,
+                    )
+
+                if import_substep in {"import_help_bank_instructions", "import_help_data_security"}:
+                    if payload.message == "import_help_back_to_import":
+                        updated_global_state = _build_onboarding_global_state(
+                            global_state,
+                            onboarding_step="import",
+                            onboarding_substep="import_wait_ready",
+                        )
+                        state_dict["global_state"] = updated_global_state
+                        updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                        updated_chat_state["state"] = state_dict
+                        profiles_repository.update_chat_state(
+                            profile_id=profile_id,
+                            user_id=auth_user_id,
+                            chat_state=updated_chat_state,
+                        )
+                        return _chat_response(
+                            reply="Ton fichier CSV est-il prêt pour l’import ?",
+                            tool_result=_build_quick_reply_import_wait_ready_ui_action(),
+                            plan=None,
+                        )
+                    if payload.message == "import_help_back_to_menu":
+                        updated_global_state = _build_onboarding_global_state(
+                            global_state,
+                            onboarding_step="import",
+                            onboarding_substep="import_help_menu",
+                        )
+                        state_dict["global_state"] = updated_global_state
+                        updated_chat_state = dict(chat_state) if isinstance(chat_state, dict) else {}
+                        updated_chat_state["state"] = state_dict
+                        profiles_repository.update_chat_state(
+                            profile_id=profile_id,
+                            user_id=auth_user_id,
+                            chat_state=updated_chat_state,
+                        )
+                        return _chat_response(
+                            reply="Très bien, comment puis-je t'aider ?",
+                            tool_result=_build_import_help_menu_ui_action(),
+                            plan=None,
+                        )
+                    return _chat_response(
+                        reply="Choisis une option.",
+                        tool_result=_build_import_help_after_answer_ui_action(
+                            security_variant=import_substep == "import_help_data_security"
+                        ),
+                        plan=None,
+                    )
+
 
             has_bank_accounts = _has_any_bank_accounts(profiles_repository, profile_id)
 
