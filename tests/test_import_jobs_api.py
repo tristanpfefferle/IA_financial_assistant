@@ -175,7 +175,7 @@ def test_import_job_endpoints_create_upload_and_events(monkeypatch) -> None:
     assert payload["tool_result"]["name"] == "open_pdf_report"
     assert payload["tool_result"]["url"]
     assert payload["tool_result"]["quick_replies"] == [
-        {"id": "seen", "label": "J’ai consulté mon rapport", "value": "j_ai_consulte_mon_rapport"}
+        {"id": "seen", "label": "J’ai consulté mon rapport.", "value": "j_ai_consulte_mon_rapport"}
     ]
 
     events = repo.events[UUID(job_id)]
@@ -627,7 +627,7 @@ def test_finalize_chat_then_yes_routes_to_report_and_not_import(monkeypatch) -> 
     report_seen_response = client.post(
         "/agent/chat",
         headers=headers,
-        json={"message": "J’ai consulté mon rapport"},
+        json={"message": "J’ai consulté mon rapport."},
     )
     assert report_seen_response.status_code == 200
     report_seen_payload = report_seen_response.json()
@@ -639,8 +639,7 @@ def test_finalize_chat_then_yes_routes_to_report_and_not_import(monkeypatch) -> 
     )
     assert report_seen_payload["tool_result"]["action"] == "quick_replies"
     assert report_seen_payload["tool_result"]["options"] == [
-        {"id": "yes", "label": "✅", "value": "oui"},
-        {"id": "no", "label": "❌", "value": "non"},
+        {"id": "start_confidence", "label": "Oui, allons-y !", "value": "allons_y"},
     ]
     persisted_global_state = profiles_repo.chat_state.get("state", {}).get("global_state", {})
     assert persisted_global_state.get("mode") == "confidence_improvement"
