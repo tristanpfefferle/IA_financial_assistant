@@ -7012,7 +7012,7 @@ def _run_import_job_pipeline(*, repository: SupabaseImportJobsRepository, profil
                 )
                 emit_progress(
                     kind="categorization_progress",
-                    message=f"Catégorisation… (0/{total_transactions_hint})",
+                    message=f"Extraction des transactions… (0/{total_transactions_hint})",
                     done=0,
                     total=total_transactions_hint,
                     force=True,
@@ -7026,7 +7026,7 @@ def _run_import_job_pipeline(*, repository: SupabaseImportJobsRepository, profil
 
             emit_progress(
                 kind="categorization_progress",
-                message=f"Catégorisation… ({done}/{total})",
+                message=f"Extraction des transactions… ({done}/{total})",
                 done=done,
                 total=total,
                 progress=0.45 + (0.45 * (done / max(total, 1))),
@@ -7051,7 +7051,7 @@ def _run_import_job_pipeline(*, repository: SupabaseImportJobsRepository, profil
             result = jsonable_encoder(result_obj)
             emit_progress(
                 kind="categorization_progress",
-                message=f"Catégorisation… ({total_transactions_hint}/{total_transactions_hint})",
+                message=f"Extraction des transactions… ({total_transactions_hint}/{total_transactions_hint})",
                 done=total_transactions_hint,
                 total=total_transactions_hint,
                 force=True,
@@ -7083,6 +7083,107 @@ def _run_import_job_pipeline(*, repository: SupabaseImportJobsRepository, profil
             if isinstance(date_range, dict):
                 result.setdefault("import_start_date", date_range.get("start"))
                 result.setdefault("import_end_date", date_range.get("end"))
+
+        categorization_summary: dict[str, Any] | None = None
+        payload_import_mode_value = payload.import_mode.value if isinstance(payload.import_mode, RelevesImportMode) else str(payload.import_mode)
+        explicit_analyze_mode = (
+            "import_mode" in payload.model_fields_set and payload_import_mode_value == RelevesImportMode.ANALYZE.value
+        )
+        should_run_categorization = (
+            not explicit_analyze_mode
+            and _config.auto_resolve_merchant_aliases_enabled()
+            and _config.llm_background_enabled()
+        )
+        if should_run_categorization:
+            limit_per_batch = _config.auto_resolve_merchant_aliases_limit()
+            max_per_run = _config.auto_resolve_merchant_aliases_max_per_run()
+            pending_before = _count_pending_map_alias_suggestions(
+                profiles_repository=profiles_repository,
+                profile_id=profile_id,
+                include_failed=False,
+            )
+            if pending_before is None:
+                pending_before = len(
+                    _list_pending_map_alias_suggestions(
+                        profiles_repository=profiles_repository,
+                        profile_id=profile_id,
+                        limit=limit_per_batch + 1,
+                        include_failed=False,
+                    )
+                )
+
+            _emit_import_job_event(
+                repository=repository,
+                profile_id=profile_id,
+                job_id=job_id,
+                kind="categorization_start",
+                message="Catégorisation (marchands)...",
+                progress=0.93,
+                payload={
+                    "pending_before": pending_before,
+                    "limit_per_batch": limit_per_batch,
+                    "max_per_run": max_per_run,
+                },
+            )
+            try:
+                resolution_result = _resolve_pending_map_alias_batches(
+                    profile_id=profile_id,
+                    profiles_repository=profiles_repository,
+                    limit_per_batch=limit_per_batch,
+                    max_per_run=max_per_run,
+                    on_progress=lambda processed, target: _emit_import_job_event(
+                        repository=repository,
+                        profile_id=profile_id,
+                        job_id=job_id,
+                        kind="categorization_progress",
+                        message=f"Catégorisation... ({processed}/{max(target, 1)})",
+                        progress=min(0.99, 0.93 + (0.06 * (processed / max(target, 1)))),
+                        payload={"processed": processed, "target": target},
+                    ),
+                )
+                stats = resolution_result.get("stats") if isinstance(resolution_result, dict) else {}
+                pending_after = resolution_result.get("remaining_pending_count") if isinstance(resolution_result, dict) else None
+                usage_payload = stats.get("usage") if isinstance(stats, dict) else None
+                categorization_summary = {
+                    "pending_before": pending_before,
+                    "pending_after": pending_after,
+                    "processed": stats.get("processed", 0) if isinstance(stats, dict) else 0,
+                    "applied": stats.get("applied", 0) if isinstance(stats, dict) else 0,
+                    "failed": stats.get("failed", 0) if isinstance(stats, dict) else 0,
+                    "created_entities": stats.get("created_entities", 0) if isinstance(stats, dict) else 0,
+                    "linked_aliases": stats.get("linked_aliases", 0) if isinstance(stats, dict) else 0,
+                    "updated_transactions": stats.get("updated_transactions", 0) if isinstance(stats, dict) else 0,
+                    "llm_run_id": stats.get("llm_run_id") if isinstance(stats, dict) else None,
+                    "usage": usage_payload if isinstance(usage_payload, dict) else {},
+                }
+                _emit_import_job_event(
+                    repository=repository,
+                    profile_id=profile_id,
+                    job_id=job_id,
+                    kind="categorization_done",
+                    message="Catégorisation terminée.",
+                    progress=0.99,
+                    payload=categorization_summary,
+                )
+            except Exception as exc:
+                logger.exception("import_job_pipeline_categorization_failed job_id=%s profile_id=%s", job_id, profile_id)
+                _emit_import_job_event(
+                    repository=repository,
+                    profile_id=profile_id,
+                    job_id=job_id,
+                    kind="categorization_error",
+                    message=f"Catégorisation interrompue: {exc}",
+                    progress=0.99,
+                )
+                if isinstance(result, dict):
+                    warnings = result.get("warnings")
+                    if isinstance(warnings, list):
+                        warnings.append("merchant_alias_auto_resolve_failed")
+                    else:
+                        result["warnings"] = ["merchant_alias_auto_resolve_failed"]
+
+        if isinstance(result, dict) and categorization_summary is not None:
+            result["merchant_alias_auto_resolve"] = categorization_summary
 
         _emit_import_job_event(
             repository=repository,
@@ -7432,6 +7533,7 @@ def _resolve_pending_map_alias_batches(
     profiles_repository: Any,
     limit_per_batch: int,
     max_per_run: int,
+    on_progress: Any | None = None,
 ) -> dict[str, Any]:
     """Resolve pending map_alias suggestions in batches until exhausted or budget reached."""
 
@@ -7523,6 +7625,12 @@ def _resolve_pending_map_alias_batches(
             break
 
         processed_budget += processed_in_batch
+
+        if callable(on_progress):
+            try:
+                on_progress(processed_budget, min(pending_total_count, max_per_run))
+            except Exception:
+                logger.exception("merchant_alias_auto_resolve_progress_callback_failed profile_id=%s", profile_id)
 
         pending_remaining_count = _count_pending_map_alias_suggestions(
             profiles_repository=profiles_repository,

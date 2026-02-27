@@ -781,7 +781,9 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
           }
 
           const isProgressEvent = event.kind.endsWith('_progress') && event.kind !== 'bank_detected'
-          if (isProgressEvent) {
+          if (event.kind === 'categorization_start') {
+            lastProgressMessageIdRef.current = pushAssistantStatus(event.message)
+          } else if (isProgressEvent) {
             const lastProgressMessageId = lastProgressMessageIdRef.current
             if (lastProgressMessageId) {
               updateAssistantStatus(lastProgressMessageId, event.message)
