@@ -30,10 +30,78 @@ type ChatMinimalPageProps = {
   email?: string
 }
 
+type PersistedChatState = {
+  version: 1
+  messages: ChatMessage[]
+  debugMode?: boolean
+  debugUnlocked?: boolean
+  activeThread?: string
+}
+
 const ASSISTANT_STEP_DELAY_MS = 1000
 const DEFAULT_ASSISTANT_ACTION_MESSAGE = 'Je te propose les choix suivants :'
+const CHAT_STORAGE_PREFIX = 'af_chat_history:v1'
+const CHAT_STORAGE_VERSION = 1
+const MAX_PERSISTED_MESSAGES = 300
+
 function createMessageId(): string {
   return typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`
+}
+
+function buildChatStorageKey(userId: string, threadId: string): string {
+  return `${CHAT_STORAGE_PREFIX}:${userId}:${threadId}`
+}
+
+function isValidChatMessage(value: unknown): value is ChatMessage {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+
+  const message = value as Partial<ChatMessage>
+  const validRole = message.role === 'assistant' || message.role === 'user'
+  return typeof message.id === 'string'
+    && validRole
+    && typeof message.content === 'string'
+    && typeof message.createdAt === 'number'
+}
+
+function loadPersistedChatState(userId: string, threadId: string): PersistedChatState | null {
+  try {
+    const raw = window.localStorage.getItem(buildChatStorageKey(userId, threadId))
+    if (!raw) {
+      return null
+    }
+
+    const parsed = JSON.parse(raw) as Partial<PersistedChatState>
+    if (parsed.version !== CHAT_STORAGE_VERSION || !Array.isArray(parsed.messages)) {
+      return null
+    }
+
+    const validMessages = parsed.messages.filter(isValidChatMessage).slice(-MAX_PERSISTED_MESSAGES)
+
+    return {
+      version: CHAT_STORAGE_VERSION,
+      messages: validMessages,
+      debugMode: parsed.debugMode === undefined ? undefined : Boolean(parsed.debugMode),
+      debugUnlocked: parsed.debugUnlocked === undefined ? undefined : Boolean(parsed.debugUnlocked),
+      activeThread: typeof parsed.activeThread === 'string' ? parsed.activeThread : undefined,
+    }
+  } catch {
+    return null
+  }
+}
+
+function savePersistedChatState(userId: string, threadId: string, payload: PersistedChatState): void {
+  try {
+    const normalizedPayload: PersistedChatState = {
+      ...payload,
+      version: CHAT_STORAGE_VERSION,
+      messages: payload.messages.slice(-MAX_PERSISTED_MESSAGES),
+    }
+    window.localStorage.setItem(buildChatStorageKey(userId, threadId), JSON.stringify(normalizedPayload))
+  } catch {
+    // noop: localStorage can fail (quota, private mode)
+  }
 }
 
 
@@ -44,6 +112,9 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
   const [activeTab, setActiveTab] = useState<'af' | 'help'>('af')
   const [messagesAf, setMessagesAf] = useState<ChatMessage[]>([])
   const [messagesHelp, setMessagesHelp] = useState<ChatMessage[]>([])
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null)
+  const [debugUnlocked, setDebugUnlocked] = useState(false)
+  const [didHydrateFromStorage, setDidHydrateFromStorage] = useState(false)
   const [isSending, setIsSending] = useState(false)
   const [isAssistantTyping, setIsAssistantTyping] = useState(false)
   const [isNearBottom, setIsNearBottom] = useState(true)
@@ -281,42 +352,95 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
   useEffect(() => {
     isMountedRef.current = true
 
-    async function loadGreeting() {
+    async function hydrateConversation() {
       try {
-        const response = await sendChatMessage('', { debug: debugMode, requestGreeting: true })
+        const { data } = await supabase.auth.getUser()
         if (!isMountedRef.current) {
           return
         }
 
-        setMessagesAf([])
-        await appendAssistantReplyInSequence(response.reply, response.tool_result)
+        const userId = data.user?.id ?? null
+        setCurrentUserId(userId)
+
+        if (!userId) {
+          await startConversation()
+          return
+        }
+
+        const persistedMain = loadPersistedChatState(userId, 'main')
+        const persistedHelp = loadPersistedChatState(userId, 'help')
+        const restoredMain = Boolean(persistedMain && persistedMain.messages.length > 0)
+        const restoredHelp = Boolean(persistedHelp && persistedHelp.messages.length > 0)
+
+        if (persistedMain) {
+          setMessagesAf(persistedMain.messages)
+          if (persistedMain.debugMode !== undefined) {
+            setDebugMode(persistedMain.debugMode)
+          }
+          if (persistedMain.debugUnlocked !== undefined) {
+            setDebugUnlocked(persistedMain.debugUnlocked)
+          }
+        }
+
+        if (persistedHelp) {
+          setMessagesHelp(persistedHelp.messages)
+          if (persistedHelp.debugMode !== undefined) {
+            setDebugMode(persistedHelp.debugMode)
+          }
+          if (persistedHelp.debugUnlocked !== undefined) {
+            setDebugUnlocked(persistedHelp.debugUnlocked)
+          }
+        }
+
+        const shouldOpenHelp = persistedMain?.activeThread === 'help' || persistedHelp?.activeThread === 'help'
+        if (shouldOpenHelp) {
+          setActiveTab('help')
+        }
+
+        if (!restoredMain && !restoredHelp) {
+          await startConversation()
+        }
       } catch {
         if (!isMountedRef.current) {
           return
         }
-
-        setMessagesAf([
-          {
-            id: createMessageId(),
-            role: 'assistant',
-            content: 'Impossible de charger le message de bienvenue.',
-            createdAt: Date.now(),
-          },
-        ])
+        await startConversation()
       } finally {
         if (isMountedRef.current) {
-          setIsAssistantTyping(false)
+          setDidHydrateFromStorage(true)
         }
       }
     }
 
-    void loadGreeting()
+    void hydrateConversation()
 
     return () => {
       isMountedRef.current = false
       assistantSequenceRef.current += 1
     }
   }, [])
+
+  useEffect(() => {
+    if (!didHydrateFromStorage || !currentUserId) {
+      return
+    }
+
+    savePersistedChatState(currentUserId, 'main', {
+      version: CHAT_STORAGE_VERSION,
+      messages: messagesAf,
+      debugMode,
+      debugUnlocked,
+      activeThread: activeTab,
+    })
+
+    savePersistedChatState(currentUserId, 'help', {
+      version: CHAT_STORAGE_VERSION,
+      messages: messagesHelp,
+      debugMode,
+      debugUnlocked,
+      activeThread: activeTab,
+    })
+  }, [activeTab, currentUserId, debugMode, debugUnlocked, didHydrateFromStorage, messagesAf, messagesHelp])
 
   async function submitMessage(text: string, displayContent?: string, fromQuickReply = false) {
     const trimmed = text.trim()
@@ -514,6 +638,14 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
     for (const key of chatStorageKeys) {
       window.localStorage.removeItem(key)
     }
+
+    const storagePrefix = `${CHAT_STORAGE_PREFIX}:`
+    for (let index = window.localStorage.length - 1; index >= 0; index -= 1) {
+      const key = window.localStorage.key(index)
+      if (key && key.startsWith(storagePrefix)) {
+        window.localStorage.removeItem(key)
+      }
+    }
   }
 
   async function handleHardReset() {
@@ -541,6 +673,21 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
   function openHelpTab() {
     setActiveTab('help')
     setIsAssistantTyping(false)
+
+    if (currentUserId) {
+      const persistedHelp = loadPersistedChatState(currentUserId, 'help')
+      if (persistedHelp) {
+        setMessagesHelp(persistedHelp.messages)
+        if (persistedHelp.debugMode !== undefined) {
+          setDebugMode(persistedHelp.debugMode)
+        }
+        if (persistedHelp.debugUnlocked !== undefined) {
+          setDebugUnlocked(persistedHelp.debugUnlocked)
+        }
+        return
+      }
+    }
+
     setMessagesHelp((current) => {
       if (current.length > 0) {
         return current
@@ -584,7 +731,22 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
               type="button"
               className={`icon-avatar-button ${activeTab === 'af' ? 'tab-button-selected' : ''}`}
               aria-label="Assistant financier"
-              onClick={() => setActiveTab('af')}
+              onClick={() => {
+                setActiveTab('af')
+                if (!currentUserId) {
+                  return
+                }
+                const persistedMain = loadPersistedChatState(currentUserId, 'main')
+                if (persistedMain) {
+                  setMessagesAf(persistedMain.messages)
+                  if (persistedMain.debugMode !== undefined) {
+                    setDebugMode(persistedMain.debugMode)
+                  }
+                  if (persistedMain.debugUnlocked !== undefined) {
+                    setDebugUnlocked(persistedMain.debugUnlocked)
+                  }
+                }
+              }}
             >
               <span className="icon-avatar">AF</span>
             </button>
