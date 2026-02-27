@@ -172,12 +172,11 @@ def test_import_job_endpoints_create_upload_and_events(monkeypatch) -> None:
     assert "Import terminé ✅" in payload["reply"]
     assert "Ouvre-le" in payload["reply"]
     assert payload["tool_result"]["type"] == "ui_request"
-    assert payload["tool_result"]["name"] == "open_pdf_report"
-    assert payload["tool_result"]["url"]
-    assert payload["tool_result"]["quick_replies"] == [
-        {"id": "seen", "label": "J’ai consulté mon rapport.", "value": "j_ai_consulte_mon_rapport"}
-    ]
-
+    assert payload["tool_result"]["name"] == "open_report"
+    assert payload["tool_result"]["report_kind"] == "spending"
+    assert payload["tool_result"]["query"]["start_date"] == "2026-01-01"
+    assert payload["tool_result"]["query"]["end_date"] == "2026-01-31"
+    
     events = repo.events[UUID(job_id)]
     kinds = [event.kind for event in events]
     assert "started" in kinds
@@ -287,9 +286,11 @@ def test_import_job_prefers_explicit_full_range_over_preview_for_report_url(monk
     assert persisted_last_import["date_range"] == {"start_date": "2026-01-01", "end_date": "2026-03-31"}
 
     finalize_payload = finalize_response.json()
-    assert finalize_payload["tool_result"]["url"] == (
-        "/finance/reports/spending.pdf?start_date=2026-01-01&end_date=2026-03-31"
-    )
+    assert finalize_payload["tool_result"]["name"] == "open_report"
+    assert finalize_payload["tool_result"]["query"] == {
+        "start_date": "2026-01-01",
+        "end_date": "2026-03-31",
+    }
 
 def test_import_job_pipeline_marks_error_on_tool_error_payload(monkeypatch) -> None:
     auth_user_id = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
@@ -728,10 +729,12 @@ def test_finalize_chat_uses_import_date_range_for_report_url(monkeypatch) -> Non
     assert persisted_filters["bank_account_id"] == imported_bank_account_id
 
     finalize_payload = finalize_response.json()
-    assert finalize_payload["tool_result"]["url"] == (
-        "/finance/reports/spending.pdf?start_date=2026-01-01&end_date=2026-03-31"
-        "&bank_account_id=11111111-1111-1111-1111-111111111111"
-    )
+    assert finalize_payload["tool_result"]["name"] == "open_report"
+    assert finalize_payload["tool_result"]["query"] == {
+        "start_date": "2026-01-01",
+        "end_date": "2026-03-31",
+        "bank_account_id": "11111111-1111-1111-1111-111111111111",
+    }
 
 
 def test_finalize_import_job_chat_requires_done_status(monkeypatch) -> None:

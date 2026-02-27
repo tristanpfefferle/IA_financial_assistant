@@ -1,15 +1,13 @@
-export type PdfUiRequest = {
+export type ReportUiRequest = {
   type: 'ui_request'
-  name: 'open_pdf_report'
-  url: string
-}
-
-export type OpenPdfUiAction = {
-  type: 'ui_action'
-  action: 'open_pdf'
-  title: string
-  label: string
-  url: string
+  name: 'open_report'
+  reportKind: 'spending'
+  query: {
+    month?: string
+    start_date?: string
+    end_date?: string
+    bank_account_id?: string
+  }
 }
 
 export type OpenImportPanelUiAction = {
@@ -132,52 +130,43 @@ export function toOpenImportPanelUiAction(value: unknown): OpenImportPanelUiActi
 }
 
 
-export function toOpenPdfUiAction(value: unknown): OpenPdfUiAction | null {
+
+
+
+export function toReportUiRequest(value: unknown): ReportUiRequest | null {
   if (!value || typeof value !== 'object') {
     return null
   }
 
   const record = value as Record<string, unknown>
-  if (record.type !== 'ui_action' || record.action !== 'open_pdf') {
+  if (record.type !== 'ui_request' || record.name !== 'open_report' || record.report_kind !== 'spending') {
     return null
   }
 
-  const title = typeof record.title === 'string' && record.title.trim() ? record.title.trim() : 'Rapport mensuel (PDF)'
-  const label = typeof record.label === 'string' && record.label.trim() ? record.label.trim() : 'Ouvrir le PDF'
-  const url = typeof record.url === 'string' ? record.url.trim() : ''
-  if (!url) {
-    return null
+  const rawQuery = record.query
+  const query: ReportUiRequest['query'] = {}
+  if (rawQuery && typeof rawQuery === 'object') {
+    const raw = rawQuery as Record<string, unknown>
+    if (typeof raw.month === 'string' && raw.month.trim()) {
+      query.month = raw.month.trim()
+    }
+    if (typeof raw.start_date === 'string' && raw.start_date.trim()) {
+      query.start_date = raw.start_date.trim()
+    }
+    if (typeof raw.end_date === 'string' && raw.end_date.trim()) {
+      query.end_date = raw.end_date.trim()
+    }
+    if (typeof raw.bank_account_id === 'string' && raw.bank_account_id.trim()) {
+      query.bank_account_id = raw.bank_account_id.trim()
+    }
   }
 
   return {
-    type: 'ui_action',
-    action: 'open_pdf',
-    title,
-    label,
-    url,
+    type: 'ui_request',
+    name: 'open_report',
+    reportKind: 'spending',
+    query,
   }
-}
-
-export function toAnyPdfUiRequest(value: unknown): { url: string; label: string; title: string } | null {
-  const pdfUiRequest = toPdfUiRequest(value)
-  if (pdfUiRequest) {
-    return {
-      url: pdfUiRequest.url,
-      label: 'Ouvrir le PDF',
-      title: 'Rapport mensuel (PDF)',
-    }
-  }
-
-  const openPdfAction = toOpenPdfUiAction(value)
-  if (openPdfAction) {
-    return {
-      url: openPdfAction.url,
-      label: openPdfAction.label,
-      title: openPdfAction.title,
-    }
-  }
-
-  return null
 }
 
 export function toQuickReplyYesNoUiAction(value: unknown): QuickReplyYesNoUiAction | null {
@@ -230,45 +219,6 @@ export function toLegacyImportUiRequest(value: unknown): LegacyImportUiRequest |
   }
 }
 
-export function toPdfUiRequest(value: unknown): PdfUiRequest | null {
-  if (!value || typeof value !== 'object') {
-    return null
-  }
-
-  const record = value as Record<string, unknown>
-  if (record.type !== 'ui_request' || record.name !== 'open_pdf_report') {
-    return null
-  }
-
-  const url = record.url
-  if (typeof url !== 'string' || !url.trim()) {
-    return null
-  }
-
-  return {
-    type: 'ui_request',
-    name: 'open_pdf_report',
-    url: url.trim(),
-  }
-}
-
-export function claimPdfUiRequestExecution(
-  executedMessageIds: Set<string>,
-  messageId: string,
-  toolResult: unknown,
-): PdfUiRequest | null {
-  if (executedMessageIds.has(messageId)) {
-    return null
-  }
-
-  const request = toPdfUiRequest(toolResult)
-  if (!request) {
-    return null
-  }
-
-  executedMessageIds.add(messageId)
-  return request
-}
 
 
 export function toFormUiAction(value: unknown): FormUiAction | null {

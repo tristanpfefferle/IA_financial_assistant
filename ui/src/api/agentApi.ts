@@ -212,6 +212,7 @@ export type SpendingReportParams = {
   month?: string
   start_date?: string
   end_date?: string
+  bank_account_id?: string
 }
 
 type ErrorPayload = {
@@ -657,6 +658,9 @@ export async function getSpendingReport(params: SpendingReportParams = {}, apiBa
   }
   if (params.end_date) {
     searchParams.set('end_date', params.end_date)
+  }
+  if (params.bank_account_id) {
+    searchParams.set('bank_account_id', params.bank_account_id)
   }
 
   const query = searchParams.toString()

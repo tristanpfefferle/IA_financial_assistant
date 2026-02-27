@@ -2,12 +2,8 @@ import { useMemo, useRef, useState } from 'react'
 
 import { buildFormSubmitPayload } from './formSubmit'
 import {
-  openPdfFromUrl,
-} from '../api/agentApi'
-import {
   toFormUiAction,
   toLegacyImportUiRequest,
-  toAnyPdfUiRequest,
   toOpenImportPanelUiAction,
   toQuickReplyYesNoUiAction,
 } from '../pages/chatUiRequests'
@@ -22,7 +18,6 @@ export function ChatInteractiveCard({ toolResult, onSubmit, onImport }: Interact
   const quickRepliesAction = toQuickReplyYesNoUiAction(toolResult)
   const formAction = toFormUiAction(toolResult)
   const openImportPanel = toOpenImportPanelUiAction(toolResult)
-  const openPdfAction = toAnyPdfUiRequest(toolResult)
   const legacyImportRequest = toLegacyImportUiRequest(toolResult)
 
   const [values, setValues] = useState<Record<string, string>>(() => {
@@ -58,7 +53,6 @@ export function ChatInteractiveCard({ toolResult, onSubmit, onImport }: Interact
 
   const fileRef = useRef<HTMLInputElement | null>(null)
   const [isDragOver, setIsDragOver] = useState(false)
-  const [pdfErrorMessage, setPdfErrorMessage] = useState<string | null>(null)
 
   const acceptedFileTypes = useMemo(() => {
     const acceptedTypes = openImportPanel?.accepted_types ?? legacyImportRequest?.accepted_types ?? ['csv']
@@ -166,29 +160,6 @@ export function ChatInteractiveCard({ toolResult, onSubmit, onImport }: Interact
           </button>
         </div>
       </form>
-    )
-  }
-
-  if (openPdfAction) {
-    return (
-      <div className="chat-card">
-        <button
-          type="button"
-          className="console-btn console-btn-neutral"
-          onClick={async () => {
-            setPdfErrorMessage(null)
-            try {
-              await openPdfFromUrl(openPdfAction.url)
-            } catch {
-              setPdfErrorMessage('Impossible d’ouvrir le PDF pour le moment. Réessaie dans quelques instants.')
-            }
-          }}
-          aria-label={openPdfAction.title}
-        >
-          📄 {openPdfAction.label}
-        </button>
-        {pdfErrorMessage ? <p className="subtle-text">{pdfErrorMessage}</p> : null}
-      </div>
     )
   }
 
