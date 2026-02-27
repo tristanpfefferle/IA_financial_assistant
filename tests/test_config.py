@@ -163,14 +163,20 @@ def test_auto_resolve_merchant_aliases_default_ignores_legacy_import_flag(monkey
     assert config.auto_resolve_merchant_aliases_enabled() is True
 
 
-def test_auto_resolve_merchant_aliases_max_per_run_defaults_and_fallback(monkeypatch) -> None:
+def test_auto_resolve_merchant_aliases_max_per_run_defaults_to_5000(monkeypatch) -> None:
     monkeypatch.delenv("AGENT_AUTO_RESOLVE_MERCHANT_ALIASES_MAX_PER_RUN", raising=False)
-    monkeypatch.setenv("AGENT_AUTO_RESOLVE_MERCHANT_ALIASES_LIMIT", "55")
+    monkeypatch.delenv("AGENT_AUTO_RESOLVE_MERCHANT_ALIASES_LIMIT", raising=False)
 
-    assert config.auto_resolve_merchant_aliases_max_per_run() == 55
+    assert config.auto_resolve_merchant_aliases_max_per_run() == 5000
+
+
+def test_auto_resolve_merchant_aliases_max_per_run_unlimited(monkeypatch) -> None:
+    monkeypatch.setenv("AGENT_AUTO_RESOLVE_MERCHANT_ALIASES_MAX_PER_RUN", "0")
+
+    assert config.auto_resolve_merchant_aliases_max_per_run() == 0
 
 
 def test_auto_resolve_merchant_aliases_max_per_run_uses_default_on_invalid(monkeypatch) -> None:
     monkeypatch.setenv("AGENT_AUTO_RESOLVE_MERCHANT_ALIASES_MAX_PER_RUN", "invalid")
 
-    assert config.auto_resolve_merchant_aliases_max_per_run() == 200
+    assert config.auto_resolve_merchant_aliases_max_per_run() == 5000
