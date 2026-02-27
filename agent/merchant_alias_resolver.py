@@ -235,7 +235,11 @@ def resolve_pending_map_alias(*, profile_id: UUID, profiles_repository: Any, lim
         "warnings": [],
     }
 
-    suggestions = profiles_repository.list_map_alias_suggestions(profile_id=profile_id, limit=max(1, int(limit)))
+    suggestions = profiles_repository.list_map_alias_suggestions(
+        profile_id=profile_id,
+        limit=max(1, int(limit)),
+        include_failed=False,
+    )
     if not suggestions:
         return stats
 

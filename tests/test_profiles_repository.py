@@ -949,7 +949,7 @@ def test_count_map_alias_suggestions_returns_exact_count() -> None:
                 "select": "id",
                 "profile_id": f"eq.{profile_id}",
                 "action": "eq.map_alias",
-                "status": "in.(pending,failed)",
+                "status": "eq.pending",
                 "limit": 1,
             },
             "with_count": True,

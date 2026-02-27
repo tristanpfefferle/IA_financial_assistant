@@ -34,8 +34,9 @@ class _RepoWithCount:
         assert email == "user@example.com"
         return PROFILE_ID
 
-    def count_map_alias_suggestions(self, *, profile_id: UUID) -> int:
+    def count_map_alias_suggestions(self, *, profile_id: UUID, include_failed: bool = False) -> int:
         assert profile_id == PROFILE_ID
+        assert include_failed is False
         return self.count_values.pop(0)
 
 
@@ -163,8 +164,9 @@ def test_pending_aliases_count_endpoint_returns_repository_count(monkeypatch) ->
             assert email == "user@example.com"
             return PROFILE_ID
 
-        def count_map_alias_suggestions(self, *, profile_id: UUID) -> int:
+        def count_map_alias_suggestions(self, *, profile_id: UUID, include_failed: bool = False) -> int:
             assert profile_id == PROFILE_ID
+            assert include_failed is False
             return 12
 
     monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: _CountRepo())

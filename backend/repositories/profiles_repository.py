@@ -205,11 +205,17 @@ class ProfilesRepository(Protocol):
     def create_map_alias_suggestions(self, *, profile_id: UUID, rows: list[dict[str, Any]]) -> int:
         """Create deduplicated map_alias merchant suggestions."""
 
-    def list_map_alias_suggestions(self, *, profile_id: UUID, limit: int = 100) -> list[dict[str, Any]]:
-        """List pending/failed map_alias suggestions for one profile."""
+    def list_map_alias_suggestions(
+        self,
+        *,
+        profile_id: UUID,
+        limit: int = 100,
+        include_failed: bool = False,
+    ) -> list[dict[str, Any]]:
+        """List pending map_alias suggestions for one profile (optionally including failed)."""
 
-    def count_map_alias_suggestions(self, *, profile_id: UUID) -> int | None:
-        """Count pending/failed map_alias suggestions for one profile when supported."""
+    def count_map_alias_suggestions(self, *, profile_id: UUID, include_failed: bool = False) -> int | None:
+        """Count pending map_alias suggestions for one profile (optionally including failed)."""
 
     def find_merchant_entity_by_canonical_norm(self, *, canonical_name_norm: str) -> dict[str, Any] | None:
         """Find merchant entity by canonical normalized name within default country."""
@@ -1673,14 +1679,21 @@ class SupabaseProfilesRepository:
 
         return inserted_count
 
-    def list_map_alias_suggestions(self, *, profile_id: UUID, limit: int = 100) -> list[dict[str, Any]]:
+    def list_map_alias_suggestions(
+        self,
+        *,
+        profile_id: UUID,
+        limit: int = 100,
+        include_failed: bool = False,
+    ) -> list[dict[str, Any]]:
+        statuses = "in.(pending,failed)" if include_failed else "eq.pending"
         rows, _ = self._client.get_rows(
             table="merchant_suggestions",
             query={
                 "select": "id,observed_alias,observed_alias_norm,created_at",
                 "profile_id": f"eq.{profile_id}",
                 "action": "eq.map_alias",
-                "status": "in.(pending,failed)",
+                "status": statuses,
                 "order": "created_at.asc",
                 "limit": max(1, limit),
             },
@@ -1689,14 +1702,15 @@ class SupabaseProfilesRepository:
         )
         return rows
 
-    def count_map_alias_suggestions(self, *, profile_id: UUID) -> int | None:
+    def count_map_alias_suggestions(self, *, profile_id: UUID, include_failed: bool = False) -> int | None:
+        statuses = "in.(pending,failed)" if include_failed else "eq.pending"
         _, total = self._client.get_rows(
             table="merchant_suggestions",
             query={
                 "select": "id",
                 "profile_id": f"eq.{profile_id}",
                 "action": "eq.map_alias",
-                "status": "in.(pending,failed)",
+                "status": statuses,
                 "limit": 1,
             },
             with_count=True,

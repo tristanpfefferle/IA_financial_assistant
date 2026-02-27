@@ -16,7 +16,7 @@ class _RepoStub:
         self.events: list[str] = []
         self.updates: list[dict] = []
 
-    def list_map_alias_suggestions(self, *, profile_id: UUID, limit: int):
+    def list_map_alias_suggestions(self, *, profile_id: UUID, limit: int, include_failed: bool = False):
         self.events.append("list_map_alias_suggestions")
         assert profile_id == PROFILE_ID
         assert limit == 10
@@ -183,7 +183,7 @@ def test_resolver_marks_invalid_item_failed(monkeypatch) -> None:
 
 def test_batching_limit_25_calls_llm_twice(monkeypatch) -> None:
     class _BatchRepo(_RepoStub):
-        def list_map_alias_suggestions(self, *, profile_id: UUID, limit: int):
+        def list_map_alias_suggestions(self, *, profile_id: UUID, limit: int, include_failed: bool = False):
             assert profile_id == PROFILE_ID
             assert limit == 25
             return [
@@ -217,7 +217,7 @@ def test_batching_limit_25_calls_llm_twice(monkeypatch) -> None:
 
 def test_truncation_observed_alias_compact_in_prompt(monkeypatch) -> None:
     class _LongAliasRepo(_RepoStub):
-        def list_map_alias_suggestions(self, *, profile_id: UUID, limit: int):
+        def list_map_alias_suggestions(self, *, profile_id: UUID, limit: int, include_failed: bool = False):
             return [
                 {
                     "id": str(SUGGESTION_ID),
