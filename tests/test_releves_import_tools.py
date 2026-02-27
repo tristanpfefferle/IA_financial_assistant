@@ -303,3 +303,66 @@ Date de transaction;Date de comptabilisation;Description1;Description2;Descripti
     call = clusters_repository.upsert_calls[0]
     assert call["cluster_type"] == "recurring"
     assert len(call["transaction_ids"]) == 4
+
+
+def test_import_commit_detects_recurring_cluster_from_historical_rows(monkeypatch) -> None:
+    releves_repository = InMemoryRelevesRepository()
+    clusters_repository = _TransactionClustersRepositoryStub()
+    service = BackendToolService(
+        transactions_repository=GestionFinanciereTransactionsRepository(),
+        releves_repository=releves_repository,
+        categories_repository=InMemoryCategoriesRepository(),
+        transaction_clusters_repository=clusters_repository,
+    )
+    router = ToolRouter(backend_client=BackendClient(tool_service=service))
+
+    jan_to_mar = """Numéro de compte: CH00 0000 0000 0000 0000 0
+IBAN: CH00 0000 0000 0000 0000 0
+Du: 01.01.2025
+Au: 31.03.2025
+Date de transaction;Date de comptabilisation;Description1;Description2;Description3;No de transaction;Débit;Crédit;Monnaie
+05.01.2025;05.01.2025;Netflix;;;TRX-1;20,00;;CHF
+05.02.2025;05.02.2025;Netflix;;;TRX-2;20,00;;CHF
+05.03.2025;05.03.2025;Netflix;;;TRX-3;20,00;;CHF
+""".encode("utf-8")
+    seed_payload = _fixture_payload(filename="ubs_seed_q1.csv", content=jan_to_mar)
+    seed_payload["import_mode"] = "commit"
+    seeded = router.call("finance_releves_import_files", seed_payload, profile_id=PROFILE_ID)
+    assert isinstance(seeded, RelevesImportResult)
+    assert seeded.imported_count == 3
+
+    april_only = """Numéro de compte: CH00 0000 0000 0000 0000 0
+IBAN: CH00 0000 0000 0000 0000 0
+Du: 01.04.2025
+Au: 30.04.2025
+Date de transaction;Date de comptabilisation;Description1;Description2;Description3;No de transaction;Débit;Crédit;Monnaie
+05.04.2025;05.04.2025;Netflix;;;TRX-4;20,00;;CHF
+""".encode("utf-8")
+    payload = _fixture_payload(filename="ubs_april_only.csv", content=april_only)
+    payload["import_mode"] = "commit"
+
+    def _fake_detect(rows):
+        netflix_rows = [row for row in rows if str(row.get("libelle") or "").lower() == "netflix"]
+        assert len(netflix_rows) == 4
+        return [
+            RecurringCluster(
+                cluster_key="cluster-netflix",
+                sign="expense",
+                amount_chf=20,
+                label_key="netflix",
+                transaction_ids=[str(row["id"]) for row in netflix_rows],
+                stats={"count": 4},
+            )
+        ]
+
+    monkeypatch.setattr("backend.services.releves_import.importer.detect_monthly_recurring_clusters", _fake_detect)
+
+    result = router.call("finance_releves_import_files", payload, profile_id=PROFILE_ID)
+
+    assert isinstance(result, RelevesImportResult)
+    assert result.imported_count == 1
+    assert result.recurring_clusters_detected == 1
+    assert len(clusters_repository.upsert_calls) == 1
+    call = clusters_repository.upsert_calls[0]
+    assert call["cluster_type"] == "recurring"
+    assert len(call["transaction_ids"]) == 4

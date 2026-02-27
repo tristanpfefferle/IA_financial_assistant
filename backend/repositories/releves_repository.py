@@ -116,12 +116,11 @@ class RelevesRepository(Protocol):
         self,
         *,
         profile_id: UUID,
-        import_batch_marker: str,
         start_date: date,
         end_date: date,
         limit: int,
     ) -> list[dict[str, object]]:
-        """Return scoped rows for recurrence clustering after import commit."""
+        """Return historical rows for recurrence clustering in a date window."""
 
 
     def insert_releves_bulk(self, *, profile_id: UUID, rows: list[dict[str, object]]) -> int:
@@ -490,7 +489,6 @@ class InMemoryRelevesRepository:
         self,
         *,
         profile_id: UUID,
-        import_batch_marker: str,
         start_date: date,
         end_date: date,
         limit: int,
@@ -501,12 +499,6 @@ class InMemoryRelevesRepository:
             if item.profile_id != profile_id:
                 continue
             if item.date < start_date or item.date > end_date:
-                continue
-
-            sidecar = self._import_sidecar.get(item.id, {})
-            metadata = sidecar.get("meta") if isinstance(sidecar.get("meta"), dict) else {}
-            marker_matches = str(metadata.get("import_batch_marker") or "").strip() == import_batch_marker
-            if import_batch_marker and not marker_matches:
                 continue
 
             rows.append(
@@ -1102,7 +1094,6 @@ class SupabaseRelevesRepository:
         self,
         *,
         profile_id: UUID,
-        import_batch_marker: str,
         start_date: date,
         end_date: date,
         limit: int,
@@ -1111,45 +1102,15 @@ class SupabaseRelevesRepository:
             ("profile_id", f"eq.{profile_id}"),
             ("date", f"gte.{start_date.isoformat()}"),
             ("date", f"lte.{end_date.isoformat()}"),
-            ("select", "id,date,montant,libelle,payee,metadonnees"),
-            ("order", "date.asc,id.asc"),
-            ("limit", max(limit, 0)),
-            ("offset", 0),
-        ]
-        if import_batch_marker:
-            query.insert(1, ("metadonnees->>import_batch_marker", f"eq.{import_batch_marker}"))
-
-        rows, _ = self._client.get_rows(
-            table="releves_bancaires",
-            query=query,
-            with_count=False,
-            use_anon_key=False,
-        )
-        parsed_rows = [
-            {
-                "id": UUID(str(row["id"])),
-                "date": date.fromisoformat(str(row["date"])),
-                "montant": Decimal(str(row["montant"])),
-                "libelle": row.get("libelle"),
-                "payee": row.get("payee"),
-            }
-            for row in rows
-        ]
-        if parsed_rows:
-            return parsed_rows
-
-        fallback_query: list[tuple[str, str | int]] = [
-            ("profile_id", f"eq.{profile_id}"),
-            ("date", f"gte.{start_date.isoformat()}"),
-            ("date", f"lte.{end_date.isoformat()}"),
             ("select", "id,date,montant,libelle,payee"),
             ("order", "date.asc,id.asc"),
             ("limit", max(limit, 0)),
             ("offset", 0),
         ]
-        fallback_rows, _ = self._client.get_rows(
+
+        rows, _ = self._client.get_rows(
             table="releves_bancaires",
-            query=fallback_query,
+            query=query,
             with_count=False,
             use_anon_key=False,
         )
@@ -1161,7 +1122,7 @@ class SupabaseRelevesRepository:
                 "libelle": row.get("libelle"),
                 "payee": row.get("payee"),
             }
-            for row in fallback_rows
+            for row in rows
         ]
 
     def insert_releves_bulk(self, *, profile_id: UUID, rows: list[dict[str, object]]) -> int:
