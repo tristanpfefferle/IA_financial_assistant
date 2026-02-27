@@ -744,7 +744,7 @@ def _build_quick_reply_import_wait_ready_ui_action() -> dict[str, Any]:
         "type": "ui_action",
         "action": "quick_replies",
         "options": [
-            {"id": "import_ready_yes", "label": "Je suis prêt à te le transmettre !", "value": "import_ready_yes"},
+            {"id": "import_ready_send", "label": "Je suis prêt à te le transmettre !", "value": "import_ready_send"},
             {
                 "id": "import_ready_help",
                 "label": "J’ai besoin de plus d’informations avant.",
@@ -4583,7 +4583,7 @@ def agent_chat(
             if mode == "onboarding" and onboarding_step == "import":
                 import_substep = global_state.get("onboarding_substep")
                 if import_substep == "import_wait_ready":
-                    if payload.message == "import_ready_yes":
+                    if payload.message == "import_ready_send" or _is_yes(payload.message):
                         import_context = state_dict.get("import_context") if isinstance(state_dict.get("import_context"), dict) else {}
                         selected_bank_account_id = None
                         if isinstance(import_context, dict):
