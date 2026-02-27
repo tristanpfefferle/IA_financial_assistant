@@ -129,6 +129,27 @@ def test_auto_resolve_merchant_aliases_enabled_defaults_true(monkeypatch) -> Non
     assert config.auto_resolve_merchant_aliases_enabled() is True
 
 
+def test_llm_background_enabled_defaults_to_true_with_api_key(monkeypatch) -> None:
+    monkeypatch.delenv("AGENT_LLM_BACKGROUND_ENABLED", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    assert config.llm_background_enabled() is True
+
+
+def test_llm_background_enabled_false_without_api_key(monkeypatch) -> None:
+    monkeypatch.delenv("AGENT_LLM_BACKGROUND_ENABLED", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    assert config.llm_background_enabled() is False
+
+
+def test_llm_background_enabled_can_be_forced_off(monkeypatch) -> None:
+    monkeypatch.setenv("AGENT_LLM_BACKGROUND_ENABLED", "0")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    assert config.llm_background_enabled() is False
+
+
 def test_auto_resolve_merchant_aliases_limit_uses_default_on_invalid(monkeypatch) -> None:
     monkeypatch.setenv("AGENT_AUTO_RESOLVE_MERCHANT_ALIASES_LIMIT", "invalid")
 

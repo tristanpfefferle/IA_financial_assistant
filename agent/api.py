@@ -7588,16 +7588,32 @@ def import_releves(request: Request, payload: ImportRequestPayload, authorizatio
     }
     response_payload["merchant_alias_auto_resolve"] = merchant_alias_auto_resolve_payload
 
+    def _log_auto_resolve_skip(skipped_reason: str) -> None:
+        logger.info(
+            "import_releves_merchant_alias_auto_resolve_skipped",
+            extra={
+                "profile_id": str(profile_id),
+                "reason": skipped_reason,
+                "agent_llm_enabled": _config.llm_enabled(),
+                "agent_llm_background_enabled": _config.llm_background_enabled(),
+                "openai_api_key_configured": bool((_config.openai_api_key() or "").strip()),
+                "pending_total_count": merchant_alias_auto_resolve_payload.get("pending_total_count"),
+            },
+        )
+
     if not _config.auto_resolve_merchant_aliases_enabled():
         merchant_alias_auto_resolve_payload["skipped_reason"] = "merchant_alias_auto_resolve_disabled"
-    elif not _config.llm_enabled():
+        _log_auto_resolve_skip("merchant_alias_auto_resolve_disabled")
+    elif not _config.llm_background_enabled():
         merchant_alias_auto_resolve_payload["skipped_reason"] = "merchant_alias_auto_resolve_llm_disabled"
+        _log_auto_resolve_skip("merchant_alias_auto_resolve_llm_disabled")
     else:
         try:
             if profiles_repository is None:
                 profiles_repository = get_profiles_repository()
             if not hasattr(profiles_repository, "list_map_alias_suggestions"):
                 merchant_alias_auto_resolve_payload["skipped_reason"] = "merchant_alias_auto_resolve_unsupported"
+                _log_auto_resolve_skip("merchant_alias_auto_resolve_unsupported")
             else:
                 auto_resolve_limit = _config.auto_resolve_merchant_aliases_limit()
                 max_per_run = _config.auto_resolve_merchant_aliases_max_per_run()
@@ -7614,8 +7630,10 @@ def import_releves(request: Request, payload: ImportRequestPayload, authorizatio
 
                 if not pending_map_alias_suggestions:
                     merchant_alias_auto_resolve_payload["skipped_reason"] = "merchant_alias_auto_resolve_no_suggestions"
+                    _log_auto_resolve_skip("merchant_alias_auto_resolve_no_suggestions")
                 elif payload.import_mode == "analyze":
                     merchant_alias_auto_resolve_payload["skipped_reason"] = "merchant_alias_auto_resolve_analyze_mode"
+                    _log_auto_resolve_skip("merchant_alias_auto_resolve_analyze_mode")
                 else:
                     merchant_alias_auto_resolve_payload["attempted"] = True
                     usage_totals: dict[str, int] = {}
@@ -7705,12 +7723,14 @@ def import_releves(request: Request, payload: ImportRequestPayload, authorizatio
                         if processed_budget >= max_per_run:
                             merchant_alias_auto_resolve_payload["max_per_run_reached"] = True
                             merchant_alias_auto_resolve_payload["skipped_reason"] = "merchant_alias_auto_resolve_cap_reached"
+                            _log_auto_resolve_skip("merchant_alias_auto_resolve_cap_reached")
                             if isinstance(warnings, list):
                                 warnings.append("merchant_alias_auto_resolve_cap_reached")
                             else:
                                 response_payload["warnings"] = ["merchant_alias_auto_resolve_cap_reached"]
                         elif "merchant_alias_auto_resolve_no_progress" in warning_values:
                             merchant_alias_auto_resolve_payload["skipped_reason"] = "merchant_alias_auto_resolve_no_progress"
+                            _log_auto_resolve_skip("merchant_alias_auto_resolve_no_progress")
                             if isinstance(warnings, list):
                                 warnings.append("merchant_alias_auto_resolve_no_progress")
                             else:

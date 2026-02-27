@@ -102,6 +102,24 @@ def llm_model() -> str:
     return (get_env("AGENT_LLM_MODEL", "gpt-5") or "gpt-5").strip() or "gpt-5"
 
 
+def llm_background_enabled() -> bool:
+    """Return whether background LLM tasks (non-chat) are enabled.
+
+    Defaults to enabled when an OpenAI API key is configured and can be forced
+    off with ``AGENT_LLM_BACKGROUND_ENABLED=0``.
+    """
+
+    raw_toggle = (get_env("AGENT_LLM_BACKGROUND_ENABLED", "1") or "1").strip().lower()
+    if raw_toggle not in _TRUE_VALUES:
+        return False
+
+    api_key = (openai_api_key() or "").strip()
+    if not api_key:
+        return False
+
+    return bool(llm_model().strip())
+
+
 def auto_resolve_merchant_aliases_enabled() -> bool:
     """Return whether import should auto-trigger map_alias suggestion resolution."""
 
