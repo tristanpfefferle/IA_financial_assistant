@@ -50,6 +50,18 @@ def test_banking_fees_category() -> None:
     assert result.category_key == "banking_fees"
 
 
+
+
+def test_banking_fees_requires_strict_fee_marker() -> None:
+    result = classify_and_categorize_transaction(_tx(montant="-9.00", libelle="UBS tenue de compte frais"))
+    assert result.category_key == "banking_fees"
+
+
+def test_standing_order_with_bank_is_not_banking_fees() -> None:
+    result = classify_and_categorize_transaction(_tx(montant="-250.00", libelle="UBS ordre permanent loyer"))
+    assert result.category_key != "banking_fees"
+    assert result.category_key == "other"
+
 def test_taxes_category() -> None:
     result = classify_and_categorize_transaction(_tx(montant="-300.00", libelle="AFC impots cantonaux"))
     assert result.category_key == "taxes"
