@@ -180,6 +180,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
   const [reportWasOpened, setReportWasOpened] = useState(false)
   const [reportParams, setReportParams] = useState<{ month?: string; start_date?: string; end_date?: string; bank_account_id?: string }>({})
   const isMountedRef = useRef(true)
+  const isNearBottomRef = useRef(true)
   const assistantSequenceRef = useRef(0)
   const lastProgressMessageIdRef = useRef<string | null>(null)
   const importMessageIdsRef = useRef<string[]>([])
@@ -292,19 +293,29 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
 
     const { scrollHeight, scrollTop, clientHeight } = scrollRef.current
     const distanceBottom = scrollHeight - (scrollTop + clientHeight)
-    setIsNearBottom(distanceBottom < 80)
+    setIsNearBottom(distanceBottom < 120)
     setCanScroll(scrollHeight > clientHeight + 8)
   }
 
-  function scrollToBottom() {
-    if (!scrollRef.current) {
+  function scrollToBottomImmediate() {
+    const el = scrollRef.current
+    if (!el) {
       return
     }
 
-    scrollRef.current.scrollTo({
-      top: scrollRef.current.scrollHeight,
-      behavior: 'smooth',
+    el.scrollTop = el.scrollHeight
+  }
+
+  function scheduleScrollToBottomImmediate() {
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        scrollToBottomImmediate()
+      })
     })
+  }
+
+  function scrollToBottom() {
+    scrollToBottomImmediate()
   }
 
   async function wait(ms: number): Promise<void> {
@@ -372,6 +383,9 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
           toolResult: isLastSegment ? toolResult : null,
         },
       ])
+      if (isNearBottomRef.current) {
+        scheduleScrollToBottomImmediate()
+      }
 
       if (isLastSegment && toolResult) {
         if (isSequenceCancelled(sequenceId)) {
@@ -410,6 +424,9 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
         createdAt: Date.now(),
       },
     ])
+    if (isNearBottomRef.current) {
+      scheduleScrollToBottomImmediate()
+    }
     importMessageIdsRef.current.push(id)
     return id
   }
@@ -421,6 +438,9 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
     setMessagesAf((current) => current.map((message) => (
       message.id === messageId ? { ...message, content } : message
     )))
+    if (isNearBottomRef.current) {
+      scheduleScrollToBottomImmediate()
+    }
   }
 
   function clearImportStreamingMessages() {
@@ -432,8 +452,12 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
   }
 
   useEffect(() => {
+    isNearBottomRef.current = isNearBottom
+  }, [isNearBottom])
+
+  useEffect(() => {
     if (isNearBottom) {
-      scrollToBottom()
+      scheduleScrollToBottomImmediate()
     }
   }, [displayedMessages.length, isAssistantTyping, isNearBottom])
 
@@ -634,6 +658,9 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
     }
 
     setMessagesAf((current) => [...current, userMessage])
+    if (isNearBottomRef.current) {
+      scheduleScrollToBottomImmediate()
+    }
     setSubmitErrorMessage(null)
     setPendingActionMessageId(null)
     setRevealedActionMessageId(null)
@@ -655,6 +682,9 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
           createdAt: Date.now(),
         },
       ])
+      if (isNearBottomRef.current) {
+        scheduleScrollToBottomImmediate()
+      }
     } finally {
       setIsSending(false)
       setIsAssistantTyping(false)
@@ -688,6 +718,9 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
         createdAt: Date.now(),
       },
     ])
+    if (isNearBottomRef.current) {
+      scheduleScrollToBottomImmediate()
+    }
 
     setIsSending(true)
     setIsAssistantTyping(false)
@@ -781,6 +814,9 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
               createdAt: Date.now(),
             },
           ])
+          if (isNearBottomRef.current) {
+            scheduleScrollToBottomImmediate()
+          }
           setIsSending(false)
         },
       )
@@ -796,6 +832,9 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
           createdAt: Date.now(),
         },
       ])
+      if (isNearBottomRef.current) {
+        scheduleScrollToBottomImmediate()
+      }
       setIsSending(false)
     }
   }
@@ -846,6 +885,9 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
           createdAt: Date.now(),
         },
       ])
+      if (isNearBottomRef.current) {
+        scheduleScrollToBottomImmediate()
+      }
     }
   }
 
