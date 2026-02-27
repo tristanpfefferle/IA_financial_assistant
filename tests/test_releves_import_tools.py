@@ -330,6 +330,7 @@ Date de transaction;Date de comptabilisation;Description1;Description2;Descripti
     seeded = router.call("finance_releves_import_files", seed_payload, profile_id=PROFILE_ID)
     assert isinstance(seeded, RelevesImportResult)
     assert seeded.imported_count == 3
+    clusters_repository.upsert_calls.clear()
 
     april_only = """Numéro de compte: CH00 0000 0000 0000 0000 0
 IBAN: CH00 0000 0000 0000 0000 0
