@@ -408,9 +408,11 @@ _YES_VALUES = {
 _NO_VALUES = {"non", "nope", "no", "n"}
 _IMPORT_FILE_PROMPT = "Parfait. Envoie le fichier CSV du compte sélectionné."
 _IMPORT_WAIT_READY_REPLY = (
-    "Prochaine étape : importer un relevé mensuel.\n\n"
-    "Idéalement, prends le mois le plus récent complet (un mois entier), comme ça ton premier rapport sera représentatif.\n\n"
-    "Ton fichier CSV est prêt pour l’import ?"
+    "Parfait ! Maintenant que j'ai récupéré tes données personnelles, la prochaine étape consiste à importer un relevé bancaire.\n\n"
+    "L'objectif : analyser en profondeur les mouvements de ton ou tes comptes, afin de pouvoir mettre en lumière l'équilibre entre tes entrées et sorties d'argent. Également, notre système classera tes dépenses automatiquement par catégorie.\n\n"
+    "J'ai besoin donc que tu me prépares un relevé bancaire. Pour cela, tu dois te rendre sur ton e-banking et télécharger un fichier Excel, au format .csv.\n\n"
+    "Je te conseille de choisir une période comprise entre 3 mois et 1 année. Plus la période est longue, plus l’analyse sera représentative de ta situation.\n\n"
+    "Quand ton fichier est prêt à être importé, indique-le-moi. Si tu as besoin de plus d'informations, je suis à ta disposition."
 )
 _SYSTEM_CATEGORIES: tuple[tuple[str, str], ...] = (
     ("income_salary", "Salaire"),
@@ -699,6 +701,90 @@ def _build_quick_reply_yes_no_ui_action() -> dict[str, Any]:
             {"id": "no", "label": "❌", "value": "non"},
         ],
     }
+
+
+def _build_quick_reply_profile_confirm_ui_action() -> dict[str, Any]:
+    """Return profile confirmation quick replies with conversational wording."""
+
+    return {
+        "type": "ui_action",
+        "action": "quick_replies",
+        "options": [
+            {"id": "yes", "label": "Oui, c'est tout bon, on peut continuer !", "value": "oui"},
+            {"id": "no", "label": "Non, je dois modifier quelque chose.", "value": "non"},
+        ],
+    }
+
+
+def _build_quick_reply_bank_accounts_confirm_ui_action() -> dict[str, Any]:
+    """Return bank accounts confirmation quick replies with conversational wording."""
+
+    return {
+        "type": "ui_action",
+        "action": "quick_replies",
+        "options": [
+            {"id": "yes", "label": "Oui, c'est correct !", "value": "oui"},
+            {"id": "no", "label": "Non, je dois modifier mon choix.", "value": "non"},
+        ],
+    }
+
+
+def _build_quick_reply_import_wait_ready_ui_action() -> dict[str, Any]:
+    """Return CSV readiness quick replies with conversational wording."""
+
+    return {
+        "type": "ui_action",
+        "action": "quick_replies",
+        "options": [
+            {"id": "yes", "label": "Oui, je suis prêt à te le transmettre !", "value": "oui"},
+            {"id": "no", "label": "Non, j’ai besoin de plus d’informations avant.", "value": "non"},
+        ],
+    }
+
+
+def _build_csv_export_guidance_reply(profiles_repository: Any, profile_id: UUID) -> str:
+    """Build bank-specific CSV export guidance based on linked bank accounts."""
+
+    accounts = profiles_repository.list_bank_accounts(profile_id=profile_id) if hasattr(profiles_repository, "list_bank_accounts") else []
+    detected_banks: set[str] = set()
+    for account in accounts:
+        account_name = str(account.get("name") or "").strip()
+        if not account_name:
+            continue
+        matched_banks, _ = extract_canonical_banks(account_name)
+        for bank in matched_banks:
+            detected_banks.add(bank)
+
+    steps_by_bank: dict[str, str] = {
+        "UBS": (
+            "Depuis UBS e-banking :\n"
+            "1. Accède à ton compte\n"
+            "2. Va dans « Historique des transactions »\n"
+            "3. Clique sur « Exporter »\n"
+            "4. Choisis le format CSV"
+        ),
+        "Revolut": (
+            "Depuis Revolut :\n"
+            "1. Ouvre l’app ou l’interface web\n"
+            "2. Va dans la section Transactions\n"
+            "3. Sélectionne la période souhaitée\n"
+            "4. Exporte au format CSV"
+        ),
+    }
+
+    prioritized_banks = [bank for bank in ("UBS", "Revolut") if bank in detected_banks]
+    if prioritized_banks:
+        bank_sections = [steps_by_bank[bank] for bank in prioritized_banks if bank in steps_by_bank]
+        return "Voici comment exporter ton CSV selon ta banque :\n\n" + "\n\n".join(bank_sections)
+
+    return (
+        "Pas de souci 🙂 Voici une méthode générique pour obtenir un CSV :\n"
+        "1. Connecte-toi à ton e-banking\n"
+        "2. Ouvre l’historique des transactions du compte\n"
+        "3. Choisis la période souhaitée\n"
+        "4. Cherche l’option Exporter / Télécharger\n"
+        "5. Sélectionne le format CSV"
+    )
 
 
 def _build_quick_reply_report_view_confirmed_ui_action() -> dict[str, Any]:
@@ -3607,7 +3693,7 @@ def agent_chat(
                 )
                 return _chat_response(
                     reply=_build_profile_recap_reply(profile_fields),
-                    tool_result=_build_quick_reply_yes_no_ui_action(),
+                    tool_result=_build_quick_reply_profile_confirm_ui_action(),
                     plan=None,
                 )
 
@@ -3643,7 +3729,7 @@ def agent_chat(
                         if _is_profile_complete(profile_fields):
                             return _chat_response(
                                 reply=_build_profile_recap_reply(profile_fields),
-                                tool_result=_build_quick_reply_yes_no_ui_action(),
+                                tool_result=_build_quick_reply_profile_confirm_ui_action(),
                                 plan=None,
                             )
                     if global_state.get("onboarding_step") == "bank_accounts":
@@ -3678,7 +3764,7 @@ def agent_chat(
                         if substep == "bank_accounts_confirm":
                             return _chat_response(
                                 reply=_build_bank_accounts_confirm_recap(existing_accounts),
-                                tool_result=_build_quick_reply_yes_no_ui_action(),
+                                tool_result=_build_quick_reply_bank_accounts_confirm_ui_action(),
                                 plan=None,
                             )
                 payload = payload.model_copy(update={"message": ""})
@@ -3785,7 +3871,7 @@ def agent_chat(
                 else:
                     next_substep = "profile_confirm"
                     reply_text = _build_profile_recap_reply(refreshed_fields)
-                    tool_result = _build_quick_reply_yes_no_ui_action()
+                    tool_result = _build_quick_reply_profile_confirm_ui_action()
 
                 updated_global_state = _build_onboarding_global_state(
                     global_state,
@@ -3854,7 +3940,7 @@ def agent_chat(
                 )
                 return _chat_response(
                     reply=_build_profile_recap_reply(refreshed_fields),
-                    tool_result=_build_quick_reply_yes_no_ui_action(),
+                    tool_result=_build_quick_reply_profile_confirm_ui_action(),
                     plan=None,
                 )
 
@@ -3910,7 +3996,7 @@ def agent_chat(
                 )
                 return _chat_response(
                     reply=_build_bank_accounts_confirm_recap(refreshed_accounts),
-                    tool_result=_build_quick_reply_yes_no_ui_action(),
+                    tool_result=_build_quick_reply_bank_accounts_confirm_ui_action(),
                     plan=None,
                 )
 
@@ -4015,7 +4101,7 @@ def agent_chat(
                 ):
                     current_substep = current_global_state.get("onboarding_substep")
                     if current_substep == "profile_confirm":
-                        tool_result = _build_quick_reply_yes_no_ui_action()
+                        tool_result = _build_quick_reply_profile_confirm_ui_action()
                     elif current_substep == "profile_collect":
                         profile_fields = profiles_repository.get_profile_fields(
                             profile_id=profile_id,
@@ -4147,7 +4233,7 @@ def agent_chat(
                     )
                     return _chat_response(
                         reply=_build_profile_recap_reply(profile_fields),
-                        tool_result=_build_quick_reply_yes_no_ui_action(),
+                        tool_result=_build_quick_reply_profile_confirm_ui_action(),
                         plan=None,
                     )
 
@@ -4210,7 +4296,7 @@ def agent_chat(
                         )
                         return _chat_response(
                             reply=_build_profile_recap_reply(profile_fields),
-                            tool_result=_build_quick_reply_yes_no_ui_action(),
+                            tool_result=_build_quick_reply_profile_confirm_ui_action(),
                             plan=None,
                         )
 
@@ -4388,9 +4474,15 @@ def agent_chat(
                         tool_result=_build_import_file_ui_request(state_dict.get("import_context")),
                         plan=None,
                     )
+                if _is_no(payload.message):
+                    return _chat_response(
+                        reply=_build_csv_export_guidance_reply(profiles_repository, profile_id),
+                        tool_result=_build_quick_reply_import_wait_ready_ui_action(),
+                        plan=None,
+                    )
                 return _chat_response(
                     reply=_IMPORT_WAIT_READY_REPLY,
-                    tool_result=_build_quick_reply_yes_no_ui_action(),
+                    tool_result=_build_quick_reply_import_wait_ready_ui_action(),
                     plan=None,
                 )
 
@@ -4463,7 +4555,7 @@ def agent_chat(
                 )
                 return _chat_response(
                     reply=_IMPORT_WAIT_READY_REPLY,
-                    tool_result=_build_quick_reply_yes_no_ui_action(),
+                    tool_result=_build_quick_reply_import_wait_ready_ui_action(),
                     plan=None,
                 )
 
@@ -4490,7 +4582,7 @@ def agent_chat(
                         )
                         return _chat_response(
                             reply=_build_bank_accounts_confirm_recap(existing_accounts),
-                            tool_result=_build_quick_reply_yes_no_ui_action(),
+                            tool_result=_build_quick_reply_bank_accounts_confirm_ui_action(),
                             plan=None,
                         )
 
@@ -4519,7 +4611,7 @@ def agent_chat(
                             )
                             return _chat_response(
                                 reply=_build_bank_accounts_confirm_recap(existing_accounts),
-                                tool_result=_build_quick_reply_yes_no_ui_action(),
+                                tool_result=_build_quick_reply_bank_accounts_confirm_ui_action(),
                                 plan=None,
                             )
                         return _chat_response(
@@ -4546,7 +4638,7 @@ def agent_chat(
                         )
                         return _chat_response(
                             reply=_build_bank_accounts_confirm_recap(existing_accounts),
-                            tool_result=_build_quick_reply_yes_no_ui_action(),
+                            tool_result=_build_quick_reply_bank_accounts_confirm_ui_action(),
                             plan=None,
                         )
 
@@ -4598,7 +4690,7 @@ def agent_chat(
 
                     return _chat_response(
                         reply=_build_bank_accounts_confirm_recap(refreshed_accounts),
-                        tool_result=_build_quick_reply_yes_no_ui_action(),
+                        tool_result=_build_quick_reply_bank_accounts_confirm_ui_action(),
                         plan=None,
                     )
 
@@ -4682,7 +4774,7 @@ def agent_chat(
                             )
                             return _chat_response(
                                 reply=_IMPORT_WAIT_READY_REPLY,
-                                tool_result=_build_quick_reply_yes_no_ui_action(),
+                                tool_result=_build_quick_reply_import_wait_ready_ui_action(),
                                 plan=None,
                             )
 
@@ -4693,10 +4785,10 @@ def agent_chat(
                         )
                         return _chat_response(
                             reply=_IMPORT_WAIT_READY_REPLY,
-                            tool_result=_build_quick_reply_yes_no_ui_action(),
+                            tool_result=_build_quick_reply_import_wait_ready_ui_action(),
                             plan=None,
                         )
-                    return _chat_response(reply=_build_bank_accounts_confirm_recap(existing_accounts), tool_result=_build_quick_reply_yes_no_ui_action(), plan=None)
+                    return _chat_response(reply=_build_bank_accounts_confirm_recap(existing_accounts), tool_result=_build_quick_reply_bank_accounts_confirm_ui_action(), plan=None)
 
             if mode == "onboarding" and onboarding_step == "import" and global_state.get("onboarding_substep") == "import_select_account" and hasattr(profiles_repository, "list_bank_accounts"):
                 existing_accounts = profiles_repository.list_bank_accounts(profile_id=profile_id)

@@ -198,7 +198,7 @@ def test_bootstrap_profile_complete_routes_to_profile_confirm(monkeypatch) -> No
     response = client.post("/agent/chat", json={"message": "Bonjour"}, headers=_auth_headers())
 
     assert response.status_code == 200
-    assert response.json()["tool_result"] == {"type": "ui_action", "action": "quick_replies", "options": [{"id": "yes", "label": "✅", "value": "oui"}, {"id": "no", "label": "❌", "value": "non"}]}
+    assert response.json()["tool_result"] == {"type": "ui_action", "action": "quick_replies", "options": [{"id": "yes", "label": "Oui, c'est tout bon, on peut continuer !", "value": "oui"}, {"id": "no", "label": "Non, je dois modifier quelque chose.", "value": "non"}]}
     assert loop.called is False
 
 
@@ -372,8 +372,8 @@ def test_session_resume_allons_y_from_profile_fix_returns_profile_confirm_recap(
     assert "Récapitulatif de ton profil" in payload["reply"]
     assert "Est-ce bien correct" in payload["reply"]
     assert payload["tool_result"]["options"] == [
-        {"id": "yes", "label": "✅", "value": "oui"},
-        {"id": "no", "label": "❌", "value": "non"},
+        {"id": "yes", "label": "Oui, c'est tout bon, on peut continuer !", "value": "oui"},
+        {"id": "no", "label": "Non, je dois modifier quelque chose.", "value": "non"},
     ]
     persisted_state = repo.update_calls[-1]["chat_state"]["state"]
     assert persisted_state["session_resume_pending"] is False
@@ -489,7 +489,7 @@ def test_bank_accounts_confirm_yes_moves_to_import_wait_ready(monkeypatch) -> No
     assert persisted["onboarding_step"] == "import"
     assert persisted["onboarding_substep"] == "import_wait_ready"
     assert persisted["bank_accounts_confirmed"] is True
-    assert response.json()["tool_result"] == {"type": "ui_action", "action": "quick_replies", "options": [{"id": "yes", "label": "✅", "value": "oui"}, {"id": "no", "label": "❌", "value": "non"}]}
+    assert response.json()["tool_result"] == {"type": "ui_action", "action": "quick_replies", "options": [{"id": "yes", "label": "Oui, je suis prêt à te le transmettre !", "value": "oui"}, {"id": "no", "label": "Non, j’ai besoin de plus d’informations avant.", "value": "non"}]}
 
 
 def test_bank_accounts_collect_no_with_existing_account_moves_to_import_select(monkeypatch) -> None:
@@ -515,7 +515,7 @@ def test_bank_accounts_collect_no_with_existing_account_moves_to_import_select(m
     assert response.status_code == 200
     assert "Tu as des comptes bancaires chez : UBS." in response.json()["reply"]
     assert "nom exact" not in response.json()["reply"].lower()
-    assert response.json()["tool_result"] == {"type": "ui_action", "action": "quick_replies", "options": [{"id": "yes", "label": "✅", "value": "oui"}, {"id": "no", "label": "❌", "value": "non"}]}
+    assert response.json()["tool_result"] == {"type": "ui_action", "action": "quick_replies", "options": [{"id": "yes", "label": "Oui, c'est correct !", "value": "oui"}, {"id": "no", "label": "Non, je dois modifier mon choix.", "value": "non"}]}
     persisted = repo.update_calls[-1]["chat_state"]["state"]["global_state"]
     assert persisted["onboarding_step"] == "bank_accounts"
     assert persisted["onboarding_substep"] == "bank_accounts_confirm"
@@ -932,7 +932,7 @@ def test_free_chat_re_gates_to_import_when_transactions_not_imported(monkeypatch
     response = client.post("/agent/chat", json={"message": "Salut"}, headers=_auth_headers())
 
     assert response.status_code == 200
-    assert "Ton fichier CSV est prêt pour l’import" in response.json()["reply"]
+    assert "Quand ton fichier est prêt à être importé" in response.json()["reply"]
     persisted_state = repo.update_calls[-1]["chat_state"]["state"]
     assert persisted_state["global_state"]["onboarding_step"] == "import"
     assert persisted_state["global_state"]["onboarding_substep"] == "import_wait_ready"
@@ -1646,7 +1646,7 @@ def test_onboarding_resume_pending_allons_y_profile_confirm_returns_recap(monkey
     payload = response.json()
     assert "Récapitulatif de ton profil" in payload["reply"]
     assert "Est-ce bien correct" in payload["reply"]
-    assert payload["tool_result"]["options"] == [{"id": "yes", "label": "✅", "value": "oui"}, {"id": "no", "label": "❌", "value": "non"}]
+    assert payload["tool_result"]["options"] == [{"id": "yes", "label": "Oui, c'est tout bon, on peut continuer !", "value": "oui"}, {"id": "no", "label": "Non, je dois modifier quelque chose.", "value": "non"}]
     assert repo.update_calls[-1]["chat_state"]["state"]["session_resume_pending"] is False
 
 
@@ -1895,7 +1895,7 @@ def test_profile_form_submit_birth_date_moves_to_confirm_with_yes_no(monkeypatch
     assert payload["tool_result"] == {
         "type": "ui_action",
         "action": "quick_replies",
-        "options": [{"id": "yes", "label": "✅", "value": "oui"}, {"id": "no", "label": "❌", "value": "non"}],
+        "options": [{"id": "yes", "label": "Oui, c'est tout bon, on peut continuer !", "value": "oui"}, {"id": "no", "label": "Non, je dois modifier quelque chose.", "value": "non"}],
     }
 
 
@@ -1923,7 +1923,7 @@ def test_profile_collect_when_profile_complete_shows_recap(monkeypatch) -> None:
     assert response.json()["tool_result"] == {
         "type": "ui_action",
         "action": "quick_replies",
-        "options": [{"id": "yes", "label": "✅", "value": "oui"}, {"id": "no", "label": "❌", "value": "non"}],
+        "options": [{"id": "yes", "label": "Oui, c'est tout bon, on peut continuer !", "value": "oui"}, {"id": "no", "label": "Non, je dois modifier quelque chose.", "value": "non"}],
     }
 def test_profile_confirmation_no_returns_profile_fix_quick_replies(monkeypatch) -> None:
     _mock_auth(monkeypatch)

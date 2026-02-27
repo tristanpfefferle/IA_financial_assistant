@@ -43,12 +43,12 @@ def _onboarding_help_prompt(loop_id: str, *, services: Any, profile_id: Any) -> 
         return loop.expected_prompt_for_help(services=services, profile_id=profile_id)
 
     prompts = {
-        "onboarding.profile_confirm": "Confirme ton profil (oui/non).",
+        "onboarding.profile_confirm": "Confirme ton profil.",
         "onboarding.profile_fix_select": "Dis-moi ce que tu veux corriger : prénom/nom ou date de naissance.",
         "onboarding.bank_accounts_collect": "Sélectionne les banques où tu as un compte. Tu peux en choisir plusieurs.",
-        "onboarding.bank_accounts_confirm": "Confirme la liste des comptes (oui/non).",
+        "onboarding.bank_accounts_confirm": "Confirme la liste des comptes.",
         "onboarding.import_select_account": "Sélectionne le compte à importer.",
-        "onboarding.import_wait_ready": "Ton CSV est-il prêt ? (oui/non)",
+        "onboarding.import_wait_ready": "Ton fichier CSV est-il prêt pour l’import ?",
         "onboarding.categories_intro": "On va préparer tes catégories personnalisées.",
         "onboarding.categories_bootstrap": "Je crée les catégories système.",
         "onboarding.report": "Es-tu prêt à le découvrir ?",
