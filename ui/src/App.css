@@ -251,6 +251,7 @@ button:disabled {
   flex-direction: column;
   min-height: 0;
   overflow-y: auto;
+  overflow-anchor: none;
   padding: 18px;
   border: 1px solid #1f2a44;
   border-radius: 18px;
@@ -272,6 +273,7 @@ button:disabled {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   position: relative;
+  overflow-anchor: none;
   box-shadow: 0 10px 24px rgba(2, 6, 23, 0.32);
 }
 
