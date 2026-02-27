@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
-import { createImportJob, finalizeImportJobChat, hardResetProfile, openPdfFromUrl, sendChatMessage, streamImportJobEvents, uploadImportFileToJob } from '../api/agentApi'
+import { createImportJob, finalizeImportJobChat, hardResetProfile, sendChatMessage, streamImportJobEvents, uploadImportFileToJob } from '../api/agentApi'
 import { ChatInteractiveCard } from '../chat/ChatInteractiveCard'
 import { InlineAction } from '../chat/InlineAction'
 import { normalizeQuickReplyDisplay } from '../chat/formatters'
@@ -54,6 +54,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
   const [pendingActionMessageId, setPendingActionMessageId] = useState<string | null>(null)
   const [revealedActionMessageId, setRevealedActionMessageId] = useState<string | null>(null)
   const [openingPdfByMessageId, setOpeningPdfByMessageId] = useState<Record<string, boolean>>({})
+  const [pdfOpenedByMessageId, setPdfOpenedByMessageId] = useState<Record<string, boolean>>({})
   const isMountedRef = useRef(true)
   const assistantSequenceRef = useRef(0)
   const lastProgressMessageIdRef = useRef<string | null>(null)
@@ -655,11 +656,13 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
                   ...(isShort ? ['msg-short'] : []),
                   ...(message.role === 'user' && message.fromQuickReply ? ['msg-chip'] : []),
                 ].join(' ')
+                const messageIsPdfRequest = message.toolResult ? isPdfReportRequest(message.toolResult) : false
+                const canRenderMessageQuickReplies = !messageIsPdfRequest || Boolean(pdfOpenedByMessageId[message.id])
 
                 return (
                   <div key={message.id} className="msg-row">
                     <div className={messageClasses}>{message.content}</div>
-                    {message.role === 'assistant' && message.toolResult && isPdfReportRequest(message.toolResult) ? (
+                    {message.role === 'assistant' && message.toolResult && messageIsPdfRequest ? (
                       <div className="msg msg-assistant">
                         <button
                           type="button"
@@ -675,11 +678,11 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
                               return
                             }
                             setOpeningPdfByMessageId((current) => ({ ...current, [message.id]: true }))
-                            void openPdfFromUrl(pdfUi.url).finally(() => {
-                              window.setTimeout(() => {
-                                setOpeningPdfByMessageId((current) => ({ ...current, [message.id]: false }))
-                              }, 1500)
-                            })
+                            setPdfOpenedByMessageId((current) => ({ ...current, [message.id]: true }))
+                            window.open(pdfUi.url, '_blank', 'noopener,noreferrer')
+                            window.setTimeout(() => {
+                              setOpeningPdfByMessageId((current) => ({ ...current, [message.id]: false }))
+                            }, 800)
                           }}
                         >
                           {openingPdfByMessageId[message.id] ? (
@@ -714,6 +717,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
                     && pendingInteractiveIndex === index
                     && pendingActionMessageId !== message.id
                     && revealedActionMessageId === message.id
+                    && canRenderMessageQuickReplies
                     && toQuickRepliesOptions(message.toolResult).length > 0 ? (
                       <div className="quick-replies-stack" role="group" aria-label="Réponses rapides">
                         {toQuickRepliesOptions(message.toolResult).map((option) => (

@@ -919,9 +919,46 @@ def _build_quick_reply_report_view_confirmed_ui_action() -> dict[str, Any]:
         "options": [
             {
                 "id": "seen",
-                "label": "J’ai consulté mon rapport",
+                "label": "J’ai consulté mon rapport.",
                 "value": "j_ai_consulte_mon_rapport",
             }
+        ],
+    }
+
+
+def _build_quick_reply_confidence_start_ui_action() -> dict[str, Any]:
+    """Return confidence intro start quick reply payload."""
+
+    return {
+        "type": "ui_action",
+        "action": "quick_replies",
+        "options": [
+            {
+                "id": "start_confidence",
+                "label": "Oui, allons-y !",
+                "value": "allons_y",
+            }
+        ],
+    }
+
+
+def _build_quick_reply_shared_expenses_offer_ui_action() -> dict[str, Any]:
+    """Return shared expenses offer quick replies."""
+
+    return {
+        "type": "ui_action",
+        "action": "quick_replies",
+        "options": [
+            {
+                "id": "shared_yes",
+                "label": "Oui, absolument ! Dans ma situation, il m'arrive plusieurs fois par mois de payer des dépenses communes.",
+                "value": "shared_yes",
+            },
+            {
+                "id": "shared_no",
+                "label": "Non, les dépenses de mes comptes sont représentatifs en grande majorité de mes dépenses personnelles.",
+                "value": "shared_no",
+            },
         ],
     }
 
@@ -2399,7 +2436,7 @@ def _is_no(message: str) -> bool:
 
 def _is_allons_y(message: str) -> bool:
     normalized = _normalize_text(re.sub(r"[!?.,;:]+$", "", message))
-    return normalized in {"allons-y", "allons y", "allons_y"}
+    return normalized in {"allons-y", "allons y", "allons_y", "oui allons-y", "oui allons y"}
 
 
 def _is_report_view_confirmed(message: str) -> bool:
@@ -2444,7 +2481,7 @@ def _build_shared_expenses_offer_reply() -> str:
         "Commençons par vérifier que les transactions de ton compte représentent bien ta réalité.\n\n"
         "Dans certaines situations (colocation, concubinage), une personne paie des dépenses communes puis se fait rembourser ensuite via des virements bancaires ou TWINT.\n\n"
         "Ce fonctionnement peut fausser la lecture du rapport. Pour gérer ça, on a un système de partage de transactions qui garantit une précision optimale pour chaque personne concernée.\n\n"
-        "Es-tu intéressé par cette fonctionnalité ? (c’est surtout utile si ça arrive régulièrement chaque mois)"
+        "Es-tu intéressé par cette fonctionnalité ? (elle est surtout utile si ça t'arrive régulièrement chaque mois)"
     )
 
 
@@ -5211,7 +5248,7 @@ def agent_chat(
                     )
                     return _chat_response(
                         reply=_build_confidence_intro_reply(state_dict),
-                        tool_result=_build_quick_reply_yes_no_ui_action(),
+                        tool_result=_build_quick_reply_confidence_start_ui_action(),
                         plan=None,
                     )
                 month_value: str | None = None
@@ -5245,13 +5282,13 @@ def agent_chat(
                     bank_account_id=bank_account_id_value,
                 )
                 return _chat_response(
-                    reply="Ouvre le rapport puis clique « J’ai consulté mon rapport » 🙂",
+                    reply="Ouvre le rapport puis clique « J’ai consulté mon rapport. » 🙂",
                     tool_result=_build_open_pdf_with_report_view_confirmed_ui_request(report_url),
                     plan=None,
                 )
 
             if mode == "confidence_improvement" and global_state.get("confidence_step") == "waiting_start":
-                if _is_yes(payload.message):
+                if _is_allons_y(payload.message):
                     updated_global_state = {
                         **dict(global_state),
                         "confidence_step": "shared_expenses_offer",
@@ -5266,23 +5303,17 @@ def agent_chat(
                     )
                     return _chat_response(
                         reply=_build_shared_expenses_offer_reply(),
-                        tool_result=_build_quick_reply_yes_no_ui_action(),
-                        plan=None,
-                    )
-                if _is_no(payload.message):
-                    return _chat_response(
-                        reply="Ok 🙂 Dis-moi quand tu seras prêt.",
-                        tool_result=_build_quick_reply_yes_no_ui_action(),
+                        tool_result=_build_quick_reply_shared_expenses_offer_ui_action(),
                         plan=None,
                     )
                 return _chat_response(
-                    reply="Réponds simplement par oui ou non 🙂",
-                    tool_result=_build_quick_reply_yes_no_ui_action(),
+                    reply="Clique sur « Oui, allons-y ! » quand tu es prêt 🙂",
+                    tool_result=_build_quick_reply_confidence_start_ui_action(),
                     plan=None,
                 )
 
             if mode == "confidence_improvement" and global_state.get("confidence_step") == "shared_expenses_offer":
-                if _is_yes(payload.message):
+                if payload.message == "shared_yes" or _is_yes(payload.message):
                     next_global_state = {
                         **dict(global_state),
                         "confidence_step": None,
@@ -5305,7 +5336,7 @@ def agent_chat(
                         tool_result=None,
                         plan=None,
                     )
-                if _is_no(payload.message):
+                if payload.message == "shared_no" or _is_no(payload.message):
                     next_global_state = {
                         **dict(global_state),
                         "confidence_step": None,
@@ -5319,13 +5350,13 @@ def agent_chat(
                         chat_state=updated_chat_state,
                     )
                     return _chat_response(
-                        reply="Ok 🙂 Pas de souci. On passera au point suivant (catégories) juste après.",
+                        reply="Très bien 🙂 On continue sans partage.",
                         tool_result=None,
                         plan=None,
                     )
                 return _chat_response(
-                    reply="Réponds simplement par oui ou non 🙂",
-                    tool_result=_build_quick_reply_yes_no_ui_action(),
+                    reply="Choisis l’une des deux options pour continuer 🙂",
+                    tool_result=_build_quick_reply_shared_expenses_offer_ui_action(),
                     plan=None,
                 )
 
