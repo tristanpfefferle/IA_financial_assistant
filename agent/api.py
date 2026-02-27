@@ -6241,39 +6241,55 @@ def _fetch_spending_transactions(
     """Fetch all period transactions for spending PDF detail page."""
 
     router = get_tool_router()
-    query_payload = {
-        "date_range": payload.get("date_range"),
-        "limit": 500,
-        "offset": 0,
-        "include_internal_transfers": True,
-    }
-    if payload.get("bank_account_id"):
-        query_payload["bank_account_id"] = payload.get("bank_account_id")
-    result = router.call("finance_releves_search", query_payload, profile_id=profile_id)
+    page_size = 500
+    offset = 0
+    all_items: list[dict[str, Any]] = []
 
-    if isinstance(result, ToolError) and result.code == ToolErrorCode.UNKNOWN_TOOL:
-        result = router.call("finance_releves_list", query_payload, profile_id=profile_id)
+    while True:
+        query_payload = {
+            "date_range": payload.get("date_range"),
+            "limit": page_size,
+            "offset": offset,
+            "include_internal_transfers": True,
+        }
+        if payload.get("bank_account_id"):
+            query_payload["bank_account_id"] = payload.get("bank_account_id")
 
-    if isinstance(result, ToolError):
-        logger.warning(
-            "finance_spending_report_transactions_unavailable",
-            extra={
-                "profile_id": str(profile_id),
-                "error_code": result.code.value,
-                "error_message": result.message,
-            },
-        )
-        return [], False, True, []
+        result = router.call("finance_releves_search", query_payload, profile_id=profile_id)
+        if isinstance(result, ToolError) and result.code == ToolErrorCode.UNKNOWN_TOOL:
+            result = router.call("finance_releves_list", query_payload, profile_id=profile_id)
 
-    payload_dict = jsonable_encoder(result)
-    items = payload_dict.get("items") if isinstance(payload_dict, dict) else None
-    if not isinstance(items, list):
+        if isinstance(result, ToolError):
+            logger.warning(
+                "finance_spending_report_transactions_unavailable",
+                extra={
+                    "profile_id": str(profile_id),
+                    "error_code": result.code.value,
+                    "error_message": result.message,
+                },
+            )
+            return [], False, True, []
+
+        payload_dict = jsonable_encoder(result)
+        items = payload_dict.get("items") if isinstance(payload_dict, dict) else None
+        if not isinstance(items, list):
+            break
+
+        valid_items = [item for item in items if isinstance(item, dict)]
+        all_items.extend(valid_items)
+
+        if len(valid_items) < page_size:
+            break
+
+        offset += page_size
+
+    if not all_items:
         return [], False, False, []
 
     rows: list[SpendingTransactionRow] = []
     profiles_repository = get_profiles_repository()
 
-    for item in items:
+    for item in all_items:
         if not isinstance(item, dict):
             continue
 
@@ -6331,9 +6347,7 @@ def _fetch_spending_transactions(
 
     rows.sort(key=lambda row: row.date)
 
-    total = payload_dict.get("total") if isinstance(payload_dict, dict) else None
-    truncated = isinstance(total, int) and total > len(rows)
-    return rows, truncated, False, [item for item in items if isinstance(item, dict)]
+    return rows, False, False, all_items
 
 
 def _serialize_effective_spending_summary(summary: dict[str, Decimal]) -> dict[str, str]:
@@ -7569,6 +7583,8 @@ def import_releves(request: Request, payload: ImportRequestPayload, authorizatio
         "skipped_reason": None,
         "stats": None,
         "pending_total_count": None,
+        "remaining_pending_count": None,
+        "max_per_run_reached": False,
     }
     response_payload["merchant_alias_auto_resolve"] = merchant_alias_auto_resolve_payload
 
@@ -7584,6 +7600,7 @@ def import_releves(request: Request, payload: ImportRequestPayload, authorizatio
                 merchant_alias_auto_resolve_payload["skipped_reason"] = "merchant_alias_auto_resolve_unsupported"
             else:
                 auto_resolve_limit = _config.auto_resolve_merchant_aliases_limit()
+                max_per_run = _config.auto_resolve_merchant_aliases_max_per_run()
                 pending_map_alias_suggestions = profiles_repository.list_map_alias_suggestions(
                     profile_id=profile_id,
                     limit=auto_resolve_limit + 1,
@@ -7599,26 +7616,105 @@ def import_releves(request: Request, payload: ImportRequestPayload, authorizatio
                     merchant_alias_auto_resolve_payload["skipped_reason"] = "merchant_alias_auto_resolve_no_suggestions"
                 elif payload.import_mode == "analyze":
                     merchant_alias_auto_resolve_payload["skipped_reason"] = "merchant_alias_auto_resolve_analyze_mode"
-                elif len(pending_map_alias_suggestions) > auto_resolve_limit:
-                    merchant_alias_auto_resolve_payload["attempted"] = True
-                    merchant_alias_auto_resolve_payload["skipped_reason"] = "merchant_alias_auto_resolve_partial"
-                    merchant_alias_auto_resolve_payload["stats"] = resolve_pending_map_alias(
-                        profile_id=profile_id,
-                        profiles_repository=profiles_repository,
-                        limit=auto_resolve_limit,
-                    )
-                    warnings = response_payload.get("warnings")
-                    if isinstance(warnings, list):
-                        warnings.append("merchant_alias_auto_resolve_partial")
-                    else:
-                        response_payload["warnings"] = ["merchant_alias_auto_resolve_partial"]
                 else:
                     merchant_alias_auto_resolve_payload["attempted"] = True
-                    merchant_alias_auto_resolve_payload["stats"] = resolve_pending_map_alias(
-                        profile_id=profile_id,
-                        profiles_repository=profiles_repository,
-                        limit=auto_resolve_limit,
-                    )
+                    usage_totals: dict[str, int] = {}
+                    warning_values: set[str] = set()
+                    aggregated_stats: dict[str, Any] = {
+                        "processed": 0,
+                        "applied": 0,
+                        "failed": 0,
+                        "created_entities": 0,
+                        "linked_aliases": 0,
+                        "updated_transactions": 0,
+                        "warnings": [],
+                        "usage": {},
+                        "llm_run_id": None,
+                    }
+
+                    processed_budget = 0
+                    pending_remaining = pending_total_count
+                    while processed_budget < max_per_run and (pending_remaining is None or pending_remaining > 0):
+                        current_batch_limit = min(auto_resolve_limit, max_per_run - processed_budget)
+                        if current_batch_limit <= 0:
+                            break
+
+                        stats = resolve_pending_map_alias(
+                            profile_id=profile_id,
+                            profiles_repository=profiles_repository,
+                            limit=current_batch_limit,
+                        )
+
+                        processed_in_batch = 0
+                        if isinstance(stats, dict):
+                            for key in (
+                                "processed",
+                                "applied",
+                                "failed",
+                                "created_entities",
+                                "linked_aliases",
+                                "updated_transactions",
+                            ):
+                                value = stats.get(key)
+                                if isinstance(value, int):
+                                    aggregated_stats[key] += value
+                                    if key == "processed":
+                                        processed_in_batch = value
+
+                            usage = stats.get("usage")
+                            if isinstance(usage, dict):
+                                for usage_key, usage_value in usage.items():
+                                    if isinstance(usage_value, int):
+                                        usage_totals[usage_key] = usage_totals.get(usage_key, 0) + usage_value
+
+                            warnings = stats.get("warnings")
+                            if isinstance(warnings, list):
+                                for warning in warnings:
+                                    if isinstance(warning, str):
+                                        warning_values.add(warning)
+
+                            llm_run_id = stats.get("llm_run_id")
+                            if isinstance(llm_run_id, str) and llm_run_id.strip():
+                                aggregated_stats["llm_run_id"] = llm_run_id
+
+                        if processed_in_batch <= 0:
+                            warning_values.add("merchant_alias_auto_resolve_no_progress")
+                            break
+
+                        processed_budget += processed_in_batch
+
+                        recounted_pending_total = None
+                        if hasattr(profiles_repository, "count_map_alias_suggestions"):
+                            recounted_pending_total = profiles_repository.count_map_alias_suggestions(profile_id=profile_id)
+                        if isinstance(recounted_pending_total, int):
+                            pending_remaining = max(0, recounted_pending_total)
+                        else:
+                            pending_probe = profiles_repository.list_map_alias_suggestions(
+                                profile_id=profile_id,
+                                limit=auto_resolve_limit + 1,
+                            )
+                            pending_remaining = len(pending_probe)
+
+                    aggregated_stats["usage"] = usage_totals
+                    aggregated_stats["warnings"] = sorted(warning_values)
+                    merchant_alias_auto_resolve_payload["stats"] = aggregated_stats
+                    merchant_alias_auto_resolve_payload["remaining_pending_count"] = pending_remaining
+
+                    if pending_remaining and pending_remaining > 0:
+                        warnings = response_payload.get("warnings")
+                        if processed_budget >= max_per_run:
+                            merchant_alias_auto_resolve_payload["max_per_run_reached"] = True
+                            merchant_alias_auto_resolve_payload["skipped_reason"] = "merchant_alias_auto_resolve_cap_reached"
+                            if isinstance(warnings, list):
+                                warnings.append("merchant_alias_auto_resolve_cap_reached")
+                            else:
+                                response_payload["warnings"] = ["merchant_alias_auto_resolve_cap_reached"]
+                        elif "merchant_alias_auto_resolve_no_progress" in warning_values:
+                            merchant_alias_auto_resolve_payload["skipped_reason"] = "merchant_alias_auto_resolve_no_progress"
+                            if isinstance(warnings, list):
+                                warnings.append("merchant_alias_auto_resolve_no_progress")
+                            else:
+                                response_payload["warnings"] = ["merchant_alias_auto_resolve_no_progress"]
         except Exception:
             logger.exception("import_releves_merchant_alias_auto_resolve_failed profile_id=%s", profile_id)
             warnings = response_payload.get("warnings")

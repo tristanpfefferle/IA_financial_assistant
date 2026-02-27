@@ -655,6 +655,30 @@ class SupabaseRelevesRepository:
     def _row_is_internal_transfer(row: dict[str, object]) -> bool:
         return SupabaseRelevesRepository._row_effective_flow_type(row) == "transfer_internal"
 
+    def _list_releves_rows_paginated(
+        self,
+        *,
+        base_query: list[tuple[str, str | int]],
+        page_size: int = 1000,
+    ) -> list[dict[str, object]]:
+        query_without_paging = [(key, value) for key, value in base_query if key not in {"limit", "offset"}]
+        offset = 0
+        rows: list[dict[str, object]] = []
+
+        while True:
+            query = [*query_without_paging, ("limit", page_size), ("offset", offset)]
+            page_rows, _ = self._client.get_rows(table="releves_bancaires", query=query, with_count=False)
+            if not page_rows:
+                break
+
+            rows.extend(page_rows)
+            if len(page_rows) < page_size:
+                break
+
+            offset += page_size
+
+        return rows
+
     def list_releves(self, filters: RelevesFilters) -> tuple[list[ReleveBancaire], int | None]:
         select_with_category, _ = self._select_with_category_embed(
             "id,profile_id,date,libelle,montant,devise,categorie,category_id,payee,merchant_id,merchant_entity_id,bank_account_id,merchant_entities(canonical_name,suggested_confidence)"
@@ -692,7 +716,7 @@ class SupabaseRelevesRepository:
             "montant,devise,categorie,category_id,bank_account_id,metadonnees"
         )
         query = [*self._build_query(filters), ("select", select_with_category)]
-        rows, _ = self._client.get_rows(table="releves_bancaires", query=query, with_count=False)
+        rows = self._list_releves_rows_paginated(base_query=query)
         self._hydrate_category_label(rows)
 
         if filters.direction == RelevesDirection.DEBIT_ONLY:
@@ -805,7 +829,7 @@ class SupabaseRelevesRepository:
             *self._build_query(request),
             ("select", select_with_category),
         ]
-        rows, _ = self._client.get_rows(table="releves_bancaires", query=query, with_count=False)
+        rows = self._list_releves_rows_paginated(base_query=query)
         self._hydrate_category_label(rows)
 
         if request.direction == RelevesDirection.DEBIT_ONLY:

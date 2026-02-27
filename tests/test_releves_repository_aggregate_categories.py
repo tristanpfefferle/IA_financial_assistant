@@ -127,3 +127,46 @@ def test_aggregate_categories_overrides_autres_category_id_with_metadata_key() -
 
     assert currency == "CHF"
     assert groups == {"Alimentation": (Decimal("-19.90"), 1)}
+
+
+def test_aggregate_releves_paginates_all_pages_including_january() -> None:
+    class _PagedClientStub:
+        def __init__(self) -> None:
+            self.rows: list[dict[str, object]] = []
+            for month in range(1, 13):
+                for day in range(1, 53):
+                    self.rows.append(
+                        {
+                            "montant": "-1.00",
+                            "devise": "CHF",
+                            "date": f"2025-{month:02d}-{(day % 28) + 1:02d}",
+                            "categorie": "Alimentation",
+                            "category_id": None,
+                            "payee": "Shop",
+                            "metadonnees": {},
+                        }
+                    )
+
+        def get_rows(self, *, table, query, with_count, use_anon_key=False):
+            assert table == "releves_bancaires"
+            query_dict = dict(query)
+            limit = int(query_dict.get("limit", 1000))
+            offset = int(query_dict.get("offset", 0))
+            return self.rows[offset : offset + limit], None
+
+    class _ProfilesRepositoryNoop:
+        def get_profile_category_name_by_id(self, *, profile_id: UUID, category_id: UUID) -> str | None:
+            return None
+
+    repository = SupabaseRelevesRepository(client=_PagedClientStub(), profiles_repository=_ProfilesRepositoryNoop())
+
+    groups, currency = repository.aggregate_releves(
+        RelevesAggregateRequest(
+            profile_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            group_by=RelevesGroupBy.MONTH,
+        )
+    )
+
+    assert currency == "CHF"
+    assert "2025-01" in groups
+    assert sum(count for _, count in groups.values()) == 624
