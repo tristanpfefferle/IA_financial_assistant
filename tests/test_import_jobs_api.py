@@ -172,11 +172,18 @@ def test_import_job_endpoints_create_upload_and_events(monkeypatch) -> None:
     payload = finalize_response.json()
     assert "Import terminé ✅" in payload["reply"]
     assert "Ouvre-le" in payload["reply"]
+    assert "J'ai détecté 1 paiements récurrents." in payload["reply"]
     assert payload["tool_result"]["type"] == "ui_request"
     assert payload["tool_result"]["name"] == "open_report"
     assert payload["tool_result"]["report_kind"] == "spending"
     assert payload["tool_result"]["query"]["start_date"] == "2026-01-01"
     assert payload["tool_result"]["query"]["end_date"] == "2026-01-31"
+    assert payload["tool_result"]["next_ui_request"] == {
+        "type": "ui_request",
+        "name": "open_clusters_review",
+        "cluster_type": "recurring",
+        "status": "pending",
+    }
     
     events = repo.events[UUID(job_id)]
     kinds = [event.kind for event in events]

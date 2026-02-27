@@ -78,19 +78,24 @@ class SupabaseTransactionClustersRepository:
         profile_id: str,
         status: str = "pending",
         limit: int = 50,
+        cluster_type: str | None = None,
     ) -> list[dict[str, Any]]:
+        query: dict[str, Any] = {
+            "select": (
+                "id,profile_id,cluster_type,cluster_key,stats,status,"
+                "suggested_category_id,confidence,rationale,model,run_id,created_at,updated_at"
+            ),
+            "profile_id": f"eq.{profile_id}",
+            "status": f"eq.{status}",
+            "order": "updated_at.desc",
+            "limit": limit,
+        }
+        if isinstance(cluster_type, str) and cluster_type.strip():
+            query["cluster_type"] = f"eq.{cluster_type.strip()}"
+
         cluster_rows, _ = self._client.get_rows(
             table="transaction_clusters",
-            query={
-                "select": (
-                    "id,profile_id,cluster_type,cluster_key,stats,status,"
-                    "suggested_category_id,confidence,rationale,model,run_id,created_at,updated_at"
-                ),
-                "profile_id": f"eq.{profile_id}",
-                "status": f"eq.{status}",
-                "order": "updated_at.desc",
-                "limit": limit,
-            },
+            query=query,
             with_count=False,
             use_anon_key=False,
         )
@@ -139,14 +144,18 @@ class SupabaseTransactionClustersRepository:
             )
         return result
 
-    def apply_cluster_category(self, *, cluster_id: str, category_id: str) -> None:
+    def apply_cluster_category(self, *, cluster_id: str, category_id: str, profile_id: str | None = None) -> None:
+        items_query: dict[str, Any] = {
+            "select": "transaction_id",
+            "cluster_id": f"eq.{cluster_id}",
+            "limit": 5000,
+        }
+        if isinstance(profile_id, str) and profile_id.strip():
+            items_query["profile_id"] = f"eq.{profile_id.strip()}"
+
         item_rows, _ = self._client.get_rows(
             table="transaction_cluster_items",
-            query={
-                "select": "transaction_id",
-                "cluster_id": f"eq.{cluster_id}",
-                "limit": 5000,
-            },
+            query=items_query,
             with_count=False,
             use_anon_key=False,
         )
@@ -161,9 +170,13 @@ class SupabaseTransactionClustersRepository:
                 use_anon_key=False,
             )
 
+        clusters_query = {"id": f"eq.{cluster_id}"}
+        if isinstance(profile_id, str) and profile_id.strip():
+            clusters_query["profile_id"] = f"eq.{profile_id.strip()}"
+
         self._client.patch_rows(
             table="transaction_clusters",
-            query={"id": f"eq.{cluster_id}"},
+            query=clusters_query,
             payload={
                 "status": "applied",
                 "suggested_category_id": category_id,
@@ -172,10 +185,14 @@ class SupabaseTransactionClustersRepository:
             use_anon_key=False,
         )
 
-    def dismiss_cluster(self, *, cluster_id: str) -> None:
+    def dismiss_cluster(self, *, cluster_id: str, profile_id: str | None = None) -> None:
+        query = {"id": f"eq.{cluster_id}"}
+        if isinstance(profile_id, str) and profile_id.strip():
+            query["profile_id"] = f"eq.{profile_id.strip()}"
+
         self._client.patch_rows(
             table="transaction_clusters",
-            query={"id": f"eq.{cluster_id}"},
+            query=query,
             payload={"status": "dismissed", "updated_at": datetime.now(timezone.utc).isoformat()},
             use_anon_key=False,
         )

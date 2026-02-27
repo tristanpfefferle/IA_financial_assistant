@@ -3497,6 +3497,11 @@ class SharedExpenseSuggestionApplyPayload(BaseModel):
     amount: str | None = None
 
 
+class ClusterApplyPayload(BaseModel):
+    """Payload for recurring cluster apply endpoint."""
+
+    category_id: UUID
+
 @lru_cache(maxsize=1)
 def get_tool_router() -> ToolRouter:
     """Create and cache the tool router once per process."""
@@ -3620,6 +3625,33 @@ def _get_import_jobs_repository_or_501() -> SupabaseImportJobsRepository:
     repository = _try_get_import_jobs_repository()
     if repository is None:
         raise HTTPException(status_code=501, detail="imports jobs disabled")
+    return repository
+
+
+def _try_get_transaction_clusters_repository() -> Any | None:
+    """Return transaction-clusters repository when Supabase config is available."""
+
+    supabase_url = _config.supabase_url()
+    supabase_key = _config.supabase_service_role_key()
+    if not supabase_url or not supabase_key:
+        return None
+
+    client = SupabaseClient(
+        settings=SupabaseSettings(
+            url=supabase_url,
+            service_role_key=supabase_key,
+            anon_key=_config.supabase_anon_key(),
+        )
+    )
+    from backend.repositories.transaction_clusters_repository import SupabaseTransactionClustersRepository
+
+    return SupabaseTransactionClustersRepository(client=client)
+
+
+def _get_transaction_clusters_repository_or_501() -> Any:
+    repository = _try_get_transaction_clusters_repository()
+    if repository is None:
+        raise HTTPException(status_code=501, detail="transaction clusters disabled")
     return repository
 
 
@@ -5830,6 +5862,84 @@ def debug_hard_reset(
     return {"ok": True}
 
 
+@app.get("/clusters/recurring")
+def list_recurring_clusters(
+    request: Request,
+    status: str = "pending",
+    limit: int = 50,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """List recurring transaction clusters for authenticated profile."""
+
+    _, profile_id = _resolve_authenticated_profile(request, authorization)
+    repository = _get_transaction_clusters_repository_or_501()
+    rows = repository.list_clusters(
+        profile_id=str(profile_id),
+        status=status,
+        limit=limit,
+        cluster_type="recurring",
+    )
+
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        if str(row.get("cluster_type") or "") != "recurring":
+            continue
+        items.append(
+            {
+                "id": str(row.get("id") or ""),
+                "cluster_type": str(row.get("cluster_type") or ""),
+                "cluster_key": row.get("cluster_key"),
+                "status": row.get("status"),
+                "count": row.get("count"),
+                "total_amount_abs": row.get("total_amount_abs"),
+                "sample_labels": row.get("sample_labels"),
+                "items_count": row.get("items_count"),
+                "transaction_ids": row.get("transaction_ids"),
+                "created_at": row.get("created_at"),
+                "updated_at": row.get("updated_at"),
+            }
+        )
+
+    return {"type": "clusters_list", "items": items}
+
+
+@app.post("/clusters/{cluster_id}/apply")
+def apply_cluster(
+    request: Request,
+    cluster_id: UUID,
+    payload: ClusterApplyPayload,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Apply one category to all transactions in one cluster."""
+
+    _, profile_id = _resolve_authenticated_profile(request, authorization)
+    repository = _get_transaction_clusters_repository_or_501()
+    repository.apply_cluster_category(
+        cluster_id=str(cluster_id),
+        category_id=str(payload.category_id),
+        profile_id=str(profile_id),
+    )
+    return {
+        "type": "cluster_applied",
+        "cluster_id": str(cluster_id),
+        "category_id": str(payload.category_id),
+    }
+
+
+@app.post("/clusters/{cluster_id}/dismiss")
+def dismiss_cluster(
+    request: Request,
+    cluster_id: UUID,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Dismiss one pending transaction cluster."""
+
+    _, profile_id = _resolve_authenticated_profile(request, authorization)
+    repository = _get_transaction_clusters_repository_or_501()
+    repository.dismiss_cluster(cluster_id=str(cluster_id), profile_id=str(profile_id))
+    return {"type": "cluster_dismissed", "cluster_id": str(cluster_id)}
+
+
 @app.get("/finance/shared-expenses/suggestions")
 def list_shared_expense_suggestions(
     request: Request,
@@ -7433,19 +7543,41 @@ def finalize_import_job_chat(
         bank_account_id=bank_account_id_value,
     )
 
-    return ChatResponse(
-        reply=(
-            "Import terminé ✅\n\n"
-            "Je viens de générer ton premier rapport financier.\n"
-            "Ouvre-le, puis dis-moi quand tu l’as consulté 🙂"
-        ),
-        tool_result=_build_open_report_ui_request(
-            month=month_value,
-            start_date=start_date_value,
-            end_date=end_date_value,
-            bank_account_id=bank_account_id_value,
-        ),
+    report_ui_request = _build_open_report_ui_request(
+        month=month_value,
+        start_date=start_date_value,
+        end_date=end_date_value,
+        bank_account_id=bank_account_id_value,
     )
+    recurring_clusters_detected = 0
+    if isinstance(job.result, dict):
+        raw_clusters = job.result.get("recurring_clusters_detected")
+        if isinstance(raw_clusters, (int, float)):
+            recurring_clusters_detected = max(0, int(raw_clusters))
+
+    reply_text = (
+        "Import terminé ✅\n\n"
+        "Je viens de générer ton premier rapport financier.\n"
+        "Ouvre-le, puis dis-moi quand tu l’as consulté 🙂"
+    )
+    tool_result: dict[str, Any] = report_ui_request
+    if recurring_clusters_detected > 0:
+        reply_text = (
+            f"{reply_text}\n\n"
+            f"J'ai détecté {recurring_clusters_detected} paiements récurrents. "
+            "Tu veux que je te propose une catégorie à appliquer à chaque série ?"
+        )
+        tool_result = {
+            **report_ui_request,
+            "next_ui_request": {
+                "type": "ui_request",
+                "name": "open_clusters_review",
+                "cluster_type": "recurring",
+                "status": "pending",
+            },
+        }
+
+    return ChatResponse(reply=reply_text, tool_result=tool_result)
 
 
 @app.get("/imports/jobs/{job_id}/events")
