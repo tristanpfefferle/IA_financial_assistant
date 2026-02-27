@@ -13,6 +13,9 @@ from backend.repositories.share_rules_repository import (
     ShareRulesRepository,
     SupabaseShareRulesRepository,
 )
+from backend.repositories.transaction_clusters_repository import (
+    SupabaseTransactionClustersRepository,
+)
 
 __all__ = [
     "SharedExpenseRow",
@@ -23,4 +26,5 @@ __all__ = [
     "ShareRulesRepository",
     "SupabaseShareRulesRepository",
     "InMemoryShareRulesRepository",
+    "SupabaseTransactionClustersRepository",
 ]
