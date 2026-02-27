@@ -45,8 +45,39 @@ function formatMonthLabel(monthKey: string): string {
 }
 
 function isInternalTransfer(transaction: CategorizedTransaction): boolean {
-  const normalizedCategory = transaction.category_norm.toLowerCase()
-  return transaction.is_internal_transfer || transaction.flow_type === 'internal_transfer' || normalizedCategory === 'internal_transfer'
+  if (transaction.is_internal_transfer === true) {
+    return true
+  }
+
+  const flowType = String(transaction.flow_type ?? '').toLowerCase()
+  if (flowType.includes('internal')) {
+    return true
+  }
+
+  const normalizedCategory = String(transaction.category_norm ?? '').toLowerCase()
+  if (
+    normalizedCategory === 'internal_transfer' ||
+    normalizedCategory === 'internal_transfers' ||
+    normalizedCategory === 'transfer_internal' ||
+    normalizedCategory === 'transfert_interne' ||
+    normalizedCategory === 'transferts_internes'
+  ) {
+    return true
+  }
+
+  const categoryLabel = String(transaction.category_label ?? '').toLowerCase()
+  if (categoryLabel.includes('transfert interne') || categoryLabel.includes('transferts internes')) {
+    return true
+  }
+
+  // Fallback faible mais utile: libellé/merchant mentionne explicitement un transfert interne.
+  const fallbackSource = `${String(transaction.merchant ?? '')} ${String(transaction.label ?? '')}`.toLowerCase()
+  return (
+    fallbackSource.includes('transfert interne') ||
+    fallbackSource.includes('internal transfer') ||
+    fallbackSource.includes('virement interne') ||
+    fallbackSource.includes('entre comptes')
+  )
 }
 
 function isIncome(transaction: CategorizedTransaction): boolean {
@@ -93,6 +124,14 @@ function computeReportMetrics(transactions: CategorizedTransaction[], selectedMo
       expensesOnly.push(transaction)
       expensesTotal += expenseAmount
       const categoryName = transaction.category_label || 'À catégoriser'
+      const normalizedCategoryName = categoryName.toLowerCase()
+
+      // Mini test manuel: si category_label='Transferts internes' et amount<0,
+      // la transaction ne doit pas apparaître dans categoryBreakdown.
+      if (normalizedCategoryName === 'transferts internes' || normalizedCategoryName.includes('transfert interne')) {
+        continue
+      }
+
       expenseByCategory.set(categoryName, (expenseByCategory.get(categoryName) ?? 0) + expenseAmount)
     }
   }
