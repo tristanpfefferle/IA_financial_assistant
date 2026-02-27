@@ -493,7 +493,7 @@ def test_bank_accounts_confirm_yes_moves_to_import_wait_ready(monkeypatch) -> No
         "type": "ui_action",
         "action": "quick_replies",
         "options": [
-            {"id": "import_ready_yes", "label": "Je suis prêt à te le transmettre !", "value": "import_ready_yes"},
+            {"id": "import_ready_send", "label": "Je suis prêt à te le transmettre !", "value": "import_ready_send"},
             {"id": "import_ready_help", "label": "J’ai besoin de plus d’informations avant.", "value": "import_ready_help"},
         ],
     }
@@ -2049,7 +2049,7 @@ def test_import_wait_ready_confirmation_returns_import_file(monkeypatch) -> None
     monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
     monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
 
-    response = client.post("/agent/chat", json={"message": "import_ready_yes"}, headers=_auth_headers())
+    response = client.post("/agent/chat", json={"message": "import_ready_send"}, headers=_auth_headers())
     payload = response.json()
     assert payload["reply"] == "Parfait 🙂\n\nClique sur « Importer maintenant » pour sélectionner ton fichier CSV."
     assert payload["tool_result"]["name"] == "import_file"
@@ -2127,7 +2127,7 @@ def test_import_help_bank_select_then_back_to_import_shows_short_question_only(m
     payload = second.json()
     assert payload["reply"] == "Ton fichier CSV est-il prêt pour l’import ?"
     assert payload["tool_result"]["options"] == [
-        {"id": "import_ready_yes", "label": "Je suis prêt à te le transmettre !", "value": "import_ready_yes"},
+        {"id": "import_ready_send", "label": "Je suis prêt à te le transmettre !", "value": "import_ready_send"},
         {
             "id": "import_ready_help",
             "label": "J’ai besoin de plus d’informations avant.",
