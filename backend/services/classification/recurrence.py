@@ -13,7 +13,8 @@ from typing import Any
 _VARIABLE_TOKENS = frozenset({"ref", "referenz", "avis", "message", "tx", "transaction"})
 _IBAN_LIKE_REGEX = re.compile(r"\b[a-z]{2}\d{2}[a-z0-9]{8,30}\b")
 _LONG_NUMBER_REGEX = re.compile(r"\b\d{4,}\b")
-_DIGIT_SEQUENCE_REGEX = re.compile(r"\d+")
+_STRICT_NUMERIC_TOKEN_REGEX = re.compile(r"^\d+$")
+_LONG_ALNUM_REFERENCE_REGEX = re.compile(r"^(?=.*\d)[a-z0-9]{6,}$")
 _NON_ALNUM_REGEX = re.compile(r"[^a-z0-9]+")
 
 
@@ -46,7 +47,9 @@ def normalize_label_key(payee: str | None, libelle: str | None) -> str:
     for token in text.split():
         if token in _VARIABLE_TOKENS:
             continue
-        if _DIGIT_SEQUENCE_REGEX.search(token):
+        if _STRICT_NUMERIC_TOKEN_REGEX.fullmatch(token):
+            continue
+        if _LONG_ALNUM_REFERENCE_REGEX.fullmatch(token):
             continue
         tokens.append(token)
 
@@ -85,6 +88,8 @@ def detect_monthly_recurring_clusters(transactions: list[dict[str, Any]]) -> lis
     for tx in transactions:
         tx_date = _parse_date(tx.get("date"))
         amount = _to_decimal(tx.get("montant"))
+        if amount == 0:
+            continue
         sign = "income" if amount > 0 else "expense"
         amount_chf = int(abs(amount).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
         label_key = normalize_label_key(tx.get("payee"), tx.get("libelle"))
@@ -102,7 +107,7 @@ def detect_monthly_recurring_clusters(transactions: list[dict[str, Any]]) -> lis
     clusters: list[RecurringCluster] = []
 
     for (sign, amount_chf, label_key), rows in grouped.items():
-        if len(rows) < 3:
+        if len(rows) < 4:
             continue
 
         ordered_rows = sorted(rows, key=lambda row: row["date"])

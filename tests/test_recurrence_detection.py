@@ -62,6 +62,33 @@ def test_detects_with_small_date_drift() -> None:
     assert clusters[0].stats["count"] == 4
 
 
+def test_ignores_three_monthly_occurrences() -> None:
+    transactions = [
+        {"id": "tx-1", "date": "2024-01-15", "montant": "-45.00", "libelle": "Abonnement", "payee": "Provider"},
+        {"id": "tx-2", "date": "2024-02-15", "montant": "-45.00", "libelle": "Abonnement", "payee": "Provider"},
+        {"id": "tx-3", "date": "2024-03-15", "montant": "-45.00", "libelle": "Abonnement", "payee": "Provider"},
+    ]
+
+    clusters = detect_monthly_recurring_clusters(transactions)
+
+    assert clusters == []
+
+
+def test_skips_zero_amount_transactions() -> None:
+    transactions = [
+        {"id": "tx-0", "date": "2024-01-05", "montant": "0", "libelle": "Assurance", "payee": "Assureur"},
+        {"id": "tx-1", "date": "2024-01-30", "montant": "-89.90", "libelle": "Assurance", "payee": "Assureur"},
+        {"id": "tx-2", "date": "2024-02-28", "montant": "-89.90", "libelle": "Assurance", "payee": "Assureur"},
+        {"id": "tx-3", "date": "2024-03-31", "montant": "-89.90", "libelle": "Assurance", "payee": "Assureur"},
+        {"id": "tx-4", "date": "2024-04-29", "montant": "-89.90", "libelle": "Assurance", "payee": "Assureur"},
+    ]
+
+    clusters = detect_monthly_recurring_clusters(transactions)
+
+    assert len(clusters) == 1
+    assert clusters[0].transaction_ids == ["tx-1", "tx-2", "tx-3", "tx-4"]
+
+
 def test_ignores_non_monthly_pattern() -> None:
     transactions = [
         {"id": "tx-1", "date": "2024-01-01", "montant": "-50", "libelle": "Service X", "payee": "Fournisseur"},
