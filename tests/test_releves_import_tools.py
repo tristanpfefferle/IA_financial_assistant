@@ -11,6 +11,7 @@ from agent.tool_router import ToolRouter
 from backend.repositories.categories_repository import InMemoryCategoriesRepository
 from backend.repositories.releves_repository import InMemoryRelevesRepository
 from backend.repositories.transactions_repository import GestionFinanciereTransactionsRepository
+from backend.services.classification.recurrence import RecurringCluster
 from backend.services.tools import BackendToolService
 from shared.models import RelevesImportResult
 
@@ -226,3 +227,79 @@ def test_import_creates_pending_map_alias_suggestions_when_aliases_are_unknown()
     assert result.merchant_suggestions_created_count > 0
     assert profiles_repository.suggestions
     assert profiles_repository.created_entities == []
+
+
+class _TransactionClustersRepositoryStub:
+    def __init__(self) -> None:
+        self.upsert_calls: list[dict[str, object]] = []
+
+    def upsert_cluster(
+        self,
+        *,
+        profile_id: str,
+        cluster_type: str,
+        cluster_key: str,
+        stats: dict[str, object],
+        transaction_ids: list[str],
+    ) -> str:
+        self.upsert_calls.append(
+            {
+                "profile_id": profile_id,
+                "cluster_type": cluster_type,
+                "cluster_key": cluster_key,
+                "stats": stats,
+                "transaction_ids": transaction_ids,
+            }
+        )
+        return "cluster-1"
+
+
+def test_import_commit_detects_and_persists_recurring_clusters(monkeypatch) -> None:
+    releves_repository = InMemoryRelevesRepository()
+    clusters_repository = _TransactionClustersRepositoryStub()
+    service = BackendToolService(
+        transactions_repository=GestionFinanciereTransactionsRepository(),
+        releves_repository=releves_repository,
+        categories_repository=InMemoryCategoriesRepository(),
+        transaction_clusters_repository=clusters_repository,
+    )
+    router = ToolRouter(backend_client=BackendClient(tool_service=service))
+
+    csv_content = """Numéro de compte: CH00 0000 0000 0000 0000 0
+IBAN: CH00 0000 0000 0000 0000 0
+Du: 01.01.2025
+Au: 31.05.2025
+Date de transaction;Date de comptabilisation;Description1;Description2;Description3;No de transaction;Débit;Crédit;Monnaie
+05.01.2025;05.01.2025;Netflix;;;TRX-1;20,00;;CHF
+05.02.2025;05.02.2025;Netflix;;;TRX-2;20,00;;CHF
+05.03.2025;05.03.2025;Netflix;;;TRX-3;20,00;;CHF
+05.04.2025;05.04.2025;Netflix;;;TRX-4;20,00;;CHF
+""".encode("utf-8")
+
+    payload = _fixture_payload(filename="ubs_recurring.csv", content=csv_content)
+    payload["import_mode"] = "commit"
+
+    def _fake_detect(_rows):
+        imported_ids = [str(item.id) for item in releves_repository._seed if item.profile_id == PROFILE_ID][-4:]
+        return [
+            RecurringCluster(
+                cluster_key="cluster-netflix",
+                sign="expense",
+                amount_chf=20,
+                label_key="netflix",
+                transaction_ids=imported_ids,
+                stats={"count": 4},
+            )
+        ]
+
+    monkeypatch.setattr("backend.services.releves_import.importer.detect_monthly_recurring_clusters", _fake_detect)
+
+    result = router.call("finance_releves_import_files", payload, profile_id=PROFILE_ID)
+
+    assert isinstance(result, RelevesImportResult)
+    assert result.imported_count == 4
+    assert result.recurring_clusters_detected == 1
+    assert len(clusters_repository.upsert_calls) == 1
+    call = clusters_repository.upsert_calls[0]
+    assert call["cluster_type"] == "recurring"
+    assert len(call["transaction_ids"]) == 4

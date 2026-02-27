@@ -13,6 +13,7 @@ from backend.repositories.bank_accounts_repository import (
 )
 from backend.repositories.profiles_repository import SupabaseProfilesRepository
 from backend.repositories.releves_repository import InMemoryRelevesRepository, SupabaseRelevesRepository
+from backend.repositories.transaction_clusters_repository import SupabaseTransactionClustersRepository
 from backend.repositories.transactions_repository import (
     InMemoryTransactionsRepository,
     SupabaseTransactionsRepository,
@@ -48,12 +49,14 @@ def build_backend_tool_service() -> BackendToolService:
         categories_repository = SupabaseCategoriesRepository(client=supabase_client)
         bank_accounts_repository = SupabaseBankAccountsRepository(client=supabase_client)
         profiles_repository = SupabaseProfilesRepository(client=supabase_client)
+        transaction_clusters_repository = SupabaseTransactionClustersRepository(client=supabase_client)
     else:
         releves_repository = InMemoryRelevesRepository()
         transactions_repository = InMemoryTransactionsRepository()
         categories_repository = InMemoryCategoriesRepository()
         bank_accounts_repository = InMemoryBankAccountsRepository()
         profiles_repository = None
+        transaction_clusters_repository = None
 
     return BackendToolService(
         transactions_repository=transactions_repository,
@@ -61,4 +64,5 @@ def build_backend_tool_service() -> BackendToolService:
         categories_repository=categories_repository,
         bank_accounts_repository=bank_accounts_repository,
         profiles_repository=profiles_repository,
+        transaction_clusters_repository=transaction_clusters_repository,
     )

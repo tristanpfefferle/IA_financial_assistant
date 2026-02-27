@@ -14,6 +14,8 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 from backend.repositories.profiles_repository import ProfilesRepository
 from backend.repositories.releves_repository import RelevesRepository
 from backend.repositories.shared_expenses_repository import SupabaseSharedExpensesRepository
+from backend.repositories.transaction_clusters_repository import SupabaseTransactionClustersRepository
+from backend.services.classification.recurrence import detect_monthly_recurring_clusters
 from backend.services.classification.decision_engine import decide_releve_classification, normalize_merchant_alias
 from backend.services.releves_import.classification import classify_and_categorize_transaction, resolve_system_category_label
 from backend.services.releves_import.dedup import compare_rows
@@ -39,6 +41,9 @@ logger = logging.getLogger(__name__)
 class RelevesImportService:
     releves_repository: RelevesRepository
     profiles_repository: ProfilesRepository | None = None
+    transaction_clusters_repository: SupabaseTransactionClustersRepository | None = None
+
+    _MAX_RECURRING_CLUSTER_SCOPE_ROWS = 20_000
 
     @staticmethod
     def _fallback_autres_category_id(*, profile_id: UUID) -> UUID:
@@ -279,6 +284,84 @@ class RelevesImportService:
             return "unknown"
 
         return " ".join(cleaned_tokens[:3]).strip() or "unknown"
+
+    @staticmethod
+    def _build_import_batch_marker(*, profile_id: UUID, imported_at: datetime) -> str:
+        """Build one deterministic marker for all rows persisted in one import run."""
+
+        return f"{profile_id}:{imported_at.isoformat()}"
+
+    @staticmethod
+    def _to_recurrence_payload(transaction_rows: list[dict[str, object]]) -> list[dict[str, object]]:
+        """Map scoped rows to recurrence detector input schema."""
+
+        return [
+            {
+                "id": str(row.get("id") or ""),
+                "date": row.get("date"),
+                "montant": row.get("montant"),
+                "libelle": row.get("libelle"),
+                "payee": row.get("payee"),
+            }
+            for row in transaction_rows
+            if row.get("id") is not None
+        ]
+
+    def _resolve_transaction_clusters_repository(self) -> SupabaseTransactionClustersRepository | None:
+        if self.transaction_clusters_repository is not None:
+            return self.transaction_clusters_repository
+
+        supabase_url = config.supabase_url()
+        supabase_key = config.supabase_service_role_key()
+        if not supabase_url or not supabase_key:
+            return None
+
+        return SupabaseTransactionClustersRepository(
+            client=SupabaseClient(
+                settings=SupabaseSettings(
+                    url=supabase_url,
+                    service_role_key=supabase_key,
+                    anon_key=config.supabase_anon_key(),
+                )
+            )
+        )
+
+    def _detect_and_persist_recurring_clusters(
+        self,
+        *,
+        profile_id: UUID,
+        import_batch_marker: str,
+        imported_date_min: date | None,
+        imported_date_max: date | None,
+    ) -> int:
+        if imported_date_min is None or imported_date_max is None:
+            return 0
+
+        repository = self._resolve_transaction_clusters_repository()
+        if repository is None:
+            return 0
+
+        scoped_rows = self.releves_repository.list_releves_for_cluster_detection(
+            profile_id=profile_id,
+            import_batch_marker=import_batch_marker,
+            start_date=imported_date_min,
+            end_date=imported_date_max,
+            limit=self._MAX_RECURRING_CLUSTER_SCOPE_ROWS,
+        )
+        if not scoped_rows:
+            return 0
+
+        recurrence_input = self._to_recurrence_payload(scoped_rows)
+        clusters = detect_monthly_recurring_clusters(recurrence_input)
+        for cluster in clusters:
+            repository.upsert_cluster(
+                profile_id=str(profile_id),
+                cluster_type="recurring",
+                cluster_key=cluster.cluster_key,
+                stats=cluster.stats,
+                transaction_ids=cluster.transaction_ids,
+            )
+        return len(clusters)
 
     def _normalize_row(
         self,
@@ -596,6 +679,16 @@ class RelevesImportService:
         replaced_count = 0
 
         if request.import_mode == RelevesImportMode.COMMIT:
+            import_batch_marker = self._build_import_batch_marker(
+                profile_id=request.profile_id,
+                imported_at=datetime.now(timezone.utc),
+            )
+            for row in rows_to_insert:
+                raw_meta = row.get("meta")
+                next_meta = dict(raw_meta) if isinstance(raw_meta, dict) else {}
+                next_meta["import_batch_marker"] = import_batch_marker
+                row["meta"] = next_meta
+
             if request.modified_action == RelevesImportModifiedAction.REPLACE and dedup.modified_rows:
                 self.releves_repository.delete_releves_by_ids(
                     profile_id=request.profile_id,
@@ -609,13 +702,37 @@ class RelevesImportService:
                 rows=rows_to_insert,
             ) if rows_to_insert else 0
 
+            imported_dates = [
+                row["date"]
+                for row in rows_to_insert
+                if isinstance(row.get("date"), date)
+            ]
+
+            recurring_clusters_detected = 0
+            if imported_count > 0 and imported_dates:
+                try:
+                    recurring_clusters_detected = self._detect_and_persist_recurring_clusters(
+                        profile_id=request.profile_id,
+                        import_batch_marker=import_batch_marker,
+                        imported_date_min=min(imported_dates),
+                        imported_date_max=max(imported_dates),
+                    )
+                except Exception:
+                    logger.exception(
+                        "releves_import_recurring_clusters_failed profile_id=%s marker=%s",
+                        request.profile_id,
+                        import_batch_marker,
+                    )
+
+            logger.info(
+                "releves_import_recurring_clusters_detected profile_id=%s marker=%s clusters=%s",
+                request.profile_id,
+                import_batch_marker,
+                recurring_clusters_detected,
+            )
+
             if rows_to_insert and self.profiles_repository is not None:
                 try:
-                    imported_dates = [
-                        row["date"]
-                        for row in rows_to_insert
-                        if isinstance(row.get("date"), date)
-                    ]
                     if imported_dates:
                         supabase_url = config.supabase_url()
                         supabase_key = config.supabase_service_role_key()
@@ -641,6 +758,7 @@ class RelevesImportService:
                     pass
         else:
             imported_count = 0
+            recurring_clusters_detected = 0
 
         preview = [
             RelevesImportPreviewItem(
@@ -684,6 +802,7 @@ class RelevesImportService:
             errors=errors,
             preview=preview,
             merchant_suggestions_created_count=merchant_suggestions_created_count,
+            recurring_clusters_detected=recurring_clusters_detected,
             import_start_date=import_start_date,
             import_end_date=import_end_date,
         )

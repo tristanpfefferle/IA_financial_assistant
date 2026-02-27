@@ -7203,6 +7203,23 @@ def _run_import_job_pipeline(*, repository: SupabaseImportJobsRepository, profil
             progress=0.92,
             job_patch={"processed_transactions": processed_transactions},
         )
+
+        recurring_clusters_detected = 0
+        if isinstance(result, dict):
+            raw_clusters = result.get("recurring_clusters_detected")
+            if isinstance(raw_clusters, (int, float)):
+                recurring_clusters_detected = max(0, int(raw_clusters))
+
+        _emit_import_job_event(
+            repository=repository,
+            profile_id=profile_id,
+            job_id=job_id,
+            kind="cluster",
+            message=f"Detected {recurring_clusters_detected} recurring clusters",
+            progress=0.95,
+            payload={"clusters": recurring_clusters_detected},
+        )
+
         _emit_import_job_event(
             repository=repository,
             profile_id=profile_id,
