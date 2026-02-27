@@ -744,10 +744,10 @@ def _build_quick_reply_import_wait_ready_ui_action() -> dict[str, Any]:
         "type": "ui_action",
         "action": "quick_replies",
         "options": [
-            {"id": "import_ready_yes", "label": "Oui, je suis prêt à te le transmettre !", "value": "import_ready_yes"},
+            {"id": "import_ready_yes", "label": "Je suis prêt à te le transmettre !", "value": "import_ready_yes"},
             {
                 "id": "import_ready_help",
-                "label": "Non, j'ai besoin de plus d'informations avant.",
+                "label": "J’ai besoin de plus d’informations avant.",
                 "value": "import_ready_help",
             },
         ],
@@ -4582,9 +4582,8 @@ def agent_chat(
 
             if mode == "onboarding" and onboarding_step == "import":
                 import_substep = global_state.get("onboarding_substep")
-                normalized_import_message = _normalize_text(payload.message)
                 if import_substep == "import_wait_ready":
-                    if payload.message == "import_ready_yes" or _is_yes(payload.message):
+                    if payload.message == "import_ready_yes":
                         import_context = state_dict.get("import_context") if isinstance(state_dict.get("import_context"), dict) else {}
                         selected_bank_account_id = None
                         if isinstance(import_context, dict):
@@ -4614,11 +4613,7 @@ def agent_chat(
                             plan=None,
                         )
 
-                    is_help_request = payload.message == "import_ready_help" or normalized_import_message in {
-                        "non, j'ai besoin de plus d'informations avant.",
-                        "non, jai besoin de plus dinformations avant.",
-                    }
-                    if is_help_request:
+                    if payload.message == "import_ready_help":
                         updated_global_state = _build_onboarding_global_state(
                             global_state,
                             onboarding_step="import",

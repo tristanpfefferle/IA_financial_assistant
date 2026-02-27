@@ -489,7 +489,14 @@ def test_bank_accounts_confirm_yes_moves_to_import_wait_ready(monkeypatch) -> No
     assert persisted["onboarding_step"] == "import"
     assert persisted["onboarding_substep"] == "import_wait_ready"
     assert persisted["bank_accounts_confirmed"] is True
-    assert response.json()["tool_result"] == {"type": "ui_action", "action": "quick_replies", "options": [{"id": "yes", "label": "Oui, je suis prêt à te le transmettre !", "value": "oui"}, {"id": "no", "label": "Non, j’ai besoin de plus d’informations avant.", "value": "non"}]}
+    assert response.json()["tool_result"] == {
+        "type": "ui_action",
+        "action": "quick_replies",
+        "options": [
+            {"id": "import_ready_yes", "label": "Je suis prêt à te le transmettre !", "value": "import_ready_yes"},
+            {"id": "import_ready_help", "label": "J’ai besoin de plus d’informations avant.", "value": "import_ready_help"},
+        ],
+    }
 
 
 def test_bank_accounts_collect_no_with_existing_account_moves_to_import_select(monkeypatch) -> None:
@@ -2042,7 +2049,7 @@ def test_import_wait_ready_confirmation_returns_import_file(monkeypatch) -> None
     monkeypatch.setattr(agent_api, "get_profiles_repository", lambda: repo)
     monkeypatch.setattr(agent_api, "get_agent_loop", lambda: _LoopSpy())
 
-    response = client.post("/agent/chat", json={"message": "c'est prêt"}, headers=_auth_headers())
+    response = client.post("/agent/chat", json={"message": "import_ready_yes"}, headers=_auth_headers())
     payload = response.json()
     assert payload["reply"] == "Parfait 🙂\n\nClique sur « Importer maintenant » pour sélectionner ton fichier CSV."
     assert payload["tool_result"]["name"] == "import_file"
@@ -2059,7 +2066,7 @@ def test_import_wait_ready_help_enters_help_menu(monkeypatch) -> None:
 
     response = client.post(
         "/agent/chat",
-        json={"message": "Non, j'ai besoin de plus d'informations avant."},
+        json={"message": "import_ready_help"},
         headers=_auth_headers(),
     )
 
@@ -2120,10 +2127,10 @@ def test_import_help_bank_select_then_back_to_import_shows_short_question_only(m
     payload = second.json()
     assert payload["reply"] == "Ton fichier CSV est-il prêt pour l’import ?"
     assert payload["tool_result"]["options"] == [
-        {"id": "import_ready_yes", "label": "Oui, je suis prêt à te le transmettre !", "value": "import_ready_yes"},
+        {"id": "import_ready_yes", "label": "Je suis prêt à te le transmettre !", "value": "import_ready_yes"},
         {
             "id": "import_ready_help",
-            "label": "Non, j'ai besoin de plus d'informations avant.",
+            "label": "J’ai besoin de plus d’informations avant.",
             "value": "import_ready_help",
         },
     ]
