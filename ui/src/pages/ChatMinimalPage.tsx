@@ -36,6 +36,7 @@ type PersistedChatState = {
   debugMode?: boolean
   debugUnlocked?: boolean
   activeThread?: string
+  reportWasOpened?: boolean
 }
 
 const ASSISTANT_STEP_DELAY_MS = 1000
@@ -96,6 +97,7 @@ function loadPersistedChatState(userId: string, threadId: string): PersistedChat
       debugMode: parsed.debugMode === undefined ? undefined : Boolean(parsed.debugMode),
       debugUnlocked: parsed.debugUnlocked === undefined ? undefined : Boolean(parsed.debugUnlocked),
       activeThread: typeof parsed.activeThread === 'string' ? parsed.activeThread : undefined,
+      reportWasOpened: parsed.reportWasOpened === undefined ? undefined : Boolean(parsed.reportWasOpened),
     }
   } catch {
     return null
@@ -136,7 +138,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
   const [pendingActionMessageId, setPendingActionMessageId] = useState<string | null>(null)
   const [revealedActionMessageId, setRevealedActionMessageId] = useState<string | null>(null)
   const [reportAvailable, setReportAvailable] = useState(false)
-  const [reportOpened, setReportOpened] = useState(false)
+  const [reportWasOpened, setReportWasOpened] = useState(false)
   const [reportParams, setReportParams] = useState<{ month?: string; start_date?: string; end_date?: string; bank_account_id?: string }>({})
   const isMountedRef = useRef(true)
   const assistantSequenceRef = useRef(0)
@@ -144,7 +146,41 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
   const importMessageIdsRef = useRef<string[]>([])
 
   const displayedMessages = activeTab === 'af' ? messagesAf : messagesHelp
-  const shouldHighlightReportTab = reportAvailable && !reportOpened
+  const shouldHighlightReportTab = reportAvailable && !reportWasOpened
+
+  const shouldShowReportViewedQuickReply = useMemo(() => {
+    if (!reportAvailable || !reportWasOpened) {
+      return false
+    }
+
+    const alreadyConfirmed = messagesAf.some(
+      (message) => message.role === 'user' && (message.content === 'J’ai consulté mon rapport.' || message.content === 'j_ai_consulte_mon_rapport'),
+    )
+    if (alreadyConfirmed) {
+      return false
+    }
+
+    let candidateAssistantIndex = -1
+    for (let index = messagesAf.length - 1; index >= 0; index -= 1) {
+      const message = messagesAf[index]
+      if (message.role !== 'assistant') {
+        continue
+      }
+
+      const hasOpenReportToolResult = Boolean(message.toolResult && toReportUiRequest(message.toolResult))
+      const hasReportPrompt = /ouvre(?:-le)?\s+le\s+rapport|ouvre-le/i.test(message.content)
+      if (hasOpenReportToolResult || hasReportPrompt) {
+        candidateAssistantIndex = index
+        break
+      }
+    }
+
+    if (candidateAssistantIndex === -1) {
+      return false
+    }
+
+    return !messagesAf.some((message, index) => message.role === 'user' && index > candidateAssistantIndex)
+  }, [messagesAf, reportAvailable, reportWasOpened])
 
   const pendingInteractiveIndex = useMemo(() => {
     let actionIndex = -1
@@ -398,6 +434,9 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
           if (persistedMain.debugUnlocked !== undefined) {
             setDebugUnlocked(persistedMain.debugUnlocked)
           }
+          if (persistedMain.reportWasOpened !== undefined) {
+            setReportWasOpened(persistedMain.reportWasOpened)
+          }
         }
 
         if (persistedHelp) {
@@ -464,6 +503,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
       debugMode,
       debugUnlocked,
       activeThread: activeTab,
+      reportWasOpened,
     })
 
     savePersistedChatState(currentUserId, 'help', {
@@ -472,8 +512,9 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
       debugMode,
       debugUnlocked,
       activeThread: activeTab,
+      reportWasOpened,
     })
-  }, [activeTab, currentUserId, debugMode, debugUnlocked, didHydrateFromStorage, messagesAf, messagesHelp])
+  }, [activeTab, currentUserId, debugMode, debugUnlocked, didHydrateFromStorage, messagesAf, messagesHelp, reportWasOpened])
 
   async function submitMessage(text: string, displayContent?: string, fromQuickReply = false) {
     const trimmed = text.trim()
@@ -666,7 +707,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
     setPendingActionMessageId(null)
     setRevealedActionMessageId(null)
     setReportAvailable(false)
-    setReportOpened(false)
+    setReportWasOpened(false)
     setReportParams({})
 
     const chatStorageKeys = ['chat_messages', 'chat_debug_payload', 'chat_console_state']
@@ -783,6 +824,9 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
                   if (persistedMain.debugUnlocked !== undefined) {
                     setDebugUnlocked(persistedMain.debugUnlocked)
                   }
+                  if (persistedMain.reportWasOpened !== undefined) {
+                    setReportWasOpened(persistedMain.reportWasOpened)
+                  }
                 }
               }}
             >
@@ -806,7 +850,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
                   className={`icon-button ${activeTab === 'report' ? 'tab-button-selected' : ''} ${shouldHighlightReportTab ? 'report-tab-pulse' : ''}`}
                   onClick={() => {
                     setActiveTab('report')
-                    setReportOpened(true)
+                    setReportWasOpened(true)
                   }}
                   aria-label="Rapport"
                 >
@@ -860,15 +904,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
           <div className={`message-area ${shouldHighlightReportTab && activeTab === 'af' ? 'message-area-blurred' : ''}`}>
             {activeTab === 'report' ? (
               <div className="chat-scroll report-scroll">
-                <ReportPage
-                  params={reportParams}
-                  isSending={isSending || isAssistantTyping}
-                  onConfirmViewed={() => {
-                    setReportOpened(true)
-                    setActiveTab('af')
-                    void submitMessage('j_ai_consulte_mon_rapport', 'J’ai consulté mon rapport.', true)
-                  }}
-                />
+                <ReportPage params={reportParams} />
               </div>
             ) : (
               <>
@@ -965,6 +1001,20 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
                   <button type="button" className="scroll-down-btn" onClick={scrollToBottom} aria-label="Aller en bas">
                     ↓
                   </button>
+                ) : null}
+                {activeTab === 'af' && shouldShowReportViewedQuickReply ? (
+                  <div className="quick-replies-stack" role="group" aria-label="Confirmation de lecture du rapport">
+                    <button
+                      type="button"
+                      className="msg msg-user msg-quick-reply msg-quick-reply--pending"
+                      disabled={isSending || isAssistantTyping}
+                      onClick={() => {
+                        void submitMessage('j_ai_consulte_mon_rapport', 'J’ai consulté mon rapport.', true)
+                      }}
+                    >
+                      J’ai consulté mon rapport.
+                    </button>
+                  </div>
                 ) : null}
               </>
             )}
