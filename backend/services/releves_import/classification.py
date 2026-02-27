@@ -90,20 +90,19 @@ _TWINT_P2P_NAME_REGEX = re.compile(r"\btwint\b.*\ba\b\s+([a-z]{2,})\s+([a-z]{2,}
 _TWINT_NON_PERSON_TOKENS = frozenset({"la", "le", "les", "un", "une", "des", "du", "de", "d", "au", "aux"})
 _TAXES_REGEX = re.compile(r"\b(tax|impot|impots|steuer|estv|afc|vat)\b")
 
-_BANKING_FEE_STRICT_MARKERS = (
-    "tenue de compte",
-    "frais de compte",
-    "frais carte",
-    "commission carte",
-    "interest debit",
-    "interest credit",
-    "frais paiement",
-    "frais transaction",
-    "closing fee",
-    "account maintenance fee",
-    "monthly fee",
-    "overdraft fee",
+_BANKING_FEE_STRONG_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\btenue de compte\b"),
+    re.compile(r"\bkontofuehrung(?:sgebuehr)?\b"),
+    re.compile(r"\bspesen\b"),
+    re.compile(r"\boverdraft fee\b"),
+    re.compile(r"\baccount maintenance(?: fee)?\b"),
+    re.compile(r"\bclosing fee\b"),
+    re.compile(r"\bfrais carte\b"),
+    re.compile(r"\bcommission carte\b"),
 )
+
+_BANKING_FEE_GENERIC_FEE_REGEX = re.compile(r"\b(gebuehr|gebuehren|commission|frais|fee)\b")
+_BANKING_FEE_CONTEXT_REGEX = re.compile(r"\b(konto|compte|karte|card|zins|interest|spesen|atm|bargeld|withdrawal)\b")
 
 _BANKING_TRANSFER_EXCLUSION_MARKERS = (
     "ordre permanent",
@@ -119,6 +118,16 @@ _BANKING_TRANSFER_EXCLUSION_MARKERS = (
     "dd",
     "ebill",
 )
+
+
+def _is_banking_fee(text: str) -> bool:
+    if any(marker in text for marker in _BANKING_TRANSFER_EXCLUSION_MARKERS):
+        return False
+
+    if any(pattern.search(text) for pattern in _BANKING_FEE_STRONG_PATTERNS):
+        return True
+
+    return bool(_BANKING_FEE_GENERIC_FEE_REGEX.search(text) and _BANKING_FEE_CONTEXT_REGEX.search(text))
 
 
 def _normalize_text(value: str) -> str:
@@ -208,9 +217,7 @@ def classify_and_categorize_transaction(row: dict[str, Any]) -> ClassifiedTransa
             return ClassifiedTransaction("income", "income_salary", _SYSTEM_CATEGORY_LABELS["income_salary"], "confirmed")
         return ClassifiedTransaction("income", "income_other", _SYSTEM_CATEGORY_LABELS["income_other"], "confirmed")
 
-    has_strict_banking_fee_marker = any(marker in text for marker in _BANKING_FEE_STRICT_MARKERS)
-    has_transfer_exclusion_marker = any(marker in text for marker in _BANKING_TRANSFER_EXCLUSION_MARKERS)
-    if has_strict_banking_fee_marker and not has_transfer_exclusion_marker and any(bank in text for bank in _KNOWN_BANK_MARKERS):
+    if _is_banking_fee(text) and any(bank in text for bank in _KNOWN_BANK_MARKERS):
         return ClassifiedTransaction("expense", "banking_fees", _SYSTEM_CATEGORY_LABELS["banking_fees"], "confirmed")
 
     if _TAXES_REGEX.search(text):

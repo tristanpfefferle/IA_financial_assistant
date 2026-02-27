@@ -50,10 +50,13 @@ def test_banking_fees_category() -> None:
     assert result.category_key == "banking_fees"
 
 
-
-
 def test_banking_fees_requires_strict_fee_marker() -> None:
-    result = classify_and_categorize_transaction(_tx(montant="-9.00", libelle="UBS tenue de compte frais"))
+    result = classify_and_categorize_transaction(_tx(montant="-9.00", libelle="UBS frais divers"))
+    assert result.category_key == "other"
+
+
+def test_banking_fees_german_kontofuehrungsgebuehr() -> None:
+    result = classify_and_categorize_transaction(_tx(montant="-9.00", libelle="UBS Kontofuehrungsgebuehr"))
     assert result.category_key == "banking_fees"
 
 
