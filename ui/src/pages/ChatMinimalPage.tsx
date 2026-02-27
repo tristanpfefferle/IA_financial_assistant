@@ -37,6 +37,8 @@ type PersistedChatState = {
   debugUnlocked?: boolean
   activeThread?: string
   reportWasOpened?: boolean
+  revealedActionMessageId?: string | null
+  pendingActionMessageId?: string | null
 }
 
 const ASSISTANT_STEP_DELAY_MS = 1000
@@ -66,10 +68,39 @@ function isValidChatMessage(value: unknown): value is ChatMessage {
     && typeof message.createdAt === 'number'
 }
 
-function getLastInteractiveAssistantMessageId(messages: ChatMessage[]): string | null {
+function isInteractiveUiToolResult(toolResult: Record<string, unknown> | null | undefined): boolean {
+  if (!toolResult) {
+    return false
+  }
+
+  if (toolResult.type !== 'ui_action') {
+    return false
+  }
+
+  const action = toolResult.action
+  if (typeof action !== 'string') {
+    return false
+  }
+
+  return new Set([
+    'quick_replies',
+    'quick_reply_yes_no',
+    'form',
+    'import_panel',
+    'open_import_panel',
+    'import_file',
+  ]).has(action)
+}
+
+function findActiveInteractiveMessageId(messages: ChatMessage[]): string | null {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index]
-    if (message.role === 'assistant' && message.toolResult) {
+    if (message.role !== 'assistant' || !isInteractiveUiToolResult(message.toolResult)) {
+      continue
+    }
+
+    const hasUserResponseAfter = messages.some((nextMessage, nextIndex) => nextMessage.role === 'user' && nextIndex > index)
+    if (!hasUserResponseAfter) {
       return message.id
     }
   }
@@ -98,6 +129,14 @@ function loadPersistedChatState(userId: string, threadId: string): PersistedChat
       debugUnlocked: parsed.debugUnlocked === undefined ? undefined : Boolean(parsed.debugUnlocked),
       activeThread: typeof parsed.activeThread === 'string' ? parsed.activeThread : undefined,
       reportWasOpened: parsed.reportWasOpened === undefined ? undefined : Boolean(parsed.reportWasOpened),
+      revealedActionMessageId:
+        typeof parsed.revealedActionMessageId === 'string' || parsed.revealedActionMessageId === null
+          ? parsed.revealedActionMessageId
+          : undefined,
+      pendingActionMessageId:
+        typeof parsed.pendingActionMessageId === 'string' || parsed.pendingActionMessageId === null
+          ? parsed.pendingActionMessageId
+          : undefined,
     }
   } catch {
     return null
@@ -423,7 +462,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
 
         if (persistedMain) {
           setMessagesAf(persistedMain.messages)
-          const interactiveCandidateId = getLastInteractiveAssistantMessageId(persistedMain.messages)
+          const interactiveCandidateId = findActiveInteractiveMessageId(persistedMain.messages)
           setRevealedActionMessageId(interactiveCandidateId)
           setPendingActionMessageId(null)
           setIsSending(false)
@@ -493,6 +532,16 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
   }, [messagesAf])
 
   useEffect(() => {
+    if (isSending || isAssistantTyping) {
+      return
+    }
+
+    const activeId = findActiveInteractiveMessageId(messagesAf)
+    setRevealedActionMessageId(activeId)
+    setPendingActionMessageId(null)
+  }, [isAssistantTyping, isSending, messagesAf])
+
+  useEffect(() => {
     if (!didHydrateFromStorage || !currentUserId) {
       return
     }
@@ -504,6 +553,8 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
       debugUnlocked,
       activeThread: activeTab,
       reportWasOpened,
+      revealedActionMessageId,
+      pendingActionMessageId,
     })
 
     savePersistedChatState(currentUserId, 'help', {
@@ -513,8 +564,10 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
       debugUnlocked,
       activeThread: activeTab,
       reportWasOpened,
+      revealedActionMessageId,
+      pendingActionMessageId,
     })
-  }, [activeTab, currentUserId, debugMode, debugUnlocked, didHydrateFromStorage, messagesAf, messagesHelp, reportWasOpened])
+  }, [activeTab, currentUserId, debugMode, debugUnlocked, didHydrateFromStorage, messagesAf, messagesHelp, pendingActionMessageId, reportWasOpened, revealedActionMessageId])
 
   async function submitMessage(text: string, displayContent?: string, fromQuickReply = false) {
     const trimmed = text.trim()
@@ -815,7 +868,7 @@ export function ChatMinimalPage({ email }: ChatMinimalPageProps) {
                 const persistedMain = loadPersistedChatState(currentUserId, 'main')
                 if (persistedMain) {
                   setMessagesAf(persistedMain.messages)
-                  const interactiveCandidateId = getLastInteractiveAssistantMessageId(persistedMain.messages)
+                  const interactiveCandidateId = findActiveInteractiveMessageId(persistedMain.messages)
                   setRevealedActionMessageId(interactiveCandidateId)
                   setPendingActionMessageId(null)
                   if (persistedMain.debugMode !== undefined) {
