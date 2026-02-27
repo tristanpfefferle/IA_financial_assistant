@@ -16,6 +16,7 @@ from backend.repositories.bank_accounts_repository import BankAccountsRepository
 from backend.repositories.categories_repository import CategoriesRepository
 from backend.repositories.profiles_repository import ProfilesRepository
 from backend.repositories.releves_repository import RelevesRepository
+from backend.repositories.transaction_clusters_repository import SupabaseTransactionClustersRepository
 from backend.repositories.transactions_repository import TransactionsRepository
 from backend.services.releves_import import RelevesImportService
 from backend.services.merchant_suggestions.apply_map_alias import apply_map_alias_suggestion
@@ -86,6 +87,7 @@ class BackendToolService:
     categories_repository: CategoriesRepository
     bank_accounts_repository: BankAccountsRepository | None = None
     profiles_repository: ProfilesRepository | None = None
+    transaction_clusters_repository: SupabaseTransactionClustersRepository | None = None
 
     def finance_releves_import_files(
         self,
@@ -97,6 +99,7 @@ class BackendToolService:
             service = RelevesImportService(
                 releves_repository=self.releves_repository,
                 profiles_repository=self.profiles_repository,
+                transaction_clusters_repository=self.transaction_clusters_repository,
             )
             return service.import_releves(request, on_progress=on_progress)
         except Exception as exc:

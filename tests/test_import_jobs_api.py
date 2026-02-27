@@ -124,6 +124,7 @@ def test_import_job_endpoints_create_upload_and_events(monkeypatch) -> None:
             on_progress("categorization", 47, 47)
             return {
                 "imported_count": 2,
+                "recurring_clusters_detected": 1,
                 "preview": [
                     {"date": "2026-01-01", "montant": "10.00", "devise": "EUR"},
                     {"date": "2026-01-31", "montant": "20.00", "devise": "EUR"},
@@ -183,6 +184,10 @@ def test_import_job_endpoints_create_upload_and_events(monkeypatch) -> None:
     assert "parsing" in kinds
     assert "parsed" in kinds
     assert "db_insert_progress" in kinds
+    assert "cluster" in kinds
+    cluster_event = next(event for event in events if event.kind == "cluster")
+    assert cluster_event.message == "Detected 1 recurring clusters"
+    assert cluster_event.payload == {"clusters": 1}
     parsed_events = [event for event in events if event.kind == "parsed"]
     assert parsed_events
     assert parsed_events[0].message == "Transactions détectées : 47."

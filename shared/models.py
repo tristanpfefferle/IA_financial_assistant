@@ -429,6 +429,7 @@ class RelevesImportResult(BaseModel):
     new_count: int
     requires_confirmation: bool
     merchant_suggestions_created_count: int = 0
+    recurring_clusters_detected: int = 0
     errors: list[RelevesImportError]
     preview: list[RelevesImportPreviewItem]
     import_start_date: str | None = None
